@@ -7,6 +7,10 @@ export default defineConfig({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./"),
+      // Next.js ships `server-only` as a virtual module; under Vitest we
+      // stub it with an empty file so tests can import server-tagged modules
+      // without exploding. (Production behaviour is unchanged.)
+      "server-only": path.resolve(__dirname, "./tests/stubs/server-only.ts"),
     },
   },
   test: {

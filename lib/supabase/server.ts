@@ -2,9 +2,15 @@
 // Actions. RLS-on: queries run under the caller's auth user. For player
 // requests it forwards the device_id cookie as the x-tr1via-device header
 // so current_device_id() in Postgres can identify the player.
+//
+// The cookie value on the wire is `${deviceId}.${hmac}` (see
+// lib/auth/device-cookie.ts). We verify + extract the raw UUID here before
+// sending it as the header, so Postgres sees just the UUID.
 
 import { cookies } from "next/headers";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { verifyDeviceCookie } from "@/lib/auth/device-cookie";
 import type { Database } from "./types";
 
 interface CookieToSet {
@@ -24,12 +30,22 @@ function env(name: string): string {
 /**
  * Server-side Supabase client bound to the current request's auth + device
  * cookie. RLS on. Use in Server Components, Route Handlers, Server Actions.
+ *
+ * The return type is explicitly `SupabaseClient<Database>` because the
+ * `@supabase/ssr@0.5` `createServerClient` generic doesn't forward `Database`
+ * cleanly to the underlying client (its types import a path that newer
+ * `@supabase/supabase-js` no longer ships, so the schema collapses to `any`).
+ * Asserting here gives every call site fully typed `.from(...)` queries.
  */
-export async function getSupabaseServer() {
+export async function getSupabaseServer(): Promise<SupabaseClient<Database>> {
   const cookieStore = await cookies();
-  const deviceId = cookieStore.get(DEVICE_COOKIE)?.value ?? "";
+  const rawCookie = cookieStore.get(DEVICE_COOKIE)?.value;
+  // SESSION_SECRET only available server-side; missing in some tests, so
+  // fall back to "" — verify will return null and we send an empty header.
+  const secret = process.env.SESSION_SECRET ?? "";
+  const deviceId = secret ? (verifyDeviceCookie(rawCookie, secret) ?? "") : "";
 
-  return createServerClient<Database>(
+  const client = createServerClient<Database>(
     env("NEXT_PUBLIC_SUPABASE_URL"),
     env("NEXT_PUBLIC_SUPABASE_ANON_KEY"),
     {
@@ -56,4 +72,5 @@ export async function getSupabaseServer() {
       },
     },
   );
+  return client as unknown as SupabaseClient<Database>;
 }
