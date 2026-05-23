@@ -20,3 +20,9 @@ export type {
   HostLiveBoardColumn,
   HostLiveCurrentQuestion,
 } from "./HostLiveConsole";
+export { AdjustPointsModal } from "./AdjustPointsModal";
+export type { AdjustPointsModalProps } from "./AdjustPointsModal";
+export { AddLatecomerModal } from "./AddLatecomerModal";
+export type { AddLatecomerModalProps } from "./AddLatecomerModal";
+export { RemovePlayerButton } from "./RemovePlayerButton";
+export type { RemovePlayerButtonProps } from "./RemovePlayerButton";

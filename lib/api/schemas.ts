@@ -71,6 +71,11 @@ export const CreatePlayerSchema = z.object({
   displayName: z.string().trim().min(1).max(40),
 });
 
+/** POST /api/nights/[id]/players body — host adds a latecomer. */
+export const HostAddPlayerSchema = z.object({
+  displayName: z.string().trim().min(1).max(40),
+});
+
 export const HeartbeatSchema = z.object({
   appSwitchSeconds: z.number().int().min(0).max(86_400).optional(),
 });
@@ -160,6 +165,41 @@ export const PickCategoryBodySchema = z
   })
   .strict();
 
+/**
+ * One row in a manual-entry submission. Same invariants as a generated
+ * question — 4 distinct options, correct_index 0..3, a non-trivial
+ * prompt — but the host typed it herself.
+ */
+const ManualQuestionSchema = z
+  .object({
+    prompt: z.string().trim().min(4).max(400),
+    options: QuestionOptionsTupleSchema,
+    correctIndex: CorrectIndexSchema,
+    // Optional photo URL. When present, persisted as image_source='upload'
+    // so the question row's audit trail makes sense. We store the URL
+    // verbatim — the host owns whatever they pasted.
+    imageUrl: z
+      .string()
+      .url()
+      .max(2_000)
+      .nullable()
+      .optional()
+      .transform((v) => v ?? null),
+  })
+  .strict();
+
+/**
+ * POST /api/categories/[id]/manual body. The host typed 7 questions by
+ * hand — generation failed, or she preferred to. Order entered = point
+ * order: row 1 becomes the 100-pointer, row 7 becomes the 700-pointer.
+ * Difficulty mirrors position (1..7) so the meter reads sensibly.
+ */
+export const ManualCategoryBodySchema = z
+  .object({
+    questions: z.array(ManualQuestionSchema).length(7),
+  })
+  .strict();
+
 /** PATCH /api/questions/[id] body — any subset of edits. */
 export const PatchQuestionBodySchema = z
   .object({
@@ -205,6 +245,7 @@ export const PatchQuestionPhotoBodySchema = z
 
 export type CreateNightInput = z.infer<typeof CreateNightSchema>;
 export type CreatePlayerInput = z.infer<typeof CreatePlayerSchema>;
+export type HostAddPlayerInput = z.infer<typeof HostAddPlayerSchema>;
 export type HeartbeatInput = z.infer<typeof HeartbeatSchema>;
 export type JoinGameInput = z.infer<typeof JoinGameSchema>;
 export type RevealInput = z.infer<typeof RevealSchema>;
@@ -215,5 +256,6 @@ export type TopicSuggestionInput = z.infer<typeof TopicSuggestionSchema>;
 export type CreateCategoryInput = z.infer<typeof CreateCategoryBodySchema>;
 export type GenerateCategoryInput = z.infer<typeof GenerateCategoryBodySchema>;
 export type PickCategoryInput = z.infer<typeof PickCategoryBodySchema>;
+export type ManualCategoryInput = z.infer<typeof ManualCategoryBodySchema>;
 export type PatchQuestionInput = z.infer<typeof PatchQuestionBodySchema>;
 export type PatchQuestionPhotoInput = z.infer<typeof PatchQuestionPhotoBodySchema>;

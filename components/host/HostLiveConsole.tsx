@@ -2,9 +2,10 @@
 // mirrors to the TV.
 //
 // Wired form: the live route passes the full game state — current question,
-// the grid of revealed/picked cells, players + their lock status, and four
-// action handlers (revealCell, undo, endEarly, adjustPoints). Every prop is
-// optional with demo defaults so the /_dev/host gallery still renders.
+// the grid of revealed/picked cells, players + their lock status, and the
+// action handlers (revealCell, undo, endEarly, adjustPoints, removePlayer,
+// addPlayer). Every prop is optional with demo defaults so the /_dev/host
+// gallery still renders.
 
 "use client";
 
@@ -17,6 +18,7 @@ import {
   useTheme,
 } from "@/components/system";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { RemovePlayerButton } from "./RemovePlayerButton";
 
 export interface HostLivePlayer {
   id: string;
@@ -83,6 +85,10 @@ export interface HostLiveConsoleProps {
   onUndo?: () => void;
   /** Open the adjust-points modal. */
   onAdjustPoints?: () => void;
+  /** Host removes a player mid-night. When undefined the × button hides. */
+  onRemovePlayer?: (playerId: string) => void;
+  /** Host opens the add-latecomer flow. When undefined the + button hides. */
+  onAddPlayer?: () => void;
 }
 
 export function HostLiveConsole(props: HostLiveConsoleProps) {
@@ -154,6 +160,8 @@ function HostLiveConsoleInner({
   onEndEarly,
   onUndo,
   onAdjustPoints,
+  onRemovePlayer,
+  onAddPlayer,
 }: Omit<HostLiveConsoleProps, "themeKey">) {
   const { t } = useTheme();
   const totalPlayers = playersTotal ?? players.length;
@@ -367,18 +375,42 @@ function HostLiveConsoleInner({
           <div
             style={{
               display: "flex",
-              alignItems: "baseline",
+              alignItems: "center",
               justifyContent: "space-between",
               paddingBottom: 12,
               borderBottom: `1px solid ${t.line}`,
+              gap: 8,
             }}
           >
             <Eyebrow color={t.inkMid} size={10}>
               PLAYERS · {totalPlayers} LIVE
             </Eyebrow>
-            <Numeric size={12} color={t.inkMid}>
-              {locks} / {totalPlayers} in
-            </Numeric>
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Numeric size={12} color={t.inkMid}>
+                {locks} / {totalPlayers} in
+              </Numeric>
+              {onAddPlayer && (
+                <button
+                  type="button"
+                  onClick={onAddPlayer}
+                  aria-label="Add a latecomer"
+                  style={{
+                    padding: "2px 8px",
+                    borderRadius: 6,
+                    border: `1px solid ${t.line}`,
+                    background: "transparent",
+                    color: t.inkMid,
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 14,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    lineHeight: 1.4,
+                  }}
+                >
+                  + add
+                </button>
+              )}
+            </div>
           </div>
           <div
             style={{
@@ -398,7 +430,9 @@ function HostLiveConsoleInner({
                   key={p.id}
                   style={{
                     display: "grid",
-                    gridTemplateColumns: "20px 1fr 70px 18px",
+                    gridTemplateColumns: onRemovePlayer
+                      ? "20px 1fr 70px 18px 28px"
+                      : "20px 1fr 70px 18px",
                     alignItems: "center",
                     gap: 10,
                     padding: "10px 0",
@@ -456,6 +490,14 @@ function HostLiveConsoleInner({
                       opacity: p.locked || p.flag ? 1 : 0.4,
                     }}
                   />
+                  {onRemovePlayer && (
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <RemovePlayerButton
+                        playerName={p.name}
+                        onConfirm={() => onRemovePlayer(p.id)}
+                      />
+                    </div>
+                  )}
                 </div>
               ))
             )}
