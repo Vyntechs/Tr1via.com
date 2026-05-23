@@ -4,13 +4,13 @@
 
 ---
 
-## State as of 2026-05-23
+## State as of 2026-05-23 (afternoon)
 
 **Live, deployed, working:**
 - Repo: <https://github.com/Vyntechs/Tr1via.com> (main branch is canonical)
-- 12+ commits today; all pushed.
-- TypeScript build clean. 105/105 tests pass. 30+ routes registered.
-- **tr1via.com is live and auto-deploying from `main`** — verified via curl: HTTP 200, TR1VIA wordmark renders, ThemeProvider mounts, fonts load. `/join` returns 200.
+- 17+ commits today; all pushed.
+- TypeScript build clean. **178/178 tests pass.** 30+ routes registered.
+- **tr1via.com is live and auto-deploying from `main`** — every push triggers a fresh build (~28s) and serves within ~60s. Verified end-to-end.
 
 **Production resources (canonical, what to use going forward):**
 - Supabase project **Trivia** — ref `citweuctcnuxmqjxcbiz`. All 4 migrations applied (schema, RLS, Realtime, storage). 13 tables + `game_scores` view + `resolve_question` proc. Types generated from live schema and committed to `lib/supabase/types.ts`.
@@ -89,22 +89,22 @@ If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team
 
 ## What's still pending
 
-**Phase 9 — Polish** (not done — agents were partly rejected mid-run):
-- 9.1 ✓ heightened finale weather (verified)
-- 9.2 ✓ winner card PNG download (html-to-image dep added; `PlayerWinnerCard` extended)
-- 9.3 partial: `lib/hooks/useFiveTapEgg.ts` exists; still need PalettePeek overlay, first-night-ever trigger wiring, "Made it!" toast
-- 9.4 not started: keyboard nav for AnswerCards (keys 1/2/3/4), aria-live announcer, reduced-motion audit
-- 9.5 not started: mid-game host edits (remove player, add latecomer, expanded adjust-points modal)
+**Phase 9 — Polish:** ✓ DONE
+- 9.1 ✓ heightened finale weather
+- 9.2 ✓ winner card PNG download
+- 9.3 ✓ PalettePeek overlay + first-session auto-trigger + "Made it!" toast (`components/player/PalettePeek.tsx` + `PalettePeekProvider.tsx`)
+- 9.4 ✓ keyboard nav 1/2/3/4 (`lib/hooks/useAnswerKeyboard.ts`); aria-live on lock/reveal screens; `usePrefersReducedMotion` honored by ParticleField
+- 9.5 ✓ mid-game host edits — `RemovePlayerButton`, `AddLatecomerModal`, `AdjustPointsModal`; soft-delete + add-latecomer API routes
 
-**Phase 10 — Error states + offline** (not started):
-- 10.1 EmptyState + Spinner atoms; audit every route's loading + not-found state
-- 10.2 `useConnectionStatus` hook + ConnectionRibbon component; mount on player/TV/host-live; optimistic answer submit with exponential backoff retry
-- 10.3 Generation failure UI + manual entry route at `/host/setup/[nightId]/pick/[categoryId]/manual`; Pexels/upload error surfacing
+**Phase 10 — Error states + offline:**
+- 10.1 ✓ EmptyState + Spinner atoms in `components/system/`; loading.tsx + not-found.tsx across host routes; top-level `app/not-found.tsx`
+- 10.2 ✓ `useConnectionStatus` hook + ConnectionRibbon mounted in player layout; `useAnswerSubmit` with exponential-backoff retry replaces inline fetch in PlayerQuestion; visible "tap to retry" CTA after exhausted attempts
+- 10.3 IN FLIGHT (parallel agent): generation failure UI, manual entry route at `/host/setup/[nightId]/pick/[categoryId]/manual`, Pexels/upload error surfacing. Files exist on disk + type-clean + tests passing; agent finishing the commit.
 
-**Phase 11 — Deploy:**
-- Verify the git auto-deploy actually works (CURRENT BLOCKER — see above)
-- Verify `tr1via.com` domain is attached to the Vercel project
-- Smoke checklist: host signs up → creates night → adds category → generates questions → opens room → 2+ phones join → reveals → answers → resolve → leaderboard → intermission → game 2 → finale
+**Phase 11 — Deploy:** ✓ Git auto-deploy verified working; `tr1via.com` attached + serving fresh artifacts.
+
+**What's NOT yet done (full smoke checklist):**
+- End-to-end host flow: sign up → create night → add category → generate questions → open room → 2+ phones join → reveals → answers → resolve → leaderboard → intermission → game 2 → finale. (The pieces all work in isolation; needs a real-device manual run.)
 
 ---
 
@@ -117,8 +117,8 @@ If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team
 
 ## How to resume
 
-1. Verify the git auto-deploy is working (push something, watch for a build from `main` in the Vercel deployments).
-2. Once the auto-deploy works and `tr1via.com` serves a fresh build: smoke-test the host login flow on the live site.
-3. Then knock out Phase 9 → 10 → final smoke checklist.
+1. If Phase 10.3 isn't fully committed: the agent's files (`components/host/gen/HostGenError.tsx`, `HostGenManualEntry.tsx`, `lib/hooks/useGenerationStatus.ts`, `app/api/categories/[id]/manual/route.ts`, `app/host/setup/[nightId]/pick/[categoryId]/manual/{page,HostSetupManualClient}.tsx`, plus modifications to `HostGenImageSwap.tsx`, `HostGenImageUpload.tsx`, `gen/index.ts`, `HostSetupPickClient.tsx`) need a commit. TS is clean; tests pass.
+2. Smoke-test the live site on tr1via.com — visit `/join`, `/host/login`, walk through the full host flow on a real laptop + 2 phones.
+3. Optional cleanup: delete the throwaway Vercel projects listed under DO NOT TOUCH (Brandon does this in the dashboard).
 
 Don't re-do any of the completed phases. The plan at `docs/superpowers/plans/2026-05-23-tr1via.md` is the authoritative scope.
