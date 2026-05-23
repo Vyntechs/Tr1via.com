@@ -2,8 +2,14 @@
 // clovers, leaves, pumpkins, pine, rain). Each particle gets stable
 // per-particle randomness via a seed so positions don't jitter on theme
 // change. Pure visual decoration — pointer-events: none.
+//
+// Honors `prefers-reduced-motion: reduce` — skips render entirely rather
+// than freezing particles in mid-air via the CSS catch-all in globals.css.
+
+"use client";
 
 import { useMemo, type ComponentType } from "react";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 
 interface ParticleFieldProps {
   count?: number;
@@ -29,6 +35,7 @@ export function ParticleField({
   spinRange = [-180, 180],
   seed = 1,
 }: ParticleFieldProps) {
+  const reduced = usePrefersReducedMotion();
   const particles = useMemo(() => {
     let h = (seed * 2654435761) >>> 0;
     const r = () => {
@@ -47,6 +54,8 @@ export function ParticleField({
       spin: spinRange[0] + r() * (spinRange[1] - spinRange[0]),
     }));
   }, [count, seed, sizeRange, durationRange, colors, opacityRange, driftRange, spinRange]);
+
+  if (reduced) return null;
 
   return (
     <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>

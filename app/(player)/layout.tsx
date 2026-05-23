@@ -9,6 +9,7 @@
 // the Question or Reveal screens.
 
 import type { ReactNode } from "react";
+import { PalettePeekProvider } from "@/components/player/PalettePeekProvider";
 
 export default function PlayerLayout({ children }: { children: ReactNode }) {
   return (
@@ -27,6 +28,7 @@ export default function PlayerLayout({ children }: { children: ReactNode }) {
       }}
     >
       {children}
+      <PalettePeekProvider />
     </div>
   );
 }

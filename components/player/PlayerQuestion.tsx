@@ -15,6 +15,7 @@ import {
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
+import { useAnswerKeyboard } from "@/lib/hooks/useAnswerKeyboard";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export type PlayerQuestionSlot = 1 | 2 | 3 | 4;
@@ -57,6 +58,11 @@ export function PlayerQuestion({
   const { t } = useTheme();
   const catColor = categoryColor(category, t.accent);
   const slots: PlayerQuestionSlot[] = [1, 2, 3, 4];
+
+  useAnswerKeyboard({
+    enabled: !!onTap && !disabled,
+    onSlot: (slot) => onTap?.(slot),
+  });
 
   return (
     <PhoneScreen>
@@ -121,6 +127,7 @@ export function PlayerQuestion({
         }}
       >
         <Eyebrow color={t.inkMute} size={9}>EVERYONE&apos;S #&apos;S ARE SCRAMBLED · YOURS IS YOURS</Eyebrow>
+        <Eyebrow color={t.inkMute} size={9}>KEYBOARD: 1·2·3·4</Eyebrow>
       </div>
     </PhoneScreen>
   );

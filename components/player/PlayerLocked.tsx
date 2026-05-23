@@ -85,7 +85,7 @@ export function PlayerLocked({
         }}
       >
         <TimerRing accent={catColor} seconds={seconds} />
-        <div style={{ flex: 1 }}>
+        <div style={{ flex: 1 }} role="status" aria-live="polite">
           <Eyebrow color={t.inkMid} size={9}>LOCKED AT</Eyebrow>
           <div style={{ marginTop: 2, fontSize: 14, color: t.ink, fontWeight: 600 }}>
             <Numeric size={15} color={catColor}>{secondsToLock}s</Numeric>
