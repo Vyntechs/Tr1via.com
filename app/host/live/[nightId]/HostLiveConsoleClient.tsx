@@ -9,8 +9,9 @@
 //     show the lock-in count + the per-player locked flag in real time.
 //   - Action handlers: reveal (POST /api/games/[id]/reveal), undo (POST
 //     /api/games/[id]/undo), end-early (POST /api/games/[id]/end-early),
-//     adjust (POST /api/adjustments). Adjustments are wired through a
-//     small inline modal so we don't lose the live console behind it.
+//     adjust (POST /api/adjustments), remove player (DELETE /api/players/[id]),
+//     add latecomer (POST /api/nights/[id]/players). The mid-game edits live
+//     in dedicated modal components so the live console stays uncluttered.
 
 "use client";
 
@@ -19,6 +20,8 @@ import { useRoom } from "@/lib/hooks/useRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
+  AddLatecomerModal,
+  AdjustPointsModal,
   HostLiveConsole,
   type HostLivePlayer,
   type HostLiveBoardColumn,
@@ -51,6 +54,8 @@ export function HostLiveConsoleClient({
   const [scores, setScores] = useState<GameScoreRow[]>([]);
   const [lastRevealAt, setLastRevealAt] = useState<number | null>(null);
   const [adjusting, setAdjusting] = useState<HostLivePlayer | null>(null);
+  const [addingLatecomer, setAddingLatecomer] = useState(false);
+  const [removingPlayerId, setRemovingPlayerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // ── load all picked questions for the night ──────────────────────────
@@ -307,6 +312,37 @@ export function HostLiveConsoleClient({
       setError(err instanceof Error ? err.message : "Adjust failed.");
     }
   }
+  async function handleRemovePlayer(playerId: string) {
+    if (removingPlayerId) return;
+    setRemovingPlayerId(playerId);
+    setError(null);
+    try {
+      const res = await fetch(`/api/players/${playerId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "remove failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Remove failed.");
+    } finally {
+      setRemovingPlayerId(null);
+    }
+  }
+  async function handleAddLatecomer(displayName: string) {
+    setError(null);
+    const res = await fetch(`/api/nights/${nightId}/players`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ displayName }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const message = body.error ?? "add failed";
+      setError(message);
+      throw new Error(message);
+    }
+    setAddingLatecomer(false);
+  }
 
   // The HostLiveConsole's grid click handler currently picks the cell
   // and reveals immediately. For mid-game the host can stage on her phone;
@@ -328,15 +364,23 @@ export function HostLiveConsoleClient({
           const first = players[0];
           if (first) setAdjusting(first);
         }}
+        onRemovePlayer={(pid) => void handleRemovePlayer(pid)}
+        onAddPlayer={() => setAddingLatecomer(true)}
       />
       {adjusting && (
-        <AdjustModal
-          player={adjusting}
+        <AdjustPointsModal
+          initialPlayer={adjusting}
           allPlayers={players}
           onCancel={() => setAdjusting(null)}
           onSubmit={(playerId, delta, reason) =>
             void handleAdjust(playerId, delta, reason)
           }
+        />
+      )}
+      {addingLatecomer && (
+        <AddLatecomerModal
+          onCancel={() => setAddingLatecomer(false)}
+          onSubmit={handleAddLatecomer}
         />
       )}
       {error && (
@@ -413,158 +457,3 @@ function formatAppOff(seconds: number): string {
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
 
-function AdjustModal({
-  player,
-  allPlayers,
-  onCancel,
-  onSubmit,
-}: {
-  player: HostLivePlayer;
-  allPlayers: HostLivePlayer[];
-  onCancel: () => void;
-  onSubmit: (playerId: string, delta: number, reason: string) => void;
-}) {
-  const [selectedId, setSelectedId] = useState(player.id);
-  const [deltaStr, setDeltaStr] = useState("100");
-  const [reason, setReason] = useState("");
-
-  function submit() {
-    const delta = Number.parseInt(deltaStr, 10);
-    if (Number.isNaN(delta) || delta === 0) return;
-    onSubmit(selectedId, delta, reason.trim());
-  }
-
-  return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 60,
-        background: "rgba(0,0,0,.55)",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel();
-      }}
-    >
-      <div
-        style={{
-          width: 420,
-          background: "var(--paper)",
-          borderRadius: 14,
-          padding: 24,
-          color: "var(--ink)",
-          fontFamily: "var(--font-sans)",
-          boxShadow: "0 24px 48px -12px rgba(0,0,0,.4)",
-        }}
-      >
-        <div
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            letterSpacing: "0.1em",
-            color: "var(--ink-mute)",
-            textTransform: "uppercase",
-          }}
-        >
-          ADJUST POINTS
-        </div>
-        <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}>
-          <label style={{ fontSize: 12, color: "var(--ink-mid)", fontWeight: 600 }}>
-            Player
-          </label>
-          <select
-            value={selectedId}
-            onChange={(e) => setSelectedId(e.target.value)}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--line)",
-              background: "var(--surface)",
-              color: "var(--ink)",
-              fontSize: 14,
-            }}
-          >
-            {allPlayers.map((p) => (
-              <option key={p.id} value={p.id}>
-                {p.name} · {p.score.toLocaleString()}
-              </option>
-            ))}
-          </select>
-          <label style={{ fontSize: 12, color: "var(--ink-mid)", fontWeight: 600 }}>
-            Delta (+/- points)
-          </label>
-          <input
-            type="number"
-            value={deltaStr}
-            onChange={(e) => setDeltaStr(e.target.value)}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--line)",
-              background: "var(--surface)",
-              color: "var(--ink)",
-              fontSize: 14,
-              fontFamily: "var(--font-mono)",
-            }}
-          />
-          <label style={{ fontSize: 12, color: "var(--ink-mid)", fontWeight: 600 }}>
-            Reason (optional)
-          </label>
-          <input
-            type="text"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Pub round bonus / suspected sharing"
-            style={{
-              padding: "10px 12px",
-              borderRadius: 8,
-              border: "1px solid var(--line)",
-              background: "var(--surface)",
-              color: "var(--ink)",
-              fontSize: 14,
-            }}
-          />
-        </div>
-        <div style={{ marginTop: 20, display: "flex", gap: 8 }}>
-          <button
-            type="button"
-            onClick={onCancel}
-            style={{
-              flex: 1,
-              padding: "10px 0",
-              borderRadius: 10,
-              border: "1px solid var(--line)",
-              background: "transparent",
-              color: "var(--ink-mid)",
-              fontSize: 13,
-              fontWeight: 600,
-              cursor: "pointer",
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            style={{
-              flex: 2,
-              padding: "10px 0",
-              borderRadius: 10,
-              border: "none",
-              background: "var(--accent)",
-              color: "#FFF",
-              fontSize: 13,
-              fontWeight: 700,
-              cursor: "pointer",
-            }}
-          >
-            Apply
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
