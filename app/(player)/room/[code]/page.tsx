@@ -46,6 +46,7 @@ import {
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
+import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
@@ -418,48 +419,61 @@ function QuestionView({
     onZero: handleZero,
   });
 
-  const [submitting, setSubmitting] = useState(false);
+  // Optimistic submit with exponential-backoff retry on transient failures.
+  // The UI flips to "locked" the moment the player taps; the hook keeps
+  // retrying in the background. A failed-after-retries state surfaces a
+  // small retry prompt the player can tap to re-attempt manually.
+  const { submit, status: submitStatus, retry } = useAnswerSubmit({
+    questionId: question.id,
+    scramble: Array.from(scramble),
+  });
   const handleTap = useCallback(
-    async (slot: PlayerQuestionSlot) => {
-      if (submitting) return;
-      setSubmitting(true);
-      try {
-        const res = await fetch("/api/answers", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            questionId: question.id,
-            slotChosen: slot,
-            scramble,
-          }),
-        });
-        if (!res.ok && res.status !== 409) {
-          // 409 = already answered, which is fine (the realtime update will
-          // catch the row and we'll transition to PlayerLocked).
-          console.warn("answer submit failed", res.status, await res.text());
-        }
-      } catch (e) {
-        console.warn("answer submit error", e);
-      } finally {
-        setSubmitting(false);
-      }
-    },
-    [question.id, scramble, submitting],
+    (slot: PlayerQuestionSlot) => submit(slot),
+    [submit],
   );
 
   const questionNumber = computeQuestionNumber(question, categories);
 
   return (
-    <PlayerQuestion
-      seconds={displaySeconds}
-      category={category.name}
-      value={question.point_value ?? 100}
-      options={optionsInScrambleOrder}
-      questionNumber={questionNumber}
-      onTap={handleTap}
-      disabled={submitting}
-    />
+    <>
+      <PlayerQuestion
+        seconds={displaySeconds}
+        category={category.name}
+        value={question.point_value ?? 100}
+        options={optionsInScrambleOrder}
+        questionNumber={questionNumber}
+        onTap={handleTap}
+        disabled={submitStatus === "pending" || submitStatus === "sent"}
+      />
+      {submitStatus === "failed" && (
+        <button
+          type="button"
+          onClick={retry}
+          aria-label="Retry sending your answer"
+          style={{
+            position: "fixed",
+            bottom: 20,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 60,
+            background: "var(--wrong)",
+            color: "#FFF",
+            border: "none",
+            borderRadius: 99,
+            padding: "12px 22px",
+            fontFamily: "var(--font-mono)",
+            fontSize: 11,
+            fontWeight: 700,
+            letterSpacing: "0.08em",
+            textTransform: "uppercase",
+            boxShadow: "0 10px 24px rgba(0,0,0,0.3)",
+            cursor: "pointer",
+          }}
+        >
+          Couldn&rsquo;t send · Tap to retry
+        </button>
+      )}
+    </>
   );
 }
 

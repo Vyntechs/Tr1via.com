@@ -1,0 +1,43 @@
+// useConnectionStatus — tri-state connection health for the surfaces that
+// need to surface a ribbon when the room isn't fully wired:
+//
+//   "online"        — browser navigator.onLine && channel SUBSCRIBED (or no channel)
+//   "reconnecting"  — channel ERROR / TIMED_OUT / CLOSED, but browser online
+//   "offline"       — browser navigator.onLine === false (trumps channel state)
+//
+// Pass `channelState` from a Supabase Realtime channel's `system` event so the
+// hook can distinguish "WS dropped, still recovering" from "we have no network."
+
+"use client";
+
+import { useEffect, useState } from "react";
+
+export type ConnectionStatus = "online" | "reconnecting" | "offline";
+
+export interface UseConnectionStatusOptions {
+  /** Pass through the latest Realtime channel state when one exists. */
+  channelState?: string;
+}
+
+const HEALTHY_CHANNEL_STATES = new Set(["SUBSCRIBED", "JOINED"]);
+
+export function useConnectionStatus({ channelState }: UseConnectionStatusOptions = {}): ConnectionStatus {
+  const [browserOnline, setBrowserOnline] = useState(
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
+
+  useEffect(() => {
+    const onOnline = () => setBrowserOnline(true);
+    const onOffline = () => setBrowserOnline(false);
+    window.addEventListener("online", onOnline);
+    window.addEventListener("offline", onOffline);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      window.removeEventListener("offline", onOffline);
+    };
+  }, []);
+
+  if (!browserOnline) return "offline";
+  if (channelState && !HEALTHY_CHANNEL_STATES.has(channelState)) return "reconnecting";
+  return "online";
+}
