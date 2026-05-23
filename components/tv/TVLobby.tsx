@@ -1,6 +1,9 @@
 // TV — pre-game lobby. Hero display headline. Live roster, scan-to-join QR,
 // in-the-room counter. The first thing a venue TV shows when the host opens
 // the room — visible across the bar from any seat.
+//
+// Driven by props so the live `/tv/[code]` route can feed it real data; falls
+// back to the demo strings so the `/_dev/tv` gallery still renders cleanly.
 
 "use client";
 
@@ -17,30 +20,59 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface TVLobbyProps {
   themeKey?: ThemeKey;
+  /** Venue name shown in the header, e.g. "SOUL FIRE PIZZA". */
+  venueName?: string;
+  /** Pre-formatted scheduled date, e.g. "WED MAY 27". */
+  scheduledDate?: string;
+  /** Pre-formatted room code with middle dot, e.g. "K9P·R4M". */
+  roomCode?: string;
+  /** Live "in the room" count (= number of joined players). */
+  inRoomCount?: number;
+  /** Player names ordered most-recent first (the front of the roster glows). */
+  roster?: string[];
+  /** Full URL the QR encodes — usually `${SITE_URL}/join?code=K9PR4M`. */
+  joinUrl?: string;
+  /** Footer copy: who's running this and what game is next. */
+  hostStatusLine?: string;
+  /** Game N of M, header right side. */
+  gameStatusLine?: string;
 }
 
-export function TVLobby({ themeKey }: TVLobbyProps) {
+export function TVLobby({ themeKey, ...rest }: TVLobbyProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVLobbyInner />
+        <TVLobbyInner {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVLobbyInner />;
+  return <TVLobbyInner {...rest} />;
 }
 
-function TVLobbyInner() {
+const DEMO_ROSTER: string[] = [
+  "Maya", "Cole", "Theo", "Devon", "Marcus", "Priya", "Sara", "Eli", "Ana",
+  "June", "Lex", "Otis", "Sam", "Iris", "Ren", "Kai", "Nadia", "Jules",
+  "Ezra", "Mira", "Hank", "Reza", "Tess", "Vee", "Yumi", "Quinn", "Wren",
+];
+
+function TVLobbyInner({
+  venueName = "SOUL FIRE PIZZA",
+  scheduledDate = "WED MAY 27",
+  roomCode = "K9·PR4M",
+  inRoomCount = 27,
+  roster = DEMO_ROSTER,
+  joinUrl = "https://tr1via.com/join/K9PR4M",
+  hostStatusLine = "ROOM OPEN · LINDA WILL START WHEN READY",
+  gameStatusLine = "GAME 1 OF 2 · WAITING",
+}: Omit<TVLobbyProps, "themeKey">) {
   const { t } = useTheme();
-  const roster = [
-    "Maya", "Cole", "Theo", "Devon", "Marcus", "Priya", "Sara", "Eli", "Ana",
-    "June", "Lex", "Otis", "Sam", "Iris", "Ren", "Kai", "Nadia", "Jules",
-    "Ezra", "Mira", "Hank", "Reza", "Tess", "Vee", "Yumi", "Quinn", "Wren",
-  ];
 
   return (
     <TVStage>
-      <TVHeader left="SOUL FIRE PIZZA · WED MAY 27" right="GAME 1 OF 2 · WAITING" />
+      <TVHeader
+        left={`${venueName} · ${scheduledDate}`}
+        right={gameStatusLine}
+      />
 
       <div
         style={{
@@ -97,7 +129,7 @@ function TVLobbyInner() {
                   display: "inline-block",
                 }}
               >
-                K9·PR4M
+                {roomCode}
               </div>
             </div>
           </div>
@@ -112,7 +144,7 @@ function TVLobbyInner() {
               border: `1px solid ${t.line}`,
             }}
           >
-            <QRBlock url="https://tr1via.com/join/K9PR4M" size={300} light />
+            <QRBlock url={joinUrl} size={300} light />
           </div>
 
           <div
@@ -136,7 +168,9 @@ function TVLobbyInner() {
                 animation: "tr1via-pulse 1.6s ease-in-out infinite",
               }}
             />
-            <Numeric size={22} weight={700} color="#0E0805" tracking={-0.02}>27</Numeric>
+            <Numeric size={22} weight={700} color="#0E0805" tracking={-0.02}>
+              {inRoomCount}
+            </Numeric>
             <span style={{ fontSize: 14, color: "#0E0805", fontWeight: 600 }}>in the room</span>
           </div>
 
@@ -145,7 +179,7 @@ function TVLobbyInner() {
             <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: "8px 14px" }}>
               {roster.map((n, i) => (
                 <span
-                  key={n}
+                  key={`${n}-${i}`}
                   style={{
                     fontSize: 15,
                     fontWeight: i < 3 ? 700 : 500,
@@ -164,7 +198,7 @@ function TVLobbyInner() {
         </div>
       </div>
 
-      <TVFooter left="ROOM OPEN · LINDA WILL START WHEN READY" right="TR1VIA.COM · K9·PR4M" />
+      <TVFooter left={hostStatusLine} right={`TR1VIA.COM · ${roomCode}`} />
     </TVStage>
   );
 }

@@ -17,10 +17,37 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface PlayerJoinGame2Props {
   themeKey?: ThemeKey;
+  /** Player's display name — printed in the CTA caption. */
+  playerName?: string;
+  /** Final placement in game 1 (1-based). */
+  finalRank?: number;
+  /** Final cumulative score from game 1. */
+  finalScore?: number;
+  /** Best-performing category name (drives the color). */
+  bestCategory?: string;
+  /** "7/7" style accuracy string for the best category. */
+  bestCategoryRatio?: string;
+  /** Fastest answer time in seconds (e.g. 1.4). */
+  fastestSeconds?: number;
+  /** Tap handler — fires when the player opts into game 2. */
+  onJoin?: () => void;
+  /** True while a join request is in flight. Disables the CTA. */
+  submitting?: boolean;
 }
 
-export function PlayerJoinGame2({ themeKey: _themeKey }: PlayerJoinGame2Props = {}) {
+export function PlayerJoinGame2({
+  themeKey: _themeKey,
+  playerName = "Maya",
+  finalRank = 5,
+  finalScore = 4820,
+  bestCategory = "Music",
+  bestCategoryRatio = "7/7",
+  fastestSeconds = 1.4,
+  onJoin,
+  submitting,
+}: PlayerJoinGame2Props = {}) {
   const { t } = useTheme();
+  const ctaDisabled = !onJoin || submitting;
   return (
     <PhoneScreen>
       <PhoneHeader eyebrow="GAME 1 · FINAL" />
@@ -29,13 +56,13 @@ export function PlayerJoinGame2({ themeKey: _themeKey }: PlayerJoinGame2Props = 
         <Display size={56} color={t.ink}>
           Wrapped.
           <br />
-          You finished <span style={{ color: t.pop }}>#5</span>.
+          You finished <span style={{ color: t.pop }}>#{finalRank}</span>.
         </Display>
 
         <div style={{ marginTop: 20, padding: "20px 22px", borderRadius: 14, background: t.surface }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
             <Eyebrow color={t.inkMid} size={10}>YOUR SCORE</Eyebrow>
-            <Numeric size={36} weight={700} color={t.ink}>4,820</Numeric>
+            <Numeric size={36} weight={700} color={t.ink}>{finalScore.toLocaleString()}</Numeric>
           </div>
           <div
             style={{
@@ -53,16 +80,16 @@ export function PlayerJoinGame2({ themeKey: _themeKey }: PlayerJoinGame2Props = 
                   marginTop: 4,
                   fontSize: 14,
                   fontWeight: 600,
-                  color: categoryColor("Music"),
+                  color: categoryColor(bestCategory),
                   letterSpacing: "-0.005em",
                 }}
               >
-                Music · 7/7
+                {bestCategory} · {bestCategoryRatio}
               </div>
             </div>
             <div style={{ flex: 1 }}>
               <Eyebrow color={t.inkMid} size={9}>FASTEST</Eyebrow>
-              <div style={{ marginTop: 4, fontSize: 14, fontWeight: 600, color: t.ink }}>1.4s</div>
+              <div style={{ marginTop: 4, fontSize: 14, fontWeight: 600, color: t.ink }}>{fastestSeconds.toFixed(1)}s</div>
             </div>
           </div>
         </div>
@@ -75,6 +102,8 @@ export function PlayerJoinGame2({ themeKey: _themeKey }: PlayerJoinGame2Props = 
 
       <button
         type="button"
+        onClick={ctaDisabled ? undefined : onJoin}
+        disabled={ctaDisabled}
         style={{
           background: t.accent,
           color: "#FFF",
@@ -84,7 +113,8 @@ export function PlayerJoinGame2({ themeKey: _themeKey }: PlayerJoinGame2Props = 
           fontSize: 18,
           fontWeight: 700,
           fontFamily: "var(--font-sans)",
-          cursor: "pointer",
+          cursor: ctaDisabled ? "default" : "pointer",
+          opacity: ctaDisabled && !onJoin ? 1 : submitting ? 0.55 : 1,
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -92,7 +122,7 @@ export function PlayerJoinGame2({ themeKey: _themeKey }: PlayerJoinGame2Props = 
           boxShadow: `0 14px 32px -10px ${t.accent}66`,
         }}
       >
-        Join Game 2  &rarr;
+        {submitting ? "Joining…" : "Join Game 2  →"}
       </button>
       <div
         style={{
@@ -104,7 +134,7 @@ export function PlayerJoinGame2({ themeKey: _themeKey }: PlayerJoinGame2Props = 
           letterSpacing: "0.04em",
         }}
       >
-        ONE TAP · MAYA
+        ONE TAP · {playerName.toUpperCase()}
       </div>
     </PhoneScreen>
   );

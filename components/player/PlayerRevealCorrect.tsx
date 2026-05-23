@@ -16,10 +16,43 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface PlayerRevealCorrectProps {
   themeKey?: ThemeKey;
+  category?: string;
+  /** Face point value (100..700). */
+  value?: number;
+  /** Total points awarded for this answer — includes speed bonus. */
+  awardedPoints?: number;
+  /** Time-to-lock in ms — drives the "in 2.3s" caption + speed-bonus chip. */
+  msToLock?: number;
+  /** Current streak count (correct in a row). 0 hides the chip. */
+  streak?: number;
+  /** Player's rank in the leaderboard right now. */
+  rank?: number;
+  /** Total cumulative score. */
+  totalScore?: number;
+  /** Positions climbed since the previous question. Positive = up. */
+  rankDelta?: number;
+  /** Caption for the next-action strip. */
+  nextHint?: string;
 }
 
-export function PlayerRevealCorrect({ themeKey: _themeKey }: PlayerRevealCorrectProps = {}) {
+export function PlayerRevealCorrect({
+  themeKey: _themeKey,
+  category = "Geography",
+  value = 100,
+  awardedPoints = 110,
+  msToLock = 2300,
+  streak = 3,
+  rank = 7,
+  totalScore = 2340,
+  rankDelta = 4,
+  nextHint = "Linda is picking the next category…",
+}: PlayerRevealCorrectProps = {}) {
   const { t } = useTheme();
+  const speedBonus = msToLock < 5000;
+  const speedBonusAmount = speedBonus
+    ? Math.max(0, awardedPoints - value)
+    : 0;
+  const seconds = (msToLock / 1000).toFixed(1);
   return (
     <div
       style={{
@@ -45,24 +78,26 @@ export function PlayerRevealCorrect({ themeKey: _themeKey }: PlayerRevealCorrect
           paddingBottom: 14,
         }}
       >
-        <Eyebrow color="rgba(14,8,5,.55)" size={10}>GEOGRAPHY · 100 PTS</Eyebrow>
-        <span
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            padding: "3px 8px",
-            borderRadius: 99,
-            background: "#0E0805",
-            color: t.correct,
-            fontFamily: "var(--font-mono)",
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: "0.06em",
-          }}
-        >
-          × 3 STREAK
-        </span>
+        <Eyebrow color="rgba(14,8,5,.55)" size={10}>{category.toUpperCase()} · {value} PTS</Eyebrow>
+        {streak >= 2 && (
+          <span
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 8px",
+              borderRadius: 99,
+              background: "#0E0805",
+              color: t.correct,
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              fontWeight: 700,
+              letterSpacing: "0.06em",
+            }}
+          >
+            × {streak} STREAK
+          </span>
+        )}
       </div>
 
       <Display size={72} color="#0E0805" weight={700}>
@@ -71,7 +106,7 @@ export function PlayerRevealCorrect({ themeKey: _themeKey }: PlayerRevealCorrect
 
       <div style={{ marginTop: 8, display: "flex", alignItems: "baseline", gap: 12 }}>
         <Eyebrow color="rgba(14,8,5,.55)" size={11}>YOU EARNED</Eyebrow>
-        <Numeric size={11} color="rgba(14,8,5,.55)">in 2.3s</Numeric>
+        <Numeric size={11} color="rgba(14,8,5,.55)">in {seconds}s</Numeric>
       </div>
 
       <div
@@ -87,26 +122,28 @@ export function PlayerRevealCorrect({ themeKey: _themeKey }: PlayerRevealCorrect
           animation: "tr1via-score-pop .55s cubic-bezier(.2,.7,.3,1) .1s both",
         }}
       >
-        +110
+        +{awardedPoints}
       </div>
 
-      <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-        <span
-          style={{
-            padding: "4px 10px",
-            borderRadius: 99,
-            background: "#0E0805",
-            color: t.correct,
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            fontWeight: 600,
-            letterSpacing: "0.06em",
-          }}
-        >
-          +10 SPEED
-        </span>
-        <span style={{ fontSize: 13, color: "rgba(14,8,5,.7)" }}>under 5s nails the bonus.</span>
-      </div>
+      {speedBonus && (
+        <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
+          <span
+            style={{
+              padding: "4px 10px",
+              borderRadius: 99,
+              background: "#0E0805",
+              color: t.correct,
+              fontFamily: "var(--font-mono)",
+              fontSize: 11,
+              fontWeight: 600,
+              letterSpacing: "0.06em",
+            }}
+          >
+            +{speedBonusAmount} SPEED
+          </span>
+          <span style={{ fontSize: 13, color: "rgba(14,8,5,.7)" }}>under 5s nails the bonus.</span>
+        </div>
+      )}
 
       <div
         style={{
@@ -121,14 +158,18 @@ export function PlayerRevealCorrect({ themeKey: _themeKey }: PlayerRevealCorrect
         }}
       >
         <Eyebrow color="rgba(200,226,94,.7)" size={10}>NOW AT</Eyebrow>
-        <Numeric size={36} weight={700} color={t.correct}>#7</Numeric>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: t.correct, fontWeight: 600 }}>&uarr; 4</span>
+        <Numeric size={36} weight={700} color={t.correct}>#{rank}</Numeric>
+        {rankDelta !== 0 && (
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: t.correct, fontWeight: 600 }}>
+            {rankDelta > 0 ? `↑ ${rankDelta}` : `↓ ${Math.abs(rankDelta)}`}
+          </span>
+        )}
         <span style={{ flex: 1 }} />
-        <Numeric size={22} weight={600} color="rgba(244,230,196,.95)">2,340</Numeric>
+        <Numeric size={22} weight={600} color="rgba(244,230,196,.95)">{totalScore.toLocaleString()}</Numeric>
       </div>
 
       <div style={{ marginTop: 10, color: "rgba(14,8,5,.7)", fontSize: 12, textAlign: "center" }}>
-        Linda is picking the next category&hellip;
+        {nextHint}
       </div>
     </div>
   );

@@ -15,24 +15,53 @@ import { PhoneScreen } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-export interface PlayerRecapProps {
-  themeKey?: ThemeKey;
+export interface PlayerRecapStat {
+  label: string;
+  value: string;
+  /** Optional color override; defaults derive from semantic position. */
+  color?: string;
 }
 
-export function PlayerRecap({ themeKey: _themeKey }: PlayerRecapProps = {}) {
+export interface PlayerRecapProps {
+  themeKey?: ThemeKey;
+  venueName?: string;
+  nightDateLabel?: string;
+  finalRank?: number;
+  finalScore?: number;
+  stats?: PlayerRecapStat[];
+  /** Caption above the stats. */
+  blurb?: string;
+  /** "Stayed in the top ten all night" headline blurb (optional). */
+  highlight?: string;
+  /** Action to take when the player taps "Suggest a topic". */
+  onSuggestTopic?: () => void;
+}
+
+export function PlayerRecap({
+  themeKey: _themeKey,
+  venueName = "Soul Fire",
+  nightDateLabel = "May 27",
+  finalRank = 7,
+  finalScore = 5360,
+  stats,
+  blurb = "You climbed from #11 to #7 over the second game. The biggest jump was after Music.",
+  highlight = "STAYED IN THE TOP TEN ALL NIGHT",
+  onSuggestTopic,
+}: PlayerRecapProps = {}) {
   const { t } = useTheme();
-  const stats: { l: string; v: string; color: string }[] = [
-    { l: "GOT RIGHT",      v: "28 / 42",      color: t.correct },
-    { l: "BEST CATEGORY",  v: "Music · 7/7",  color: categoryColor("Music", t.accent) },
-    { l: "FASTEST ANSWER", v: "1.4s · Pixar", color: t.pop },
-    { l: "LONGEST STREAK", v: "× 4",          color: t.accent },
+  const defaultStats: PlayerRecapStat[] = [
+    { label: "GOT RIGHT",      value: "28 / 42",      color: t.correct },
+    { label: "BEST CATEGORY",  value: "Music · 7/7",  color: categoryColor("Music", t.accent) },
+    { label: "FASTEST ANSWER", value: "1.4s · Pixar", color: t.pop },
+    { label: "LONGEST STREAK", value: "× 4",          color: t.accent },
   ];
+  const rows = stats ?? defaultStats;
 
   return (
     <PhoneScreen>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 6 }}>
-        <Eyebrow color={t.inkMid} size={10}>YOUR NIGHT · SOUL FIRE</Eyebrow>
-        <Eyebrow color={t.inkMute} size={10}>MAY 27</Eyebrow>
+        <Eyebrow color={t.inkMid} size={10}>YOUR NIGHT · {venueName.toUpperCase()}</Eyebrow>
+        <Eyebrow color={t.inkMute} size={10}>{nightDateLabel.toUpperCase()}</Eyebrow>
       </div>
 
       <Display
@@ -43,13 +72,13 @@ export function PlayerRecap({ themeKey: _themeKey }: PlayerRecapProps = {}) {
       >
         Wrapped.
         <br />
-        You finished <span style={{ color: t.accent }}>#7</span>.
+        You finished <span style={{ color: t.accent }}>#{finalRank}</span>.
       </Display>
 
       <div style={{ marginTop: 22, padding: "18px 22px", borderRadius: 16, background: t.surface }}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
           <Eyebrow color={t.inkMid} size={10}>YOUR SCORE</Eyebrow>
-          <Numeric size={42} weight={700} color={t.ink} tracking={-0.03}>5,360</Numeric>
+          <Numeric size={42} weight={700} color={t.ink} tracking={-0.03}>{finalScore.toLocaleString()}</Numeric>
         </div>
 
         <div
@@ -62,22 +91,22 @@ export function PlayerRecap({ themeKey: _themeKey }: PlayerRecapProps = {}) {
             gap: 12,
           }}
         >
-          {stats.map((s) => (
+          {rows.map((s) => (
             <div
-              key={s.l}
+              key={s.label}
               style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}
             >
-              <Eyebrow color={t.inkMid} size={9}>{s.l}</Eyebrow>
-              <Numeric size={15} weight={700} color={s.color}>{s.v}</Numeric>
+              <Eyebrow color={t.inkMid} size={9}>{s.label}</Eyebrow>
+              <Numeric size={15} weight={700} color={s.color ?? t.ink}>{s.value}</Numeric>
             </div>
           ))}
         </div>
       </div>
 
       <div style={{ marginTop: 18, padding: "14px 16px", borderRadius: 12, border: `1px dashed ${t.line}` }}>
-        <Eyebrow color={t.inkMute} size={10}>STAYED IN THE TOP TEN ALL NIGHT</Eyebrow>
+        <Eyebrow color={t.inkMute} size={10}>{highlight}</Eyebrow>
         <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid, lineHeight: 1.45 }}>
-          You climbed from #11 to #7 over the second game. The biggest jump was after Music.
+          {blurb}
         </div>
       </div>
 
@@ -111,6 +140,7 @@ export function PlayerRecap({ themeKey: _themeKey }: PlayerRecapProps = {}) {
         </div>
         <button
           type="button"
+          onClick={onSuggestTopic}
           style={{
             background: "transparent",
             color: t.ink,
@@ -120,7 +150,7 @@ export function PlayerRecap({ themeKey: _themeKey }: PlayerRecapProps = {}) {
             fontSize: 13,
             fontWeight: 600,
             fontFamily: "var(--font-sans)",
-            cursor: "pointer",
+            cursor: onSuggestTopic ? "pointer" : "default",
           }}
         >
           Suggest a topic for next week

@@ -2,6 +2,9 @@
 // owns the room instead of letting it drift. Three winners get a podium row,
 // a "ready" panel shows who's back in, late arrivals get a join QR, and the
 // night's notable numbers anchor the right column.
+//
+// Driven by props for the live `/tv/[code]` route; demo defaults preserved
+// for the `/_dev/tv` gallery.
 
 "use client";
 
@@ -14,39 +17,91 @@ import {
   ThemeProvider,
   useTheme,
 } from "@/components/system";
+import type { ResolvedTheme } from "@/lib/theme/resolve";
 import type { ThemeKey } from "@/lib/theme/tokens";
+
+export interface TVIntermissionPodiumRow {
+  rank: number;
+  name: string;
+  score: number;
+  /** One-line color note about how they got here. Optional. */
+  line?: string;
+  /** Override color for the row outline. Defaults from rank position. */
+  color?: string;
+}
+
+export interface TVIntermissionStat {
+  /** SHORT-CAPS label, e.g. "FASTEST". */
+  l: string;
+  /** Value, e.g. "0.9s". */
+  v: string;
+  /** Sub-line under the value. */
+  sub?: string;
+}
 
 export interface TVIntermissionProps {
   themeKey?: ThemeKey;
+  headerLeft?: string;
+  headerRight?: string;
+  footerLeft?: string;
+  footerRight?: string;
+  /** Top 3 winners. */
+  podium?: TVIntermissionPodiumRow[];
+  /** Total players who have re-joined for Game 2. */
+  readyCount?: number;
+  /** Total players in the night. */
+  totalCount?: number;
+  /** Pre-formatted room code with middle dot, e.g. "K9P·R4M". */
+  roomCode?: string;
+  /** Full URL the QR encodes. */
+  joinUrl?: string;
+  /** Notable stats for the right column. */
+  nightStats?: TVIntermissionStat[];
 }
 
-export function TVIntermission({ themeKey }: TVIntermissionProps) {
+export function TVIntermission({ themeKey, ...rest }: TVIntermissionProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVIntermissionInner />
+        <TVIntermissionInner {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVIntermissionInner />;
+  return <TVIntermissionInner {...rest} />;
 }
 
-function TVIntermissionInner() {
-  const { t } = useTheme();
-  const podium = [
+function defaultPodium(t: ResolvedTheme): TVIntermissionPodiumRow[] {
+  return [
     { rank: 1, name: "Devon", score: 6280, line: "Two streaks of five. Untouchable.", color: t.accent },
     { rank: 2, name: "Iris",  score: 5740, line: "Fastest hand in the room.",         color: t.pop },
     { rank: 3, name: "Priya", score: 5220, line: "Quietly perfect on history.",       color: t.correct },
   ];
-  const nightStats = [
-    { l: "FASTEST", v: "0.9s", sub: "Iris on music" },
-    { l: "STREAK",  v: "×7",   sub: "Devon on history" },
-    { l: "STUMPER", v: "4/32", sub: "Egyptian honey" },
-  ];
+}
+
+const DEMO_STATS: TVIntermissionStat[] = [
+  { l: "FASTEST", v: "0.9s", sub: "Iris on music" },
+  { l: "STREAK",  v: "×7",   sub: "Devon on history" },
+  { l: "STUMPER", v: "4/32", sub: "Egyptian honey" },
+];
+
+function TVIntermissionInner({
+  headerLeft = "GAME 1 · COMPLETE",
+  headerRight = "GAME 2 LAUNCHES WHEN HOST SAYS GO",
+  footerLeft = "TR1VIA.COM · K9·PR4M · ROOM STILL OPEN",
+  footerRight = "HOST STARTS GAME 2 WHEN ENOUGH ARE IN",
+  podium,
+  readyCount = 24,
+  totalCount = 32,
+  roomCode = "K9·PR4M",
+  joinUrl = "https://tr1via.com/join/K9PR4M",
+  nightStats = DEMO_STATS,
+}: Omit<TVIntermissionProps, "themeKey">) {
+  const { t } = useTheme();
+  const rows = podium ?? defaultPodium(t);
 
   return (
     <TVStage>
-      <TVHeader left="GAME 1 · COMPLETE" right="GAME 2 LAUNCHES WHEN LINDA SAYS GO" />
+      <TVHeader left={headerLeft} right={headerRight} />
 
       <div
         style={{
@@ -65,47 +120,52 @@ function TVIntermissionInner() {
           </Display>
 
           <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
-            {podium.map((p) => (
-              <div
-                key={p.rank}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "80px 1fr auto",
-                  alignItems: "center",
-                  gap: 22,
-                  padding: "22px 26px",
-                  borderRadius: 16,
-                  background: p.rank === 1 ? p.color : "transparent",
-                  color: p.rank === 1 ? "#0E0805" : t.ink,
-                  border: `1.5px solid ${p.color}`,
-                }}
-              >
-                <Numeric
-                  size={56}
-                  weight={700}
-                  color={p.rank === 1 ? "#0E0805" : p.color}
-                  tracking={-0.04}
+            {rows.map((p) => {
+              const color = p.color ?? (p.rank === 1 ? t.accent : p.rank === 2 ? t.pop : t.correct);
+              return (
+                <div
+                  key={p.rank}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "80px 1fr auto",
+                    alignItems: "center",
+                    gap: 22,
+                    padding: "22px 26px",
+                    borderRadius: 16,
+                    background: p.rank === 1 ? color : "transparent",
+                    color: p.rank === 1 ? "#0E0805" : t.ink,
+                    border: `1.5px solid ${color}`,
+                  }}
                 >
-                  {p.rank}
-                </Numeric>
-                <div>
-                  <Display size={48} color="currentColor" weight={700}>{p.name}</Display>
-                  <div
-                    style={{
-                      marginTop: 4,
-                      fontSize: 14,
-                      fontWeight: 500,
-                      opacity: p.rank === 1 ? 0.7 : 0.6,
-                    }}
+                  <Numeric
+                    size={56}
+                    weight={700}
+                    color={p.rank === 1 ? "#0E0805" : color}
+                    tracking={-0.04}
                   >
-                    {p.line}
+                    {p.rank}
+                  </Numeric>
+                  <div>
+                    <Display size={48} color="currentColor" weight={700}>{p.name}</Display>
+                    {p.line && (
+                      <div
+                        style={{
+                          marginTop: 4,
+                          fontSize: 14,
+                          fontWeight: 500,
+                          opacity: p.rank === 1 ? 0.7 : 0.6,
+                        }}
+                      >
+                        {p.line}
+                      </div>
+                    )}
                   </div>
+                  <Numeric size={36} weight={700} color="currentColor">
+                    {p.score.toLocaleString()}
+                  </Numeric>
                 </div>
-                <Numeric size={36} weight={700} color="currentColor">
-                  {p.score.toLocaleString()}
-                </Numeric>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div style={{ marginTop: 24, fontSize: 16, color: t.inkMid, lineHeight: 1.5, maxWidth: 560 }}>
@@ -124,9 +184,9 @@ function TVIntermissionInner() {
                 tracking={-0.05}
                 style={{ lineHeight: 0.9 }}
               >
-                24
+                {readyCount}
               </Numeric>
-              <span style={{ fontSize: 22, fontWeight: 500, opacity: 0.6 }}>of 32</span>
+              <span style={{ fontSize: 22, fontWeight: 500, opacity: 0.6 }}>of {totalCount}</span>
             </div>
             <div style={{ marginTop: 8, fontSize: 15, fontWeight: 500 }}>
               Open your phone. Tap <span style={{ fontWeight: 700 }}>Join Game 2</span> — your name is already in.
@@ -144,7 +204,7 @@ function TVIntermissionInner() {
               gap: 18,
             }}
           >
-            <QRBlock url="https://tr1via.com/join/K9PR4M" size={110} light />
+            <QRBlock url={joinUrl} size={110} light />
             <div>
               <Eyebrow color={t.inkMute} size={10}>NEW HERE?</Eyebrow>
               <div
@@ -167,7 +227,7 @@ function TVIntermissionInner() {
                     fontWeight: 600,
                   }}
                 >
-                  K9·PR4M
+                  {roomCode}
                 </span>
               </div>
             </div>
@@ -187,7 +247,9 @@ function TVIntermissionInner() {
                   >
                     {s.v}
                   </Numeric>
-                  <div style={{ fontSize: 11, color: t.inkMid, marginTop: 2 }}>{s.sub}</div>
+                  {s.sub && (
+                    <div style={{ fontSize: 11, color: t.inkMid, marginTop: 2 }}>{s.sub}</div>
+                  )}
                 </div>
               ))}
             </div>
@@ -195,10 +257,7 @@ function TVIntermissionInner() {
         </div>
       </div>
 
-      <TVFooter
-        left="TR1VIA.COM · K9·PR4M · ROOM STILL OPEN"
-        right="LINDA STARTS GAME 2 WHEN ENOUGH ARE IN"
-      />
+      <TVFooter left={footerLeft} right={footerRight} />
     </TVStage>
   );
 }

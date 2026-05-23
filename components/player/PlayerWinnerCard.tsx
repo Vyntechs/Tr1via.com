@@ -17,18 +17,43 @@ import {
 import { PhoneScreen } from "@/components/shells";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-export interface PlayerWinnerCardProps {
-  themeKey?: ThemeKey;
+export interface PlayerWinnerCardStat {
+  label: string;
+  value: string;
 }
 
-export function PlayerWinnerCard({ themeKey: _themeKey }: PlayerWinnerCardProps = {}) {
+export interface PlayerWinnerCardProps {
+  themeKey?: ThemeKey;
+  venueName?: string;
+  /** Date string for the eyebrow ("MAY 27"). */
+  nightDateLabel?: string;
+  /** Final score. */
+  finalScore?: number;
+  /** 1-4 stat rows shown below the score. */
+  stats?: PlayerWinnerCardStat[];
+  /** Caption beneath the trading card. */
+  blurb?: string;
+  /** Fired when the user taps "Save your card". */
+  onSave?: () => void;
+}
+
+const DEFAULT_STATS: PlayerWinnerCardStat[] = [
+  { label: "GOT RIGHT", value: "38 / 42" },
+  { label: "LONGEST STREAK", value: "× 7" },
+  { label: "FASTEST ANSWER", value: "0.9s · Music" },
+  { label: "BEST CATEGORY", value: "History · 7/7" },
+];
+
+export function PlayerWinnerCard({
+  themeKey: _themeKey,
+  venueName = "Soul Fire",
+  nightDateLabel = "May 27",
+  finalScore = 8420,
+  stats = DEFAULT_STATS,
+  blurb = "Untouchable from the third question on. Two streaks of five and a near-perfect history round.",
+  onSave,
+}: PlayerWinnerCardProps = {}) {
   const { t, themeKey } = useTheme();
-  const stats: { l: string; v: string }[] = [
-    { l: "GOT RIGHT",      v: "38 / 42" },
-    { l: "LONGEST STREAK", v: "× 7" },
-    { l: "FASTEST ANSWER", v: "0.9s · Music" },
-    { l: "BEST CATEGORY",  v: "History · 7/7" },
-  ];
 
   return (
     <PhoneScreen>
@@ -39,7 +64,7 @@ export function PlayerWinnerCard({ themeKey: _themeKey }: PlayerWinnerCardProps 
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", height: "100%" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 6 }}>
           <Eyebrow color={t.accent} size={10}>YOU WON</Eyebrow>
-          <Eyebrow color={t.inkMid} size={10}>SOUL FIRE · MAY 27</Eyebrow>
+          <Eyebrow color={t.inkMid} size={10}>{venueName.toUpperCase()} · {nightDateLabel.toUpperCase()}</Eyebrow>
         </div>
 
         {/* Trading-card panel — designed to screenshot well */}
@@ -85,7 +110,7 @@ export function PlayerWinnerCard({ themeKey: _themeKey }: PlayerWinnerCardProps 
 
           <div style={{ marginTop: 18, display: "flex", alignItems: "baseline", gap: 10 }}>
             <Numeric size={56} weight={700} color="#0E0805" tracking={-0.04} style={{ lineHeight: 1 }}>
-              8,420
+              {finalScore.toLocaleString()}
             </Numeric>
             <span style={{ fontSize: 14, color: "rgba(14,8,5,.65)", fontWeight: 500 }}>points</span>
           </div>
@@ -102,23 +127,24 @@ export function PlayerWinnerCard({ themeKey: _themeKey }: PlayerWinnerCardProps 
           >
             {stats.map((s) => (
               <div
-                key={s.l}
+                key={s.label}
                 style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}
               >
-                <Eyebrow color="rgba(14,8,5,.55)" size={9}>{s.l}</Eyebrow>
-                <Numeric size={14} weight={700} color="#0E0805">{s.v}</Numeric>
+                <Eyebrow color="rgba(14,8,5,.55)" size={9}>{s.label}</Eyebrow>
+                <Numeric size={14} weight={700} color="#0E0805">{s.value}</Numeric>
               </div>
             ))}
           </div>
         </div>
 
         <div style={{ marginTop: 18, fontSize: 13, color: t.inkMid, lineHeight: 1.5 }}>
-          Untouchable from the third question on. Two streaks of five and a near-perfect history round.
+          {blurb}
         </div>
 
         <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8, paddingTop: 14 }}>
           <button
             type="button"
+            onClick={onSave}
             style={{
               background: t.ink,
               color: t.paper,
@@ -128,7 +154,7 @@ export function PlayerWinnerCard({ themeKey: _themeKey }: PlayerWinnerCardProps 
               fontSize: 15,
               fontWeight: 700,
               fontFamily: "var(--font-sans)",
-              cursor: "pointer",
+              cursor: onSave ? "pointer" : "default",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",

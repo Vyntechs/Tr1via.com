@@ -1,5 +1,8 @@
 // TV — leaderboard. Bold name typography + movement deltas. Top of the
 // leaderboard wears the accent. Self-row is highlighted with the surface tint.
+//
+// Driven by props so the live `/tv/[code]` route can feed the top 10 from
+// the `game_scores` view. Demo rows preserved for `/_dev/tv`.
 
 "use client";
 
@@ -13,48 +16,72 @@ import {
 } from "@/components/system";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-export interface TVLeaderboardProps {
-  themeKey?: ThemeKey;
-}
-
-interface Row {
+export interface TVLeaderboardRow {
   rank: number;
   name: string;
   score: number;
-  delta: string;
-  move: number;
+  /** Pre-formatted delta from the previous round, e.g. "+330" or "0". */
+  delta?: string;
+  /** Movement signal. Positive = climbed; negative = fell; zero = flat. */
+  move?: number;
+  /** True for the current viewer ("· you" tag). */
   self?: boolean;
 }
 
-export function TVLeaderboard({ themeKey }: TVLeaderboardProps) {
+export interface TVLeaderboardProps {
+  themeKey?: ThemeKey;
+  /** Header left, e.g. "GAME 1 · END OF ROUND 3". */
+  headerLeft?: string;
+  /** Header right, e.g. "32 PLAYERS · 8 OF 42 ANSWERED". */
+  headerRight?: string;
+  /** Footer left, e.g. "LINDA IS LOADING ROUND 4". */
+  footerLeft?: string;
+  /** Footer right, e.g. "34 QUESTIONS LEFT". */
+  footerRight?: string;
+  /** Top 10 rows for the board. Defaults to demo data. */
+  rows?: TVLeaderboardRow[];
+}
+
+export function TVLeaderboard({ themeKey, ...rest }: TVLeaderboardProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVLeaderboardInner />
+        <TVLeaderboardInner {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVLeaderboardInner />;
+  return <TVLeaderboardInner {...rest} />;
 }
 
-function TVLeaderboardInner() {
+const DEMO_ROWS: TVLeaderboardRow[] = [
+  { rank: 1,  name: "Devon",  score: 2140, delta: "+330", move: 0 },
+  { rank: 2,  name: "Iris",   score: 1990, delta: "+550", move: 2 },
+  { rank: 3,  name: "Priya",  score: 1820, delta: "+110", move: -1 },
+  { rank: 4,  name: "Cole",   score: 1740, delta: "+220", move: 0 },
+  { rank: 5,  name: "Ezra",   score: 1610, delta: "+440", move: 3 },
+  { rank: 6,  name: "Nadia",  score: 1530, delta: "0",    move: -3 },
+  { rank: 7,  name: "Maya",   score: 1460, delta: "+330", move: 1, self: true },
+  { rank: 8,  name: "Theo",   score: 1380, delta: "+110", move: 0 },
+  { rank: 9,  name: "Jules",  score: 1290, delta: "+220", move: 2 },
+  { rank: 10, name: "Marcus", score: 1180, delta: "0",    move: -2 },
+];
+
+function TVLeaderboardInner({
+  headerLeft = "GAME 1 · END OF ROUND 3",
+  headerRight = "32 PLAYERS · 8 OF 42 ANSWERED",
+  footerLeft = "LINDA IS LOADING ROUND 4",
+  footerRight = "34 QUESTIONS LEFT",
+  rows = DEMO_ROWS,
+}: Omit<TVLeaderboardProps, "themeKey">) {
   const { t } = useTheme();
-  const rows: Row[] = [
-    { rank: 1,  name: "Devon",  score: 2140, delta: "+330", move: 0 },
-    { rank: 2,  name: "Iris",   score: 1990, delta: "+550", move: 2 },
-    { rank: 3,  name: "Priya",  score: 1820, delta: "+110", move: -1 },
-    { rank: 4,  name: "Cole",   score: 1740, delta: "+220", move: 0 },
-    { rank: 5,  name: "Ezra",   score: 1610, delta: "+440", move: 3 },
-    { rank: 6,  name: "Nadia",  score: 1530, delta: "0",    move: -3 },
-    { rank: 7,  name: "Maya",   score: 1460, delta: "+330", move: 1, self: true },
-    { rank: 8,  name: "Theo",   score: 1380, delta: "+110", move: 0 },
-    { rank: 9,  name: "Jules",  score: 1290, delta: "+220", move: 2 },
-    { rank: 10, name: "Marcus", score: 1180, delta: "0",    move: -2 },
-  ];
+  // Be defensive — when the room has fewer than 10 players the right column
+  // can be empty. We always render two columns to keep the layout stable.
+  const left = rows.slice(0, 5);
+  const right = rows.slice(5, 10);
 
   return (
     <TVStage>
-      <TVHeader left="GAME 1 · END OF ROUND 3" right="32 PLAYERS · 8 OF 42 ANSWERED" />
+      <TVHeader left={headerLeft} right={headerRight} />
 
       <div
         style={{
@@ -83,14 +110,15 @@ function TVLeaderboardInner() {
             paddingBottom: 18,
           }}
         >
-          {[rows.slice(0, 5), rows.slice(5)].map((col, ci) => (
+          {[left, right].map((col, ci) => (
             <div key={ci} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {col.map((r) => {
                 const top = r.rank === 1;
                 const isSelf = r.self;
+                const move = r.move ?? 0;
                 return (
                   <div
-                    key={r.name}
+                    key={`${r.rank}-${r.name}`}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "56px 1fr 90px 130px",
@@ -123,7 +151,7 @@ function TVLeaderboardInner() {
                       size={15}
                       weight={600}
                       color={
-                        r.move > 0
+                        move > 0
                           ? top
                             ? "#0E0805"
                             : t.correct
@@ -132,27 +160,25 @@ function TVLeaderboardInner() {
                             : t.inkMute
                       }
                     >
-                      {r.move > 0 ? `↑ ${r.move}` : r.move < 0 ? `↓ ${-r.move}` : "—"}
+                      {move > 0 ? `↑ ${move}` : move < 0 ? `↓ ${-move}` : "—"}
                     </Numeric>
                     <div style={{ textAlign: "right" }}>
                       <Numeric size={26} weight={700} color={top ? "#0E0805" : t.ink}>
                         {r.score.toLocaleString()}
                       </Numeric>
-                      <span
-                        style={{
-                          fontFamily: "var(--font-mono)",
-                          fontSize: 12,
-                          color: top
-                            ? "rgba(14,8,5,.6)"
-                            : r.delta === "0"
-                              ? t.inkMute
-                              : t.correct,
-                          marginLeft: 8,
-                          fontWeight: 600,
-                        }}
-                      >
-                        {r.delta === "0" ? "" : r.delta}
-                      </span>
+                      {r.delta && r.delta !== "0" && (
+                        <span
+                          style={{
+                            fontFamily: "var(--font-mono)",
+                            fontSize: 12,
+                            color: top ? "rgba(14,8,5,.6)" : t.correct,
+                            marginLeft: 8,
+                            fontWeight: 600,
+                          }}
+                        >
+                          {r.delta}
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -162,7 +188,7 @@ function TVLeaderboardInner() {
         </div>
       </div>
 
-      <TVFooter left="LINDA IS LOADING ROUND 4" right="34 QUESTIONS LEFT" />
+      <TVFooter left={footerLeft} right={footerRight} />
     </TVStage>
   );
 }

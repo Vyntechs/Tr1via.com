@@ -1,7 +1,10 @@
 // TV — the grid. Each category column = its color. Big, weighty board.
-// One selected cell (Linda's pick) glows. Played cells are dashed-out and
-// struck through. Sidebar shows leader, current-player rank, and the pick
-// that's loading.
+// One selected cell (host's pick) glows. Played cells are dashed-out and
+// struck through. Sidebar shows leader, board status, and the pick that's
+// loading.
+//
+// Driven by props so the live `/tv/[code]` route can feed real category +
+// question state. Falls back to a designer-friendly demo for `/_dev/tv`.
 
 "use client";
 
@@ -16,31 +19,91 @@ import {
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-export interface TVGridProps {
-  themeKey?: ThemeKey;
+export interface TVGridCell {
+  /** True when the question at (column, row) has been played and resolved. */
+  played: boolean;
+  /** True when the host has selected this cell — pulses with the accent color. */
+  selected: boolean;
+  /** Point value displayed in the cell, e.g. 100 ... 700. */
+  value: number;
 }
 
-export function TVGrid({ themeKey }: TVGridProps) {
+export interface TVGridLeader {
+  name: string;
+  score: number;
+}
+
+export interface TVGridProps {
+  themeKey?: ThemeKey;
+  /** Header copy left side, e.g. "GAME 1 · ROUND 3 · 32 PLAYERS". */
+  gameStatusLine?: string;
+  /** Header copy right side, e.g. "10 OF 42 ANSWERED". */
+  rightHeaderLine?: string;
+  /** Category names, left to right. */
+  categories?: string[];
+  /**
+   * Cells indexed [column][row] — outer length = categories.length, inner
+   * length = values.length. If omitted, a designer demo board is shown.
+   */
+  cells?: TVGridCell[][];
+  /** Point values shown down the column, e.g. [100, 200, ..., 700]. */
+  values?: number[];
+  /** Top-of-leaderboard for the right sidebar. */
+  leader?: TVGridLeader;
+  /** Total remaining cells number for the bottom-right line. */
+  boardLeft?: number;
+  /** Footer left, e.g. "WAITING ON LINDA". */
+  footerLeft?: string;
+  /** Footer right — usually `TR1VIA.COM · K9·PR4M`. */
+  footerRight?: string;
+  /** Optional "up next" sidebar card; null hides it. */
+  upNext?: { category: string; value: number; sub?: string } | null;
+}
+
+const DEMO_CATEGORIES = ["Geography", "Animals", "Food", "Movies", "Music", "History"];
+const DEMO_VALUES = [100, 200, 300, 400, 500, 600, 700];
+const DEMO_PLAYED = new Set(["0-0", "0-1", "1-0", "2-0", "3-0", "4-0", "1-1", "3-1", "5-0", "5-1"]);
+const DEMO_SELECTED = "2-2";
+
+function demoCells(): TVGridCell[][] {
+  return DEMO_CATEGORIES.map((_, cIdx) =>
+    DEMO_VALUES.map((v, rIdx) => ({
+      played: DEMO_PLAYED.has(`${cIdx}-${rIdx}`),
+      selected: `${cIdx}-${rIdx}` === DEMO_SELECTED,
+      value: v,
+    })),
+  );
+}
+
+export function TVGrid({ themeKey, ...rest }: TVGridProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVGridInner />
+        <TVGridInner {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVGridInner />;
+  return <TVGridInner {...rest} />;
 }
 
-function TVGridInner() {
+function TVGridInner({
+  gameStatusLine = "GAME 1 · ROUND 3 · 32 PLAYERS",
+  rightHeaderLine = "10 OF 42 ANSWERED",
+  categories = DEMO_CATEGORIES,
+  cells,
+  values = DEMO_VALUES,
+  leader = { name: "Devon", score: 2140 },
+  boardLeft = 32,
+  footerLeft = "WAITING ON LINDA",
+  footerRight = "TR1VIA.COM · K9·PR4M",
+  upNext = { category: "Food", value: 300, sub: "standing by to reveal" },
+}: Omit<TVGridProps, "themeKey">) {
   const { t } = useTheme();
-  const categories = ["Geography", "Animals", "Food", "Movies", "Music", "History"];
-  const values = [100, 200, 300, 400, 500, 600, 700];
-  const played = new Set(["0-0", "0-1", "1-0", "2-0", "3-0", "4-0", "1-1", "3-1", "5-0", "5-1"]);
-  const selected = "2-2"; // Food · 300
+  const board = cells ?? demoCells();
 
   return (
     <TVStage>
-      <TVHeader left="GAME 1 · ROUND 3 · 32 PLAYERS" right="10 OF 42 ANSWERED" />
+      <TVHeader left={gameStatusLine} right={rightHeaderLine} />
 
       <div
         style={{
@@ -105,12 +168,12 @@ function TVGridInner() {
               >
                 {categories.map((c, cIdx) => {
                   const cc = categoryColor(c, t.accent);
-                  const key = `${cIdx}-${rIdx}`;
-                  const isPlayed = played.has(key);
-                  const isSelected = key === selected;
+                  const cell = board[cIdx]?.[rIdx] ?? { played: false, selected: false, value: v };
+                  const isPlayed = cell.played;
+                  const isSelected = cell.selected;
                   return (
                     <div
-                      key={key}
+                      key={`${cIdx}-${rIdx}`}
                       style={{
                         borderRadius: 10,
                         background: isSelected
@@ -147,7 +210,7 @@ function TVGridInner() {
                           opacity: isPlayed ? 0.4 : 1,
                         }}
                       >
-                        {v}
+                        {cell.value}
                       </Numeric>
                     </div>
                   );
@@ -160,30 +223,28 @@ function TVGridInner() {
         {/* Sidebar */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
           <div style={{ padding: "18px 22px", borderRadius: 14, background: t.surface }}>
-            <Eyebrow color={t.inkMute} size={10}>LEADER · ROUND 3</Eyebrow>
+            <Eyebrow color={t.inkMute} size={10}>LEADER</Eyebrow>
             <div style={{ marginTop: 8 }}>
-              <Display size={48} color={t.ink} weight={700}>Devon</Display>
+              <Display size={48} color={t.ink} weight={700}>{leader.name}</Display>
               <Numeric size={26} weight={700} color={t.accent} style={{ display: "block", marginTop: 4 }}>
-                2,140
+                {leader.score.toLocaleString()}
               </Numeric>
             </div>
           </div>
 
-          <div style={{ padding: "16px 22px", borderRadius: 14, border: `1px solid ${t.line}` }}>
-            <Eyebrow color={t.inkMute} size={10}>YOU · MAYA</Eyebrow>
-            <div style={{ marginTop: 6, display: "flex", alignItems: "baseline", gap: 12 }}>
-              <Numeric size={32} weight={700} color={t.pop}>#7</Numeric>
-              <Numeric size={20} weight={500} color={t.ink}>1,460</Numeric>
+          {upNext && (
+            <div style={{ padding: "16px 22px", borderRadius: 14, background: t.accent, color: "#0E0805" }}>
+              <Eyebrow color="rgba(14,8,5,.65)" size={10}>UP NEXT · HOST&apos;S PICK</Eyebrow>
+              <div style={{ marginTop: 6, fontSize: 20, fontWeight: 700 }}>
+                {upNext.category} · {upNext.value} pts
+              </div>
+              {upNext.sub && (
+                <div style={{ marginTop: 4, fontSize: 12, color: "rgba(14,8,5,.65)", fontWeight: 500 }}>
+                  {upNext.sub}
+                </div>
+              )}
             </div>
-          </div>
-
-          <div style={{ padding: "16px 22px", borderRadius: 14, background: t.accent, color: "#0E0805" }}>
-            <Eyebrow color="rgba(14,8,5,.65)" size={10}>UP NEXT · LINDA&apos;S PICK</Eyebrow>
-            <div style={{ marginTop: 6, fontSize: 20, fontWeight: 700 }}>Food · 300 pts</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: "rgba(14,8,5,.65)", fontWeight: 500 }}>
-              standing by to reveal
-            </div>
-          </div>
+          )}
 
           <div
             style={{
@@ -194,12 +255,12 @@ function TVGridInner() {
             }}
           >
             <Eyebrow color={t.inkMute} size={10}>BOARD</Eyebrow>
-            <Numeric size={20} color={t.ink}>32 left</Numeric>
+            <Numeric size={20} color={t.ink}>{boardLeft} left</Numeric>
           </div>
         </div>
       </div>
 
-      <TVFooter left="WAITING ON LINDA" right="TR1VIA.COM · K9·PR4M" />
+      <TVFooter left={footerLeft} right={footerRight} />
     </TVStage>
   );
 }

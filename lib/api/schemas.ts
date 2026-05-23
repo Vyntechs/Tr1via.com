@@ -130,6 +130,16 @@ const QuestionOptionsTupleSchema = z
     message: "options must be four distinct values",
   });
 
+/** POST /api/categories body — host creates a new category in a game. */
+export const CreateCategoryBodySchema = z
+  .object({
+    gameId: UuidSchema,
+    name: z.string().trim().min(1).max(80),
+    topic: z.string().trim().min(1).max(120),
+    position: z.number().int().min(1).max(6),
+  })
+  .strict();
+
 /** POST /api/categories/[id]/generate body. */
 export const GenerateCategoryBodySchema = z
   .object({
@@ -202,6 +212,7 @@ export type EndEarlyInput = z.infer<typeof EndEarlySchema>;
 export type SubmitAnswerInput = z.infer<typeof SubmitAnswerSchema>;
 export type AdjustmentInput = z.infer<typeof AdjustmentSchema>;
 export type TopicSuggestionInput = z.infer<typeof TopicSuggestionSchema>;
+export type CreateCategoryInput = z.infer<typeof CreateCategoryBodySchema>;
 export type GenerateCategoryInput = z.infer<typeof GenerateCategoryBodySchema>;
 export type PickCategoryInput = z.infer<typeof PickCategoryBodySchema>;
 export type PatchQuestionInput = z.infer<typeof PatchQuestionBodySchema>;

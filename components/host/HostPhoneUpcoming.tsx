@@ -1,6 +1,11 @@
 // HOST PHONE — UPCOMING. Linda sees the question privately before pressing
 // Reveal. The big button on the bottom is the moment that fires the whole
 // room.
+//
+// Wired form: the host-phone route passes the staged question (text +
+// options + correctIndex), the category + point value, the room-wide
+// counters, and an onReveal handler. All props are optional with demo
+// defaults so the /_dev/host gallery still renders.
 
 "use client";
 
@@ -10,20 +15,61 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostPhoneUpcomingProps {
   themeKey?: ThemeKey;
+  /** Host display name shown in the top-left eyebrow. */
+  hostName?: string;
+  /** True if the room has open players in it (mirrors the room indicator). */
+  roomLive?: boolean;
+  /** Current count of players in the room. */
+  playerCount?: number;
+  /** Category name (e.g. "Geography"). */
+  categoryName?: string;
+  /** Point value of the staged question. */
+  pointValue?: number;
+  /** Display index within the night (e.g. 10 of 42). */
+  questionIndex?: number;
+  /** Total questions in the night (e.g. 42). */
+  questionTotal?: number;
+  /** The question prompt itself. */
+  prompt?: string;
+  /** Four options as displayed on the host's phone. */
+  options?: [string, string, string, string];
+  /** Index of the correct option (host-only view). */
+  correctIndex?: 0 | 1 | 2 | 3;
+  /** Called when the host taps "Reveal to the room". */
+  onReveal?: () => void;
+  /** Called when the host taps "Pick a different cell". */
+  onPickDifferent?: () => void;
+  /** True while the reveal request is in flight (disables the button). */
+  isRevealing?: boolean;
 }
 
-export function HostPhoneUpcoming({ themeKey }: HostPhoneUpcomingProps) {
+export function HostPhoneUpcoming(props: HostPhoneUpcomingProps) {
+  const { themeKey, ...rest } = props;
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <HostPhoneUpcomingInner />
+        <HostPhoneUpcomingInner {...rest} />
       </ThemeProvider>
     );
   }
-  return <HostPhoneUpcomingInner />;
+  return <HostPhoneUpcomingInner {...rest} />;
 }
 
-function HostPhoneUpcomingInner() {
+function HostPhoneUpcomingInner({
+  hostName = "Linda",
+  roomLive = true,
+  playerCount = 32,
+  categoryName = "Geography",
+  pointValue = 100,
+  questionIndex = 10,
+  questionTotal = 42,
+  prompt = "Which U.S. state has the longest coastline?",
+  options = ["Florida", "Alaska", "California", "Maine"],
+  correctIndex = 1,
+  onReveal,
+  onPickDifferent,
+  isRevealing = false,
+}: Omit<HostPhoneUpcomingProps, "themeKey">) {
   const { t } = useTheme();
   return (
     <PhoneScreen>
@@ -37,12 +83,19 @@ function HostPhoneUpcomingInner() {
         }}
       >
         <Eyebrow color={t.inkMid} size={10}>
-          HOST · LINDA
+          HOST · {hostName.toUpperCase()}
         </Eyebrow>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 99, background: t.accent }} />
+          <span
+            style={{
+              width: 6,
+              height: 6,
+              borderRadius: 99,
+              background: roomLive ? t.accent : t.inkMute,
+            }}
+          />
           <Eyebrow color={t.inkMid} size={10}>
-            ROOM LIVE · 32
+            {roomLive ? `ROOM LIVE · ${playerCount}` : "ROOM CLOSED"}
           </Eyebrow>
         </div>
       </div>
@@ -62,11 +115,11 @@ function HostPhoneUpcomingInner() {
             NEXT FROM THE BOARD
           </Eyebrow>
           <div style={{ marginTop: 4, fontSize: 14, fontWeight: 500, color: t.ink }}>
-            Geography · 100 pts
+            {categoryName} · {pointValue} pts
           </div>
         </div>
         <span style={{ fontSize: 11, color: t.inkMid, fontFamily: "var(--font-mono)" }}>
-          Q 10 / 42
+          Q {questionIndex} / {questionTotal}
         </span>
       </div>
 
@@ -84,57 +137,55 @@ function HostPhoneUpcomingInner() {
             lineHeight: 1.25,
           }}
         >
-          Which U.S. state has the longest coastline?
+          {prompt}
         </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {[
-          { n: 1, text: "Florida", correct: false },
-          { n: 2, text: "Alaska", correct: true },
-          { n: 3, text: "California", correct: false },
-          { n: 4, text: "Maine", correct: false },
-        ].map((o) => (
-          <div
-            key={o.n}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "12px 14px",
-              background: o.correct
-                ? t.dark
-                  ? "rgba(123,212,154,.10)"
-                  : "#EFF7F1"
-                : "transparent",
-              border: `1px solid ${o.correct ? t.correct : t.line}`,
-              borderRadius: 10,
-            }}
-          >
-            <Numeric
-              size={14}
-              color={o.correct ? t.correct : t.inkMid}
-              style={{ minWidth: 12 }}
-            >
-              {o.n}
-            </Numeric>
-            <span
+        {options.map((text, i) => {
+          const isCorrect = i === correctIndex;
+          return (
+            <div
+              key={`${i}-${text}`}
               style={{
-                fontSize: 14,
-                color: o.correct ? t.correct : t.ink,
-                fontWeight: o.correct ? 500 : 400,
-                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                padding: "12px 14px",
+                background: isCorrect
+                  ? t.dark
+                    ? "rgba(123,212,154,.10)"
+                    : "#EFF7F1"
+                  : "transparent",
+                border: `1px solid ${isCorrect ? t.correct : t.line}`,
+                borderRadius: 10,
               }}
             >
-              {o.text}
-            </span>
-            {o.correct && (
-              <Eyebrow color={t.correct} size={9}>
-                CORRECT
-              </Eyebrow>
-            )}
-          </div>
-        ))}
+              <Numeric
+                size={14}
+                color={isCorrect ? t.correct : t.inkMid}
+                style={{ minWidth: 12 }}
+              >
+                {i + 1}
+              </Numeric>
+              <span
+                style={{
+                  fontSize: 14,
+                  color: isCorrect ? t.correct : t.ink,
+                  fontWeight: isCorrect ? 500 : 400,
+                  flex: 1,
+                }}
+              >
+                {text}
+              </span>
+              {isCorrect && (
+                <Eyebrow color={t.correct} size={9}>
+                  CORRECT
+                </Eyebrow>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       <div style={{ marginTop: 14, fontSize: 11, color: t.inkMute, lineHeight: 1.4 }}>
@@ -151,6 +202,9 @@ function HostPhoneUpcomingInner() {
         }}
       >
         <button
+          type="button"
+          onClick={onReveal}
+          disabled={isRevealing || !onReveal}
           style={{
             background: t.accent,
             color: t.dark ? "#0E0E0C" : "#FFF",
@@ -161,7 +215,8 @@ function HostPhoneUpcomingInner() {
             fontWeight: 600,
             fontFamily: "var(--font-sans)",
             letterSpacing: "-0.01em",
-            cursor: "pointer",
+            cursor: isRevealing ? "default" : "pointer",
+            opacity: isRevealing ? 0.7 : 1,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -169,7 +224,7 @@ function HostPhoneUpcomingInner() {
             boxShadow: t.dark ? "none" : `0 12px 28px -10px ${t.accent}66`,
           }}
         >
-          Reveal to the room
+          {isRevealing ? "Revealing…" : "Reveal to the room"}
           <span
             style={{
               fontFamily: "var(--font-mono)",
@@ -182,6 +237,8 @@ function HostPhoneUpcomingInner() {
           </span>
         </button>
         <button
+          type="button"
+          onClick={onPickDifferent}
           style={{
             background: "transparent",
             color: t.inkMid,

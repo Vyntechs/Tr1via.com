@@ -1,6 +1,10 @@
 // TV — reveal. Drenched in the theme's correct-color. The whole stage paints
 // itself, a massive answer numeral + word fill the left, the first-five-in
 // rail on the right. Designed to feel like a curtain drop.
+//
+// Driven by props so the live `/tv/[code]` route can paint the actual answer
+// and the actual fastest-five from `answers`. Demo defaults preserved for
+// `/_dev/tv`.
 
 "use client";
 
@@ -15,30 +19,70 @@ import {
 } from "@/components/system";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-export interface TVRevealProps {
-  themeKey?: ThemeKey;
+export interface TVRevealFastest {
+  name: string;
+  /** Pre-formatted lock-in time, e.g. "1.2s". */
+  time: string;
+  /** Pre-formatted "+110" string. Optional — kept for layout parity. */
+  delta?: string;
 }
 
-export function TVReveal({ themeKey }: TVRevealProps) {
+export interface TVRevealProps {
+  themeKey?: ThemeKey;
+  /** Header eyebrow, e.g. "GAME 1 · GEOGRAPHY · 100 PTS". */
+  headerEyebrow?: string;
+  /** Question prompt rendered in the muted-on-correct heading area. */
+  question?: string;
+  /** Number that prints in massive ink for the correct option (1-4). */
+  correctNumber?: number;
+  /** Text of the correct option. */
+  correctText?: string;
+  /** Optional fact blurb under the answer. */
+  fact?: string;
+  /** Total players who got it right out of the room. */
+  gotIt?: number;
+  /** Denominator of the room. */
+  ofTotal?: number;
+  /** Fastest single correct lock-in time, e.g. "1.2s". */
+  fastest?: string;
+  /** Speed bonus awarded for the leader, e.g. "+10". */
+  speedBonus?: string;
+  /** Top 5 fastest correct answers. */
+  fastestFive?: TVRevealFastest[];
+}
+
+export function TVReveal({ themeKey, ...rest }: TVRevealProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVRevealInner />
+        <TVRevealInner {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVRevealInner />;
+  return <TVRevealInner {...rest} />;
 }
 
-function TVRevealInner() {
+const DEMO_FASTEST: TVRevealFastest[] = [
+  { name: "Devon", time: "1.2s", delta: "+110" },
+  { name: "Iris",  time: "1.4s", delta: "+110" },
+  { name: "Maya",  time: "2.3s", delta: "+110" },
+  { name: "Cole",  time: "2.8s", delta: "+110" },
+  { name: "Priya", time: "3.1s", delta: "+110" },
+];
+
+function TVRevealInner({
+  headerEyebrow = "GAME 1 · GEOGRAPHY · 100 PTS",
+  question = "Which U.S. state has the\nlongest coastline?",
+  correctNumber = 2,
+  correctText = "Alaska",
+  fact = "33,904 miles of tidal coastline — more than all other states combined.",
+  gotIt = 23,
+  ofTotal = 32,
+  fastest = "1.2s",
+  speedBonus = "+10",
+  fastestFive = DEMO_FASTEST,
+}: Omit<TVRevealProps, "themeKey">) {
   const { t } = useTheme();
-  const fastest = [
-    { name: "Devon", time: "1.2s", delta: "+110" },
-    { name: "Iris",  time: "1.4s", delta: "+110" },
-    { name: "Maya",  time: "2.3s", delta: "+110" },
-    { name: "Cole",  time: "2.8s", delta: "+110" },
-    { name: "Priya", time: "3.1s", delta: "+110" },
-  ];
 
   return (
     <TVStage bg={t.correct}>
@@ -55,7 +99,7 @@ function TVRevealInner() {
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
           <Wordmark size={24} accent="#0E0805" ink="#0E0805" />
           <span style={{ width: 1, height: 16, background: "rgba(14,8,5,.2)" }} />
-          <Eyebrow color="rgba(14,8,5,.65)" size={11}>GAME 1 · GEOGRAPHY · 100 PTS</Eyebrow>
+          <Eyebrow color="rgba(14,8,5,.65)" size={11}>{headerEyebrow}</Eyebrow>
         </div>
         <Eyebrow color="rgba(14,8,5,.65)" size={11}>REVEAL</Eyebrow>
       </div>
@@ -73,7 +117,12 @@ function TVRevealInner() {
       >
         <div>
           <Display size={56} color="rgba(14,8,5,.55)" weight={500} tracking={-0.025}>
-            Which U.S. state has the<br />longest coastline?
+            {question.split("\n").map((line, i, arr) => (
+              <span key={i}>
+                {line}
+                {i < arr.length - 1 && <br />}
+              </span>
+            ))}
           </Display>
 
           <div style={{ marginTop: 36, display: "flex", alignItems: "baseline", gap: 28 }}>
@@ -84,22 +133,24 @@ function TVRevealInner() {
               tracking={-0.05}
               style={{ lineHeight: 0.85 }}
             >
-              2
+              {correctNumber}
             </Numeric>
-            <Display size={140} color="#0E0805" weight={700}>Alaska</Display>
+            <Display size={140} color="#0E0805" weight={700}>{correctText}</Display>
           </div>
 
-          <div
-            style={{
-              marginTop: 18,
-              fontSize: 22,
-              color: "rgba(14,8,5,.7)",
-              lineHeight: 1.35,
-              maxWidth: 700,
-            }}
-          >
-            33,904 miles of tidal coastline — more than all other states combined.
-          </div>
+          {fact && (
+            <div
+              style={{
+                marginTop: 18,
+                fontSize: 22,
+                color: "rgba(14,8,5,.7)",
+                lineHeight: 1.35,
+                maxWidth: 700,
+              }}
+            >
+              {fact}
+            </div>
+          )}
 
           <div style={{ marginTop: 36, display: "flex", gap: 48 }}>
             <div>
@@ -115,8 +166,8 @@ function TVRevealInner() {
                   lineHeight: 1,
                 }}
               >
-                23
-                <span style={{ fontSize: 22, fontWeight: 500, opacity: 0.55 }}> / 32</span>
+                {gotIt}
+                <span style={{ fontSize: 22, fontWeight: 500, opacity: 0.55 }}> / {ofTotal}</span>
               </div>
             </div>
             <div>
@@ -132,7 +183,7 @@ function TVRevealInner() {
                   lineHeight: 1,
                 }}
               >
-                1.2s
+                {fastest}
               </div>
             </div>
             <div>
@@ -148,7 +199,7 @@ function TVRevealInner() {
                   lineHeight: 1,
                 }}
               >
-                +10
+                {speedBonus}
               </div>
             </div>
           </div>
@@ -157,9 +208,9 @@ function TVRevealInner() {
         <div>
           <Eyebrow color="rgba(14,8,5,.55)" size={10}>FIRST FIVE IN</Eyebrow>
           <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
-            {fastest.map((p, i) => (
+            {fastestFive.map((p, i) => (
               <div
-                key={p.name}
+                key={`${p.name}-${i}`}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "40px 1fr 80px",
@@ -191,6 +242,11 @@ function TVRevealInner() {
                 </Numeric>
               </div>
             ))}
+            {fastestFive.length === 0 && (
+              <div style={{ fontSize: 14, color: "rgba(14,8,5,.6)" }}>
+                Nobody locked in yet.
+              </div>
+            )}
           </div>
         </div>
       </div>

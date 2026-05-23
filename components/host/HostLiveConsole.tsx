@@ -1,5 +1,10 @@
 // HOST LAPTOP — MID-GAME. Board + live player list + quick controls. This
 // mirrors to the TV.
+//
+// Wired form: the live route passes the full game state — current question,
+// the grid of revealed/picked cells, players + their lock status, and four
+// action handlers (revealCell, undo, endEarly, adjustPoints). Every prop is
+// optional with demo defaults so the /_dev/host gallery still renders.
 
 "use client";
 
@@ -13,53 +18,153 @@ import {
 } from "@/components/system";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-export interface HostLiveConsoleProps {
-  themeKey?: ThemeKey;
-}
-
-export function HostLiveConsole({ themeKey }: HostLiveConsoleProps) {
-  if (themeKey) {
-    return (
-      <ThemeProvider themeKey={themeKey}>
-        <HostLiveConsoleInner />
-      </ThemeProvider>
-    );
-  }
-  return <HostLiveConsoleInner />;
-}
-
-interface PlayerRow {
+export interface HostLivePlayer {
+  id: string;
   name: string;
   score: number;
   locked: boolean;
+  /** Display string like "0s" / "4m 12s". */
   appOff: string;
+  /** Show the row with the "off-app" red flag rail. */
   flag?: boolean;
 }
 
-const COLUMNS = ["GEOGRAPHY", "ANIMALS", "FOOD", "MOVIES", "MUSIC", "HISTORY"] as const;
-const ROWS = [100, 200, 300, 400, 500, 600, 700] as const;
+export interface HostLiveBoardCell {
+  /** Logical question id for the cell. Used as the reveal target. */
+  questionId: string;
+  /** Numeric point value (100..700). */
+  pointValue: number;
+  /** True if this cell has been played (revealed and resolved). */
+  played: boolean;
+  /** True if this cell is the currently live question. */
+  live: boolean;
+}
 
-function HostLiveConsoleInner() {
+export interface HostLiveBoardColumn {
+  categoryId: string;
+  /** Display name (uppercase rendered in the header). */
+  name: string;
+  /** 7 cells per column, ordered low → high point value. */
+  cells: HostLiveBoardCell[];
+}
+
+export interface HostLiveCurrentQuestion {
+  questionId: string;
+  /** Question text (host sees it; the TV mirrors). */
+  prompt: string;
+  /** Category name shown in the eyebrow. */
+  categoryName: string;
+  pointValue: number;
+  /** Seconds remaining (0..20). Pass null to hide the ring. */
+  secondsRemaining: number | null;
+}
+
+export interface HostLiveConsoleProps {
+  themeKey?: ThemeKey;
+  /** Title displayed in the LaptopShell chrome (e.g. "game 1 · live"). */
+  title?: string;
+  /** All board columns. Provide an empty array for the pre-start state. */
+  columns?: HostLiveBoardColumn[];
+  /** Live question — null when the host is between reveals. */
+  currentQuestion?: HostLiveCurrentQuestion | null;
+  /** Live roster sorted by score (host's view). */
+  players?: HostLivePlayer[];
+  /** Total players checked into the night. */
+  playersTotal?: number;
+  /** Count of players who've locked an answer for the current question. */
+  lockedCount?: number;
+  /** True while the 2s undo window is still open. */
+  canUndo?: boolean;
+  /** Called when the host taps a cell on the grid. */
+  onRevealCell?: (questionId: string) => void;
+  /** End-early reveals the live question now. */
+  onEndEarly?: () => void;
+  /** Undo the most recent reveal (only within 2s). */
+  onUndo?: () => void;
+  /** Open the adjust-points modal. */
+  onAdjustPoints?: () => void;
+}
+
+export function HostLiveConsole(props: HostLiveConsoleProps) {
+  const { themeKey, ...rest } = props;
+  if (themeKey) {
+    return (
+      <ThemeProvider themeKey={themeKey}>
+        <HostLiveConsoleInner {...rest} />
+      </ThemeProvider>
+    );
+  }
+  return <HostLiveConsoleInner {...rest} />;
+}
+
+const DEMO_COLUMNS: HostLiveBoardColumn[] = [
+  "GEOGRAPHY",
+  "ANIMALS",
+  "FOOD",
+  "MOVIES",
+  "MUSIC",
+  "HISTORY",
+].map((name, ci) => ({
+  categoryId: `demo-cat-${ci}`,
+  name,
+  cells: [100, 200, 300, 400, 500, 600, 700].map((v, ri) => ({
+    questionId: `demo-q-${ci}-${ri}`,
+    pointValue: v,
+    played:
+      (ci === 0 && ri === 0) ||
+      (ci === 0 && ri === 1) ||
+      (ci === 1 && ri === 0) ||
+      (ci === 2 && ri === 0),
+    live: ci === 0 && ri === 0,
+  })),
+}));
+
+const DEMO_PLAYERS: HostLivePlayer[] = [
+  { id: "p1",  name: "Devon",  score: 2140, locked: true, appOff: "0s" },
+  { id: "p2",  name: "Iris",   score: 1990, locked: true, appOff: "0s" },
+  { id: "p3",  name: "Priya",  score: 1820, locked: true, appOff: "0s" },
+  { id: "p4",  name: "Cole",   score: 1740, locked: true, appOff: "12s" },
+  { id: "p5",  name: "Ezra",   score: 1610, locked: true, appOff: "0s" },
+  { id: "p6",  name: "Nadia",  score: 1530, locked: true, appOff: "0s" },
+  { id: "p7",  name: "Maya",   score: 1460, locked: true, appOff: "0s" },
+  { id: "p8",  name: "Theo",   score: 1380, locked: true, appOff: "0s" },
+  { id: "p9",  name: "Jules",  score: 1290, locked: false, appOff: "0s" },
+  { id: "p10", name: "Marcus", score: 1180, locked: false, appOff: "0s" },
+  { id: "p11", name: "Sara",   score: 1110, locked: false, appOff: "0s" },
+  { id: "p12", name: "Eli",    score: 1040, locked: false, appOff: "4m 12s", flag: true },
+  { id: "p13", name: "Ana",    score: 980,  locked: false, appOff: "0s" },
+  { id: "p14", name: "June",   score: 920,  locked: false, appOff: "0s" },
+];
+
+function HostLiveConsoleInner({
+  title = "game 1 · live",
+  columns = DEMO_COLUMNS,
+  currentQuestion = {
+    questionId: "demo-q-0-0",
+    prompt: "Which U.S. state has the longest coastline?",
+    categoryName: "GEOGRAPHY",
+    pointValue: 100,
+    secondsRemaining: 11,
+  },
+  players = DEMO_PLAYERS,
+  playersTotal,
+  lockedCount,
+  canUndo = true,
+  onRevealCell,
+  onEndEarly,
+  onUndo,
+  onAdjustPoints,
+}: Omit<HostLiveConsoleProps, "themeKey">) {
   const { t } = useTheme();
-  const players: PlayerRow[] = [
-    { name: "Devon", score: 2140, locked: true, appOff: "0s" },
-    { name: "Iris", score: 1990, locked: true, appOff: "0s" },
-    { name: "Priya", score: 1820, locked: true, appOff: "0s" },
-    { name: "Cole", score: 1740, locked: true, appOff: "12s" },
-    { name: "Ezra", score: 1610, locked: true, appOff: "0s" },
-    { name: "Nadia", score: 1530, locked: true, appOff: "0s" },
-    { name: "Maya", score: 1460, locked: true, appOff: "0s" },
-    { name: "Theo", score: 1380, locked: true, appOff: "0s" },
-    { name: "Jules", score: 1290, locked: false, appOff: "0s" },
-    { name: "Marcus", score: 1180, locked: false, appOff: "0s" },
-    { name: "Sara", score: 1110, locked: false, appOff: "0s" },
-    { name: "Eli", score: 1040, locked: false, appOff: "4m 12s", flag: true },
-    { name: "Ana", score: 980, locked: false, appOff: "0s" },
-    { name: "June", score: 920, locked: false, appOff: "0s" },
-  ];
+  const totalPlayers = playersTotal ?? players.length;
+  const locks = lockedCount ?? players.filter((p) => p.locked).length;
+  const eyebrow = currentQuestion
+    ? `QUESTION LIVE · ${currentQuestion.categoryName.toUpperCase()} · ${currentQuestion.pointValue}`
+    : "BOARD READY · WAITING";
+  const promptText = currentQuestion?.prompt ?? "Tap a cell to reveal the next question.";
 
   return (
-    <LaptopShell title="game 1 · live">
+    <LaptopShell title={title}>
       <div
         style={{
           padding: "20px 28px",
@@ -81,7 +186,7 @@ function HostLiveConsoleInner() {
           >
             <div>
               <Eyebrow color={t.accent} size={11}>
-                QUESTION LIVE · GEOGRAPHY · 100
+                {eyebrow}
               </Eyebrow>
               <div
                 style={{
@@ -92,24 +197,27 @@ function HostLiveConsoleInner() {
                   letterSpacing: "-0.015em",
                 }}
               >
-                Which U.S. state has the longest coastline?
+                {promptText}
               </div>
             </div>
-            <TVTimerArc seconds={11} size={84} />
+            {currentQuestion?.secondsRemaining !== null &&
+            currentQuestion?.secondsRemaining !== undefined ? (
+              <TVTimerArc seconds={currentQuestion.secondsRemaining} size={84} />
+            ) : null}
           </div>
 
           <div
             style={{
               flex: 1,
               display: "grid",
-              gridTemplateColumns: "repeat(6, 1fr)",
+              gridTemplateColumns: `repeat(${Math.max(columns.length, 1)}, 1fr)`,
               gridTemplateRows: "24px repeat(7, 1fr)",
               gap: 6,
             }}
           >
-            {COLUMNS.map((c) => (
+            {columns.map((c) => (
               <div
-                key={c}
+                key={c.categoryId}
                 style={{
                   padding: "4px 8px",
                   borderRadius: 4,
@@ -124,48 +232,69 @@ function HostLiveConsoleInner() {
                   justifyContent: "center",
                 }}
               >
-                {c}
+                {c.name.toUpperCase()}
               </div>
             ))}
-            {ROWS.map((v, rIdx) =>
-              COLUMNS.map((c, cIdx) => {
-                const played =
-                  (cIdx === 0 && rIdx === 0) ||
-                  (cIdx === 0 && rIdx === 1) ||
-                  (cIdx === 1 && rIdx === 0) ||
-                  (cIdx === 2 && rIdx === 0);
-                const live = cIdx === 0 && rIdx === 0;
+            {/* Walk rows then columns so the layout matches the grid CSS. */}
+            {Array.from({ length: 7 }).map((_, rIdx) =>
+              columns.map((col) => {
+                const cell = col.cells[rIdx];
+                if (!cell) {
+                  return (
+                    <div
+                      key={`${col.categoryId}-empty-${rIdx}`}
+                      style={{
+                        background: t.dark ? "rgba(255,255,255,.02)" : t.surface,
+                        borderRadius: 6,
+                      }}
+                    />
+                  );
+                }
+                const clickable =
+                  !cell.played && !cell.live && Boolean(onRevealCell);
                 return (
-                  <div
-                    key={`${c}-${v}`}
+                  <button
+                    key={`${col.categoryId}-${cell.questionId}`}
+                    type="button"
+                    onClick={
+                      clickable
+                        ? () => onRevealCell?.(cell.questionId)
+                        : undefined
+                    }
+                    disabled={!clickable}
                     style={{
-                      background: live
+                      background: cell.live
                         ? t.accent
-                        : played
+                        : cell.played
                           ? "transparent"
                           : t.dark
                             ? "rgba(255,255,255,.06)"
                             : t.surface,
-                      border: played && !live ? `1px dashed ${t.line}` : "none",
+                      border:
+                        cell.played && !cell.live
+                          ? `1px dashed ${t.line}`
+                          : "none",
                       borderRadius: 6,
                       display: "flex",
                       alignItems: "center",
                       justifyContent: "center",
-                      color: live
+                      color: cell.live
                         ? t.dark
                           ? "#0E0E0C"
                           : "#FFF"
-                        : played
+                        : cell.played
                           ? t.inkMute
                           : t.ink,
                       fontFamily: "var(--font-mono)",
                       fontSize: 14,
                       fontWeight: 500,
-                      opacity: played && !live ? 0.4 : 1,
+                      opacity: cell.played && !cell.live ? 0.4 : 1,
+                      cursor: clickable ? "pointer" : "default",
+                      padding: 0,
                     }}
                   >
-                    {v}
-                  </div>
+                    {cell.pointValue}
+                  </button>
                 );
               }),
             )}
@@ -173,6 +302,9 @@ function HostLiveConsoleInner() {
 
           <div style={{ display: "flex", gap: 8 }}>
             <button
+              type="button"
+              onClick={onEndEarly}
+              disabled={!currentQuestion}
               style={{
                 flex: 1,
                 padding: "12px 0",
@@ -183,28 +315,35 @@ function HostLiveConsoleInner() {
                 fontSize: 13,
                 fontWeight: 600,
                 fontFamily: "var(--font-sans)",
-                cursor: "pointer",
+                cursor: currentQuestion ? "pointer" : "not-allowed",
+                opacity: currentQuestion ? 1 : 0.5,
               }}
             >
               End early · reveal
             </button>
             <button
+              type="button"
+              onClick={onUndo}
+              disabled={!canUndo}
               style={{
                 flex: 1,
                 padding: "12px 0",
                 borderRadius: 10,
                 background: "transparent",
-                color: t.ink,
+                color: canUndo ? t.ink : t.inkMute,
                 border: `1px solid ${t.line}`,
                 fontSize: 13,
                 fontWeight: 500,
                 fontFamily: "var(--font-sans)",
-                cursor: "pointer",
+                cursor: canUndo ? "pointer" : "not-allowed",
+                opacity: canUndo ? 1 : 0.55,
               }}
             >
               ↺ Undo
             </button>
             <button
+              type="button"
+              onClick={onAdjustPoints}
               style={{
                 flex: 1,
                 padding: "12px 0",
@@ -219,22 +358,6 @@ function HostLiveConsoleInner() {
               }}
             >
               Adjust points
-            </button>
-            <button
-              style={{
-                flex: 1,
-                padding: "12px 0",
-                borderRadius: 10,
-                background: "transparent",
-                color: t.inkMid,
-                border: `1px solid ${t.line}`,
-                fontSize: 13,
-                fontWeight: 500,
-                fontFamily: "var(--font-sans)",
-                cursor: "pointer",
-              }}
-            >
-              Pause
             </button>
           </div>
         </div>
@@ -251,10 +374,10 @@ function HostLiveConsoleInner() {
             }}
           >
             <Eyebrow color={t.inkMid} size={10}>
-              PLAYERS · 32 LIVE
+              PLAYERS · {totalPlayers} LIVE
             </Eyebrow>
             <Numeric size={12} color={t.inkMid}>
-              21 / 32 in
+              {locks} / {totalPlayers} in
             </Numeric>
           </div>
           <div
@@ -265,71 +388,77 @@ function HostLiveConsoleInner() {
               flexDirection: "column",
             }}
           >
-            {players.map((p, i) => (
-              <div
-                key={p.name}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "20px 1fr 70px 18px",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "10px 0",
-                  borderBottom: `1px solid ${t.lineSoft}`,
-                  background: p.flag
-                    ? t.dark
-                      ? "rgba(229,138,138,.05)"
-                      : "rgba(156,47,47,.03)"
-                    : "transparent",
-                  paddingLeft: p.flag ? 8 : 0,
-                  paddingRight: p.flag ? 8 : 0,
-                  marginLeft: p.flag ? -8 : 0,
-                  marginRight: p.flag ? -8 : 0,
-                  borderRadius: p.flag ? 6 : 0,
-                }}
-              >
-                <Numeric size={11} color={t.inkMute}>
-                  {i + 1}
-                </Numeric>
-                <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                  <span
-                    style={{
-                      fontSize: 13,
-                      color: t.ink,
-                      fontWeight: 500,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {p.name}
-                  </span>
-                  {p.flag && (
+            {players.length === 0 ? (
+              <div style={{ padding: "24px 0", color: t.inkMute, fontSize: 13 }}>
+                No players in the room yet.
+              </div>
+            ) : (
+              players.map((p, i) => (
+                <div
+                  key={p.id}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "20px 1fr 70px 18px",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "10px 0",
+                    borderBottom: `1px solid ${t.lineSoft}`,
+                    background: p.flag
+                      ? t.dark
+                        ? "rgba(229,138,138,.05)"
+                        : "rgba(156,47,47,.03)"
+                      : "transparent",
+                    paddingLeft: p.flag ? 8 : 0,
+                    paddingRight: p.flag ? 8 : 0,
+                    marginLeft: p.flag ? -8 : 0,
+                    marginRight: p.flag ? -8 : 0,
+                    borderRadius: p.flag ? 6 : 0,
+                  }}
+                >
+                  <Numeric size={11} color={t.inkMute}>
+                    {i + 1}
+                  </Numeric>
+                  <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
                     <span
                       style={{
-                        fontSize: 10,
-                        color: t.wrong,
-                        fontFamily: "var(--font-mono)",
-                        marginTop: 1,
+                        fontSize: 13,
+                        color: t.ink,
+                        fontWeight: 500,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                       }}
                     >
-                      off-app {p.appOff}
+                      {p.name}
                     </span>
-                  )}
+                    {p.flag && (
+                      <span
+                        style={{
+                          fontSize: 10,
+                          color: t.wrong,
+                          fontFamily: "var(--font-mono)",
+                          marginTop: 1,
+                        }}
+                      >
+                        off-app {p.appOff}
+                      </span>
+                    )}
+                  </div>
+                  <Numeric size={12} color={t.ink} style={{ textAlign: "right" }}>
+                    {p.score.toLocaleString()}
+                  </Numeric>
+                  <span
+                    style={{
+                      width: 8,
+                      height: 8,
+                      borderRadius: 99,
+                      background: p.flag ? t.wrong : p.locked ? t.correct : t.inkMute,
+                      opacity: p.locked || p.flag ? 1 : 0.4,
+                    }}
+                  />
                 </div>
-                <Numeric size={12} color={t.ink} style={{ textAlign: "right" }}>
-                  {p.score.toLocaleString()}
-                </Numeric>
-                <span
-                  style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 99,
-                    background: p.flag ? t.wrong : p.locked ? t.correct : t.inkMute,
-                    opacity: p.locked || p.flag ? 1 : 0.4,
-                  }}
-                />
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </div>
       </div>

@@ -15,20 +15,56 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface OnboardingFirstDashboardProps {
   themeKey?: ThemeKey;
+  /** First name to greet the host with (defaults to "Linda"). */
+  hostName?: string;
+  /** Venue label under the host name (e.g. "Soul Fire Pizza"). */
+  venueLabel?: string;
+  /** CTA label override (e.g. "Set up Wednesday"). */
+  ctaLabel?: string;
+  /** Called when the host taps the "Set up Wednesday" CTA. */
+  onSetup?: () => void;
+  /** True while the underlying POST /api/nights is in flight. */
+  isSettingUp?: boolean;
 }
 
-export function OnboardingFirstDashboard({ themeKey }: OnboardingFirstDashboardProps) {
+export function OnboardingFirstDashboard({
+  themeKey,
+  hostName,
+  venueLabel,
+  ctaLabel,
+  onSetup,
+  isSettingUp,
+}: OnboardingFirstDashboardProps) {
+  const inner = (
+    <OnboardingFirstDashboardInner
+      hostName={hostName}
+      venueLabel={venueLabel}
+      ctaLabel={ctaLabel}
+      onSetup={onSetup}
+      isSettingUp={isSettingUp}
+    />
+  );
   if (themeKey) {
-    return (
-      <ThemeProvider themeKey={themeKey}>
-        <OnboardingFirstDashboardInner />
-      </ThemeProvider>
-    );
+    return <ThemeProvider themeKey={themeKey}>{inner}</ThemeProvider>;
   }
-  return <OnboardingFirstDashboardInner />;
+  return inner;
 }
 
-function OnboardingFirstDashboardInner() {
+interface OnboardingFirstDashboardInnerProps {
+  hostName?: string;
+  venueLabel?: string;
+  ctaLabel?: string;
+  onSetup?: () => void;
+  isSettingUp?: boolean;
+}
+
+function OnboardingFirstDashboardInner({
+  hostName = "Linda",
+  venueLabel = "Soul Fire Pizza",
+  ctaLabel = "Set up Wednesday",
+  onSetup,
+  isSettingUp = false,
+}: OnboardingFirstDashboardInnerProps) {
   const { t } = useTheme();
   return (
     <LaptopShell title="tr1via.com / linda">
@@ -56,10 +92,10 @@ function OnboardingFirstDashboardInner() {
               letterSpacing: "-0.015em",
             }}
           >
-            Linda Petrov
+            {hostName}
           </div>
           <div style={{ color: t.inkMid, fontSize: 13, marginTop: 2 }}>
-            Soul Fire Pizza
+            {venueLabel}
           </div>
 
           <div style={{ marginTop: 36 }}>
@@ -121,7 +157,7 @@ function OnboardingFirstDashboardInner() {
           >
             Welcome,
             <br />
-            <span style={{ color: t.accent }}>Linda.</span>
+            <span style={{ color: t.accent }}>{hostName}.</span>
           </Display>
 
           <div
@@ -133,11 +169,14 @@ function OnboardingFirstDashboardInner() {
               maxWidth: 560,
             }}
           >
-            About a minute to set up your first Wednesday at Soul Fire Pizza. Type your six
+            About a minute to set up your first Wednesday at {venueLabel}. Type your six
             topics; we&apos;ll do the rest.
           </div>
 
           <button
+            type="button"
+            onClick={onSetup}
+            disabled={isSettingUp}
             style={{
               marginTop: 32,
               alignSelf: "flex-start",
@@ -149,7 +188,8 @@ function OnboardingFirstDashboardInner() {
               fontSize: 17,
               fontWeight: 700,
               fontFamily: "var(--font-sans)",
-              cursor: "pointer",
+              cursor: isSettingUp ? "default" : "pointer",
+              opacity: isSettingUp ? 0.7 : 1,
               letterSpacing: "-0.005em",
               display: "flex",
               alignItems: "center",
@@ -157,7 +197,7 @@ function OnboardingFirstDashboardInner() {
               boxShadow: `0 16px 32px -10px ${t.accent}77`,
             }}
           >
-            Set up Wednesday
+            {isSettingUp ? "Setting up…" : ctaLabel}
             <span
               style={{
                 fontFamily: "var(--font-mono)",

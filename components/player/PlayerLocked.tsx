@@ -22,15 +22,35 @@ export interface PlayerLockedProps {
   themeKey?: ThemeKey;
   category?: string;
   value?: number;
+  /** 4 answer strings, already in the player's scramble order. */
+  options?: [string, string, string, string];
+  /** Visible slot (1..4) the player picked. */
+  chosenSlot?: 1 | 2 | 3 | 4;
+  /** Seconds remaining (still counting down for the rest of the room). */
+  seconds?: number;
+  /** Time-to-lock in seconds — drives the "Locked at 2.3s" stat. */
+  msToLock?: number;
+  /** Locked-in count fraction string, e.g. "21/32". Optional. */
+  lockedSummary?: string;
+  /** Question number within its game (1..N). */
+  questionNumber?: number;
 }
 
 export function PlayerLocked({
   themeKey: _themeKey,
   category = "Geography",
   value = 100,
+  options = ["Florida", "Alaska", "California", "Maine"],
+  chosenSlot = 2,
+  seconds = 11,
+  msToLock = 2300,
+  lockedSummary = "21/32",
+  questionNumber: _questionNumber,
 }: PlayerLockedProps = {}) {
   const { t } = useTheme();
   const catColor = categoryColor(category, t.accent);
+  const secondsToLock = (msToLock / 1000).toFixed(1);
+  const speedBonus = msToLock < 5000;
   return (
     <PhoneScreen>
       <div
@@ -45,7 +65,9 @@ export function PlayerLocked({
         }}
       >
         <div>
-          <Eyebrow color="rgba(14,8,5,.65)" size={10}>QUESTION 10 · {category.toUpperCase()}</Eyebrow>
+          <Eyebrow color="rgba(14,8,5,.65)" size={10}>
+            QUESTION {_questionNumber ?? 10} · {category.toUpperCase()}
+          </Eyebrow>
           <div style={{ marginTop: 4, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>{category}</div>
         </div>
         <PointTag value={value} color="#0E0805" ink={catColor} size="md" />
@@ -62,24 +84,29 @@ export function PlayerLocked({
           marginBottom: 16,
         }}
       >
-        <TimerRing accent={catColor} seconds={11} />
+        <TimerRing accent={catColor} seconds={seconds} />
         <div style={{ flex: 1 }}>
           <Eyebrow color={t.inkMid} size={9}>LOCKED AT</Eyebrow>
           <div style={{ marginTop: 2, fontSize: 14, color: t.ink, fontWeight: 600 }}>
-            <Numeric size={15} color={catColor}>2.3s</Numeric>
+            <Numeric size={15} color={catColor}>{secondsToLock}s</Numeric>
             <span style={{ color: t.inkMid, fontWeight: 400, marginLeft: 6, fontSize: 12 }}>
-              · speed bonus locked in
+              {speedBonus ? "· speed bonus locked in" : "· locked in"}
             </span>
           </div>
         </div>
-        <Numeric size={12} color={t.inkMid}>21/32</Numeric>
+        <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <AnswerCard accent={catColor} n={1} text="Florida" state="locked-other" />
-        <AnswerCard accent={catColor} n={2} text="Alaska" state="locked-self" />
-        <AnswerCard accent={catColor} n={3} text="California" state="locked-other" />
-        <AnswerCard accent={catColor} n={4} text="Maine" state="locked-other" />
+        {([1, 2, 3, 4] as const).map((slot, i) => (
+          <AnswerCard
+            key={slot}
+            accent={catColor}
+            n={slot}
+            text={options[i] ?? ""}
+            state={slot === chosenSlot ? "locked-self" : "locked-other"}
+          />
+        ))}
       </div>
 
       <div style={{ marginTop: "auto", paddingTop: 18, textAlign: "center", color: t.inkMid, fontSize: 13 }}>

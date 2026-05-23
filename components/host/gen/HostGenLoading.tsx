@@ -1,8 +1,13 @@
 // HOST · GENERATE · 3. GENERATING
-// The moment questions are being created. Captured at T+1.8s: 12 of 20 cards
-// already in, 8 still loading as soft skeletons. Two streams progress
+// The moment questions are being created. Two streams progress
 // independently: question text lands first, then the matched photo lands
-// ~250ms later.
+// shortly after.
+//
+// Wired form: the pick route subscribes to `category:{id}` broadcasts and
+// passes a live tally of questions + photos. Each loaded question lands
+// here as a card with text (and a photo when ready). The remainder are
+// shown as soft skeletons. All props are optional with demo defaults so
+// the /_dev/host/gen gallery still renders.
 
 "use client";
 
@@ -17,80 +22,113 @@ import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { DifficultyBar, StockImage } from "./_shared";
 
-export interface HostGenLoadingProps {
-  themeKey?: ThemeKey;
+export interface HostGenLoadingQuestion {
+  id: string;
+  prompt: string;
+  difficulty: number;
+  /** When set, render with the image preview; when null, show "matching photo…". */
+  imageUrl: string | null;
+  /** Fallback seed when we don't have a real URL yet (demo only). */
+  seed?: string;
 }
 
-export function HostGenLoading({ themeKey }: HostGenLoadingProps) {
+export interface HostGenLoadingProps {
+  themeKey?: ThemeKey;
+  /** Title in the shell chrome. */
+  shellTitle?: string;
+  /** Topic name displayed in the headline. */
+  topic?: string;
+  /** Questions loaded so far (in arrival order). */
+  loaded?: HostGenLoadingQuestion[];
+  /** Total questions expected (default 20). */
+  total?: number;
+  /** Count of questions whose photo has landed. */
+  photosLoaded?: number;
+  /** Called when the host taps "Cancel". */
+  onCancel?: () => void;
+}
+
+const DEMO_LOADED: HostGenLoadingQuestion[] = [
+  { id: "1",  prompt: "What was Pixar's first feature film?",                                              difficulty: 1, imageUrl: "demo", seed: "pixar1" },
+  { id: "2",  prompt: "In Up, what is the name of Carl's dog?",                                           difficulty: 2, imageUrl: "demo", seed: "pixar2" },
+  { id: "3",  prompt: "Toy Story was released in what year?",                                              difficulty: 3, imageUrl: "demo", seed: "pixar3" },
+  { id: "4",  prompt: "Which Pixar character is voiced by Ellen DeGeneres?",                               difficulty: 1, imageUrl: "demo", seed: "pixar4" },
+  { id: "5",  prompt: "In Monsters, Inc., what does CDA stand for?",                                       difficulty: 6, imageUrl: "demo", seed: "pixar5" },
+  { id: "6",  prompt: "Wall·E's love interest is named what?",                                             difficulty: 4, imageUrl: "demo", seed: "pixar6" },
+  { id: "7",  prompt: "Ratatouille is set in which city?",                                                 difficulty: 2, imageUrl: "demo", seed: "pixar7" },
+  { id: "8",  prompt: "Brave is Pixar's first film with what?",                                            difficulty: 3, imageUrl: "demo", seed: "pixar8" },
+  { id: "9",  prompt: "In Coco, what is the boy's great-great-grandfather?",                              difficulty: 4, imageUrl: null },
+  { id: "10", prompt: "Pixar's opening logo features which character?",                                    difficulty: 3, imageUrl: null },
+  { id: "11", prompt: "Inside Out's five emotions are joy, sadness, anger, fear, and what?",               difficulty: 1, imageUrl: null },
+  { id: "12", prompt: "The Incredibles' family surname is what?",                                          difficulty: 2, imageUrl: null },
+];
+
+export function HostGenLoading(props: HostGenLoadingProps) {
+  const { themeKey, ...rest } = props;
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <HostGenLoadingInner />
+        <HostGenLoadingInner {...rest} />
       </ThemeProvider>
     );
   }
-  return <HostGenLoadingInner />;
+  return <HostGenLoadingInner {...rest} />;
 }
 
-interface PhaseFull {
-  phase: "full";
-  seed: string;
-  q: string;
-  diff: number;
-}
-
-interface PhaseText {
-  phase: "text";
-  q: string;
-  diff: number;
-}
-
-type Phase = PhaseFull | PhaseText;
-
-function HostGenLoadingInner() {
+function HostGenLoadingInner({
+  shellTitle = "pulling questions · pixar movies",
+  topic = "Pixar Movies",
+  loaded = DEMO_LOADED,
+  total = 20,
+  photosLoaded,
+  onCancel,
+}: Omit<HostGenLoadingProps, "themeKey">) {
   const { t } = useTheme();
-  const cc = categoryColor("Movies", t.accent);
-  const phases: Phase[] = [
-    { phase: "full", seed: "pixar1",  q: "What was Pixar's first feature film?",                   diff: 1 },
-    { phase: "full", seed: "pixar2",  q: "In Up, what is the name of Carl's dog?",                  diff: 2 },
-    { phase: "full", seed: "pixar3",  q: "Toy Story was released in what year?",                    diff: 3 },
-    { phase: "full", seed: "pixar4",  q: "Which Pixar character is voiced by Ellen DeGeneres?",     diff: 1 },
-    { phase: "full", seed: "pixar5",  q: "In Monsters, Inc., what does CDA stand for?",             diff: 6 },
-    { phase: "full", seed: "pixar6",  q: "Wall·E's love interest is named what?",                   diff: 4 },
-    { phase: "full", seed: "pixar7",  q: "Ratatouille is set in which city?",                       diff: 2 },
-    { phase: "full", seed: "pixar8",  q: "Brave is Pixar's first film with what?",                  diff: 3 },
-    { phase: "text",                  q: "In Coco, what is the boy's great-great-grandfather?",      diff: 4 },
-    { phase: "text",                  q: "Pixar's opening logo features which character?",           diff: 3 },
-    { phase: "text",                  q: "Inside Out's five emotions are joy, sadness, anger, fear, and what?", diff: 1 },
-    { phase: "text",                  q: "The Incredibles' family surname is what?",                 diff: 2 },
-  ];
+  const cc = categoryColor(topic, t.accent);
+  const questionsLoaded = loaded.length;
+  const photosCount =
+    typeof photosLoaded === "number"
+      ? photosLoaded
+      : loaded.filter((l) => l.imageUrl).length;
+  const skeletonCount = Math.max(0, total - questionsLoaded);
   return (
-    <LaptopShell title="pulling questions · pixar movies">
+    <LaptopShell title={shellTitle}>
       <div style={{ padding: "24px 56px 12px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
           <span style={{ width: 12, height: 12, borderRadius: 99, background: cc }} />
           <div>
-            <Eyebrow color={t.accent} size={11}>PULLING 20 ON</Eyebrow>
-            <div style={{ marginTop: 4, fontSize: 28, fontWeight: 700, color: t.ink, letterSpacing: "-0.02em" }}>Pixar Movies</div>
+            <Eyebrow color={t.accent} size={11}>PULLING {total} ON</Eyebrow>
+            <div style={{ marginTop: 4, fontSize: 28, fontWeight: 700, color: t.ink, letterSpacing: "-0.02em" }}>{topic}</div>
             <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>Writing the questions, then matching a photo to each.</div>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
           <div style={{ display: "flex", gap: 24 }}>
-            <ProgressMini label="QUESTIONS" done={12} total={20} color={cc} />
-            <ProgressMini label="PHOTOS" done={8} total={20} color={t.pop} />
+            <ProgressMini label="QUESTIONS" done={questionsLoaded} total={total} color={cc} />
+            <ProgressMini label="PHOTOS" done={photosCount} total={total} color={t.pop} />
           </div>
-          <button style={{ padding: "8px 14px", borderRadius: 99, border: `1px solid ${t.line}`, background: "transparent", color: t.inkMid, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}>Cancel</button>
+          {onCancel && (
+            <button
+              type="button"
+              onClick={onCancel}
+              style={{ padding: "8px 14px", borderRadius: 99, border: `1px solid ${t.line}`, background: "transparent", color: t.inkMid, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}
+            >
+              Cancel
+            </button>
+          )}
         </div>
       </div>
 
       <div style={{ flex: 1, overflow: "auto", padding: "24px 56px 40px" }}>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
-          {phases.map((c, i) => {
-            if (c.phase === "full") return <PickCardSmall key={i} q={c} cc={cc} />;
-            return <PickCardTextOnly key={i} q={c} cc={cc} />;
-          })}
-          {Array.from({ length: 8 }).map((_, i) => (
+          {loaded.map((q) =>
+            q.imageUrl ? (
+              <PickCardSmall key={q.id} q={q} cc={cc} />
+            ) : (
+              <PickCardTextOnly key={q.id} q={q} cc={cc} />
+            ),
+          )}
+          {Array.from({ length: skeletonCount }).map((_, i) => (
             <SkeletonCard key={`s${i}`} delay={i * 150} />
           ))}
         </div>
@@ -101,6 +139,7 @@ function HostGenLoadingInner() {
 
 function ProgressMini({ label, done, total, color }: { label: string; done: number; total: number; color: string }) {
   const { t } = useTheme();
+  const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
   return (
     <div style={{ width: 150 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
@@ -108,7 +147,7 @@ function ProgressMini({ label, done, total, color }: { label: string; done: numb
         <Numeric size={10} color={t.inkMid}>{done}/{total}</Numeric>
       </div>
       <div style={{ height: 4, borderRadius: 99, background: t.line, overflow: "hidden", position: "relative" }}>
-        <div style={{ width: `${(done / total) * 100}%`, height: "100%", background: color, transition: "width 0.4s ease-out" }} />
+        <div style={{ width: `${pct}%`, height: "100%", background: color, transition: "width 0.4s ease-out" }} />
         <div style={{
           position: "absolute", inset: 0,
           background: `linear-gradient(90deg, transparent, ${color}55, transparent)`,
@@ -120,7 +159,7 @@ function ProgressMini({ label, done, total, color }: { label: string; done: numb
   );
 }
 
-function PickCardTextOnly({ q, cc }: { q: PhaseText; cc: string }) {
+function PickCardTextOnly({ q, cc }: { q: HostGenLoadingQuestion; cc: string }) {
   const { t } = useTheme();
   return (
     <div style={{
@@ -147,17 +186,17 @@ function PickCardTextOnly({ q, cc }: { q: PhaseText; cc: string }) {
         }}>MATCHING PHOTO…</span>
       </div>
       <div style={{ padding: "12px 14px" }}>
-        <div style={{ fontSize: 13.5, color: t.ink, fontWeight: 600, letterSpacing: "-0.005em", lineHeight: 1.35, minHeight: 38 }}>{q.q}</div>
+        <div style={{ fontSize: 13.5, color: t.ink, fontWeight: 600, letterSpacing: "-0.005em", lineHeight: 1.35, minHeight: 38 }}>{q.prompt}</div>
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <DifficultyBar value={q.diff} color={cc} />
-          <Numeric size={12} color={cc} weight={700}>{q.diff * 100}</Numeric>
+          <DifficultyBar value={q.difficulty} color={cc} />
+          <Numeric size={12} color={cc} weight={700}>{q.difficulty * 100}</Numeric>
         </div>
       </div>
     </div>
   );
 }
 
-function PickCardSmall({ q, cc }: { q: PhaseFull; cc: string }) {
+function PickCardSmall({ q, cc }: { q: HostGenLoadingQuestion; cc: string }) {
   const { t } = useTheme();
   return (
     <div style={{
@@ -166,12 +205,12 @@ function PickCardSmall({ q, cc }: { q: PhaseFull; cc: string }) {
       background: t.dark ? "rgba(244,230,196,.03)" : "#FFF",
       animation: "tr1via-rise .4s cubic-bezier(.2,.7,.3,1) both",
     }}>
-      <StockImage seed={q.seed} height={120} radius="11px 11px 0 0" caption={null} />
+      <StockImage seed={q.seed ?? q.id} height={120} radius="11px 11px 0 0" caption={null} />
       <div style={{ padding: "12px 14px" }}>
-        <div style={{ fontSize: 13.5, color: t.ink, fontWeight: 600, letterSpacing: "-0.005em", lineHeight: 1.35, minHeight: 38 }}>{q.q}</div>
+        <div style={{ fontSize: 13.5, color: t.ink, fontWeight: 600, letterSpacing: "-0.005em", lineHeight: 1.35, minHeight: 38 }}>{q.prompt}</div>
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <DifficultyBar value={q.diff} color={cc} />
-          <Numeric size={12} color={cc} weight={700}>{q.diff * 100}</Numeric>
+          <DifficultyBar value={q.difficulty} color={cc} />
+          <Numeric size={12} color={cc} weight={700}>{q.difficulty * 100}</Numeric>
         </div>
       </div>
     </div>

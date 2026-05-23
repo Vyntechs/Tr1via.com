@@ -17,27 +17,58 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface PlayerRevealWrongProps {
   themeKey?: ThemeKey;
+  category?: string;
+  value?: number;
+  /** Slot (1..4) the player picked. Pass `null` for "no answer". */
+  chosenSlot?: 1 | 2 | 3 | 4 | null;
+  /** Text of the option the player picked. Ignored when chosenSlot is null. */
+  chosenText?: string;
+  /** Slot (1..4) the correct answer was in for this player's scramble. */
+  correctSlot?: 1 | 2 | 3 | 4;
+  /** Text of the canonical correct answer. */
+  correctText?: string;
+  /** Player's current rank (post-question). */
+  rank?: number;
+  /** Player's running score. */
+  totalScore?: number;
 }
 
-export function PlayerRevealWrong({ themeKey: _themeKey }: PlayerRevealWrongProps = {}) {
+export function PlayerRevealWrong({
+  themeKey: _themeKey,
+  category = "Geography",
+  value = 100,
+  chosenSlot = 1,
+  chosenText = "Florida",
+  correctSlot = 2,
+  correctText = "Alaska",
+  rank = 11,
+  totalScore = 2230,
+}: PlayerRevealWrongProps = {}) {
   const { t } = useTheme();
+  const noAnswer = chosenSlot === null;
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow="GEOGRAPHY · 100 PTS" score={2230} position="#11" />
+      <PhoneHeader
+        eyebrow={`${category.toUpperCase()} · ${value} PTS`}
+        score={totalScore}
+        position={`#${rank}`}
+      />
 
       <Display size={64} color={t.ink}>
-        <span style={{ color: t.inkMid }}>Not this</span>
+        <span style={{ color: t.inkMid }}>{noAnswer ? "Time's" : "Not this"}</span>
         <br />
-        one.
+        {noAnswer ? "up." : "one."}
       </Display>
       <div style={{ marginTop: 10, color: t.inkMid, fontSize: 14, lineHeight: 1.4 }}>
         No points lost — that&apos;s not how this game treats you.
       </div>
 
       <div style={{ marginTop: 30, display: "flex", flexDirection: "column", gap: 10 }}>
-        <AnswerCard n={1} text="Florida" state="wrong" />
+        {!noAnswer && chosenSlot !== null && (
+          <AnswerCard n={chosenSlot} text={chosenText} state="wrong" />
+        )}
         <Eyebrow color={t.inkMid} size={9} style={{ marginLeft: 4, marginTop: 4 }}>THE ANSWER WAS</Eyebrow>
-        <AnswerCard n={2} text="Alaska" state="missed-correct" />
+        <AnswerCard n={correctSlot} text={correctText} state="missed-correct" />
       </div>
 
       <div
@@ -52,10 +83,10 @@ export function PlayerRevealWrong({ themeKey: _themeKey }: PlayerRevealWrongProp
         }}
       >
         <Eyebrow color={t.inkMid} size={10}>POSITION</Eyebrow>
-        <Numeric size={28} weight={600} color={t.ink}>#11</Numeric>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: t.inkMute, fontWeight: 500 }}>&mdash;</span>
+        <Numeric size={28} weight={600} color={t.ink}>#{rank}</Numeric>
+        <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: t.inkMute, fontWeight: 500 }}>—</span>
         <span style={{ flex: 1 }} />
-        <Numeric size={18} weight={500} color={t.inkMid}>2,230</Numeric>
+        <Numeric size={18} weight={500} color={t.inkMid}>{totalScore.toLocaleString()}</Numeric>
       </div>
     </PhoneScreen>
   );

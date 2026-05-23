@@ -13,22 +13,30 @@
 //   8. Launch          — both boards ready, room about to open
 
 export { HostGenOverview } from "./HostGenOverview";
-export type { HostGenOverviewProps } from "./HostGenOverview";
+export type {
+  HostGenOverviewProps,
+  CategorySlotData,
+  GameOverviewData,
+} from "./HostGenOverview";
 
 export { HostGenTopicEntry } from "./HostGenTopicEntry";
-export type { HostGenTopicEntryProps } from "./HostGenTopicEntry";
+export type {
+  HostGenTopicEntryProps,
+  DifficultyTarget,
+  RecentTopic,
+} from "./HostGenTopicEntry";
 
 export { HostGenLoading } from "./HostGenLoading";
-export type { HostGenLoadingProps } from "./HostGenLoading";
+export type { HostGenLoadingProps, HostGenLoadingQuestion } from "./HostGenLoading";
 
 export { HostGenPick } from "./HostGenPick";
-export type { HostGenPickProps } from "./HostGenPick";
+export type { HostGenPickProps, HostGenPickQuestion } from "./HostGenPick";
 
 export { HostGenEdit } from "./HostGenEdit";
-export type { HostGenEditProps } from "./HostGenEdit";
+export type { HostGenEditProps, HostGenEditValues } from "./HostGenEdit";
 
 export { HostGenImageSwap } from "./HostGenImageSwap";
-export type { HostGenImageSwapProps } from "./HostGenImageSwap";
+export type { HostGenImageSwapProps, HostGenPhotoCandidate } from "./HostGenImageSwap";
 
 export { HostGenImageUpload } from "./HostGenImageUpload";
 export type { HostGenImageUploadProps, HostGenImageUploadState } from "./HostGenImageUpload";

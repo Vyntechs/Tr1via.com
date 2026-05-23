@@ -2,6 +2,9 @@
 // 2.2) on the theme's signature motion. Massive name. Three highlight chips
 // for the headline stats. Runner-up rail + the night-in-numbers card on
 // the right. Closing scene of the movie.
+//
+// Driven by props so `/tv/[code]` can paint the actual winner; demo defaults
+// preserved for the `/_dev/tv` gallery.
 
 "use client";
 
@@ -17,34 +20,86 @@ import {
 import type { ResolvedTheme } from "@/lib/theme/resolve";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-export interface TVFinaleWinnerProps {
-  themeKey?: ThemeKey;
+export interface TVFinaleWinnerData {
+  name: string;
+  score: number;
+  /** Correct answers. */
+  correct: number;
+  /** Of total questions in the game. */
+  of: number;
+  /** Longest correct streak. */
+  streak?: number;
+  /** Pre-formatted fastest correct time, e.g. "0.9s". */
+  fastest?: string;
+  /** Optional editorial blurb under the chips. */
+  blurb?: string;
 }
 
-export function TVFinaleWinner({ themeKey }: TVFinaleWinnerProps) {
+export interface TVFinalePodiumRow {
+  rank: number;
+  name: string;
+  score: number;
+}
+
+export interface TVFinaleStat {
+  l: string;
+  v: string;
+}
+
+export interface TVFinaleWinnerProps {
+  themeKey?: ThemeKey;
+  /** Header eyebrow center: "SOUL FIRE PIZZA · WED MAY 27". */
+  headerEyebrow?: string;
+  /** Header right, e.g. "GAME 2 · FINAL". */
+  headerRight?: string;
+  winner?: TVFinaleWinnerData;
+  /** Runners up (rank 2 + 3). */
+  podium?: TVFinalePodiumRow[];
+  /** The night's notable numbers. */
+  nightStats?: TVFinaleStat[];
+}
+
+export function TVFinaleWinner({ themeKey, ...rest }: TVFinaleWinnerProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVFinaleWinnerInner />
+        <TVFinaleWinnerInner {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVFinaleWinnerInner />;
+  return <TVFinaleWinnerInner {...rest} />;
 }
 
-function TVFinaleWinnerInner() {
+const DEMO_WINNER: TVFinaleWinnerData = {
+  name: "Devon",
+  score: 8420,
+  correct: 38,
+  of: 42,
+  streak: 7,
+  fastest: "0.9s",
+  blurb: "Two streaks of five and a near-perfect history round. Untouchable from the third question on.",
+};
+
+const DEMO_PODIUM: TVFinalePodiumRow[] = [
+  { rank: 2, name: "Iris",  score: 7960 },
+  { rank: 3, name: "Priya", score: 7340 },
+];
+
+const DEMO_STATS: TVFinaleStat[] = [
+  { l: "PLAYERS",      v: "32" },
+  { l: "QUESTIONS",    v: "84" },
+  { l: "FASTEST EVER", v: "0.6s · Cole" },
+  { l: "STUMPER",      v: "4/32 · Egyptian honey" },
+];
+
+function TVFinaleWinnerInner({
+  headerEyebrow = "SOUL FIRE PIZZA · WED MAY 27",
+  headerRight = "GAME 2 · FINAL",
+  winner = DEMO_WINNER,
+  podium = DEMO_PODIUM,
+  nightStats = DEMO_STATS,
+}: Omit<TVFinaleWinnerProps, "themeKey">) {
   const { t, themeKey } = useTheme();
-  const winner = { name: "Devon", score: 8420, correct: 38, of: 42, streak: 7, fastest: "0.9s" };
-  const podium = [
-    { rank: 2, name: "Iris",  score: 7960 },
-    { rank: 3, name: "Priya", score: 7340 },
-  ];
-  const nightStats = [
-    { l: "PLAYERS",      v: "32" },
-    { l: "QUESTIONS",    v: "84" },
-    { l: "FASTEST EVER", v: "0.6s · Cole" },
-    { l: "STUMPER",      v: "4/32 · Egyptian honey" },
-  ];
 
   return (
     <div
@@ -93,9 +148,9 @@ function TVFinaleWinnerInner() {
           <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
             <Wordmark size={22} accent={t.accent} ink={t.ink} />
             <span style={{ width: 1, height: 16, background: t.line }} />
-            <Eyebrow color={t.inkMid} size={11}>SOUL FIRE PIZZA · WED MAY 27</Eyebrow>
+            <Eyebrow color={t.inkMid} size={11}>{headerEyebrow}</Eyebrow>
           </div>
-          <Eyebrow color={t.accent} size={11}>GAME 2 · FINAL</Eyebrow>
+          <Eyebrow color={t.accent} size={11}>{headerRight}</Eyebrow>
         </div>
 
         {/* The moment */}
@@ -135,13 +190,19 @@ function TVFinaleWinnerInner() {
 
             <div style={{ marginTop: 28, display: "flex", flexWrap: "wrap", gap: 12 }}>
               <FinaleChip label="GOT RIGHT" value={`${winner.correct} of ${winner.of}`} color={t.correct} t={t} />
-              <FinaleChip label="LONGEST STREAK" value={`×${winner.streak}`} color={t.accent} t={t} />
-              <FinaleChip label="FASTEST ANSWER" value={winner.fastest} color={t.pop} t={t} />
+              {typeof winner.streak === "number" && winner.streak > 1 && (
+                <FinaleChip label="LONGEST STREAK" value={`×${winner.streak}`} color={t.accent} t={t} />
+              )}
+              {winner.fastest && (
+                <FinaleChip label="FASTEST ANSWER" value={winner.fastest} color={t.pop} t={t} />
+              )}
             </div>
 
-            <div style={{ marginTop: 24, fontSize: 16, color: t.inkMid, lineHeight: 1.5, maxWidth: 560 }}>
-              Two streaks of five and a near-perfect history round. Untouchable from the third question on.
-            </div>
+            {winner.blurb && (
+              <div style={{ marginTop: 24, fontSize: 16, color: t.inkMid, lineHeight: 1.5, maxWidth: 560 }}>
+                {winner.blurb}
+              </div>
+            )}
           </div>
 
           {/* Podium / runner-up rail */}
@@ -225,7 +286,7 @@ function TVFinaleWinnerInner() {
           }}
         >
           <Eyebrow color={t.inkMute} size={10}>
-            SEE YOU NEXT WEDNESDAY · SAME PLACE, FRESH BOARD
+            SEE YOU NEXT WEEK · SAME PLACE, FRESH BOARD
           </Eyebrow>
           <Eyebrow color={t.inkMute} size={10}>TR1VIA.COM</Eyebrow>
         </div>

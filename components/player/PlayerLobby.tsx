@@ -11,11 +11,30 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface PlayerLobbyProps {
   themeKey?: ThemeKey;
+  /** This player's display name — shown in the headline. */
+  playerName?: string;
+  /** Total players currently in the room. */
+  inRoomCount?: number;
+  /**
+   * Newest joiners (display strings). First entry is rendered as "you" — the
+   * caller can suffix " · you" on the player's own row before passing in.
+   */
+  newestNames?: string[];
+  /** Host's first name — used in the "Linda is setting up" strip. */
+  hostName?: string;
+  /** Venue name (currently unused inline but kept for parity / future copy). */
+  venueName?: string;
 }
 
-export function PlayerLobby({ themeKey: _themeKey }: PlayerLobbyProps = {}) {
+export function PlayerLobby({
+  themeKey: _themeKey,
+  playerName = "Maya",
+  inRoomCount = 27,
+  newestNames = ["Maya · you", "Cole", "Theo", "Devon", "Marcus"],
+  hostName = "Linda",
+  venueName: _venueName,
+}: PlayerLobbyProps = {}) {
   const { t } = useTheme();
-  const newest = ["Maya · you", "Cole", "Theo", "Devon", "Marcus"];
   return (
     <PhoneScreen>
       <PhoneHeader eyebrow="IN THE ROOM" />
@@ -24,10 +43,10 @@ export function PlayerLobby({ themeKey: _themeKey }: PlayerLobbyProps = {}) {
         <Display size={64} color={t.ink}>
           You&apos;re in,
           <br />
-          <span style={{ color: t.accent }}>Maya.</span>
+          <span style={{ color: t.accent }}>{playerName}.</span>
         </Display>
         <div style={{ marginTop: 14, color: t.inkMid, fontSize: 15, lineHeight: 1.45, maxWidth: 280 }}>
-          Linda will start the first game when the room is settled.
+          {hostName} will start the first game when the room is settled.
         </div>
 
         <div style={{ marginTop: 38 }}>
@@ -54,15 +73,15 @@ export function PlayerLobby({ themeKey: _themeKey }: PlayerLobbyProps = {}) {
                   lineHeight: 1,
                 }}
               >
-                27
+                {inRoomCount}
               </div>
             </div>
             <div style={{ flex: 1.4, paddingBottom: 8 }}>
               <Eyebrow color={t.inkMid} size={10}>NEWEST</Eyebrow>
               <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
-                {newest.map((n, i) => (
+                {newestNames.map((n, i) => (
                   <span
-                    key={n}
+                    key={`${n}-${i}`}
                     style={{
                       fontSize: 14,
                       fontWeight: i === 0 ? 700 : 500,
@@ -98,7 +117,7 @@ export function PlayerLobby({ themeKey: _themeKey }: PlayerLobbyProps = {}) {
               animation: "tr1via-pulse 1.8s ease-in-out infinite",
             }}
           />
-          <span style={{ color: t.ink, fontSize: 14, fontWeight: 500 }}>Linda is setting up.</span>
+          <span style={{ color: t.ink, fontSize: 14, fontWeight: 500 }}>{hostName} is setting up.</span>
         </div>
       </div>
     </PhoneScreen>
