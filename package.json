@@ -19,6 +19,7 @@
     "@anthropic-ai/sdk": "^0.32.1",
     "@supabase/ssr": "^0.5.2",
     "@supabase/supabase-js": "^2.46.1",
+    "html-to-image": "^1.11.13",
     "next": "^16.0.0",
     "pexels": "^1.4.0",
     "qrcode": "^1.5.4",

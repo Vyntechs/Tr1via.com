@@ -9,7 +9,7 @@
 -- Source of truth: tr1via-plan.md (the rules).
 -- Plan ref: docs/superpowers/plans/2026-05-23-tr1via.md, Phase 3 Task 3.2.
 
-set search_path = public;
+set search_path = public, extensions;
 
 -- ─── hosts ──────────────────────────────────────────────────────────────
 create table hosts (

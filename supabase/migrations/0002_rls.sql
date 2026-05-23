@@ -14,7 +14,7 @@
 -- cookie; the helper function current_device_id() reads it via the
 -- `request.headers` JSON setting.
 
-set search_path = public;
+set search_path = public, extensions;
 
 -- ─── helpers ────────────────────────────────────────────────────────────
 

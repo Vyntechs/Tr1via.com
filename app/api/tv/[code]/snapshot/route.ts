@@ -135,7 +135,13 @@ export async function GET(
       .select("*")
       .eq("game_id", currentGame.id);
     if (scoreRows) {
+      // game_scores is a LEFT JOIN view so player_id + display_name can
+      // technically be null. In practice every game_participation pins a
+      // real player; drop the safety-null rows defensively.
       scores = scoreRows
+        .filter((r): r is typeof r & { player_id: string; display_name: string } =>
+          r.player_id !== null && r.display_name !== null,
+        )
         .map((r) => ({
           player_id: r.player_id,
           display_name: r.display_name,
@@ -181,7 +187,8 @@ export async function GET(
         player_name: playerMap.get(a.player_id) ?? "—",
         ms_to_lock: Number(a.ms_to_lock ?? 0),
         is_correct: a.is_correct,
-        chosen_index: a.chosen_index,
+        // DB CHECK constraint enforces 0-3; narrow for the consumer.
+        chosen_index: a.chosen_index as 0 | 1 | 2 | 3,
       }));
       liveAnswers.sort((a, b) => a.ms_to_lock - b.ms_to_lock);
     }

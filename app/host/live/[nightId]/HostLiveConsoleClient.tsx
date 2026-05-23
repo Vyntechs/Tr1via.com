@@ -191,7 +191,9 @@ export function HostLiveConsoleClient({
   );
   const scoreByPlayer = useMemo(() => {
     const map = new Map<string, GameScoreRow>();
-    for (const s of scores) map.set(s.player_id, s);
+    // GameScoreRow.player_id is nullable because game_scores is a LEFT
+    // JOIN view; in practice it never is. Skip defensively.
+    for (const s of scores) if (s.player_id) map.set(s.player_id, s);
     return map;
   }, [scores]);
   const lockedPlayerIds = useMemo(

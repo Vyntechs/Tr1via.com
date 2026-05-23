@@ -6,6 +6,7 @@
 
 "use client";
 
+import { useCallback, useRef, useState } from "react";
 import {
   useTheme,
   Wordmark,
@@ -33,8 +34,23 @@ export interface PlayerWinnerCardProps {
   stats?: PlayerWinnerCardStat[];
   /** Caption beneath the trading card. */
   blurb?: string;
-  /** Fired when the user taps "Save your card". */
+  /**
+   * Optional override for the "Save your card" handler. If omitted, the card
+   * renders itself to PNG via html-to-image and triggers a browser download.
+   */
   onSave?: () => void;
+}
+
+function slugifyForFilename(input: string): string {
+  return (
+    input
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/(^-|-$)/g, "")
+      .slice(0, 40) || "card"
+  );
 }
 
 const DEFAULT_STATS: PlayerWinnerCardStat[] = [
@@ -54,6 +70,43 @@ export function PlayerWinnerCard({
   onSave,
 }: PlayerWinnerCardProps = {}) {
   const { t, themeKey } = useTheme();
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  // Default save handler: render the trading-card panel to a PNG via
+  // html-to-image and trigger a browser download. We dynamic-import the
+  // library so its ~30KB stays out of the initial bundle.
+  const handleSave = useCallback(async () => {
+    if (onSave) {
+      onSave();
+      return;
+    }
+    const node = cardRef.current;
+    if (!node) return;
+    setSaveState("saving");
+    try {
+      const { toPng } = await import("html-to-image");
+      const dataUrl = await toPng(node, {
+        // Bump pixel ratio so the saved card is crisp on retina screens.
+        pixelRatio: Math.min((typeof window !== "undefined" && window.devicePixelRatio) || 2, 3),
+        cacheBust: true,
+        backgroundColor: t.paper,
+      });
+      const filename = `tr1via-${slugifyForFilename(venueName)}-${slugifyForFilename(nightDateLabel)}.png`;
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setSaveState("saved");
+      window.setTimeout(() => setSaveState("idle"), 2200);
+    } catch (err) {
+      console.error("[PlayerWinnerCard] toPng failed", err);
+      setSaveState("error");
+      window.setTimeout(() => setSaveState("idle"), 2200);
+    }
+  }, [onSave, t.paper, venueName, nightDateLabel]);
 
   return (
     <PhoneScreen>
@@ -69,6 +122,7 @@ export function PlayerWinnerCard({
 
         {/* Trading-card panel — designed to screenshot well */}
         <div
+          ref={cardRef}
           style={{
             marginTop: 18,
             background: t.accent,
@@ -144,7 +198,13 @@ export function PlayerWinnerCard({
         <div style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 8, paddingTop: 14 }}>
           <button
             type="button"
-            onClick={onSave}
+            onClick={handleSave}
+            disabled={saveState === "saving"}
+            aria-label={
+              saveState === "saving"
+                ? "Saving your winner card to a PNG"
+                : "Save your winner card as a PNG image"
+            }
             style={{
               background: t.ink,
               color: t.paper,
@@ -154,11 +214,12 @@ export function PlayerWinnerCard({
               fontSize: 15,
               fontWeight: 700,
               fontFamily: "var(--font-sans)",
-              cursor: onSave ? "pointer" : "default",
+              cursor: saveState === "saving" ? "progress" : "pointer",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
               gap: 8,
+              opacity: saveState === "saving" ? 0.7 : 1,
             }}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -171,7 +232,13 @@ export function PlayerWinnerCard({
                 transform="rotate(180 8 7.5)"
               />
             </svg>
-            Save your card
+            {saveState === "saving"
+              ? "Saving…"
+              : saveState === "saved"
+                ? "Saved!"
+                : saveState === "error"
+                  ? "Couldn’t save — try again"
+                  : "Save your card"}
           </button>
           <div
             style={{
@@ -182,7 +249,7 @@ export function PlayerWinnerCard({
               letterSpacing: "0.06em",
             }}
           >
-            SAVES TO YOUR PHOTOS
+            SAVES A PNG TO YOUR DOWNLOADS
           </div>
         </div>
       </div>
