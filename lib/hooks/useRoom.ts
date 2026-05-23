@@ -98,6 +98,40 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
 
     const supa = getSupabaseBrowser();
 
+    /**
+     * Re-fetch the moving parts of the snapshot — games (state may have
+     * flipped ready→live), the live question (played_at / finished_at), and
+     * answers for the live question. We hit these via HTTP through the
+     * browser client, which attaches x-tr1via-device, so RLS gives the player
+     * read access. Called as a fallback whenever a broadcast event arrives,
+     * since postgres_changes can drop events for device-authed players.
+     */
+    async function refreshLiveState(nightId: string, questionId?: string): Promise<void> {
+      if (cancelled) return;
+      const [gamesRes, qRes] = await Promise.all([
+        supa
+          .from("games")
+          .select("*")
+          .eq("night_id", nightId)
+          .order("game_no", { ascending: true }),
+        questionId
+          ? supa.from("questions").select("*").eq("id", questionId).maybeSingle()
+          : Promise.resolve({ data: null, error: null }),
+      ]);
+      if (cancelled) return;
+      const nextGames = (gamesRes.data ?? null) as GameRow[] | null;
+      const nextQ = (qRes.data ?? null) as QuestionRow | null;
+      setSnapshot((prev) => {
+        const games = nextGames ?? prev.games;
+        return {
+          ...prev,
+          games,
+          currentGame: pickCurrentGame(games),
+          currentQuestion: nextQ ?? prev.currentQuestion,
+        };
+      });
+    }
+
     async function bootstrap() {
       // Look up the night by room code first (server route bypasses RLS
       // since we don't yet have a player session here).
@@ -193,6 +227,13 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
             serverNow: String(p.serverNow),
             revealedAt: typeof p.revealedAt === "string" ? p.revealedAt : undefined,
           });
+          // Realtime postgres_changes don't reliably reach phones (Realtime's
+          // RLS evaluation differs from REST's — the x-tr1via-device header
+          // isn't forwarded over WebSocket). Refresh the live state over
+          // HTTP, where the browser client DOES attach the device header
+          // and RLS sees the player. Updates the games table (state may
+          // have flipped to "live") AND the live question (played_at stamp).
+          void refreshLiveState(nightId, String(p.questionId));
         })
         .on("broadcast", { event: "undo" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;
@@ -201,6 +242,9 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
           });
+          // Re-sync after undo so the question state (played_at cleared)
+          // propagates immediately to the player.
+          void refreshLiveState(nightId, String(p.questionId));
         })
         .on("broadcast", { event: "resolve" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;
@@ -214,6 +258,11 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
               ? (p.awards as BroadcastTag["awards"])
               : undefined,
           });
+          // Same fallback as reveal: pull current state over HTTP so the
+          // finished_at stamp + any answer rows propagate even when
+          // postgres_changes doesn't land. Flips the room state machine
+          // into RevealView.
+          void refreshLiveState(nightId, String(p.questionId));
         })
         .on("broadcast", { event: "end-early" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;
@@ -222,6 +271,9 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
           });
+          // End-early = manual reveal of the answer. Pull the latest
+          // question state so the reveal screen renders without delay.
+          void refreshLiveState(nightId, String(p.questionId));
         })
         .subscribe();
       channelHandles.push(() => {
