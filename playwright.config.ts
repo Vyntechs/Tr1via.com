@@ -23,5 +23,12 @@ export default defineConfig({
     url: BASE_URL,
     reuseExistingServer: !process.env.CI,
     timeout: 60_000,
+    // Gate /api/_test/* routes open and mock external services for the test
+    // run. These env vars MUST mirror tests/e2e/helpers/env.ts (TEST_SECRET).
+    env: {
+      TEST_AUTH_ENABLED: "1",
+      TEST_SECRET: "local-test-secret",
+      MOCK_EXTERNAL: "1",
+    },
   },
 });

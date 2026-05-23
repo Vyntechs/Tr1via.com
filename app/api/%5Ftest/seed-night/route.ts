@@ -3,7 +3,10 @@
 //   - "happy-path-3-cats-game1": 3 categories of 7 picked questions in game 1
 //   - "two-games-ready": same + 1 category in game 2
 //   - "empty-night": no categories
-// Returns: {nightId, roomCode, game1, game2, categories}
+// Returns: {nightId, roomCode, game1, game2, categories:[{id,name,position,
+// question_ids:[uuid, ...]}]}. question_ids are returned sorted ascending by
+// point_value (100 -> 700) so tests can drive a category through reveal one
+// question at a time without a separate fetch.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -64,7 +67,13 @@ export async function POST(req: NextRequest) {
   const game2 = games.find((g) => g.game_no === 2)!;
 
   if (scenario === "empty-night") {
-    return NextResponse.json({ nightId: night.id, roomCode: night.room_code, game1, game2, categories: [] });
+    return NextResponse.json({
+      nightId: night.id,
+      roomCode: night.room_code,
+      game1,
+      game2,
+      categories: [] as { id: string; name: string; position: number; question_ids: string[] }[],
+    });
   }
 
   // 3 categories, 7 questions each, point values 100..700, all picked + ready
@@ -114,14 +123,36 @@ export async function POST(req: NextRequest) {
       });
     }
   }
-  const { error: qErr } = await admin.from("questions").insert(rows);
-  if (qErr) return NextResponse.json({ error: qErr.message }, { status: 500 });
+  const { data: insertedQs, error: qErr } = await admin
+    .from("questions")
+    .insert(rows)
+    .select("id, category_id, point_value");
+  if (qErr || !insertedQs) {
+    return NextResponse.json({ error: qErr?.message ?? "questions insert failed" }, { status: 500 });
+  }
+
+  // Group question ids by category, sorted ascending by point_value so the
+  // first id is the 100-pointer, the seventh is the 700-pointer. This lets
+  // tests march a category through reveal without a follow-up fetch.
+  const questionIdsByCategory = new Map<string, string[]>();
+  for (const cat of cats) questionIdsByCategory.set(cat.id, []);
+  const sortedQs = [...insertedQs].sort(
+    (a, b) => (a.point_value ?? 0) - (b.point_value ?? 0),
+  );
+  for (const q of sortedQs) {
+    const list = questionIdsByCategory.get(q.category_id);
+    if (list) list.push(q.id);
+  }
+  const categoriesWithQs = cats.map((c) => ({
+    ...c,
+    question_ids: questionIdsByCategory.get(c.id) ?? [],
+  }));
 
   return NextResponse.json({
     nightId: night.id,
     roomCode: night.room_code,
     game1,
     game2,
-    categories: cats,
+    categories: categoriesWithQs,
   });
 }
