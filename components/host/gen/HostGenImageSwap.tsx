@@ -54,6 +54,14 @@ export interface HostGenImageSwapProps {
   onBack?: () => void;
   /** True while the photo patch / refresh is in flight. */
   isSaving?: boolean;
+  /**
+   * Pexels lookup failure — renders an inline banner inside the gallery
+   * region with a Retry button. The parent clears this by re-issuing
+   * the lookup (`onLoadMore`).
+   */
+  errorMessage?: string | null;
+  /** Called when the host taps "Try again" on the error banner. */
+  onErrorRetry?: () => void;
 }
 
 const DEMO_CANDIDATES: HostGenPhotoCandidate[] = [
@@ -91,6 +99,8 @@ function HostGenImageSwapInner({
   onLoadMore,
   onBack,
   isSaving = false,
+  errorMessage = null,
+  onErrorRetry,
 }: Omit<HostGenImageSwapProps, "themeKey">) {
   const { t } = useTheme();
   const cc = categoryColor(topic, t.accent);
@@ -135,6 +145,71 @@ function HostGenImageSwapInner({
               </button>
             ))}
           </div>
+
+          {errorMessage && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 18,
+                padding: "14px 16px",
+                borderRadius: 12,
+                background: t.dark
+                  ? "rgba(156,47,47,.18)"
+                  : "rgba(156,47,47,.08)",
+                border: `1px solid ${
+                  t.dark
+                    ? "rgba(255,140,120,.30)"
+                    : "rgba(156,47,47,.30)"
+                }`,
+                color: t.ink,
+                fontSize: 13.5,
+                lineHeight: 1.5,
+                fontWeight: 500,
+                display: "flex",
+                gap: 14,
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>{errorMessage}</span>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={onErrorRetry}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${t.ink}`,
+                    background: t.ink,
+                    color: t.paper,
+                    fontSize: 12.5,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "var(--font-sans)",
+                  }}
+                >
+                  Try again
+                </button>
+                <button
+                  type="button"
+                  onClick={onOpenUpload}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${t.line}`,
+                    background: "transparent",
+                    color: t.inkMid,
+                    fontSize: 12.5,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: "var(--font-sans)",
+                  }}
+                >
+                  Upload your own
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* From the library */}
           <div style={{ marginTop: 18, flex: 1, overflow: "auto", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, gridAutoRows: "130px", paddingBottom: 24 }}>

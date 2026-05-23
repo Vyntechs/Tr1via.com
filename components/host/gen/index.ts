@@ -49,3 +49,12 @@ export type { HostGenFlavorProps } from "./HostGenFlavor";
 
 export { HostGenLaunch } from "./HostGenLaunch";
 export type { HostGenLaunchProps } from "./HostGenLaunch";
+
+export { HostGenError } from "./HostGenError";
+export type { HostGenErrorProps } from "./HostGenError";
+
+export { HostGenManualEntry } from "./HostGenManualEntry";
+export type {
+  HostGenManualEntryProps,
+  HostGenManualQuestionInput,
+} from "./HostGenManualEntry";

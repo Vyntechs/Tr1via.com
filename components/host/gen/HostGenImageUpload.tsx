@@ -44,6 +44,14 @@ export interface HostGenImageUploadProps {
   onFileChosen?: (file: File) => void;
   /** Called when the user taps "Back to library". */
   onBack?: () => void;
+  /**
+   * Last upload failure surfaced inline. Renders an alert banner over
+   * the drop zone with a Retry button. The parent owns clearing this
+   * (typically once the host picks a new file or cancels).
+   */
+  errorMessage?: string | null;
+  /** Called when the host taps "Try again" on the error banner. */
+  onErrorRetry?: () => void;
 }
 
 export function HostGenImageUpload(props: HostGenImageUploadProps) {
@@ -74,6 +82,8 @@ function HostGenImageUploadInner({
   uploadPercent = 68,
   onFileChosen,
   onBack,
+  errorMessage = null,
+  onErrorRetry,
 }: Omit<HostGenImageUploadProps, "themeKey">) {
   const { t } = useTheme();
   const cc = categoryColor(topic, t.accent);
@@ -110,6 +120,77 @@ function HostGenImageUploadInner({
             onChange={handleFileChange}
             style={{ display: "none" }}
           />
+
+          {errorMessage && (
+            <div
+              role="alert"
+              style={{
+                marginTop: 18,
+                padding: "12px 14px",
+                borderRadius: 10,
+                background: t.dark
+                  ? "rgba(156,47,47,.18)"
+                  : "rgba(156,47,47,.08)",
+                border: `1px solid ${
+                  t.dark
+                    ? "rgba(255,140,120,.30)"
+                    : "rgba(156,47,47,.30)"
+                }`,
+                color: t.ink,
+                fontSize: 13,
+                lineHeight: 1.5,
+                fontWeight: 500,
+                display: "flex",
+                gap: 12,
+                alignItems: "center",
+                justifyContent: "space-between",
+              }}
+            >
+              <span>{errorMessage}</span>
+              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (onErrorRetry) {
+                      onErrorRetry();
+                    } else {
+                      fileInputRef.current?.click();
+                    }
+                  }}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${t.ink}`,
+                    background: t.ink,
+                    color: t.paper,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                    fontFamily: "var(--font-sans)",
+                  }}
+                >
+                  Try again
+                </button>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 8,
+                    border: `1px solid ${t.line}`,
+                    background: "transparent",
+                    color: t.inkMid,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    fontFamily: "var(--font-sans)",
+                  }}
+                >
+                  Pick another file
+                </button>
+              </div>
+            </div>
+          )}
 
           <button
             type="button"
