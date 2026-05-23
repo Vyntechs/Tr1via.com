@@ -4,13 +4,14 @@
 
 ---
 
-## State as of 2026-05-23 (afternoon)
+## State as of 2026-05-23 (evening)
 
 **Live, deployed, working:**
 - Repo: <https://github.com/Vyntechs/Tr1via.com> (main branch is canonical)
-- 17+ commits today; all pushed.
-- TypeScript build clean. **178/178 tests pass.** 30+ routes registered.
-- **tr1via.com is live and auto-deploying from `main`** — every push triggers a fresh build (~28s) and serves within ~60s. Verified end-to-end.
+- 19+ commits today; all pushed.
+- TypeScript build clean. **178/178 tests pass.** ~40 routes registered (including the 7 `/dev/*` galleries).
+- **tr1via.com is live and auto-deploying from `main`** — every push triggers a fresh build (~28s) and serves within ~60s. Verified end-to-end across 6+ pushes.
+- All 11 phases of the build plan are now complete (Phases 0–10 plus the deploy verification in 11). What's left is a real-device smoke run.
 
 **Production resources (canonical, what to use going forward):**
 - Supabase project **Trivia** — ref `citweuctcnuxmqjxcbiz`. All 4 migrations applied (schema, RLS, Realtime, storage). 13 tables + `game_scores` view + `resolve_question` proc. Types generated from live schema and committed to `lib/supabase/types.ts`.
@@ -83,7 +84,7 @@ If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team
 - Host laptop: `/host`, `/host/onboarding`, `/host/setup/[nightId]`, `/host/setup/[nightId]/topic`, `/host/setup/[nightId]/pick/[categoryId]`, `/host/live/[nightId]`
 - Host phone: `/host/phone/[nightId]`
 - Auth: `/login`, `/auth/callback`, `/auth/onboarding-complete`
-- Dev galleries: `/_dev/system`, `/_dev/player`, `/_dev/tv`, `/_dev/host`, `/_dev/host/gen`, `/_dev/tv/lockin`
+- Dev galleries: `/dev` (index), `/dev/system`, `/dev/player`, `/dev/tv`, `/dev/host`, `/dev/host/gen`, `/dev/tv/lockin` — note: NOT `/_dev/*`. Next.js treats underscore-prefixed folders as private and excludes them from routing. Earlier HANDOFFs documented `/_dev/*` paths; those never worked.
 
 ---
 
@@ -103,8 +104,20 @@ If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team
 
 **Phase 11 — Deploy:** ✓ Git auto-deploy verified working; `tr1via.com` attached + serving fresh artifacts.
 
-**What's NOT yet done (full smoke checklist):**
-- End-to-end host flow: sign up → create night → add category → generate questions → open room → 2+ phones join → reveals → answers → resolve → leaderboard → intermission → game 2 → finale. (The pieces all work in isolation; needs a real-device manual run.)
+**What's NOT yet done:**
+
+1. **End-to-end smoke check on real devices** (the only material blocker before "launch"):
+   - host laptop → /login (magic-link arrives in inbox?)
+   - host onboarding → first night row created
+   - host setup → pick a category → wait for Claude generation → if it fails, the new failure UI surfaces and the manual-entry route works
+   - host opens room → TV shows lobby with QR + room code → 2+ phones scan, type names, see the lobby
+   - host reveals → TV shows the question + the lock-in pile fills as phones tap → T+20 reveals correct/wrong on every surface in sync
+   - intermission → game 2 → opt-in flow → finale → winner card + recap
+
+2. **Nice-to-haves not in scope but worth flagging:**
+   - The host-side "first-night-ever" celebration (`OnboardingFirstNightDone` exists but isn't wired to fire when the host finishes their first night). Player-side "Made it!" toast for the palette egg is done; this is the host counterpart.
+   - Junk Vercel projects can be deleted in the dashboard (~15 UUID-named + `talknndone`, `frontend`, `soulfire-trivia`). Pure cleanup.
+   - `next lint` is broken (Next 16 dropped `next lint`). Not a regression — would need either ESLint config + script update OR adopting Biome. Skip unless lint is blocking something.
 
 ---
 
@@ -117,8 +130,10 @@ If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team
 
 ## How to resume
 
-1. Phase 10.3 is committed (`feat(host): generation failure UI + manual entry + Pexels/upload error surfacing`). All 178 tests pass; TS clean.
-2. Smoke-test the live site on tr1via.com — visit `/join`, `/host/login`, walk through the full host flow on a real laptop + 2 phones.
-3. Optional cleanup: delete the throwaway Vercel projects listed under DO NOT TOUCH (Brandon does this in the dashboard).
+`git pull` then `npm install`. Then:
 
-Don't re-do any of the completed phases. The plan at `docs/superpowers/plans/2026-05-23-tr1via.md` is the authoritative scope.
+1. **Spot-check the live site.** Visit <https://tr1via.com> — should show the placeholder home with links to `/dev/system` (design canvas) and `/dev` (gallery index). Visit `/join` — should render PlayerJoin with the editable name field.
+2. **Decide what's next with Brandon.** Likely candidates: the real-device smoke run (highest value, can't be done by Claude alone), the OnboardingFirstNightDone host wiring (small, isolated), or whatever surfaces from the smoke run.
+3. **For Claude: don't re-do completed phases.** The build plan at `docs/superpowers/plans/2026-05-23-tr1via.md` is the authoritative scope; Phases 0–10 are all complete and tested. Always check `git log` and `npm test` before assuming anything's broken.
+
+If Vercel feels off again: check `vercel ls tr1via` from the CLI (NOT the Vercel MCP — see Two-Vercel-account note above; the MCP sees the wrong team). The CLI is logged into Brandon's real account.
