@@ -8,30 +8,23 @@
 
 **Live, deployed, working:**
 - Repo: <https://github.com/Vyntechs/Tr1via.com> (main branch is canonical)
-- 11 commits today; all pushed.
+- 12+ commits today; all pushed.
 - TypeScript build clean. 105/105 tests pass. 30+ routes registered.
+- **tr1via.com is live and auto-deploying from `main`** — verified via curl: HTTP 200, TR1VIA wordmark renders, ThemeProvider mounts, fonts load. `/join` returns 200.
 
-**Live but unverified end-to-end:**
+**Production resources (canonical, what to use going forward):**
 - Supabase project **Trivia** — ref `citweuctcnuxmqjxcbiz`. All 4 migrations applied (schema, RLS, Realtime, storage). 13 tables + `game_scores` view + `resolve_question` proc. Types generated from live schema and committed to `lib/supabase/types.ts`.
-- Vercel project **tr1via** — slug `talknndone`, id `prj_dX5YFvxLjt3G1olYFj6rdec2jIr6`, team id `team_X2HCfoLF0Us6hAsVbRfsgH9K`. Env vars set in dashboard: `PEXELS_API_KEY`, `ANTHROPIC_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SESSION_SECRET`, `NEXT_PUBLIC_SITE_URL`. Most recent build artifact: from April 21 — recent "deploys" are all **redeploys of that stale artifact**, not fresh builds from `main`.
+- Vercel project **tr1via** — id `prj_dsHB5DhLhWSuBBXDLCVT5JC7INO8`, in Brandon's personal Vercel account `brandon-nichols-projects-f7e6d2a9` (team id `team_pIz2bArnD9WKAfzxYWoPtvSd`). Git auto-deploy IS connected to `Vyntechs/Tr1via.com#main`. All 7 env vars set in dashboard: `PEXELS_API_KEY`, `ANTHROPIC_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SESSION_SECRET`, `NEXT_PUBLIC_SITE_URL`. Domain `tr1via.com` + `www.tr1via.com` attached.
+
+**Two-Vercel-account note:** Brandon has two Vercel logins:
+- `brandon-5701` (personal, `brandon.james.nichols@gmail.com`) — **the real account.** Owns tr1via.com + all domains. CLI on his laptop is logged in here. The `tr1via` project lives here. THIS is the source of truth.
+- `thebrandonnichols-5376` (a separate team, `thebrandonnichols@gmail.com`, team id `team_X2HCfoLF0Us6hAsVbRfsgH9K`) — old account, MCP token happens to be wired here. Has a stale `talknndone` project from April 12 with env vars but no domain. Earlier HANDOFFs mistakenly documented this project; ignore it.
+
+If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team. For accurate state, use the CLI (`vercel ls`, `vercel inspect`) from this repo — it's already linked to the real `tr1via` project via `.vercel/repo.json`.
 
 **DO NOT TOUCH:**
 - Supabase project **Vyntechs Auto** (ref `ynmtszuybeenjbigxdyl`). Different product, off-limits.
-
----
-
-## Immediate blocker
-
-Vercel's git auto-deploy is NOT triggering on push. As of commit `aaafc35` (pushed 2026-05-23) the API still shows no git-driven deploys — only manual redeploys of the Apr 21 artifact.
-
-**Check:** Vercel dashboard → tr1via → Settings → Git:
-- Connected repo must be `Vyntechs/Tr1via.com`
-- Production branch must be `main`
-- If something is off, click Disconnect → Reconnect → pick `Vyntechs/Tr1via.com` → save
-
-After fixing, push any commit (or run `npx vercel --prod` locally) to verify a fresh build runs. Build logs via MCP: `get_deployment_build_logs(idOrUrl, teamId)`.
-
-Also check Settings → Domains — `tr1via.com` should be attached. The MCP showed only `*.vercel.app` URLs as of the last check.
+- Old/throwaway Vercel projects in the personal account: `talknndone`, `frontend`, `soulfire-trivia`, and ~15 UUID-named projects (all from earlier experiments). Brandon can delete these in the dashboard when convenient; they're not load-bearing.
 
 ---
 
