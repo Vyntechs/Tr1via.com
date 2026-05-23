@@ -224,3 +224,21 @@ export async function requireOwnedPlayer(
   }
   return { ok: true, player: player as PlayerRow };
 }
+
+/**
+ * Founder-only gate. Wraps getAuthedHost and additionally requires the
+ * authed host's role to be 'founder'. Returns the host row on success so
+ * call sites can record audit fields (comped_by = founder.id).
+ *
+ * Used by every /api/admin/* route. The DB has a unique partial index
+ * making 'founder' a singleton — so this resolves to one specific user
+ * (Brandon) in production.
+ */
+export async function requireFounder(): Promise<HostAuthResult> {
+  const auth = await getAuthedHost();
+  if (!auth.ok) return auth;
+  if (auth.host.role !== "founder") {
+    return { ok: false, status: 403, error: "founder only" };
+  }
+  return auth;
+}
