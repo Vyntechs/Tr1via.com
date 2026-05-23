@@ -10,6 +10,7 @@
 
 import type { ReactNode } from "react";
 import { PalettePeekProvider } from "@/components/player/PalettePeekProvider";
+import { ConnectionRibbonProvider } from "@/components/player/ConnectionRibbonProvider";
 
 export default function PlayerLayout({ children }: { children: ReactNode }) {
   return (
@@ -27,6 +28,7 @@ export default function PlayerLayout({ children }: { children: ReactNode }) {
         overflowX: "hidden",
       }}
     >
+      <ConnectionRibbonProvider />
       {children}
       <PalettePeekProvider />
     </div>
