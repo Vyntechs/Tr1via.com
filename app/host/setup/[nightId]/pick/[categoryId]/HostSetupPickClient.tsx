@@ -21,6 +21,7 @@ import {
   HostGenLoading,
   HostGenPick,
   HostGenEdit,
+  HostGenError,
   HostGenImageSwap,
   HostGenImageUpload,
   type DifficultyTarget,
@@ -31,6 +32,7 @@ import {
 } from "@/components/host/gen";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { QuestionRow, CategoryRow } from "@/lib/supabase/types";
+import { useGenerationStatus } from "@/lib/hooks/useGenerationStatus";
 
 export interface HostSetupPickClientProps {
   nightId: string;
@@ -46,6 +48,28 @@ type ModalState =
   | { kind: "edit"; questionId: string }
   | { kind: "swap"; questionId: string }
   | { kind: "upload"; questionId: string };
+
+/**
+ * Translate the various failure paths into a single host-facing message.
+ * Internal stack traces and HTTP detail are abstracted away — the host
+ * cares whether to retry or to bail to manual entry.
+ */
+function explainGenerationFailure(input: {
+  broadcastMessage: string | null;
+  fromTimeout: boolean;
+  fromRollback: boolean;
+}): string {
+  if (input.broadcastMessage && input.broadcastMessage.trim().length > 0) {
+    return input.broadcastMessage;
+  }
+  if (input.fromRollback) {
+    return "The generator gave up partway through. A retry usually works.";
+  }
+  if (input.fromTimeout) {
+    return "Anthropic took longer than 60 seconds without sending back a single question. That's almost always a slow upstream — retry, or type your seven by hand.";
+  }
+  return "Something went sideways while pulling your questions.";
+}
 
 export function HostSetupPickClient({
   nightId,
@@ -68,8 +92,14 @@ export function HostSetupPickClient({
   const [savingEdit, setSavingEdit] = useState(false);
   const [savingPhoto, setSavingPhoto] = useState(false);
   const [uploadState, setUploadState] = useState<"idle" | "uploading">("idle");
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const [photoCandidates, setPhotoCandidates] = useState<HostGenPhotoCandidate[]>([]);
+  const [photoLookupError, setPhotoLookupError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [generationFailureMessage, setGenerationFailureMessage] = useState<
+    string | null
+  >(null);
+  const [retrying, setRetrying] = useState(false);
 
   // ── live subscription ────────────────────────────────────────────────
   useEffect(() => {
@@ -102,7 +132,15 @@ export function HostSetupPickClient({
       .on("broadcast", { event: "error" }, (msg) => {
         if (cancelled) return;
         const payload = msg.payload as { error?: string };
-        setError(payload.error ?? "Generation failed. Try again.");
+        // Keep the generation-failure UI persistent; the toast banner
+        // is for transient errors (edit/lock/upload) only.
+        setGenerationFailureMessage(
+          explainGenerationFailure({
+            broadcastMessage: payload.error ?? null,
+            fromTimeout: false,
+            fromRollback: true,
+          }),
+        );
         setState("draft");
       })
       .subscribe();
@@ -134,6 +172,41 @@ export function HostSetupPickClient({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── safety net: timeout + DB-polling fallback for the broadcast ──────
+  const watchStatus = useGenerationStatus({
+    categoryId,
+    state,
+    loadedCount: questions.length,
+    timeoutMs: 60_000,
+    pollIntervalMs: 5_000,
+  });
+
+  useEffect(() => {
+    if (watchStatus.kind === "timeout" && !generationFailureMessage) {
+      setGenerationFailureMessage(
+        explainGenerationFailure({
+          broadcastMessage: null,
+          fromTimeout: true,
+          fromRollback: false,
+        }),
+      );
+      setState("draft");
+    } else if (
+      watchStatus.kind === "rolled-back" &&
+      !generationFailureMessage
+    ) {
+      setGenerationFailureMessage(
+        explainGenerationFailure({
+          broadcastMessage: null,
+          fromTimeout: false,
+          fromRollback: true,
+        }),
+      );
+      setState("draft");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchStatus.kind]);
 
   // ── pick toggling ────────────────────────────────────────────────────
   function togglePick(questionId: string) {
@@ -231,14 +304,39 @@ export function HostSetupPickClient({
   }
 
   // ── photo swap (GET /api/questions/[id]/photos + PATCH photo) ───────
+  /**
+   * Translate a Pexels failure status into a host-actionable inline
+   * message. The host doesn't care about HTTP codes — she needs to know
+   * "wait a bit and retry" vs "no results — type your own description."
+   */
+  function explainPhotoLookupFailure(
+    rawMessage: string | undefined,
+    status: number,
+  ) {
+    if (status === 503) {
+      return "Pexels is being slow right now. Wait a few seconds and try again, or upload your own photo instead.";
+    }
+    if (status === 401 || status === 403) {
+      return "Image search isn't reachable from your account. Upload a photo instead.";
+    }
+    if (status >= 500 || status === 0) {
+      return "Image search hit a hiccup. Retry, or upload your own photo.";
+    }
+    return rawMessage?.trim()
+      ? rawMessage
+      : "Couldn't load alternative photos. Try again or upload your own.";
+  }
+
   async function openSwap(questionId: string) {
     setModal({ kind: "swap", questionId });
     setPhotoCandidates([]);
+    setPhotoLookupError(null);
     try {
       const res = await fetch(`/api/questions/${questionId}/photos`);
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "could not load alternatives");
+        setPhotoLookupError(explainPhotoLookupFailure(body.error, res.status));
+        return;
       }
       interface PexelsPhoto {
         id: number;
@@ -251,9 +349,20 @@ export function HostSetupPickClient({
         url: p.src?.large ?? p.src?.medium ?? "",
         attribution: p.photographer,
       }));
+      if (candidates.length === 0) {
+        setPhotoLookupError(
+          "Pexels didn't find any matches for this question. Upload your own photo or skip the image.",
+        );
+        return;
+      }
       setPhotoCandidates(candidates);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not load alternatives.");
+      setPhotoLookupError(
+        explainPhotoLookupFailure(
+          err instanceof Error ? err.message : undefined,
+          0,
+        ),
+      );
     }
   }
 
@@ -288,10 +397,47 @@ export function HostSetupPickClient({
   }
 
   // ── photo upload (POST /api/images/upload) ───────────────────────────
+  /**
+   * Map a server upload error to a host-actionable message. The host
+   * doesn't care about Supabase Storage error codes — she cares whether
+   * to pick a different file, shrink it, or retry.
+   */
+  function explainUploadFailure(rawMessage: string | undefined, status: number) {
+    const msg = (rawMessage ?? "").toLowerCase();
+    if (msg.includes("too large")) {
+      return "That file is over 10 MB. Try a smaller export or compress it first.";
+    }
+    if (msg.includes("supported image") || msg.includes("not a supported")) {
+      return "That file isn't a PNG, JPEG, WEBP, or GIF. Pick a different image.";
+    }
+    if (msg.includes("empty file")) {
+      return "That file came through empty. Try saving and uploading again.";
+    }
+    if (status === 401 || status === 403) {
+      return "Your sign-in expired. Refresh the page and try again.";
+    }
+    if (status === 0 || status >= 500) {
+      return "Storage didn't accept the upload. Try again in a moment.";
+    }
+    return rawMessage?.trim()
+      ? rawMessage
+      : "The upload didn't go through. Try a different file or retry.";
+  }
+
   async function handleUploadFile(file: File) {
     if (modal.kind !== "upload") return;
     setUploadState("uploading");
     setError(null);
+    setUploadError(null);
+    // Client-side belt: catch the obvious too-large file BEFORE we burn
+    // a round-trip. The server enforces this too.
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError(
+        "That file is over 10 MB. Try a smaller export or compress it first.",
+      );
+      setUploadState("idle");
+      return;
+    }
     try {
       const form = new FormData();
       form.set("file", file);
@@ -302,7 +448,8 @@ export function HostSetupPickClient({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "upload failed");
+        setUploadError(explainUploadFailure(body.error, res.status));
+        return;
       }
       const { question } = (await res.json()) as { question: Partial<QuestionRow> };
       setQuestions((prev) =>
@@ -310,11 +457,67 @@ export function HostSetupPickClient({
       );
       setModal({ kind: "none" });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed.");
+      // Network-layer failure (fetch rejected). Treat as a transient.
+      setUploadError(
+        explainUploadFailure(
+          err instanceof Error ? err.message : undefined,
+          0,
+        ),
+      );
     } finally {
       setUploadState("idle");
     }
   }
+
+  // ── recovery: retry generation or bail to manual entry ───────────────
+  async function handleRetryGeneration() {
+    setRetrying(true);
+    setGenerationFailureMessage(null);
+    try {
+      const res = await fetch(`/api/categories/${categoryId}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          difficulty,
+          flavor: flavor.length > 0 ? flavor : undefined,
+        }),
+      });
+      if (!res.ok && res.status !== 202 && res.status !== 409) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setGenerationFailureMessage(
+          explainGenerationFailure({
+            broadcastMessage: body.error ?? null,
+            fromTimeout: false,
+            fromRollback: true,
+          }),
+        );
+        return;
+      }
+      if (res.status === 202 || res.status === 409) {
+        setState("generating");
+      }
+    } catch (err) {
+      setGenerationFailureMessage(
+        explainGenerationFailure({
+          broadcastMessage:
+            err instanceof Error ? err.message : null,
+          fromTimeout: false,
+          fromRollback: true,
+        }),
+      );
+    } finally {
+      setRetrying(false);
+    }
+  }
+
+  function handleEnterManually() {
+    router.push(
+      `/host/setup/${nightId}/pick/${categoryId}/manual`,
+    );
+  }
+
+  const showGenerationFailure =
+    generationFailureMessage !== null && state !== "review" && state !== "ready";
 
   // ── mapped data for the components ───────────────────────────────────
   const loadingList = useMemo<HostGenLoadingQuestion[]>(
@@ -352,7 +555,17 @@ export function HostSetupPickClient({
 
   return (
     <>
-      {state !== "review" && state !== "ready" ? (
+      {showGenerationFailure ? (
+        <HostGenError
+          shellTitle={`generation didn't work · ${categoryName.toLowerCase()}`}
+          topic={categoryName}
+          message={generationFailureMessage}
+          onRetry={() => void handleRetryGeneration()}
+          onEnterManually={handleEnterManually}
+          onBack={() => router.push(`/host/setup/${nightId}`)}
+          isRetrying={retrying}
+        />
+      ) : state !== "review" && state !== "ready" ? (
         <HostGenLoading
           shellTitle={`pulling questions · ${categoryName.toLowerCase()}`}
           topic={categoryName}
@@ -406,11 +619,15 @@ export function HostSetupPickClient({
             currentImageUrl={swapQuestion.image_url}
             candidates={photoCandidates}
             onChoose={handleChoosePhoto}
-            onOpenUpload={() =>
-              setModal({ kind: "upload", questionId: swapQuestion.id })
-            }
+            onOpenUpload={() => {
+              setUploadError(null);
+              setModal({ kind: "upload", questionId: swapQuestion.id });
+            }}
+            onLoadMore={() => void openSwap(swapQuestion.id)}
             onBack={() => setModal({ kind: "none" })}
             isSaving={savingPhoto}
+            errorMessage={photoLookupError}
+            onErrorRetry={() => void openSwap(swapQuestion.id)}
           />
         </ModalOverlay>
       )}
@@ -422,7 +639,12 @@ export function HostSetupPickClient({
             prompt={uploadQuestion.prompt}
             state={uploadState}
             onFileChosen={(file) => void handleUploadFile(file)}
-            onBack={() => setModal({ kind: "swap", questionId: uploadQuestion.id })}
+            onBack={() => {
+              setUploadError(null);
+              setModal({ kind: "swap", questionId: uploadQuestion.id });
+            }}
+            errorMessage={uploadError}
+            onErrorRetry={() => setUploadError(null)}
           />
         </ModalOverlay>
       )}

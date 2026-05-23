@@ -17,11 +17,13 @@ import {
   HostGenLoading,
   HostGenPick,
   HostGenEdit,
+  HostGenError,
   HostGenImageSwap,
   HostGenImageUpload,
   HostGenImageUploadReady,
   HostGenFlavor,
   HostGenLaunch,
+  HostGenManualEntry,
 } from "@/components/host/gen";
 import { LockInPileUp } from "@/components/tv/lockin";
 
@@ -55,6 +57,18 @@ export default function HostGenGallery() {
       title: "Loading",
       note: "Pulling 20 questions; photos match in a second stream.",
       render: () => <HostGenLoading />,
+    },
+    {
+      step: "3·err",
+      title: "Generation failed",
+      note: "Anthropic down / timeout. Retry or fall back to manual entry.",
+      render: () => (
+        <HostGenError
+          topic="Pixar Movies"
+          shellTitle="generation didn't work · pixar movies"
+          message="Anthropic took longer than 60 seconds without sending back a single question. Retry, or type your seven by hand."
+        />
+      ),
     },
     {
       step: "4",
@@ -103,6 +117,18 @@ export default function HostGenGallery() {
       title: "Launch",
       note: "Both boards ready, room about to open.",
       render: () => <HostGenLaunch />,
+    },
+    {
+      step: "M",
+      title: "Manual entry · fallback",
+      note: "Type 7 questions by hand. Order entered = 100..700 in the board.",
+      render: () => (
+        <HostGenManualEntry
+          topic="Pixar Movies"
+          shellTitle="type 7 · pixar movies · manual"
+          eyebrow="PIXAR MOVIES · MANUAL ENTRY · 7 QUESTIONS"
+        />
+      ),
     },
   ];
 

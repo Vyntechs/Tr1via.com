@@ -99,7 +99,7 @@ If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team
 **Phase 10 — Error states + offline:**
 - 10.1 ✓ EmptyState + Spinner atoms in `components/system/`; loading.tsx + not-found.tsx across host routes; top-level `app/not-found.tsx`
 - 10.2 ✓ `useConnectionStatus` hook + ConnectionRibbon mounted in player layout; `useAnswerSubmit` with exponential-backoff retry replaces inline fetch in PlayerQuestion; visible "tap to retry" CTA after exhausted attempts
-- 10.3 IN FLIGHT (parallel agent): generation failure UI, manual entry route at `/host/setup/[nightId]/pick/[categoryId]/manual`, Pexels/upload error surfacing. Files exist on disk + type-clean + tests passing; agent finishing the commit.
+- 10.3 ✓ generation failure UI (`HostGenError` + `useGenerationStatus` 60s timeout / DB-polling safety net) wired into `HostSetupPickClient`; manual entry route at `/host/setup/[nightId]/pick/[categoryId]/manual` with `HostGenManualEntry` form (7 rows, order entered = 100..700 point values, source='host-edit'); inline Pexels lookup + upload error banners with retry/upload-alt actions in `HostGenImageSwap` + `HostGenImageUpload`. POST `/api/categories/[id]/manual` accepts 7 questions, wipes prior rows, inserts with `source='host-edit'`, flips category to 'ready'.
 
 **Phase 11 — Deploy:** ✓ Git auto-deploy verified working; `tr1via.com` attached + serving fresh artifacts.
 
@@ -117,7 +117,7 @@ If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team
 
 ## How to resume
 
-1. If Phase 10.3 isn't fully committed: the agent's files (`components/host/gen/HostGenError.tsx`, `HostGenManualEntry.tsx`, `lib/hooks/useGenerationStatus.ts`, `app/api/categories/[id]/manual/route.ts`, `app/host/setup/[nightId]/pick/[categoryId]/manual/{page,HostSetupManualClient}.tsx`, plus modifications to `HostGenImageSwap.tsx`, `HostGenImageUpload.tsx`, `gen/index.ts`, `HostSetupPickClient.tsx`) need a commit. TS is clean; tests pass.
+1. Phase 10.3 is committed (`feat(host): generation failure UI + manual entry + Pexels/upload error surfacing`). All 178 tests pass; TS clean.
 2. Smoke-test the live site on tr1via.com — visit `/join`, `/host/login`, walk through the full host flow on a real laptop + 2 phones.
 3. Optional cleanup: delete the throwaway Vercel projects listed under DO NOT TOUCH (Brandon does this in the dashboard).
 
