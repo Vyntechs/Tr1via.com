@@ -22,6 +22,9 @@ export interface PhoneScreenProps {
   /** Weather intensity 0-2.2 (>1 for the finale). */
   weatherIntensity?: number;
   style?: CSSProperties;
+  /** Forwarded data-testid for E2E tests. Applied to the outer container so
+   *  Playwright can target any phone screen by its top-level id. */
+  "data-testid"?: string;
 }
 
 export function PhoneScreen({
@@ -31,12 +34,14 @@ export function PhoneScreen({
   weather = true,
   weatherIntensity = 0.5,
   style,
+  "data-testid": dataTestId,
 }: PhoneScreenProps) {
   const { t, themeKey } = useTheme();
   const bg = fill ? fillColor ?? t.accent : t.paper;
   const fg = fill ? (t.dark ? "#0E0805" : t.paper) : t.ink;
   return (
     <div
+      data-testid={dataTestId}
       style={{
         width: "100%",
         height: "100%",

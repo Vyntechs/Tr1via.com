@@ -103,6 +103,7 @@ function TVFinaleWinnerInner({
 
   return (
     <div
+      data-testid="tv-finale-winner"
       style={{
         width: "100%",
         height: "100%",
@@ -165,15 +166,17 @@ function TVFinaleWinnerInner({
         >
           <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
             <Eyebrow color={t.accent} size={13}>WON THE NIGHT</Eyebrow>
-            <Display
-              size={220}
-              color={t.ink}
-              weight={700}
-              tracking={-0.05}
-              style={{ marginTop: 12, display: "block" }}
-            >
-              {winner.name}.
-            </Display>
+            <span data-testid="tv-finale-winner-name" style={{ display: "block" }}>
+              <Display
+                size={220}
+                color={t.ink}
+                weight={700}
+                tracking={-0.05}
+                style={{ marginTop: 12, display: "block" }}
+              >
+                {winner.name}.
+              </Display>
+            </span>
 
             <div style={{ marginTop: 18, display: "flex", alignItems: "baseline", gap: 28 }}>
               <Numeric

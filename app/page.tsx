@@ -41,6 +41,7 @@ export default function HomePage() {
 
   return (
     <main
+      data-testid="home"
       style={{
         minHeight: "100dvh",
         background: t.paper,
@@ -64,6 +65,7 @@ export default function HomePage() {
         <Wordmark size={28} />
         <Link
           href="/login"
+          data-testid="home-host-signin"
           style={{
             color: t.inkMid,
             fontFamily: "var(--font-mono)",
@@ -136,6 +138,7 @@ export default function HomePage() {
               spellCheck={false}
               inputMode="text"
               aria-label="Room code"
+              data-testid="home-room-code-input"
               style={{
                 marginTop: 10,
                 width: "100%",
@@ -163,6 +166,7 @@ export default function HomePage() {
           <button
             type="submit"
             disabled={!valid}
+            data-testid="home-find-room-btn"
             style={{
               marginTop: 24,
               background: t.accent,

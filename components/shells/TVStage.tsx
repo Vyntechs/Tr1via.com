@@ -16,12 +16,23 @@ export interface TVStageProps {
   weather?: boolean;
   weatherIntensity?: number;
   style?: CSSProperties;
+  /** Forwarded data-testid for E2E tests. Applied to the outer container so
+   *  Playwright can target any TV screen by its top-level id. */
+  "data-testid"?: string;
 }
 
-export function TVStage({ children, bg, weather = true, weatherIntensity = 1, style }: TVStageProps) {
+export function TVStage({
+  children,
+  bg,
+  weather = true,
+  weatherIntensity = 1,
+  style,
+  "data-testid": dataTestId,
+}: TVStageProps) {
   const { t, themeKey } = useTheme();
   return (
     <div
+      data-testid={dataTestId}
       style={{
         width: "100%",
         height: "100%",

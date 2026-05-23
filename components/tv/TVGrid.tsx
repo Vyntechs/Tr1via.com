@@ -102,7 +102,7 @@ function TVGridInner({
   const board = cells ?? demoCells();
 
   return (
-    <TVStage>
+    <TVStage data-testid="tv-grid">
       <TVHeader left={gameStatusLine} right={rightHeaderLine} />
 
       <div
@@ -174,6 +174,7 @@ function TVGridInner({
                   return (
                     <div
                       key={`${cIdx}-${rIdx}`}
+                      data-testid={`tv-grid-cell-${cIdx}-${cell.value}`}
                       style={{
                         borderRadius: 10,
                         background: isSelected

@@ -36,7 +36,7 @@ export function PlayerLobby({
 }: PlayerLobbyProps = {}) {
   const { t } = useTheme();
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-lobby">
       <PhoneHeader eyebrow="IN THE ROOM" />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>

@@ -174,6 +174,7 @@ function HostLiveConsoleInner({
   return (
     <LaptopShell title={title}>
       <div
+        data-testid="host-live-console"
         style={{
           padding: "20px 28px",
           display: "grid",
@@ -270,6 +271,7 @@ function HostLiveConsoleInner({
                         : undefined
                     }
                     disabled={!clickable}
+                    data-testid={`host-question-${cell.questionId}`}
                     style={{
                       background: cell.live
                         ? t.accent
@@ -309,30 +311,38 @@ function HostLiveConsoleInner({
           </div>
 
           <div style={{ display: "flex", gap: 8 }}>
-            <button
-              type="button"
-              onClick={onEndEarly}
-              disabled={!currentQuestion}
-              style={{
-                flex: 1,
-                padding: "12px 0",
-                borderRadius: 10,
-                background: t.ink,
-                color: t.paper,
-                border: "none",
-                fontSize: 13,
-                fontWeight: 600,
-                fontFamily: "var(--font-sans)",
-                cursor: currentQuestion ? "pointer" : "not-allowed",
-                opacity: currentQuestion ? 1 : 0.5,
-              }}
-            >
-              End early · reveal
-            </button>
+            {/* Test wrapper exposes the same End-early action under both
+                host-end-early-btn AND host-reveal-btn — in this UI the
+                end-early button IS the manual reveal trigger, so both
+                selectors point to it. */}
+            <div data-testid="host-reveal-btn" style={{ flex: 1, display: "flex" }}>
+              <button
+                type="button"
+                onClick={onEndEarly}
+                disabled={!currentQuestion}
+                data-testid="host-end-early-btn"
+                style={{
+                  flex: 1,
+                  padding: "12px 0",
+                  borderRadius: 10,
+                  background: t.ink,
+                  color: t.paper,
+                  border: "none",
+                  fontSize: 13,
+                  fontWeight: 600,
+                  fontFamily: "var(--font-sans)",
+                  cursor: currentQuestion ? "pointer" : "not-allowed",
+                  opacity: currentQuestion ? 1 : 0.5,
+                }}
+              >
+                End early · reveal
+              </button>
+            </div>
             <button
               type="button"
               onClick={onUndo}
               disabled={!canUndo}
+              data-testid="host-undo-btn"
               style={{
                 flex: 1,
                 padding: "12px 0",

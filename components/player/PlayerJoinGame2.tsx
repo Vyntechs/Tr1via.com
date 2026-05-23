@@ -49,7 +49,7 @@ export function PlayerJoinGame2({
   const { t } = useTheme();
   const ctaDisabled = !onJoin || submitting;
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-join-game2">
       <PhoneHeader eyebrow="GAME 1 · FINAL" />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
@@ -104,6 +104,7 @@ export function PlayerJoinGame2({
         type="button"
         onClick={ctaDisabled ? undefined : onJoin}
         disabled={ctaDisabled}
+        data-testid="player-join-game2-submit"
         style={{
           background: t.accent,
           color: "#FFF",

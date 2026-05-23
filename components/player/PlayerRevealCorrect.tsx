@@ -55,6 +55,7 @@ export function PlayerRevealCorrect({
   const seconds = (msToLock / 1000).toFixed(1);
   return (
     <div
+      data-testid="player-reveal-correct"
       style={{
         width: "100%",
         height: "100%",
@@ -112,6 +113,7 @@ export function PlayerRevealCorrect({
       </div>
 
       <div
+        data-testid="player-reveal-points"
         style={{
           marginTop: 4,
           fontFamily: "var(--font-mono)",

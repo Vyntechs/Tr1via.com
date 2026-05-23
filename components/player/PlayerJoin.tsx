@@ -75,7 +75,7 @@ export function PlayerJoin({
   const ctaDisabled = interactive && (!name.trim() || submitting);
 
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-join">
       <PhoneHeader eyebrow={`JOINING · ${venueName.toUpperCase()}`} />
 
       <form
@@ -133,6 +133,7 @@ export function PlayerJoin({
                   spellCheck={false}
                   style={INPUT_STYLE(t.ink)}
                   aria-label="Your display name"
+                  data-testid="player-name-input"
                 />
               ) : (
                 <span style={{ fontSize: 34, fontWeight: 600, color: t.ink, letterSpacing: "-0.025em", flex: 1 }}>
@@ -157,6 +158,7 @@ export function PlayerJoin({
         <button
           type="submit"
           disabled={ctaDisabled}
+          data-testid="player-join-submit"
           style={{
             marginTop: "auto",
             background: t.accent,

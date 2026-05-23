@@ -93,7 +93,7 @@ function TVQuestionInner({
   }));
 
   return (
-    <TVStage>
+    <TVStage data-testid="tv-question">
       <TVHeader
         accent={cc}
         left="GAME · LIVE"
@@ -136,9 +136,11 @@ function TVQuestionInner({
           zIndex: 1,
         }}
       >
-        <Display size={86} color={t.ink} weight={500} tracking={-0.025}>
-          {question}
-        </Display>
+        <span data-testid="tv-question-prompt">
+          <Display size={86} color={t.ink} weight={500} tracking={-0.025}>
+            {question}
+          </Display>
+        </span>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
           <TVTimerArc accent={cc} seconds={seconds} />
           <Eyebrow color={seconds <= 5 ? t.wrong : cc} size={10}>
@@ -186,6 +188,7 @@ function TVQuestionInner({
         // here (not the LockInBase scaffold) so it lives inside the existing
         // TVQuestion stage and shares its question/timer/answers.
         <div
+          data-testid="tv-question-pile"
           style={{
             padding: "20px 56px 16px",
             position: "relative",
@@ -217,6 +220,7 @@ function TVQuestionInner({
         </div>
       ) : (
         <div
+          data-testid="tv-question-pile"
           style={{
             padding: "16px 56px 24px",
             display: "flex",

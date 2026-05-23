@@ -68,7 +68,7 @@ function TVLobbyInner({
   const { t } = useTheme();
 
   return (
-    <TVStage>
+    <TVStage data-testid="tv-lobby">
       <TVHeader
         left={`${venueName} · ${scheduledDate}`}
         right={gameStatusLine}
@@ -116,6 +116,7 @@ function TVLobbyInner({
             <div>
               <Eyebrow color={t.inkMute} size={11}>ROOM CODE</Eyebrow>
               <div
+                data-testid="tv-lobby-room-code"
                 style={{
                   marginTop: 8,
                   padding: "6px 14px",
@@ -137,6 +138,7 @@ function TVLobbyInner({
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
           <div
+            data-testid="tv-lobby-qr"
             style={{
               padding: 16,
               borderRadius: 24,
@@ -176,7 +178,10 @@ function TVLobbyInner({
 
           <div style={{ marginTop: 28, width: "100%", maxWidth: 420 }}>
             <Eyebrow color={t.inkMute} size={10}>JUST JOINED</Eyebrow>
-            <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: "8px 14px" }}>
+            <div
+              data-testid="tv-lobby-roster"
+              style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: "8px 14px" }}
+            >
               {roster.map((n, i) => (
                 <span
                   key={`${n}-${i}`}
