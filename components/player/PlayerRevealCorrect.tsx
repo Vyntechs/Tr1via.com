@@ -100,9 +100,11 @@ export function PlayerRevealCorrect({
         )}
       </div>
 
-      <Display size={72} color="#0E0805" weight={700}>
-        Correct.
-      </Display>
+      <div role="alert" aria-live="assertive">
+        <Display size={72} color="#0E0805" weight={700}>
+          Correct.
+        </Display>
+      </div>
 
       <div style={{ marginTop: 8, display: "flex", alignItems: "baseline", gap: 12 }}>
         <Eyebrow color="rgba(14,8,5,.55)" size={11}>YOU EARNED</Eyebrow>

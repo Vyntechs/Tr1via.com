@@ -54,11 +54,13 @@ export function PlayerRevealWrong({
         position={`#${rank}`}
       />
 
-      <Display size={64} color={t.ink}>
-        <span style={{ color: t.inkMid }}>{noAnswer ? "Time's" : "Not this"}</span>
-        <br />
-        {noAnswer ? "up." : "one."}
-      </Display>
+      <div role="alert" aria-live="assertive">
+        <Display size={64} color={t.ink}>
+          <span style={{ color: t.inkMid }}>{noAnswer ? "Time's" : "Not this"}</span>
+          <br />
+          {noAnswer ? "up." : "one."}
+        </Display>
+      </div>
       <div style={{ marginTop: 10, color: t.inkMid, fontSize: 14, lineHeight: 1.4 }}>
         No points lost — that&apos;s not how this game treats you.
       </div>
