@@ -4,6 +4,7 @@
 
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { HostDashboard, type HostDashboardPastNight, type HostDashboardTonight } from "@/components/host";
@@ -14,6 +15,7 @@ export interface HostHomeClientProps {
   hostSubtitle: string;
   defaultVenue: string;
   isFirstNightComplete: boolean;
+  isFounder?: boolean;
   weeks: HostDashboardPastNight[];
   lifetime: { nights: number; questions: number };
   tonight: HostDashboardTonight | null;
@@ -24,6 +26,7 @@ export function HostHomeClient({
   hostSubtitle,
   defaultVenue,
   isFirstNightComplete,
+  isFounder = false,
   weeks,
   lifetime,
   tonight,
@@ -87,8 +90,36 @@ export function HostHomeClient({
         onSetupTonight={createNightAndGo}
         onResume={goToTonight}
       />
+      {isFounder && <FounderChip />}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
     </>
+  );
+}
+
+function FounderChip() {
+  return (
+    <Link
+      href="/host/admin"
+      style={{
+        position: "fixed",
+        top: 20,
+        right: 20,
+        zIndex: 40,
+        padding: "8px 14px",
+        borderRadius: 999,
+        background: "var(--accent)",
+        color: "#FFF",
+        textDecoration: "none",
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        fontWeight: 700,
+        boxShadow: "0 12px 28px -10px rgba(0,0,0,.5)",
+      }}
+    >
+      Founder  →
+    </Link>
   );
 }
 
