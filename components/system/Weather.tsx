@@ -237,7 +237,7 @@ function SunShimmer({ color = "#F2A02D" }: { color?: string }) {
   );
 }
 
-/** Human-readable label for each microclimate, used in /_dev/system. */
+/** Human-readable label for each microclimate, used in /dev/system. */
 export function weatherLabel(themeKey: ThemeKey): string {
   return ({
     house: "warm pub-light wash",

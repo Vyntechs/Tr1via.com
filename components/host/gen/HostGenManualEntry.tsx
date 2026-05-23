@@ -7,7 +7,7 @@
 // the 700-pointer. The form makes that explicit with a permanent PointTag
 // on every row.
 //
-// All props are optional with demo defaults so /_dev/host/gen can render
+// All props are optional with demo defaults so /dev/host/gen can render
 // it standalone.
 
 "use client";

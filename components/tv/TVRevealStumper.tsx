@@ -3,7 +3,7 @@
 // hard questions earn more on purpose.
 //
 // Driven by props so the live `/tv/[code]` route can paint the actual answer
-// and the (few) players who got it. Demo defaults preserved for `/_dev/tv`.
+// and the (few) players who got it. Demo defaults preserved for `/dev/tv`.
 
 "use client";
 

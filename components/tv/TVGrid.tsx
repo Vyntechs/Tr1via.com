@@ -4,7 +4,7 @@
 // loading.
 //
 // Driven by props so the live `/tv/[code]` route can feed real category +
-// question state. Falls back to a designer-friendly demo for `/_dev/tv`.
+// question state. Falls back to a designer-friendly demo for `/dev/tv`.
 
 "use client";
 

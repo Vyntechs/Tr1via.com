@@ -4,7 +4,7 @@
 // night's notable numbers anchor the right column.
 //
 // Driven by props for the live `/tv/[code]` route; demo defaults preserved
-// for the `/_dev/tv` gallery.
+// for the `/dev/tv` gallery.
 
 "use client";
 

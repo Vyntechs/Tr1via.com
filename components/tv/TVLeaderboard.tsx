@@ -2,7 +2,7 @@
 // leaderboard wears the accent. Self-row is highlighted with the surface tint.
 //
 // Driven by props so the live `/tv/[code]` route can feed the top 10 from
-// the `game_scores` view. Demo rows preserved for `/_dev/tv`.
+// the `game_scores` view. Demo rows preserved for `/dev/tv`.
 
 "use client";
 

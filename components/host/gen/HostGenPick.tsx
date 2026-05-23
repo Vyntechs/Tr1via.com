@@ -7,7 +7,7 @@
 // Wired form: the pick route passes the live candidates + selected-id set,
 // the topic, and an `onTogglePick` / `onLock` / `onEdit` / `onSwapImage`
 // / `onUpload` / `onRegenerate` set of handlers. All props are optional
-// with demo defaults so the /_dev/host/gen gallery still renders.
+// with demo defaults so the /dev/host/gen gallery still renders.
 
 "use client";
 

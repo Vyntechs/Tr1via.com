@@ -7,7 +7,7 @@
 // passes a live tally of questions + photos. Each loaded question lands
 // here as a card with text (and a photo when ready). The remainder are
 // shown as soft skeletons. All props are optional with demo defaults so
-// the /_dev/host/gen gallery still renders.
+// the /dev/host/gen gallery still renders.
 
 "use client";
 

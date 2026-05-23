@@ -5,7 +5,7 @@
 // Wired form: the host-phone route passes the staged question (text +
 // options + correctIndex), the category + point value, the room-wide
 // counters, and an onReveal handler. All props are optional with demo
-// defaults so the /_dev/host gallery still renders.
+// defaults so the /dev/host gallery still renders.
 
 "use client";
 

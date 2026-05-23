@@ -6,7 +6,7 @@
 // Wired form: passes the current state ("idle"|"uploading"), an optional
 // progress percentage + filename, and an onFileChosen callback that
 // receives the File object from the input. All props are optional with
-// demo defaults so the /_dev/host/gen gallery still renders.
+// demo defaults so the /dev/host/gen gallery still renders.
 
 "use client";
 

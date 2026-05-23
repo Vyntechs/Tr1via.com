@@ -4,7 +4,7 @@
 // Wired form: the live route passes the full game state — current question,
 // the grid of revealed/picked cells, players + their lock status, and the
 // action handlers (revealCell, undo, endEarly, adjustPoints, removePlayer,
-// addPlayer). Every prop is optional with demo defaults so the /_dev/host
+// addPlayer). Every prop is optional with demo defaults so the /dev/host
 // gallery still renders.
 
 "use client";

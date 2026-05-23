@@ -3,7 +3,7 @@
 // the room — visible across the bar from any seat.
 //
 // Driven by props so the live `/tv/[code]` route can feed it real data; falls
-// back to the demo strings so the `/_dev/tv` gallery still renders cleanly.
+// back to the demo strings so the `/dev/tv` gallery still renders cleanly.
 
 "use client";
 
