@@ -80,7 +80,7 @@ function TVLeaderboardInner({
   const right = rows.slice(5, 10);
 
   return (
-    <TVStage>
+    <TVStage data-testid="tv-leaderboard">
       <TVHeader left={headerLeft} right={headerRight} />
 
       <div
@@ -119,6 +119,7 @@ function TVLeaderboardInner({
                 return (
                   <div
                     key={`${r.rank}-${r.name}`}
+                    data-testid={`tv-leaderboard-row-${r.rank}`}
                     style={{
                       display: "grid",
                       gridTemplateColumns: "56px 1fr 90px 130px",

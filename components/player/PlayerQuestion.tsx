@@ -65,7 +65,7 @@ export function PlayerQuestion({
   });
 
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-question">
       {/* Category banner — full bleed across top */}
       <div
         style={{
@@ -113,6 +113,7 @@ export function PlayerQuestion({
             delay={i * 70}
             onTap={onTap ? () => onTap(slot) : undefined}
             disabled={disabled}
+            data-testid={`player-answer-${slot}`}
           />
         ))}
       </div>

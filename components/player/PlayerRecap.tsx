@@ -58,7 +58,7 @@ export function PlayerRecap({
   const rows = stats ?? defaultStats;
 
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-recap">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 6 }}>
         <Eyebrow color={t.inkMid} size={10}>YOUR NIGHT · {venueName.toUpperCase()}</Eyebrow>
         <Eyebrow color={t.inkMute} size={10}>{nightDateLabel.toUpperCase()}</Eyebrow>

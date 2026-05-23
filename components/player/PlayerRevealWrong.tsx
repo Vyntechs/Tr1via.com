@@ -47,7 +47,7 @@ export function PlayerRevealWrong({
   const { t } = useTheme();
   const noAnswer = chosenSlot === null;
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-reveal-wrong">
       <PhoneHeader
         eyebrow={`${category.toUpperCase()} · ${value} PTS`}
         score={totalScore}

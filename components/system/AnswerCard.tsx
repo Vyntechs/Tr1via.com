@@ -34,6 +34,8 @@ export interface AnswerCardProps {
   delay?: number;
   onTap?: () => void;
   disabled?: boolean;
+  /** Forwarded data-testid for E2E targeting. */
+  "data-testid"?: string;
 }
 
 export function AnswerCard({
@@ -44,6 +46,7 @@ export function AnswerCard({
   delay = 0,
   onTap,
   disabled,
+  "data-testid": dataTestId,
 }: AnswerCardProps) {
   const { t } = useTheme();
   const a = accent ?? t.accent;
@@ -103,6 +106,7 @@ export function AnswerCard({
       type={isTappable ? "button" : undefined}
       onClick={isTappable ? onTap : undefined}
       disabled={!isTappable && Tag === "button"}
+      data-testid={dataTestId}
       style={{
         position: "relative",
         display: "flex",

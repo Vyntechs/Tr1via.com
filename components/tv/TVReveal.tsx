@@ -85,7 +85,7 @@ function TVRevealInner({
   const { t } = useTheme();
 
   return (
-    <TVStage bg={t.correct}>
+    <TVStage bg={t.correct} data-testid="tv-reveal">
       <div
         style={{
           padding: "32px 56px 0",
@@ -135,7 +135,9 @@ function TVRevealInner({
             >
               {correctNumber}
             </Numeric>
-            <Display size={140} color="#0E0805" weight={700}>{correctText}</Display>
+            <span data-testid="tv-reveal-correct">
+              <Display size={140} color="#0E0805" weight={700}>{correctText}</Display>
+            </span>
           </div>
 
           {fact && (

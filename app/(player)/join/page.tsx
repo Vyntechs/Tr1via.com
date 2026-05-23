@@ -76,7 +76,7 @@ function JoinPageInner() {
 function CodeEntryScreen({ onSubmit }: { onSubmit: (code: string) => void }) {
   // Theme is the global default ("house") since we don't know the night yet.
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-code-entry">
       <PhoneHeader eyebrow="JOIN A ROOM" />
       <CodeEntryBody onSubmit={onSubmit} />
     </PhoneScreen>
@@ -137,6 +137,7 @@ function CodeEntryBody({ onSubmit }: { onSubmit: (code: string) => void }) {
             spellCheck={false}
             inputMode="text"
             aria-label="Room code"
+            data-testid="player-code-input"
             style={{
               marginTop: 10,
               width: "100%",
@@ -183,6 +184,7 @@ function CodeEntryBody({ onSubmit }: { onSubmit: (code: string) => void }) {
       <button
         type="submit"
         disabled={!valid}
+        data-testid="player-code-submit"
         style={{
           marginTop: "auto",
           background: t.accent,

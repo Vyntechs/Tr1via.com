@@ -52,7 +52,7 @@ export function PlayerLocked({
   const secondsToLock = (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock < 5000;
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-locked">
       <div
         style={{
           margin: "-14px -22px 18px",

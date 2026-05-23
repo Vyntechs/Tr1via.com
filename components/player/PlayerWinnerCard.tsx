@@ -109,7 +109,7 @@ export function PlayerWinnerCard({
   }, [onSave, t.paper, venueName, nightDateLabel]);
 
   return (
-    <PhoneScreen>
+    <PhoneScreen data-testid="player-winner-card">
       {/* Heightened weather behind the card for finale energy. PhoneScreen
           already renders weather at intensity 0.5; we add an extra layer at
           1.4 to dial up the moment without rebuilding the shell. */}
@@ -200,6 +200,7 @@ export function PlayerWinnerCard({
             type="button"
             onClick={handleSave}
             disabled={saveState === "saving"}
+            data-testid="player-winner-download"
             aria-label={
               saveState === "saving"
                 ? "Saving your winner card to a PNG"

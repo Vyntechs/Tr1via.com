@@ -137,6 +137,7 @@ function HostDashboardInner({
   return (
     <LaptopShell title="tr1via.com / host">
       <div
+        data-testid="host-dashboard"
         style={{
           padding: "40px 56px",
           display: "grid",
@@ -228,6 +229,7 @@ function HostDashboardInner({
             </div>
             <button
               onClick={handleCta}
+              data-testid={tonight ? `host-open-room-${tonight.nightId}` : "host-new-night-btn"}
               style={{
                 background: t.accent,
                 color: t.dark ? "#0E0E0C" : "#FFF",
