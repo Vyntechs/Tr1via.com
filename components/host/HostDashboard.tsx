@@ -4,7 +4,7 @@
 // Wired form: the (host) layout passes `hostName`, the past nights list, and
 // (optionally) a "tonight" night that lights up the headline + makes the CTA
 // jump straight back into setup/live. All props are optional with demo
-// defaults so the /_dev/host gallery still renders.
+// defaults so the /dev/host gallery still renders.
 
 "use client";
 

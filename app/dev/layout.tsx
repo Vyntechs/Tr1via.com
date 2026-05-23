@@ -1,4 +1,4 @@
-// Layout for /_dev/* routes. Strip nothing — these are internal canvases for
+// Layout for /dev/* routes. Strip nothing — these are internal canvases for
 // previewing the design system and screens. Real app surfaces have their own
 // route-group layouts.
 

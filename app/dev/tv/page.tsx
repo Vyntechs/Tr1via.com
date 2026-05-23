@@ -2,7 +2,7 @@
 // (16:9) aspect with a theme picker. Each component renders inside a fixed
 // frame so the gallery preview matches the venue surface.
 //
-// Visit at /_dev/tv in dev.
+// Visit at /dev/tv in dev.
 
 "use client";
 

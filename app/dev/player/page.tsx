@@ -2,7 +2,7 @@
 // (380×780, the iPhone 14 logical viewport approximation we use for static
 // previews) with a theme picker so we can verify every theme variant.
 //
-// Visit at /_dev/player in dev. Pick a theme; each screen renders inside its
+// Visit at /dev/player in dev. Pick a theme; each screen renders inside its
 // own ThemeProvider so the picker drives all nine at once.
 
 "use client";

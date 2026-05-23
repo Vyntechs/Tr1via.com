@@ -2,7 +2,7 @@
 // the two host-phone screens at 380×780. Pick a theme; every screen renders
 // inside its own ThemeProvider so the picker drives all of them at once.
 //
-// Visit at /_dev/host in dev.
+// Visit at /dev/host in dev.
 
 "use client";
 

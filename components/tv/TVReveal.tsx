@@ -4,7 +4,7 @@
 //
 // Driven by props so the live `/tv/[code]` route can paint the actual answer
 // and the actual fastest-five from `answers`. Demo defaults preserved for
-// `/_dev/tv`.
+// `/dev/tv`.
 
 "use client";
 

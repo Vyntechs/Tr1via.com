@@ -5,7 +5,7 @@
 // Wired form: the setup route passes the two games + their categories
 // (locked/review/idle/empty), a venue title, and handlers for adding a
 // topic to a slot and opening the room. All props are optional with demo
-// defaults so the /_dev/host/gen gallery still renders.
+// defaults so the /dev/host/gen gallery still renders.
 
 "use client";
 

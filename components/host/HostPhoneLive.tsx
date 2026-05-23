@@ -3,7 +3,7 @@
 //
 // Wired form: the host-phone route passes the lock-in counts, the still-
 // thinking roster, the seconds remaining, and the four control handlers.
-// All props are optional with demo defaults so the /_dev/host gallery
+// All props are optional with demo defaults so the /dev/host gallery
 // still renders.
 
 "use client";

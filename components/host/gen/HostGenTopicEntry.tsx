@@ -4,7 +4,7 @@
 //
 // Wired form: controlled topic text + difficulty + flavor selections. The
 // setup route owns the state and submits to POST /api/categories. All props
-// are optional with demo defaults so the /_dev/host/gen gallery still
+// are optional with demo defaults so the /dev/host/gen gallery still
 // renders.
 
 "use client";

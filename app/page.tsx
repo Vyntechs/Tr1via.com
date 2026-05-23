@@ -21,14 +21,14 @@ export default function HomePage() {
       </h1>
       <p style={{ color: "var(--ink-mid)", maxWidth: 520, textAlign: "center", lineHeight: 1.5 }}>
         Live trivia, designed to make the room feel alive. The app is being built — visit{" "}
-        <Link href="/_dev/system" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}>
-          /_dev/system
+        <Link href="/dev/system" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}>
+          /dev/system
         </Link>{" "}
         to browse the design system, or{" "}
-        <Link href="/_dev/all" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}>
-          /_dev/all
+        <Link href="/dev" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}>
+          /dev
         </Link>{" "}
-        for every screen.
+        for every gallery.
       </p>
     </main>
   );

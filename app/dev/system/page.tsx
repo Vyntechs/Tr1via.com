@@ -1,7 +1,7 @@
 // Internal design-system gallery. Browse every atom, every theme, every
 // weather pattern. Replaces the Claude Design canvas's /design-canvas route.
 //
-// Visit at /_dev/system in dev. Pick a theme from the dropdown to see all
+// Visit at /dev/system in dev. Pick a theme from the dropdown to see all
 // atoms adapt live.
 
 "use client";

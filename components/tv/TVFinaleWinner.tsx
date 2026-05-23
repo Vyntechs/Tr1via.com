@@ -4,7 +4,7 @@
 // the right. Closing scene of the movie.
 //
 // Driven by props so `/tv/[code]` can paint the actual winner; demo defaults
-// preserved for the `/_dev/tv` gallery.
+// preserved for the `/dev/tv` gallery.
 
 "use client";
 
