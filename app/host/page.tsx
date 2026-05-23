@@ -120,6 +120,7 @@ export default async function HostHomePage() {
       hostSubtitle={host.default_venue ?? "Independent"}
       defaultVenue={host.default_venue ?? "Soul Fire Pizza"}
       isFirstNightComplete={host.is_first_night_complete}
+      isFounder={host.role === "founder"}
       weeks={weeks}
       lifetime={lifetime}
       tonight={tonight}
