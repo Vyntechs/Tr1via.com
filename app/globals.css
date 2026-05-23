@@ -1,0 +1,67 @@
+@import "tailwindcss";
+@import "./themes.generated.css";
+
+@theme {
+  --font-sans: var(--font-geist), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+  --font-display: var(--font-bricolage), var(--font-geist), sans-serif;
+
+  --color-paper: var(--paper);
+  --color-ink: var(--ink);
+  --color-accent: var(--accent);
+  --color-pop: var(--pop);
+  --color-correct: var(--correct);
+  --color-wrong: var(--wrong);
+}
+
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--font-sans);
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* TR1VIA motion primitives — ported from TR1VIA.html.
+   Discipline: never longer than 800ms. */
+@keyframes tr1via-rise         { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
+@keyframes tr1via-pulse        { 0%,100% { opacity:.45; transform:scale(1); } 50% { opacity:1; transform:scale(1.2); } }
+@keyframes tr1via-caret        { 0%,100% { opacity:1; } 50% { opacity:0; } }
+@keyframes tr1via-score-pop    { 0%   { opacity:0; transform:translateY(20px) scale(0.7); }
+                                 55%  { opacity:1; transform:translateY(0) scale(1.08); }
+                                 100% { opacity:1; transform:translateY(0) scale(1); } }
+@keyframes tr1via-tick         { from { opacity:0; transform:translateX(-8px); } to { opacity:1; transform:translateX(0); } }
+@keyframes tr1via-correct-flash { 0% { filter:brightness(1.4) saturate(1.3); }
+                                  60% { filter:brightness(1.05) saturate(1.05); }
+                                  100% { filter:brightness(1) saturate(1); } }
+@keyframes tr1via-shimmer      { 0% { background-position:-200% 0; } 100% { background-position:200% 0; } }
+@keyframes tr1via-drift-down   { 0% { transform:translate3d(0,0,0) rotate(0deg); }
+                                 100% { transform:translate3d(var(--drift, 0px), 130vh, 0) rotate(var(--spin, 0deg)); } }
+@keyframes tr1via-lightning    { 0%,100% { opacity:0; }
+                                 2.5% { opacity:0.9; } 3.5% { opacity:0.1; } 4% { opacity:0.7; } 5% { opacity:0; }
+                                 45% { opacity:0; } 46% { opacity:0.5; } 47% { opacity:0; } }
+@keyframes tr1via-burst        { 0% { opacity:0; transform:scale(0.3); }
+                                 8% { opacity:0.85; transform:scale(1.0); }
+                                 18% { opacity:0.6; transform:scale(1.4); }
+                                 35% { opacity:0; transform:scale(1.9); }
+                                 100% { opacity:0; transform:scale(1.9); } }
+@keyframes tr1via-glow-flicker { 0%,100% { opacity:0.7; } 25% { opacity:1; } 50% { opacity:0.55; } 72% { opacity:0.95; } }
+@keyframes tr1via-skeleton-pulse { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
+@keyframes tr1via-tile-land    { 0%   { transform:translate3d(0,-60px,0) scale(0.8) rotate(-8deg); opacity:0; }
+                                 55%  { transform:translate3d(0,6px,0) scale(1.04) rotate(0deg); opacity:1; }
+                                 100% { transform:var(--tile-final, translate3d(0,0,0) scale(1)); opacity:1; } }
+@keyframes tr1via-fly          { 0%   { transform:translate3d(0,0,0) scale(1) rotate(0deg); opacity:1; }
+                                 40%  { transform:translate3d(280px,80px,0) scale(0.85) rotate(6deg); opacity:1; }
+                                 85%  { transform:translate3d(820px,280px,0) scale(0.5) rotate(-4deg); opacity:0.9; }
+                                 100% { transform:translate3d(900px,320px,0) scale(0.3) rotate(-6deg); opacity:0; } }
+
+/* Respect user preference for reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

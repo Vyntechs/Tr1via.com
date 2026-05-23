@@ -1,0 +1,58 @@
+# dependencies
+node_modules
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# next.js
+.next/
+out/
+build
+dist
+
+# production
+*.tsbuildinfo
+next-env.d.ts
+
+# tests
+coverage
+playwright-report
+test-results
+playwright/.cache
+
+# env
+.env*.local
+.env.production
+.env.development
+
+# editor / OS
+.DS_Store
+._*
+*.swp
+*.swo
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.idea/
+
+# vercel
+.vercel
+
+# supabase local
+supabase/.branches
+supabase/.temp
+
+# misc artifacts
+*.log
+*.pem
+.cache
+.turbo
+
+# session-scoped (not committed)
+.surgeon
