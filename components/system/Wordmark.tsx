@@ -2,6 +2,12 @@
 // "TR" + "VIA" are set in Geist (sans). The "1" is a Geist Mono numeral
 // in the accent color, pretending to be a letter. Never substitute a capital
 // "I". Never recolor the "1". Never set it in sans.
+//
+// Marked client because useTheme() reads from React context; Server
+// Components that need the wordmark (not-found, etc.) re-render it as a
+// child client island automatically.
+
+"use client";
 
 import type { CSSProperties } from "react";
 import { useTheme } from "./ThemeProvider";
