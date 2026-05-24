@@ -20,6 +20,17 @@ interface ThemeProviderProps {
 export function ThemeProvider({ themeKey: initial = "house", children }: ThemeProviderProps) {
   const [themeKey, setThemeKeyState] = useState<ThemeKey>(initial);
 
+  // Sync the incoming prop into state whenever the caller changes it.
+  // For static call sites (gallery, demo defaults) this fires once on mount
+  // and is otherwise a no-op. For the host theme picker — which threads a
+  // changing `themeKey` down through HostGenOverview — it fires on every
+  // new pick, triggering the data-theme effect below to repaint live.
+  // Without this, useState(initial) frozen the prop at first render and
+  // the host had to hard-refresh to see a new palette take effect.
+  useEffect(() => {
+    if (isThemeKey(initial)) setThemeKeyState(initial);
+  }, [initial]);
+
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", themeKey);
   }, [themeKey]);
