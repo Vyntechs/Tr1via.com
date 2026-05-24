@@ -1,185 +1,219 @@
 # TR1VIA — Handoff
 
-**Read order for a fresh session:** this file → `tr1via-plan.md` (rules) → `docs/superpowers/plans/2026-05-23-tr1via.md` (build plan) → `docs/superpowers/plans/2026-05-23-smoke-orchestration.md` (test orchestration plan) → `supabase/README.md` (DB setup) → `README.md` (run instructions). The Claude Design package is at `/tmp/tr1via-design/tr1via/` (chats + JSX prototypes).
+**Read order:** this → `MEMORY.md` (auto-memory) → `tr1via-plan.md` (rules) → `docs/superpowers/plans/2026-05-23-tr1via.md` (build plan) → `supabase/README.md` (DB) → `README.md` (run).
 
 ---
 
-## State as of 2026-05-24 (~5am, end of session 4)
+## Critical context
 
-**Live, deployed, working on `tr1via.com`:**
-- `main` latest: `70fcc55 fix(live): auto-start game on first reveal so TV/phones leave lobby` (2 new commits this session on top of session 3).
-- TypeScript build clean. **187/187** unit + component tests pass (was 181 — added 6 for `previewPointValues`).
-- `full-game.spec.ts` (28-reveal multi-context test against localhost + MSW mocks) passes in 2.4 min.
-- `reveal-sync.spec.ts` passes when Supabase is responsive (variance day-to-day; 1.8–9 s arrivals against 3 s budget).
-- **Brandon can log in at `tr1via.com/login` with `brandon@vyntechs.com` and lands on `/host` in ~1 s via the founder bypass.** No email needed.
-- **Question generation works end-to-end:** ~20 s for Claude Haiku 4.5 + ~10 s for 20 Pexels photos = ~30 s total per category, then auto-navigates to the pick-7 screen.
-- **Realtime works in prod** (was completely broken in session 3 — see "Lessons" below).
-- **NEW: pick-tier sidebar honestly previews the lock distribution** — picks at the same Claude rating no longer overwrite each other; cards show "originalRating → assignedTier" when they shift.
-- **NEW: host → TV + phone reveal sync verified end-to-end on real prod** — first reveal now auto-starts the game so all three surfaces leave lobby together. Tested with chrome-devtools-MCP driving three pages (host laptop + TV + phone in isolated browser context, 390×844).
+**Wednesday 2026-05-27 is the real go-live.** This is NOT a demo — the first host (the customer, `host@example.com`) opens it that night to host actual trivia at her venue. ~3 days from this handoff (Sun 2026-05-24 ~12:45pm).
 
-**Production resources (canonical):**
-- Supabase **Trivia** (`citweuctcnuxmqjxcbiz`). 5 migrations applied. Site URL = `https://tr1via.com`, redirect allowlist contains `https://tr1via.com/auth/callback`. SMTP is still default — emails to `@vyntechs.com` are dropped silently (use bypass instead of magic link).
-- Vercel project `tr1via` in team `brandon-nichols-projects-f7e6d2a9`. `vercel link` already run; `.vercel/project.json` exists.
-- **Founder is `brandon@vyntechs.com`**, not the gmail address. Gmail was demoted to role='host' tonight. Both rows have `is_paywall_bypassed=true`.
-
-**Brandon's accounts in prod:**
-| Email | Role | First-night complete | Nights |
-|---|---|---|---|
-| brandon@vyntechs.com | **founder** | false (sees onboarding) | 0 |
-| host@example.com | host | false | 0 |
+**Neither Brandon nor I have driven a full end-to-end game on prod yet.** Every session has hit a bug somewhere in the loop. The Wednesday product has to survive the first host actually running it for paying patrons.
 
 ---
 
-## What was built in session 4 (2026-05-24 ~3–5am)
+## State as of 2026-05-24 (end of session 5, ~12:45pm)
 
-### Two demo-blocking bugs found and shipped to prod
+**Main commit tip:** `b3625e9` — TV panel honors 16:9 + reveal stays until host advances.
+**Test count:** 192/192 unit + component passing. TypeScript clean.
 
-1. **`32bb985` — pick-tier preview.** PickSidebar in `components/host/gen/HostGenPick.tsx` was keying `byDiff[difficulty * 100]`, silently overwriting when two picks shared Claude's rating. Brandon screenshotted "7/7 picked but 100/600/700 empty" on a grunge-bands batch where Claude rated everything 200-400. Fix: new `previewPointValues(picked)` helper in `lib/game/difficulty.ts` mirrors the server's `assignPointValues` rule but tolerates any N from 0..7. Sidebar + cards both consume the preview map. Picked cards now show "originalRating → assignedTier" with the original struck through when shifted. Server-side `assignPointValues` was already correct — the bug was purely client display.
+### Accounts in prod
 
-2. **`70fcc55` — auto-start on first reveal.** `/api/games/[id]/start` was defined but **never called anywhere** in the app. Host clicking a board cell only fired `/api/games/[id]/reveal`, which leaves `games.state = 'draft'`. The TV (`app/tv/[code]/page.tsx:194`) AND phone (`app/(player)/room/[code]/page.tsx:291`) both render `TVLobbyView` / "host is setting up" whenever `currentGame.state === 'draft' || === 'ready'`. Net effect: host plays through the whole game on her laptop while every player phone + the venue TV stares at the QR code. Found by multi-page chrome-devtools-MCP drive, not by API smoke. Fix: `handleReveal` now POSTs `/start` before `/reveal` whenever the game is draft/ready. `/start` is idempotent so the e2e helper that calls it explicitly still works unchanged.
+| Email | Role | Notes |
+|---|---|---|
+| `brandon@vyntechs.com` | **founder** | Founder bypass at `/login`. `is_paywall_bypassed=true`. |
+| `host@example.com` | host | Older account, still active. |
+| `host@example.com` | **host** | Provisioned this session. `display_name="the first host"`, `default_venue="the first host"`, `is_paywall_bypassed=true`. She signs in at `tr1via.com/login` → magic link via Supabase SMTP (yahoo delivers reliably). Backup magic-link generator: `node --env-file=.env.local scripts/generate-magic-link.mjs host@example.com`. |
 
-Both fixes verified live on prod via chrome-devtools-MCP driving three independent page contexts (host + TV + phone in isolated browser context). Smoke CI green on both pushes.
+### What was shipped in session 5 (today)
 
-### Architectural lessons worth carrying forward (session 4 additions)
+18 commits, all behind the smoke gate. Each ships an issue Brandon hit in real-time. **Read git log -25 for the full chain.**
 
-17. **Idempotent endpoints make "belt + suspenders" cheap.** `/start` returning 200 if already-live let `handleReveal` always call it without breaking existing helpers. Worth applying the same pattern to any state-transition endpoint future-us is tempted to gate behind a "should I call this?" client-side check.
-18. **Implemented-but-unused endpoints are a code smell.** `app/api/games/[id]/start/route.ts` existed for ~3 sessions and Brandon almost demoed without anyone ever calling it. A grep for `import.*[Rr]oute` against route paths, or a "0 callers" check in CI, would have flagged it.
-19. **Two distinct UI bugs, same testing root cause.** The pick-tier bug (silent overwrite in the sidebar) and the reveal-sync bug (lobby stuck because game.state stayed 'draft') were both invisible to pure code review and to the existing API/UI smokes. Both were caught by *driving the actual screens the user/audience sees*. This is the third concrete instance backing `feedback_validate_dont_just_claim` — keep that memory load-bearing.
+Key fixes by category:
 
----
+**Setup flow / "Open the room":**
+- `bbd6d4c` Drop "≥1 per game" gate to "≥1 anywhere" so a single category opens the room.
+- `7867614` Modal scroll fix (edit/swap/upload modals were clipped — Save button unreachable).
+- `a517258` Wired the SHORTCUTS sidebar (was dead `div`s) + shipped 5 Coming Soon placeholder pages.
 
-## What was built in session 3 (today)
+**Realtime gameplay flow:**
+- `5d9b25f` Added `useRoom.lastResolvedQuestion` so phones see PlayerRevealCorrect/Wrong after a question resolves. The previous `pickRecentReveal` was a stub returning null.
+- `0724e15` Kicked players bounce out via heartbeat 410 (postgres_changes drops for device-cookie sessions).
+- `a3b9505` Fixed every player getting 403 on answer submit. Root: prod creates games in `'draft'`, `_test/seed-night` creates `'ready'`, `/api/players` only auto-added participation for `'ready'/'live'`. Backfilled 6 rows for active nights. **This single bug class is the test-fixture-vs-prod divergence; see "What still needs to ship" → P0.27.**
+- `48b6bb7` Resolve fires from `LockedView` too. Previously `handleZero` was only in `QuestionView`, so when all players locked in early the timer expired with no one mounted to call `/resolve`.
+- `a43461b` `useMyAnswers` refetches from REST on every broadcast. Previously all players saw "wrong" because `is_correct` was set by the resolve route but never reached the phone (postgres_changes UPDATE silently drops).
 
-### Bug fixes shipped to prod (in commit order)
+**Visual surfaces:**
+- `44df15e` + `f702eca` Join QR + code panel on host live console (was: no QR for host; was: panel disappeared once 1 player joined).
+- `44df15e` Pexels photo now renders on TV question (was missing entirely during play).
+- `d47d85b` Embedded the TV view as a 16:9 iframe in the top half of `/host/live/[nightId]` — host laptop HDMI'd to a TV no longer needs two browser windows. **This is the iframe MVP; proper extraction is P0.26.**
+- `b3625e9` Removed the auto-leaderboard transition. Reveal stays until host clicks next cell.
 
-1. **`1807bb4` — bugs #3 + #4 from session 2.** TVRevealStumper missing `data-testid="tv-reveal"`. `useConnectionStatus` hydration mismatch on /join (initialized from `navigator.onLine` on client, defaulted true on server; headless Chromium reports offline at boot).
-2. **`7d93f5d` — game-ended broadcast + optimistic in-game-2.** End-game route now broadcasts `game-ended` so phones don't get stuck after game 1 (postgres_changes for `games` doesn't reach device-cookie sessions). PlayerJoinGame2Wired now flips an optimistic flag on successful API call so tapping the Join button advances the player immediately.
-3. **`a8a8ede` — full-game.spec.ts** + helpers + extended `seed-night` to fill game 2.
-4. **`58f9978` — founder bypass.** `POST /api/auth/founder-login` mints a session if the email matches a row with `role='founder'`. `/login` page tries this first, falls back to magic link if 404. Why: corporate domains (vyntechs.com) silently drop Supabase's default SMTP, and Brandon needed to be able to log in at all.
-5. **`90c32b4` — Haiku 4.5 + `maxDuration=120`.** Switched `DEFAULT_MODEL` after benchmarking (2.5× faster, 3.2× cheaper, comparable distractor quality). Added explicit 120 s function ceiling on the generate route — Vercel's default was killing the background job mid-photo-attach.
-6. **`051a2f5` + `b300e7a` + `ac9c10c` — auto-smoke CI.** GitHub Actions runs `scripts/prod-smoke.mjs` + `tests/e2e/prod-ui-smoke.spec.ts` on every push. Failures email Brandon. No cron (was overkill).
-7. **No code commit (Vercel env var change only):** anon-key trailing-newline fix. `vercel env rm NEXT_PUBLIC_SUPABASE_ANON_KEY production --yes` then re-add via `printf '%s' "$CLEAN_KEY" | vercel env add ...`. Plus the `host-onboarding-first` testid landed in commit `f798a06` (UI smoke).
-8. **`1f1edb8` — actually render the Pexels photo on pick + loading cards.** `StockImage` was a placeholder ALL ALONG; the comment literally said "In production StockImage will be replaced with the real Pexels-backed component." Never was. Pick cards now render the real `q.imageUrl` via an `<img object-fit:cover>`.
-9. **`40691d9` — photo cascade.** Auto-attach tries Claude's photoQuery → topic name → "abstract texture". Three Pexels queries before giving up. Means cards never render the striped placeholder on real generated questions.
+**Theme system (was player-side; now host-controlled per-night):**
+- `27fc3f0` Removed player-side theme picker (was auto-opening 2s after lobby).
+- `0b2f8f8` + `6f36017` Built host-side theme picker on `/host/setup`. Floating "Theme · <key>" button → bottom-sheet picker → PATCH `/api/nights/[id]/theme`. Single host-chosen palette per night.
+- `0c3d53b` ThemeProvider now syncs from prop on every render (was: `useState(initial)` froze at first render, host had to hard-refresh to see a new pick).
+- `aa2dcf4` Threaded `night.theme_key` through every host route (`/host/setup/...`, `/host/live/[nightId]`). Previously the theme reset to "house" when navigating between setup sub-pages.
 
-### Production environment changes (NOT in code)
+### What is still broken or unverified
 
-- **Supabase Site URL:** `http://localhost:3000` → `https://tr1via.com` (via Management API)
-- **Supabase redirect allowlist:** added `https://tr1via.com/auth/callback`
-- **Vercel env `ANTHROPIC_API_KEY`:** rotated (Brandon pasted fresh)
-- **Vercel env `NEXT_PUBLIC_SUPABASE_ANON_KEY`:** had a literal trailing `\n` character. Replaced with clean value from `.env.local`. **This was the single most impactful fix tonight** — it was breaking ALL Supabase Realtime subscriptions in prod. URL-encoded as `%0A`, JWT signature mismatch, every WebSocket auth rejected.
-- **Supabase data:** `brandon@vyntechs.com` is `role='founder', is_paywall_bypassed=true`. Gmail is `role='host'`. Test nights all cleaned up.
-- **GitHub Actions secrets:** `NEXT_PUBLIC_SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SMOKE_FOUNDER_EMAIL`.
+**The full game loop has never been driven end-to-end without a bug appearing.** Every session has caught something new. Possible remaining issues that have NOT been tested with all the new fixes stacked:
 
-### New test + ops infrastructure
-
-- `scripts/prod-smoke.mjs` — drives tr1via.com end-to-end (auth → night → category → real Anthropic → real Pexels → cleanup). Exit 0 = green. ~30 s.
-- `scripts/compare-models.mjs` + `scripts/compare-models-batch.mjs` — benchmark Sonnet vs Haiku.
-- `scripts/generate-magic-link.mjs` — admin-mint a magic link URL when SMTP is dead.
-- `tests/e2e/prod-ui-smoke.spec.ts` — Playwright UI smoke against tr1via.com (login → /host).
-- `playwright-prod.config.ts` — config that runs against prod, no webServer.
-- `.github/workflows/prod-smoke.yml` — runs API smoke + UI smoke on every push + on-demand. GitHub emails on failure.
-
----
-
-## Known unfixed bugs / gaps (real, in production code)
-
-### Demo-blocking risk (untested but inferred-to-work)
-
-Session 4 closed three of the four entries here. What remains:
-- ~~**Reveal sync on prod** (host → TV + phones via room-channel broadcast).~~ ✅ **Proven on real prod 2026-05-24 session 4** — drove host laptop + `/tv/[code]` + `/join` (phone viewport, isolated browser context). Found the missing `/start` call along the way; fixed in `70fcc55`. TV question view + phone reveal-then-resolve frames both render correctly.
-- ~~**`/tv/[code]` on real prod**~~ ✅ **Proven on real prod 2026-05-24 session 4** — TVLobby + TVGrid + TVQuestion all rendered correctly with real Supabase + real anon key.
-- ~~**`/join` + PlayerJoin → PlayerLobby on real prod**~~ ✅ **Proven on real prod 2026-05-24 session 4** — phone entered code, picked a name, landed in lobby, then transitioned through question + resolve frames.
-- **Multi-device sync at venue scale** (30–50 phones on real wifi). Code is the same as the 1-phone prod test that passes (session 4) and the 3-phone local test that passes. Wifi at the venue and iOS Safari quirks remain the unknowns. Only the real-device dry run will close this.
-
-### UI still uses placeholder StockImage on these screens
-
-The render fix tonight only touched `HostGenPick` and `HostGenLoading`. These still show stripes:
-- `HostGenEdit` — line 195
-- `HostGenImageSwap` — lines 232 and 285
-- `HostGenImageUploadReady` — lines 49 and 85
-- `HostGenImageUpload` — line 255
-- `HostGenFlavor` — line 94
-
-The swap UI flow needs the same `src={...}` treatment for the host to actually see what they're swapping to. Not blocking the demo if Brandon doesn't manually swap.
-
-### Pending from session 2 + 3 todo lists
-
-- **Phase 5.2** of the orchestration plan — five edge-case specs still unwritten (rejoin, network-drop, mid-game-edits, manual-entry, generation-failure).
-- **Phase 6** — API integration tests per resource.
-- **Phase 7** — `smoke-routes.spec.ts` (visit every route, check console errors). `prod-ui-smoke.spec.ts` is a tiny version of this.
-- **Phase 9** — gaps doc.
-- **Hydration mismatches** in browser console on a few player pages — flagged session 2, not investigated further.
-- **The "static, sketchy" feel** of HostGenLoading — now that broadcasts work, the counter visibly ticks. Whether it still "feels sketchy" is a separate UX call.
+- Full game-1 (7 reveals across one category) on prod, multi-phone, with all session-5 fixes live.
+- Game 1 → intermission → game 2 → finale leaderboard.
+- 3+ phones playing simultaneously on prod (we've only tested 1-2).
+- Theme change MID-GAME: if Brandon swaps theme after opening the room, already-joined player phones don't repaint (need a broadcast on `room:{code}` for `theme-change`).
+- Tie / no-leader / all-zeros leaderboard handling — current sort is `score DESC` only; no tiebreaker logic.
 
 ---
 
-## Architectural lessons worth carrying forward (session 3 additions)
+## What still needs to ship by Wednesday
 
-These are NEW vs session 2's lessons doc — keep both:
+Prioritized punch list (created as TodoWrite tasks 26-31 in session 5):
 
-10. **A trailing `\n` in a JWT env var BREAKS Supabase Realtime silently.** Vercel's `NEXT_PUBLIC_SUPABASE_ANON_KEY` had a literal newline character at the end. URL-encoded as `%0A` on the WebSocket connect, JWT signature includes the newline → signature mismatch → auth fails. No clear error in the app, just `[error] WebSocket connection ... failed: HTTP Authentication failed` in browser console with 13 retries. To detect: `od -c | tail` on the env value should NOT show a `\n` at the end. To fix in CI: trim trailing whitespace before storing.
+### P0 (must ship)
 
-11. **API-only smoke is INSUFFICIENT for a real-time app.** The `prod-smoke.mjs` and `prod-ui-smoke.spec.ts` both went green on the night the anon-key bug was active, because neither touched the WebSocket. The bug was found by chrome-devtools-MCP interactive walkthrough watching the browser console live. Lesson: any new smoke should explicitly assert a WebSocket subscription succeeds.
+**P0.26 — Replace iframe TV-merge with proper extraction.**
+Tonight's `d47d85b` embedded `/tv/[code]` as an iframe in the host page. Works but:
+- Iframe makes its own `/api/tv/[code]/snapshot` fetch (double network + double WebSocket subscription on `room:{code}`).
+- TV components designed for 100vw/100vh viewport, partially letterboxed in iframe even with `aspect-ratio: 16/9 + maxHeight: 62vh`.
+- Iframe boundary prevents shared state, can't trigger TV-state animations from host actions.
 
-12. **The `StockImage` "production" component was never built.** A placeholder named StockImage with a TODO comment was shipped to prod, called from every gen screen, and ignored the `imageUrl` it was supposed to render. Question: how many other "to be wired in production" placeholders are still in the tree? Worth a `grep -rn "production component\|TODO.*production\|seed=.*placeholder"` sweep.
+Architect agent already designed the proper fix (~245 LOC):
+1. Extract `TVStateMachine` from `app/tv/[code]/page.tsx` into `components/tv/TVStateMachine.tsx`.
+2. Write `lib/host/roomToTVSnapshot.ts` — pure adapter from `RoomSnapshot` to `TVSnapshot`.
+3. `HostLiveConsole` renders `TVStateMachine` inline using the host's existing `useRoom` data — no iframe, no duplicate subscription.
 
-13. **Vercel function default `maxDuration` is too short for AI+Pexels background jobs.** Without `export const maxDuration = N` on a route, Vercel kills the function at the plan default. Generation that takes 30–50s + photo attach hits this. Set explicit ceilings on long background work.
+**P0.27 — Close the test fixture / prod divergence.**
+The single highest-leverage thing in this entire list. The participation bug, the kicked-player bug, the reveal bug, the all-locked-no-resolve bug — all four lived in code paths that the Playwright e2e fixtures bypassed because `_test/seed-night` creates games in `'ready'` state while prod creates `'draft'`.
 
-14. **Founder bypass is the right pattern for single-tenant ops.** Magic-link email is fragile; corporate domains drop Supabase's default SMTP. A server-side route that checks `hosts.role='founder'` and mints a session is the same trust boundary the admin dashboard already uses. Not a security regression vs the existing model.
+Two ways to fix:
+- (a) Change `_test/seed-night` to call the real `POST /api/nights` (no shortcut).
+- (b) Change prod default to `'ready'` (game.state is just a label).
 
-15. **Brandon's founder email is `brandon@vyntechs.com`.** Memory + scripts default to this. The Gmail row exists as a regular host.
+Then add a single mega-spec: `tests/e2e/full-flow-prod.spec.ts`. Creates a real night via the UI, generates one category, joins 2 phones via the real `/join` flow, taps answers, asserts reveal correct/wrong, asserts leaderboard. Runs in CI on every push to `main`. **Brandon explicitly asked for this and is right to be frustrated that we don't have it.**
 
-16. **Brandon's frustration patterns to listen for:** "you said it worked but it didn't" → I claimed validation without driving the actual user-visible flow. "Why is this so painful?" → I was over-engineering test infra while real prod was broken. The corrective behavior is: drive the actual UI before claiming green; the API path passing is not proof the UI works.
+### P1 (should ship)
+
+**P1.28 — Audit the 10 deferred items I flagged earlier.** See VERIFY-2026-05-24.md + my "any obvious bugs you neglected" reply in session 5:
+- Pick-tier tie-break disagrees client ↔ server (lock query has no ORDER BY).
+- `HostGenEdit` / `HostGenImageSwap` / `HostGenImageUpload` / `HostGenFlavor` still show placeholder StockImage (carried over from session 3).
+- `TVReveal` doesn't show the image (only `TVQuestion` got it).
+- 1 of 20 generated cards doesn't render on pick screen.
+- `default_venue` null falls back to literal `"Soul Fire Pizza"` in `app/host/page.tsx:121` (leaks Brandon's venue name to other hosts).
+- My new `tests/e2e/auto-start-on-reveal.spec.ts` regression test isn't in the CI smoke pipeline.
+- Theme broadcast for live repaint (`room:{code}` event + listener in `useRoom`).
+- "Open audience vote" + "Suggested by the room" tiles may be dead UI on setup overview.
+
+**P1.29 — Venue-condition hardening.** Real-device dry run at 10-30 phones on real wifi. iOS Safari quirks (visibilitychange, touch event coverage, viewport). Latency under load. Multi-room concurrency.
+
+**P1.30 — Ties, no-leader, all-zeros leaderboard.** Define + ship a real tiebreaker (proposal: fastest cumulative `ms_to_lock`, then alphabetical). Handle the all-zeros case gracefully ("nobody scored — running it back?" UX or just sort by join time).
+
+### P2 (would be nice)
+
+**P2.31 — Polish wave.**
+- Phone-side fold/send animation Brandon designed (the "mind trick" of seeing the answer fold off the phone screen and arrive on the host's screen).
+- Image on `TVReveal` (skipped in `44df15e` since Brandon's complaint targeted the question phase).
+- Lock-in pile-up animation polish.
 
 ---
 
-## How to resume (next session)
+## How to resume (next session) — IMPORTANT
 
-1. **`git pull`** — make sure you have through `70fcc55` (session 4 tip).
-2. **Verify Brandon can still log in:** open https://tr1via.com/login, enter `brandon@vyntechs.com`, click Send. Should redirect to /host showing "Welcome, Brandon · Set up Wednesday".
-3. **Run the prod smoke as a sanity check:**
-   ```bash
-   node --env-file=.env.local scripts/prod-smoke.mjs "any topic"
-   ```
-   Exit 0 = green.
-4. **Demo-blocking work is DONE through session 4.** The remaining queue is polish + coverage that Brandon explicitly deferred at the end of session 4. Pick from this list — they're independent, work them in any order:
+**Token efficiency is now a constraint.** Session 5 ended at 65% context (652k/1m tokens) after ~4 hours of manual MCP browser driving. The next session needs to be 10x more efficient.
 
-   **Test coverage**
-   - [ ] Phase 5.2 edge-case Playwright specs (rejoin, network-drop, mid-game-edits, manual-entry, generation-failure) — see `docs/superpowers/plans/2026-05-23-smoke-orchestration.md`
-   - [ ] Phase 6 API integration tests per resource
-   - [ ] Phase 7 `smoke-routes.spec.ts` — visit every route, assert no console errors. `prod-ui-smoke.spec.ts` is a tiny version of this.
-   - [ ] Phase 9 gaps doc
-   - [x] Regression test for the session-4 fixes — `tests/component/HostGenPick.test.tsx` (4 tests, clump-heavy pick sidebar) and `tests/e2e/auto-start-on-reveal.spec.ts` (multi-context, asserts TV leaves lobby on first cell click). Both mutation-killed against reverts of the original fixes. The pick-tier regression is a component test rather than a Playwright spec because the bug is pure-UI keying with no server involvement; the server-side `assignPointValues` invariant is already covered by `tests/unit/difficulty.test.ts`.
+### Step 1: Build an efficient prod E2E driver script
 
-   **UI gaps**
-   - [ ] Wire `StockImage` to real `q.imageUrl` on the rest of the gen screens — `HostGenEdit:195`, `HostGenImageSwap:232,285`, `HostGenImageUploadReady:49,85`, `HostGenImageUpload:255`, `HostGenFlavor:94`. Only matters if Brandon manually swaps an image during the demo. The pick + loading cards were fixed in session 3 (`1f1edb8`).
-   - [ ] UX polish on `HostGenLoading` — counter ticks now (session 3) but Brandon flagged it still "feels static." Could add the photo-attach progress as a separate streaming animation, or motion on the difficulty-distribution bar.
-   - [ ] Hydration mismatches in browser console on a few player pages (flagged session 2, never investigated).
+Before you do anything else, write `scripts/full-flow-prod.mjs` — an extension of the existing `scripts/prod-smoke.mjs` that drives a FULL game flow against tr1via.com via HTTP APIs only. No browser. No MCP.
 
-   **Operational**
-   - [ ] Real-device dry run (2-3 phones, host laptop, TV, on real wifi) — Brandon's call when to schedule.
-   - [ ] Open-question UX: there's no separate "About to start Game 1 — players, look up!" moment between lobby and the first question now that `70fcc55` auto-starts on cell click. If Brandon wants a dramatic START button as a separate beat, that's a small UI add (a primary button on the host live console that's only enabled when game.state='draft'/'ready' and disabled after first reveal).
+The script:
+1. Logs in as founder (already in `prod-smoke.mjs`).
+2. Creates a night via `POST /api/nights`.
+3. Adds a topic + generates a category (already in `prod-smoke.mjs`).
+4. **NEW:** Picks 7 questions (PATCH each).
+5. **NEW:** Locks the category (`POST /api/categories/[id]/lock`).
+6. **NEW:** Opens the room (`POST /api/nights/[id]/open`).
+7. **NEW:** Joins 2-3 simulated phones (each with its own `tr1via_device` cookie via `POST /api/session/init`, then `POST /api/players` with the room's nightId).
+8. **NEW:** Clicks first cell (`POST /api/games/[id]/start` + `POST /api/games/[id]/reveal`).
+9. **NEW:** Simulates phones tapping (`POST /api/answers` for each phone's session).
+10. **NEW:** Calls `POST /api/questions/[id]/resolve` (the host's End Early).
+11. **NEW:** Asserts via Supabase MCP: question.finished_at set, is_correct set per answer, awarded_points populated, game_scores reflects updates.
+12. **NEW:** Repeats for the remaining 6 cells.
+13. **NEW:** Game ends. Asserts game.state='done' and the leaderboard ordering.
+14. Cleanup (delete the night).
 
-5. **Don't:** ask Brandon questions whose answers he can't meaningfully evaluate. Just commit and execute. See `feedback_build_without_asking.md`.
+The script should log ONE-LINE per step (✓ name) and only dump full state on failure. Token-efficient.
+
+Estimated cost: ~5k tokens for a green run, ~15k for a failure (it dumps DB state). Compared to ~100k for an MCP-driven walkthrough of the same path.
+
+### Step 2: Get the full flow green
+
+Run the script. Whatever fails, fix. Don't manually drive the browser — let the script find the bug, then read the relevant file with grep+offset/limit. Stay below 200k tokens of session usage until the full flow is end-to-end green at least once.
+
+### Step 3: Move into P0/P1
+
+Once the flow's green, dispatch parallel agents on P0.26 (proper TV extraction) and P0.27 (full-flow e2e in CI). Both have complete design from session 5 agents — just need execution.
+
+### Resumption prompt to paste into the next session
+
+```
+Read HANDOFF.md and /Users/bnipps/.claude/projects/-Volumes-Creativity-dev-projects-tr1via/memory/MEMORY.md.
+
+the first host (host@example.com) goes live on tr1via.com Wednesday 2026-05-27. This is not a demo — she'll be running real trivia for paying patrons. ~3 days.
+
+Today (Sunday) shipped 18 commits of bug fixes but the FULL GAME LOOP has never been driven end-to-end without a bug appearing. Top priority for this session: get a complete game (open room → 7 questions revealed → answers tapped → resolves → reveal frames stay → leaderboard) working end-to-end on prod.
+
+Token efficiency is a hard constraint. Don't drive Playwright MCP for end-to-end verification — write scripts/full-flow-prod.mjs (per HANDOFF.md "How to resume"). It's a node fetch-based script that exercises the full flow via HTTP APIs and asserts DB state via Supabase MCP. ~5k tokens per green run.
+
+Workflow: write the script → run it → fix what breaks → re-run → iterate until full flow green. Only fall back to MCP browser if you have a real UX bug to verify.
+
+Once green, move to P0.26 (proper TV-extraction, agent already designed it) and P0.27 (full-flow e2e in CI). Don't touch P2 polish until P0+P1 are done.
+
+Operating principles:
+- "Build without asking" (memory): commit to engineering choices yourself; only ask about product intent.
+- "Validate, don't just claim" (memory): every fix verified by running the actual flow.
+- "the first host's product, not a demo": defects ship to a real customer.
+- Dispatch agents in parallel for sweeps (audit, refactor, test build) when you'd otherwise be blocked on CI.
+
+Start by reading the HANDOFF "How to resume" section in detail, then begin writing scripts/full-flow-prod.mjs.
+```
 
 ---
 
-## Tools that worked well tonight (use these first next session)
+## Architectural lessons worth carrying forward (session 5 additions)
 
-- **chrome-devtools MCP** — interactive walkthrough of prod found the anon-key bug that no automated test caught. `new_page`, `navigate_page`, `take_snapshot`, `evaluate_script`, `list_console_messages`, `list_network_requests`.
-- **Supabase MCP** — `execute_sql` for DB inspection, `get_logs` for auth events. Faster than Supabase dashboard.
-- **Vercel CLI** — `vercel env`, `vercel redeploy`, `vercel inspect`. `SUPABASE_ACCESS_TOKEN` is in env so the Management API also works via curl.
-- **gh CLI** — `gh secret set` for Actions secrets, `gh run watch` for live workflow output.
+These add to the lessons in `docs/superpowers/plans/2026-05-23-tr1via.md` and prior HANDOFFs:
+
+20. **Test fixtures that shortcut prod setup hide entire bug classes.** `_test/seed-night` skipped the `'draft'` state every real host hits. Four critical bugs all lived in that gap. Rule: tests must enter the same doors users do. Shortcuts in fixtures are debt that hides reality.
+
+21. **postgres_changes silently drops for device-cookie sessions; broadcasts don't.** The architectural rule going forward: any state a player needs must be reachable via a broadcast or an explicit REST refetch. Never assume postgres_changes UPDATE events arrive. We've hit this 4 times in the past 24 hours (kick → heartbeat 410; reveal → lastResolvedQuestion via broadcast; is_correct → refresh trigger on broadcast; etc.).
+
+22. **`useState(initial)` is a one-shot, not a binding.** If a provider takes a prop that might change, `useEffect` must sync the prop into state. ThemeProvider had been a "frozen on first render" trap that wasn't visible until a caller (the host picker) tried to actually change it.
+
+23. **Optimistic UI without a confirmation handshake hides server-side rejection.** PlayerLocked flipped on tap regardless of whether `/api/answers` returned 200, 403, or 500. Players saw "locked in" while the server silently dropped the answer. Two fixes possible: (a) require server confirmation before locking the UI, OR (b) display the submit status (`useAnswerSubmit` already has `failed` state but it's just a small retry button — easy to miss).
+
+24. **HDMI'd hosts make the "separate TV URL" design wrong.** When a host laptop IS the audience display via HDMI, two URLs become awkward. The merge into a single host surface is the architecturally correct fix. Iframe MVP shipped tonight; proper extraction is P0.26.
+
+25. **One-fix-at-a-time reactive mode wastes time.** Session 5 spent 4h of context burning through Brandon-finds-bug → I-fix → Brandon-finds-next. Better workflow: dispatch agents in parallel for sweeps (audit, refactor, test infra) WHILE staying reactive on the main thread. Done correctly, parallel work uses CI wait time productively instead of idle.
+
+---
+
+## Files / artifacts from session 5 worth keeping
+
+- `VERIFY-2026-05-24.md` — initial prod verification report from earlier in the day.
+- `verify-1-pick-sidebar-filled.png`, `verify-2-tv-lobby-2-players.png`, `verify-3-tv-final.png` — screenshots from MCP prod drive.
+- `scripts/prod-smoke.mjs` — the existing 30s API smoke. **Extend this into `full-flow-prod.mjs` per "Resume" step 1.**
 
 ---
 
 ## Memories worth carrying forward (auto-memory)
 
-- `user_brandon.md` — non-technical solo dev. **Update: founder email is now @vyntechs.com.**
-- `feedback_build_without_asking.md` — don't ask "how" questions; flag risky shared-state actions.
-- `project_test_isolation.md` — smoke against PROD Supabase with `@tr1via.test` allowlist, NOT local Docker.
-- New: **`feedback_validate_dont_just_claim.md`** — when claiming a fix works, drive the actual user-visible flow before saying it's done. API path passing ≠ UI works.
-- New: **`project_realtime_anon_key.md`** — trailing whitespace in any Supabase JWT env var breaks WebSocket auth silently. Watch the env var hygiene.
+- `user_brandon.md` — non-technical solo dev, terse, "build without asking" style.
+- `feedback_build_without_asking.md` — commit to engineering decisions, only ask about product intent.
+- `feedback_validate_dont_just_claim.md` — drive the actual user-visible flow before claiming "fixed."
+- `project_test_isolation.md` — smoke against PROD Supabase with `@tr1via.test` allowlist; no local Docker.
+- `project_realtime_anon_key.md` — trailing whitespace in JWT env vars breaks Realtime WebSocket auth silently.
 
-Memory pointers can stay as-is; the new ones get added in `MEMORY.md`.
+**Probably worth adding after this session:**
+- A `feedback_token_efficiency.md` memory: scripts over MCP for repeat E2E; MCP only for genuinely UX-driven verification.
+- A `feedback_first_host_real_customer.md` memory: this is a product, not a demo; Wednesday is real go-live.
