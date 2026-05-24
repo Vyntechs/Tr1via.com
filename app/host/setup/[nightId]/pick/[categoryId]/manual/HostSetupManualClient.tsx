@@ -10,12 +10,14 @@ import {
   HostGenManualEntry,
   type HostGenManualQuestionInput,
 } from "@/components/host/gen";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostSetupManualClientProps {
   nightId: string;
   categoryId: string;
   categoryName: string;
   categoryTopic: string;
+  themeKey: string;
 }
 
 export function HostSetupManualClient({
@@ -23,6 +25,7 @@ export function HostSetupManualClient({
   categoryId,
   categoryName,
   categoryTopic,
+  themeKey,
 }: HostSetupManualClientProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -60,6 +63,7 @@ export function HostSetupManualClient({
 
   return (
     <HostGenManualEntry
+      themeKey={themeKey as ThemeKey}
       shellTitle={`type 7 · ${categoryName.toLowerCase()}`}
       topic={categoryTopic || categoryName}
       eyebrow={`${categoryName.toUpperCase()} · MANUAL ENTRY · 7 QUESTIONS`}

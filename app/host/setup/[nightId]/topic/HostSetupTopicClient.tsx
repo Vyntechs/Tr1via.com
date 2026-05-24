@@ -9,12 +9,14 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { HostGenTopicEntry, type DifficultyTarget } from "@/components/host/gen";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostSetupTopicClientProps {
   nightId: string;
   gameId: string;
   gameNo: number;
   position: number;
+  themeKey: string;
 }
 
 export function HostSetupTopicClient({
@@ -22,6 +24,7 @@ export function HostSetupTopicClient({
   gameId,
   gameNo,
   position,
+  themeKey,
 }: HostSetupTopicClientProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -78,6 +81,7 @@ export function HostSetupTopicClient({
   return (
     <>
       <HostGenTopicEntry
+        themeKey={themeKey as ThemeKey}
         shellTitle={`set up tonight · slot ${position}`}
         eyebrow={`GAME ${gameNo} · SLOT ${position} OF 6`}
         onSubmit={handleSubmit}

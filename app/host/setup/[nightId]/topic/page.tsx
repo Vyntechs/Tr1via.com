@@ -59,6 +59,7 @@ export default async function SetupTopicPage({
       gameId={gameId}
       gameNo={game.game_no}
       position={position}
+      themeKey={owned.night.theme_key ?? "house"}
     />
   );
 }
