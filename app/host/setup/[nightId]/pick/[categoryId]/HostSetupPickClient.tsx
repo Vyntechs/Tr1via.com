@@ -718,10 +718,10 @@ function ModalOverlay({
         style={{
           width: "100%",
           maxWidth: 1400,
-          height: "90vh",
+          maxHeight: "90vh",
           background: "var(--paper)",
           borderRadius: 16,
-          overflow: "hidden",
+          overflow: "auto",
           boxShadow: "0 40px 80px -20px rgba(0,0,0,.6)",
         }}
       >
