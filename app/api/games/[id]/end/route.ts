@@ -10,6 +10,7 @@
 import { ok, forbidden, unauthorized, serverError, notFound } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { broadcastGameEnded } from "@/lib/api/broadcast";
 
 export async function POST(
   _req: Request,
@@ -32,5 +33,15 @@ export async function POST(
     .select("state, ended_at")
     .single();
   if (error || !data) return serverError(error?.message ?? "could not end game");
+
+  // Broadcast the state flip so phones + TV refresh without waiting on
+  // postgres_changes. Phones flip to PlayerJoinGame2 (if game 1 ended) or
+  // out of the live screen entirely; the TV moves to intermission/finale.
+  try {
+    await broadcastGameEnded(owned.night.room_code, id);
+  } catch (e) {
+    console.warn("broadcast game-ended failed", e);
+  }
+
   return ok({ state: data.state, endedAt: data.ended_at });
 }

@@ -220,6 +220,12 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         });
         void fetchSnapshot();
       })
+      .on("broadcast", { event: "game-ended" }, () => {
+        // No questionId — this is a game-level state flip. Refresh the
+        // snapshot so the TV moves to intermission (game 1) or finale
+        // (game 2) immediately instead of waiting on the 4s safety poll.
+        void fetchSnapshot();
+      })
       .subscribe();
 
     // Safety polling for missed broadcasts + slow-moving state (players
