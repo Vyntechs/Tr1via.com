@@ -1,195 +1,214 @@
-# TR1VIA — Handoff
+# TR1VIA — Handoff (session 7, mid-investigation, written to ~ because /Volumes/Creativity unmounted)
 
-**Read order:** this → `MEMORY.md` (auto-memory) → `tr1via-plan.md` (rules) → `docs/superpowers/plans/2026-05-23-tr1via.md` (build plan) → `supabase/README.md` (DB) → `README.md` (run). Prior handoff (session 5) is preserved in git history at `ca26374` — pull it up if you need pre-session-6 context.
+**When you can: copy this file into the repo as `HANDOFF.md`, commit, push to the `p0-32-33-tv-fullscreen-end-game` branch. Then next session reads it from the canonical location.**
+
+**Read order in the next session:** this → `MEMORY.md` (auto-memory) → `tr1via-plan.md` (rules) → `docs/superpowers/plans/2026-05-23-tr1via.md` (build plan) → `supabase/README.md` (DB) → `README.md` (run). Prior handoff is preserved in git history at `1f05685` (end of session 6).
 
 ---
 
 ## Critical context
 
-**Wednesday 2026-05-27 is the real go-live.** Heather (`heatherhmoore@yahoo.com`) opens it that night to host actual trivia at her venue. NOT a demo — paying patrons. ~3 days from this handoff (Sun 2026-05-24 ~3pm).
+**Wednesday 2026-05-27 is the real go-live.** Heather (`heatherhmoore@yahoo.com`) opens it that night to host actual trivia at her venue. NOT a demo — paying patrons. ~3 days from this handoff (Sun 2026-05-24 evening).
 
-**Session 6 (today, ~12pm–3pm) was the first end-to-end green game loop on prod, both via automated driver AND a real live game Brandon played.** PR #1 merged. Two new bugs surfaced from the live test — both P0 for next session.
+**Session 7 hit a stop-hook + a filesystem unmount mid-investigation of a NEW P0 bug. Session must restart cold.** Two threads are in flight:
 
----
+1. **PR #3 (TV-fullscreen layout + End Game CTA) is shipped + awaiting Brandon's eyeball check.** Code is good — pre-validated via 206 unit tests, all 4 e2e specs, full-flow driver against prod. Vercel preview deploy URL is on the PR.
 
-## State as of end of session 6 (2026-05-24 ~3pm)
-
-**Main commit tip:** the merge commit of PR #1 (https://github.com/Vyntechs/Tr1via.com/pull/1). Local main may need a `git pull origin main` to catch up.
-
-**PR shipped + merged this session:** PR #1 — "TV view inline + full-game CI driver + test fixture parity." Three commits:
-- `771c831` — `feat(scripts): add full-flow-prod.mjs end-to-end driver`
-- `f0db778` — `refactor(tv): render TV view inline in host page, drop iframe`
-- `43ffad8` — `fix(tests+ci): seed-night drives real endpoints + full-flow CI step`
-
-**Prod state:** Vercel auto-deployed after merge. tr1via.com is at the merge commit.
-
-**Test count:** 192/192 unit + component passing. TypeScript clean. All 4 Playwright e2e specs green with `--workers=1` (which is how CI runs them). New CI step runs `scripts/full-flow-prod.mjs` on every push to main (~80s, 3-min sub-timeout; job timeout bumped 5→8 min).
-
-### What shipped in session 6
-
-**`scripts/full-flow-prod.mjs`** — a Node fetch-based script that drives a complete 2-game night against tr1via.com over HTTP. 3 simulated phones (Alice/Bob/Carol) join the night, auto-opt into game 1, play 7 cells, end game 1, explicitly join game 2, play 7 more cells, end game 2. Asserts via Supabase admin: every answer row has `is_correct + awarded_points` after resolve, both games hit `state='done'`, cumulative leaderboard sorts Alice > Carol > Bob per the deterministic answer-strategy. ~80s green per run, ~5k tokens. Replaces the ~150k-token MCP browser walks we were doing.
-
-**TV view inline in host page** — yesterday's iframe MVP is gone. New `components/tv/TVStateMachine.tsx` (pure component, takes a `TVSnapshot` prop, renders the right per-state TV view) + `lib/host/roomToTVSnapshot.ts` (pure adapter from `useRoom` data → `TVSnapshot`, no new fetches). `app/tv/[code]/page.tsx` shrunk from 697 to 143 LOC and just delegates to TVStateMachine. HostLiveConsole renders `<TVStateMachine />` inline inside a 16:9 wrapper. Bonus fix in `app/api/tv/[code]/snapshot/route.ts`: the live-question query used `.maybeSingle()` against questions across ALL rooms; switched to `.limit(50) + JS filter` so multi-room concurrency doesn't silently lose the live question.
-
-**Test fixture parity** — `app/api/_test/seed-night/route.ts` no longer short-circuits. It now drives the real `/api/nights` + `/api/categories` + `/api/categories/[id]/manual` endpoints with a cookie jar threaded for auth (so refresh tokens don't break mid-sequence). Games stay in `'draft'` — same state a real host sees. `tests/e2e/auto-start-on-reveal.spec.ts` updated to match.
-
-### What Brandon validated live in prod (post-merge)
-
-- Played a 7-question game on tr1via.com via a real browser session.
-- A second phone joined via QR — both phones sat at 2 LIVE in the players panel for at least part of the game.
-- Game loop worked end-to-end on the happy path: reveals arrived on both surfaces, answers tapped, resolves landed, scoring tallied (Brandon's `Bnipps360` finished at 1,070 pts — 38% of max, with the 10% speed bonus applied).
-- **Two real bugs surfaced** — see P0.32 + P0.33 below. Screenshot worth grabbing for the layout discussion.
+2. **A new bug surfaced when Brandon tried to generate questions as a host:** the pick page hangs on the "pulling questions" spinner indefinitely. He walked away from the tab for a moment; refresh did not fix it. Investigation was systematic (via the `superpowers:systematic-debugging` skill) and reached the end of Phase 1.B before the stop-hook hit. The evidence already collected (below) **changes the initial hypothesis** — don't redo it from scratch.
 
 ---
 
-## What is still broken — P0 for session 7
+## Thread 1: PR #3 — TV-fullscreen + End Game
 
-### P0.32 — Inline TV panel letterboxes + clips content
+**URL:** https://github.com/Vyntechs/Tr1via.com/pull/3
+**Branch:** `p0-32-33-tv-fullscreen-end-game`
+**Status:** Mergeable. Vercel preview deploying. Awaiting Brandon's eyeball check.
 
-**Symptom (from Brandon's screenshot, taken on a Mac laptop running Safari):**
-- TV panel is centered with ~25–30% of host-console width wasted on black bars left + right.
-- TVQuestion's answer card (`"Cherry liqueur"`) is clipped at the bottom edge of the panel.
-- Net effect: the surface that's supposed to be the audience focus is the most cramped element on the screen.
+**What it changes:**
+- TV state machine fills the host laptop viewport (no more 30% black bars / clipping — P0.32).
+- Host taps cells directly on the same TVGrid the audience watches.
+- "End Game →" button surfaces when the board is exhausted (P0.33).
+- Bottom control strip changes per state. Players list + QR moved behind a "Players" button.
 
-**Root cause:** today's `f0db778` wraps the inline TV in:
-```css
-width: min(100%, calc(62vh * 16/9));
-maxHeight: 62vh;
-aspect-ratio: 16/9;
+**What Brandon needs to do:** pull up the preview deploy, play one game with one phone, confirm:
+1. TV fills the screen.
+2. Cell taps work on the TV grid (no separate board).
+3. "End Game →" appears when the board's empty.
+4. "Players (N)" button opens the sheet.
+5. "Pick next →" appears during reveal.
+
+**Pre-validated:**
+- 206/206 unit + component tests pass (added 14 for `deriveHostMode`).
+- TypeScript clean.
+- All 4 Playwright e2e specs green (including the rewritten `auto-start-on-reveal.spec.ts` for the new lobby → Start → cell flow).
+- `scripts/full-flow-prod.mjs` against prod: green at 81s.
+
+---
+
+## Thread 2: Gen-stuck bug — Phase 1 evidence (do NOT redo)
+
+### What Brandon hit
+
+He tried to generate questions on the host setup pick page. The page sat on the "Pulling questions · TOPIC" spinner indefinitely. He walked away briefly. Returned: still spinning. Refreshed: still spinning. His exact words: *"It's still sitting there thinking it's loading, generating questions."*
+
+### The investigation flow used (next session continues from here)
+
+Use the `superpowers:systematic-debugging` skill. Iron Law: **NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST.** Symptom patches are failure. Brandon was explicit: *"I don't want an immediate unlock. I want the root cause. Explored, researched, planned, corrected, validated. I want it ran through the toolkit."*
+
+**Phase 1 (evidence gathering) — partial, finished below:**
+
+- ✅ **1.A — query Supabase for Brandon's stuck categories.** Done via Supabase MCP. **Surprise finding:** they're all in state `'draft'`, NOT `'generating'`. Three rows, all `q_count = 0`. See "Evidence" below.
+- ✅ **1.B — inspect questions tables for those categories.** All zero. Generation never inserted any rows for these categories.
+- ❌ **1.C — pull Vercel function logs for `/api/categories/[id]/generate` around the time each stuck category was created.** Not done yet. This is the next concrete action.
+- ❌ **1.D — pinpoint failing component boundary** (Anthropic? Insert? after() crash? Vercel function timeout? Bad topic?). Depends on 1.C.
+
+**Phase 2 (pattern analysis), 3 (hypothesis), 4 (TDD fix) — not started.**
+
+### Evidence collected (Supabase, project `citweuctcnuxmqjxcbiz` = "Trivia")
+
+Query used:
+```sql
+SELECT c.id, c.name, c.topic, c.state, c.position, c.flavor::text, c.created_at,
+       EXTRACT(EPOCH FROM (now() - c.created_at))::int AS age_sec,
+       (SELECT count(*) FROM questions q WHERE q.category_id = c.id) AS q_count,
+       (SELECT count(*) FROM questions q WHERE q.category_id = c.id AND q.image_url IS NOT NULL) AS q_with_photo,
+       (SELECT count(*) FROM questions q WHERE q.category_id = c.id AND q.is_picked) AS q_picked,
+       n.venue_name, n.room_code, u.email, g.game_no
+FROM categories c
+JOIN games g ON g.id = c.game_id
+JOIN nights n ON n.id = g.night_id
+JOIN hosts h ON h.id = n.host_id
+JOIN auth.users u ON u.id = h.user_id
+WHERE c.state IN ('generating','draft','review')
+ORDER BY c.created_at DESC
+LIMIT 30;
 ```
 
-On a 1080p host laptop, `62vh ≈ 670px`, and `62vh × 16/9 ≈ 1188px`. The host console is wider than 1188px, so the calc dominates and caps the TV stage at 1188×670. TVQuestion's layout was originally designed for a 100vw × 100vh stage; packed into 1188×670 the answer-card overflows vertically.
+Result (all 3 rows belong to `brandon@vyntechs.com`):
 
-Two coupled problems: (a) panel is too narrow for the host page, (b) panel is too short for what the TV components want to render. Fixing only one won't get you there.
+| id | topic | state | created_at (UTC) | age_sec | q_count | flavor | night |
+|---|---|---|---|---|---|---|---|
+| `8e0fbffd-8bf6-4545-91fc-95b3da339581` | Beatles | **draft** | 2026-05-24 23:30:38 | 674 (~11min) | **0** | `{"difficulty":"normal"}` | Soul Fire Pizza · V79NYP · g1 |
+| `ba3d2500-e244-4a14-865f-ec226fcec127` | Space | **draft** | 2026-05-24 22:13:03 | 5328 (~89min) | **0** | `{"difficulty":"normal"}` | Soul Fire Pizza · ZYS7WT · g1 |
+| `7103dbe2-6914-4058-a0de-ddb05970dbbe` | Greek Mythology | **draft** | 2026-05-24 18:51:49 | 17403 (~4.8h) | **0** | `{"difficulty":"normal"}` | Soul Fire Pizza · 7QAZC6 · g1 |
 
-**Brandon's direction (quote):** "If you need more room, you can take it from other areas that aren't as important. Weigh the pros and cons."
+The most recent one (Beatles, ~11 min old at the time of query) is almost certainly what Brandon was sitting on. Note: the table schema for `categories` has NO `updated_at` column, only `created_at` — so there's no DB-level record of when state was changed.
 
-**Fix options (ranked from least to most ambitious):**
+### What this evidence rules out + rules in
 
-a. **Raise the height cap** — `maxHeight: 80vh` or remove. Lets the TV grow taller, calc → wider TV. Risk: board below the fold; host has to scroll to tap the next cell.
+**Ruled out:**
+- ❌ "Generation job died mid-flight after inserting some questions" — would leave `q_count > 0`. All three have zero.
+- ❌ "Category state stuck in `'generating'`" — DB says `'draft'`.
+- ❌ "Browser tab throttling caused missed broadcasts" — wouldn't explain the DB state.
 
-b. **Drop `aspect-ratio` inside the panel, let it fill 100% width, letterbox internally.** TV components see a wider viewport, content scales up. Risk: components designed for 16:9 may misposition (e.g. the "TR1VIA · GAME 1 · COCKTAILS" header bar).
+**Ruled in (hypotheses to test in Phase 1.C):**
 
-c. **(Recommended start)** **Collapse the QR + players sidebar.** Once players have joined, the QR code is mostly visual noise; the players list could become a collapsible side button or move to a bottom strip. Frees ~25–30% horizontal width for the TV panel — the same amount currently lost to black bars — and probably fixes the cropping without touching TV component internals.
+1. **`generateQuestions` (Claude call) returned zero valid questions or threw.** The route's catch block at `app/api/categories/[id]/generate/route.ts:94` rolls state back to `'draft'` and broadcasts `error`. If this is what happened, the host's open tab should have received the `error` broadcast → `setGenerationFailureMessage` → show the failure UI with retry / manual entry buttons. But the host sees the loading screen, not the failure UI. So either:
+   - the `error` broadcast didn't land at the client (Realtime hiccup, channel not subscribed in time), AND
+   - the polling fallback in `useGenerationStatus` didn't catch it.
+   - The polling fallback DOES detect `dbState === 'draft'` → returns `{ kind: 'rolled-back' }`. The parent's useEffect at `HostSetupPickClient.tsx:188` reacts to `rolled-back` by setting `generationFailureMessage` and `state='draft'`. So if polling ran, the failure UI WOULD appear. So either polling didn't run yet, or there's a state-update bug.
 
-d. **State-dependent TV panel size.** During an active reveal, the TV panel takes more of the screen (Brandon doesn't need to see the board mid-question); during `BOARD_READY` waiting, it shrinks and the board takes prominence. Most polished; arguably the right long-term answer. Higher implementation cost.
+2. **The after() job crashed before the synchronous portion finished setting `state='generating'`.** In that case state would never leave its initial value (which is whatever it was — likely `'draft'` post-creation). ⚠️ The route sets `state='generating'` synchronously BEFORE returning the 202, so if this were the cause, the category would still be in `'draft'` from creation, but the host's pick page wouldn't have routed there at all (the topic-page POST wouldn't have completed). Doesn't fully fit. Worth verifying by checking whether the synchronous update actually committed.
 
-My recommendation: ship (c) first (small, mostly mechanical), then layer (d) on top if Brandon wants the polish. (a) is a quick try if you want to throw a one-line tweak at it before either.
+3. **Some other path resets state to `'draft'`.** Worth grepping the codebase for every place that writes `state: 'draft'` to the categories table. Currently 2 known places: the catch block and inside `runGenerationJob`'s helper. Could be a third somewhere.
 
-### P0.33 — End-of-game has no winner / no leaderboard / no animation
+4. **The Anthropic call OR Pexels call hung past the function's `maxDuration: 120s`.** Vercel would kill the function. If the kill happened AFTER the catch block had already set state='draft' but BEFORE the broadcast landed, you'd see exactly this state (draft in DB, no client broadcast). The catch is `await runGenerationJob(...).catch(async (err) => { ... await admin.update({state:'draft'}); await broadcastToCategory(..., 'error', ...); })` — those two awaits are sequential. The update could finish, then the broadcast call gets killed mid-flight when the function is shut down. ⚠️ **This is the most plausible hypothesis given the evidence.**
 
-**Symptom:** when the host plays all 7 cells of the only category in a game, the last question resolves, and then the screen says `"BOARD READY · WAITING / Tap a cell to reveal the next question"` — but every cell is spent. No winner card, no leaderboard transition, no animation. The host is stuck staring at an exhausted board.
+**The next concrete action (Phase 1.C):** Pull Vercel function logs filtered to the Beatles category's creation window (≈ `2026-05-24 23:30:38 UTC`) and look for the `[generate]` log lines. Use:
 
-**Root cause hypothesis (unverified — investigate first):**
-- The host-page state machine doesn't watch for `questions.every(q => q.finished_at)` and trigger the game-end transition.
-- OR the system relies on the host clicking an "End Game" button that doesn't auto-appear when the board is exhausted.
-- `scripts/full-flow-prod.mjs` succeeds because IT calls `POST /api/games/[id]/end` explicitly after the loop. Real hosts have no script.
+```
+mcp__claude_ai_Vercel__get_runtime_logs   (project: tr1via)
+   - filter by time window: 2026-05-24 23:30:00 to 23:33:00 UTC
+   - look for: POST /api/categories/8e0fbffd-8bf6-4545-91fc-95b3da339581/generate
+   - look for: "[generate] job failed:" log line from the route's catch
+   - look for: function timeout / cold-stop messages
+   - look for: any error from the generateQuestions or autoAttachPhoto modules
+```
 
-**Fix shape:**
-1. Detect "all picked questions in all categories of this game are finished" in `useRoom` or `HostLiveConsoleClient`.
-2. When true, either auto-call `/api/games/[id]/end` OR surface a prominent "End Game" CTA (probably the latter — auto-end without host control could feel jarring if they wanted to recap).
-3. Trigger the TV state machine's leaderboard / winner / intermission state on game-end.
-4. **Extend `scripts/full-flow-prod.mjs`** to remove the explicit `/end` call and instead poll for `game.state === 'done'` on its own — that's the regression test. Without this step, the same bug class can re-emerge.
+Then do the same for the Space and Greek Mythology categories. If all 3 share the same failure mode, that's the root cause. If they differ, it's environment-dependent.
+
+### Tools available next session
+
+- **Supabase MCP** (already loaded):
+  - `mcp__plugin_supabase_supabase__execute_sql` — project id `citweuctcnuxmqjxcbiz`
+  - `mcp__plugin_supabase_supabase__get_logs` — service options: api, postgres, edge-function, realtime, etc.
+- **Vercel MCP** (already loaded):
+  - `mcp__claude_ai_Vercel__get_runtime_logs`
+  - `mcp__claude_ai_Vercel__list_deployments`
+- **Code paths already mapped:**
+  - `app/api/categories/[id]/generate/route.ts` (catch block at line ~94 rolls back to draft; `maxDuration: 120` at line 40).
+  - `lib/ai/generate-questions.ts` (Claude wrapper).
+  - `lib/ai/auto-attach-photo.ts` (Pexels wrapper).
+  - `lib/hooks/useGenerationStatus.ts` (client-side polling fallback — only fires timeout if `loadedCount === 0`).
+  - `app/host/setup/[nightId]/pick/[categoryId]/HostSetupPickClient.tsx` (renders loading vs error vs pick).
+
+### What NOT to do next session
+
+- ❌ Don't patch around the symptom. Brandon was explicit: he wants the bug investigated, not unblocked.
+- ❌ Don't ship `useVisibilityResume` / "drop the `loadedCount === 0` guard" fixes until root cause is confirmed. Those WERE the fixes I was about to propose; Brandon redirected to "run it through the toolkit." Phase 1 isn't done yet.
+- ❌ Don't recreate Phase 1.A or 1.B. The Supabase query above already gave the answer. Save tokens, build from it.
+- ❌ Don't query for the user-specific stuck categories with `WHERE h.email='...'` directly on the `hosts` table — the email lives on `auth.users`, joined via `h.user_id`. The working query is above.
 
 ---
 
-## Carryover from prior session (still applicable)
+## Resilience audit Brandon asked for
 
-### Closed in session 6
-- ✅ **P0.26** — Proper TV extraction (shipped in `f0db778`).
-- ✅ **P0.27** — Test fixture / prod divergence + full-flow CI step (shipped in `43ffad8`).
-- ✅ **Game-2 + intermission coverage in driver** (shipped in `771c831`).
+Brandon's question: "What other cases can we just have issues?" The audit was started but is gated on completing the systematic-debugging investigation above. Surfacing the list so it's not lost; prioritization will firm up once root cause is named.
 
-### Still open (from session 5 HANDOFF)
-- **P1.28** — 10 deferred small items: pick-tier tie-break disagrees client↔server (lock query has no ORDER BY); `HostGenEdit` / `HostGenImageSwap` / `HostGenImageUpload` / `HostGenFlavor` show placeholder StockImage; `TVReveal` doesn't show the image (only `TVQuestion` got it); 1/20 generated cards doesn't render on pick screen; `default_venue` null → "Soul Fire Pizza" leak in `app/host/page.tsx:121`; `auto-start-on-reveal.spec.ts` should land in CI smoke pipeline; theme broadcast for live repaint; "Open audience vote" + "Suggested by the room" tiles may be dead UI.
-- **P1.29** — Venue-condition hardening: 10–30 phones on real wifi, iOS Safari quirks (visibilitychange, touch coverage, viewport).
-- **P1.30** — Ties / no-leader / all-zeros leaderboard.
-- **P2.31** — Polish: phone-side fold/send animation, TVReveal image, lock-in pile-up polish.
-
-### Untested by a real human (driver tests these, Brandon hasn't)
-- Game 1 → intermission → game 2 → finale on real phones.
-- Multi-category in one game (today's live test was 1 category).
-- 3+ phones simultaneously (today's live test was effectively 1-2).
-- Theme change mid-game.
+| # | Failure | Likelihood Wed | What happens today |
+|---|---------|----|----|
+| **A** | **Gen flow leaves category in unrecoverable state** | ⚠️ HIGH (Brandon hit it 3x today) | TBD — see investigation above. |
+| **B** | **Host tab backgrounded during gen** | ⚠️ HIGH | Realtime broadcasts missed; client polling fallback only catches `loadedCount === 0` case. |
+| **C** | **Live-game tab backgrounded** | ⚠️ HIGH | `useRoom` has no visibility-resume re-fetch; state can desync from prod. TV (`useTVRoom`) has 4s self-heal — laptop doesn't. |
+| **D** | **Pexels rate-limited mid-batch** | MED | Handled (loop breaks, generation still completes); host sees some questions without images. Acceptable. |
+| **E** | **Host network drops during /reveal or /end** | MED | Toast error. Idempotency check exists for /start; needs verification for /reveal. |
+| **F** | **Realtime WebSocket dies + reconnects** | MED | Supabase SDK auto-reconnects, but broadcasts sent during the gap are lost. Self-heal exists for TV, not host. |
+| **G** | **Laptop sleeps mid-game** | LOW | Like (C) but more severe. |
+| **H** | **Heather opens two host tabs** | LOW | Both subscribe; actions from one don't refresh the other. |
 
 ---
 
-## How to resume — IMPORTANT
+## State of the working tree (before /Volumes/Creativity unmounted)
 
-### Step 1: align with Brandon on the P0.32 layout option
+- Branch: `p0-32-33-tv-fullscreen-end-game` — clean, all commits pushed to PR #3 on GitHub.
+- This handoff file is on Brandon's home directory only; he should commit + push it to the branch after re-mounting the drive or re-cloning the repo.
+- Untracked files (session-6 leftovers, NOT for any PR): `.playwright-mcp/`, `.tmp-smoke-shots/`, `VERIFY-2026-05-24.md`, three `verify-*.png` files. Safe to delete.
 
-This is product/UX territory, not pure engineering. Show him the 4 options above (or open Brandon's screenshot and walk through them). Likely answer: (c) collapse the QR/players sidebar.
+---
 
-### Step 2: ship P0.32
+## Anthropic stop-hook problem (Brandon's recurring infrastructure issue)
 
-Mostly mechanical once the option is picked. Verify by running `npm run dev`, opening a host session, getting to a live question, confirming the TV panel fills the freed space without clipping.
+Brandon hits a "stop hook problem" every session, forcing restarts. Symptoms observed this session:
+- Bash mid-command suddenly reports working directory deleted, cwd "recovered" to /Users/bnipps.
+- Write tool returns `EACCES: permission denied, mkdir '/Volumes/Creativity'` — the path can't be created because it's a mount that disappeared.
+- The TaskCreate/TaskUpdate tools start failing with `ENOENT: no such file or directory, lstat '/Users/bnipps/.claude/tasks/<uuid>/.lock'`.
 
-### Step 3: ship P0.33
+This is consistent with a network or external volume `/Volumes/Creativity` losing its mount partway through a session. The most reliable workaround: **clone the repo to a local SSD path (e.g., `~/dev/tr1via`)** so it doesn't depend on `/Volumes/Creativity` staying mounted. The PR state lives on GitHub; re-clone loses nothing local except the untracked session-6 leftovers (already noted as safe to delete).
 
-Trace `useRoom` for the "all questions done" signal. Add detection + surface End Game CTA + trigger TV leaderboard state. Extend `scripts/full-flow-prod.mjs` to drop the explicit `/end` call — that locks the regression. Re-run driver; should still go green via auto-end.
+The real fix lives on Anthropic's side. If you want to report it: file with the specific error text + that it's recurring on a project that lives on an external/network mount.
 
-### Step 4: PR
+---
 
-PR-first workflow per [[feedback-pr-workflow]]. Plain English, pre-validated checklist, one explicit "please put your eyes on this" item.
-
-### Step 5: re-validate live
-
-Brandon does the same 2-phone test he did today. Confirm both fixes. If green, merge. Heather goes live in 2 days from then.
-
-### Resumption prompt to paste into the next session
+## Resumption prompt to paste into the next session
 
 ```
 Read HANDOFF.md and /Users/bnipps/.claude/projects/-Volumes-Creativity-dev-projects-tr1via/memory/MEMORY.md.
 
 Heather (heatherhmoore@yahoo.com) goes live on tr1via.com Wednesday 2026-05-27.
 
-Last session shipped PR #1 (TV view inline + full-game CI driver + test fixture parity). All merged. Brandon validated with a real game and two P0 bugs surfaced:
+Two threads in flight:
 
-1. P0.32 — Inline TV panel clips content. CSS aspect-ratio + 62vh height cap leaves ~30% black bars on a 1080p host laptop and clips TVQuestion's answer card at the bottom. 4 options ranked in HANDOFF; (c) — collapse the QR/players sidebar — is the recommended start. Needs a Brandon decision before coding.
+1. PR #3 (TV-fullscreen layout + End Game CTA, P0.32 + P0.33) is shipped + awaiting Brandon's eyeball check. Don't touch unless he reports a problem on the preview deploy.
 
-2. P0.33 — When all cells of the only category in a game resolve, the screen says "tap a cell to reveal the next question" but every cell is spent. No winner / leaderboard / animation. Auto-end detection is missing. Driver succeeds today because it calls /api/games/[id]/end explicitly. Fix: detect questions.every(q => q.finished_at), surface End Game CTA, trigger TV leaderboard state. THEN extend scripts/full-flow-prod.mjs to remove the explicit /end call — that's the regression lock.
+2. NEW gen-stuck bug: pick page hangs on "pulling questions" spinner. Brandon walked away briefly; refresh didn't fix it. Investigation was started under superpowers:systematic-debugging, reached the end of Phase 1.B with a SURPRISE finding (3 stuck categories in DB are in state 'draft' with q_count=0, NOT 'generating' as theorized). Resume at Phase 1.C: pull Vercel function logs for /api/categories/[id]/generate around 2026-05-24 23:30:38 UTC (the most-recent stuck category "Beatles", id 8e0fbffd-8bf6-4545-91fc-95b3da339581) and identify what wrote state='draft' on these rows after they presumably went through 'generating'.
+
+Iron Law (don't violate): NO FIXES UNTIL ROOT CAUSE IS NAMED. Brandon was explicit — symptom patches are unacceptable. Run through superpowers:systematic-debugging phases 1 → 2 → 3 → 4 in order.
 
 Workflow:
 - PR-first; never push to main directly ([[feedback-pr-workflow]]).
 - Plain-English PR descriptions for Brandon (non-technical).
-- Pre-validate everything you can before opening; list the one human-eye check.
-- Use scripts/full-flow-prod.mjs ([[project-full-flow-driver]]) for repeat validation; extend rather than replace.
-- Brandon's screenshot from session 6 documents the bugs visually — reference it.
+- Use scripts/full-flow-prod.mjs ([[project-full-flow-driver]]) for repeat validation.
+- Driver hits the SAME /api/categories/[id]/generate endpoint and completes in ~24s/category — so the endpoint isn't universally broken. Brandon's failure must be conditional on something specific (topic? difficulty? a race?).
 
-Start by reading HANDOFF "P0.32" + "P0.33" sections in full, then ask Brandon to pick a P0.32 layout option.
+Start by reading the HANDOFF "Thread 2" + "Evidence collected" sections in full, then continue at Phase 1.C using the Vercel MCP. Don't redo Phase 1.A or 1.B.
 ```
-
----
-
-## Architectural lessons added this session
-
-26. **CSS `aspect-ratio` + `max-height` is a width trap.** `width: min(100%, calc(62vh * 16/9))` looks right on paper but on a viewport that's wider than ~110vh, it shrinks the surface below the available space. Picking the largest 16:9 rect that fits a 62vh height ceiling is NOT the same as picking the largest 16:9 rect the user can see. When embedding a fixed-ratio surface in a fluid layout, decide which axis is the binding constraint and bias toward filling THAT — don't try to satisfy both ratio + height cap simultaneously.
-
-27. **End-of-game state must be data-driven, not host-action-driven.** The full-flow driver passed because it called `/end` explicitly. Real hosts have no script — they reveal the last question, see it resolve, and... wait. The host page needs to detect `questions.every(q => q.finished_at)` and surface (or trigger) the end-of-game action. Driver-as-truth tests can hide host-UX gaps because the driver always knows what to do next; a real human doesn't.
-
-28. **2 humans found 2 bugs in 7 minutes that 14 automated reveals across 2 games did not.** The driver validates plumbing; it does NOT validate UX. Going forward, every UI-changing PR needs the 5-minute human-eye check that PR #1 deferred to merge time. Brandon's screenshot is a model of how to surface UI bugs in <10 seconds of attention — keep that as the regression-reporting format.
-
----
-
-## Files / artifacts from session 6 worth keeping
-
-- `scripts/full-flow-prod.mjs` — extend, don't replace.
-- `lib/host/roomToTVSnapshot.ts` — pure adapter; reusable pattern for any other place that needs to convert host-side room state into TV-side snapshot shape.
-- `components/tv/TVStateMachine.tsx` — pure state-machine component; the single source of truth for "which TV view should render right now."
-- Brandon's screenshot showing both P0 bugs (worth attaching to the P0.32 design discussion if you can re-grab it).
-
----
-
-## Memories (auto-memory) — current snapshot
-
-All in `/Users/bnipps/.claude/projects/-Volumes-Creativity-dev-projects-tr1via/memory/`:
-
-- `user_brandon.md` — non-technical solo dev; terse; "build without asking" style.
-- `feedback_build_without_asking.md` — commit to engineering decisions; only ask about product intent.
-- `feedback_validate_dont_just_claim.md` — drive the actual user-visible flow before claiming fixed.
-- `feedback_token_efficiency.md` — scripts over MCP for repeat E2E.
-- `feedback_heather_real_customer.md` — Wednesday is a real go-live.
-- `feedback_pr_workflow.md` — PR-first; plain-English description; pre-validate; one explicit human-eye check (added session 6).
-- `project_test_isolation.md` — smoke against PROD Supabase with @tr1via.test allowlist.
-- `project_realtime_anon_key.md` — JWT env var newline trap.
-- `project_full_flow_driver.md` — `scripts/full-flow-prod.mjs` is the canonical prod E2E driver (added session 6).
