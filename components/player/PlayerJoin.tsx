@@ -18,7 +18,6 @@ import {
   Eyebrow,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
-import { useEggBindings } from "./PalettePeekProvider";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface PlayerJoinProps {
@@ -56,7 +55,6 @@ export function PlayerJoin({
   const { t } = useTheme();
   const interactive = !!onSubmit;
   const [name, setName] = useState(playerName);
-  const eggBind = useEggBindings();
 
   // Keep the input synced when the parent updates the seed name (e.g. on
   // remount after a network failure).
@@ -83,13 +81,7 @@ export function PlayerJoin({
         style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
       >
         <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", paddingTop: 24 }}>
-          <span
-            {...eggBind}
-            aria-label="TR1VIA — five quick taps for a surprise"
-            style={{ display: "inline-block", cursor: "pointer", outline: "none" }}
-          >
-            <Wordmark size={36} />
-          </span>
+          <Wordmark size={36} />
           <div style={{ marginTop: 28 }}>
             <Display size={56} color={t.ink}>
               <span style={{ color: t.accent }}>Pizza,</span>
