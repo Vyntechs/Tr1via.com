@@ -197,7 +197,9 @@ function HostLiveConsoleInner({
             data-testid="host-tv-panel"
             style={{
               flexShrink: 0,
-              height: "52vh",
+              width: "100%",
+              aspectRatio: "16 / 9",
+              maxHeight: "62vh",
               borderBottom: `1px solid ${t.line}`,
               background: "#000",
               position: "relative",

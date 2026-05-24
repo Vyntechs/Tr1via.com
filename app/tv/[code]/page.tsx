@@ -21,7 +21,7 @@
 
 "use client";
 
-import { use, useEffect, useMemo, useRef, useState } from "react";
+import { use, useEffect, useMemo } from "react";
 import {
   TVFinaleWinner,
   TVGrid,
@@ -46,7 +46,6 @@ import { useTVRoom, type TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
-const LEADERBOARD_HOLD_MS = 6000; // how long the leaderboard interstitial holds
 
 export default function TVPage({
   params,
@@ -174,21 +173,14 @@ function TVStateMachine({
   const lastReveal = snapshot.reveals[0] ?? null;
   const lastResolve = snapshot.reveals.find((r) => r.event === "resolve") ?? null;
 
-  // ── Sticky leaderboard interstitial after resolve ──
-  // After a resolve event, hold the TVLeaderboard for ~6s before reverting
-  // to TVGrid. This is a TV-side timer (the leaderboard is interstitial UX
-  // — the host can advance whenever).
-  const [showLeaderboard, setShowLeaderboard] = useState(false);
-  const lastResolveId = useRef<string | null>(null);
-  useEffect(() => {
-    if (lastResolve && lastResolve.id !== lastResolveId.current) {
-      lastResolveId.current = lastResolve.id;
-      setShowLeaderboard(true);
-      const handle = setTimeout(() => setShowLeaderboard(false), LEADERBOARD_HOLD_MS + 2_500);
-      return () => clearTimeout(handle);
-    }
-    return;
-  }, [lastResolve]);
+  // After a resolve event, the reveal frame should stay visible until the
+  // host clicks the next cell. The previous auto-transition to a
+  // leaderboard interstitial (LEADERBOARD_HOLD_MS) was confusing for the
+  // demo flow — Brandon's customer saw the correct answer flicker and get
+  // replaced by the leaderboard before she could read it. The reveal now
+  // sticks until the next live question arrives (which the state machine
+  // catches via `liveQuestion && !finishedAt`) OR the game ends.
+  const stickyReveal = !!lastResolve;
 
   // ── Lobby branch ──
   if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
@@ -224,24 +216,13 @@ function TVStateMachine({
       );
     }
 
-    // Just resolved — show reveal first, then leaderboard interstitial,
-    // then back to the grid. `showLeaderboard` is the sticky pointer that
-    // gets cleared after LEADERBOARD_HOLD_MS + buffer.
-    if (showLeaderboard && lastReveal?.event === "resolve") {
-      // First show TVReveal until the underlying answers have had a moment
-      // to land; the leaderboard sits behind it. Concretely: hold reveal
-      // for the first 6s, then switch to leaderboard.
-      const elapsedSinceResolve = Date.now() - new Date(lastReveal.occurredAt).getTime();
-      if (
-        elapsedSinceResolve < LEADERBOARD_HOLD_MS &&
-        targetQuestion &&
-        targetQuestion.finishedAt
-      ) {
-        return (
-          <TVRevealView snapshot={snapshot} question={targetQuestion} />
-        );
-      }
-      return <TVLeaderboardView snapshot={snapshot} game={currentGame} />;
+    // Just resolved — show the reveal frame and KEEP it visible until the
+    // host advances by clicking the next cell (which will arrive as a new
+    // `liveQuestion` and trip the branch above). No auto-transition to a
+    // leaderboard interstitial — the customer host explicitly wanted the
+    // answer to stay readable until they move on.
+    if (stickyReveal && targetQuestion && targetQuestion.finishedAt) {
+      return <TVRevealView snapshot={snapshot} question={targetQuestion} />;
     }
 
     // No live question, no recent resolve → TVGrid.
