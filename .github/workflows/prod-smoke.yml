@@ -2,8 +2,6 @@ name: Prod smoke
 
 # Runs the end-to-end smoke against tr1via.com automatically:
 #   • After every push to main (waits for Vercel to deploy, then smokes)
-#   • Hourly via cron — catches things that drift between deploys
-#     (e.g. Anthropic rate-limit, Pexels key flip, Supabase upstream incident)
 #   • On-demand via "Run workflow" button on the Actions tab
 #
 # Silence means green. If anything turns red GitHub emails the repo owner.
@@ -18,10 +16,6 @@ name: Prod smoke
 on:
   push:
     branches: [main]
-  schedule:
-    # Every hour at :07 — offset to avoid Vercel deploy storms at the top
-    # of the hour.
-    - cron: '7 * * * *'
   workflow_dispatch:
 
 concurrency:
