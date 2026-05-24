@@ -68,13 +68,20 @@ export async function POST(req: NextRequest) {
 
   // Auto-opt into game 1 if it exists and isn't done. The player tapping
   // "Join Game 2" later separately participates in game 2.
+  //
+  // The gate matches the comment intent ("isn't done") — not the previous
+  // narrower 'ready'/'live' check. Normal night creation (POST /api/nights)
+  // inserts games in 'draft' state and stays there until the host clicks
+  // the first cell (the 70fcc55 auto-start). Players who join between
+  // "Open the room" and the first cell click need their participation row
+  // anyway — otherwise /api/answers rejects every tap with 403.
   const { data: game1 } = await admin
     .from("games")
     .select("id, state")
     .eq("night_id", parsed.data.nightId)
     .eq("game_no", 1)
     .maybeSingle();
-  if (game1 && (game1.state === "ready" || game1.state === "live")) {
+  if (game1 && game1.state !== "done") {
     // Ignore conflicts — they just mean the player rejoined.
     await admin
       .from("game_participations")
