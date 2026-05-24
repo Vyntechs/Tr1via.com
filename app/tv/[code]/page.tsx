@@ -408,6 +408,7 @@ function TVQuestionView({
       seconds={Math.max(0, displaySeconds)}
       tiles={tiles}
       totalPlayers={snapshot.players.length}
+      imageUrl={question.imageUrl}
     />
   );
 }

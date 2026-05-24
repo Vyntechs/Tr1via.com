@@ -48,6 +48,9 @@ export interface TVQuestionProps {
   tiles?: TVQuestionTile[];
   /** Total number of joined players (denominator for "X of Y locked in"). */
   totalPlayers?: number;
+  /** Pexels photo attached during generation. Rendered below the category
+   *  banner as a wide thumbnail when present. */
+  imageUrl?: string | null;
 }
 
 export function TVQuestion(props: TVQuestionProps) {
@@ -69,6 +72,7 @@ function TVQuestionInner({
   options,
   tiles,
   totalPlayers,
+  imageUrl,
 }: TVQuestionProps) {
   const { t } = useTheme();
   const cc = categoryColor(category, t.accent);
@@ -129,15 +133,34 @@ function TVQuestionInner({
           flex: 1,
           padding: "28px 56px 0",
           display: "grid",
-          gridTemplateColumns: "1fr 180px",
-          gap: 56,
+          gridTemplateColumns: imageUrl ? "260px 1fr 180px" : "1fr 180px",
+          gap: 32,
           alignItems: "flex-start",
           position: "relative",
           zIndex: 1,
         }}
       >
+        {imageUrl ? (
+          <div
+            style={{
+              width: 260,
+              height: 260,
+              borderRadius: 16,
+              overflow: "hidden",
+              background: t.surface,
+              border: `1px solid ${t.line}`,
+              flexShrink: 0,
+            }}
+          >
+            <img
+              src={imageUrl}
+              alt=""
+              style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
+            />
+          </div>
+        ) : null}
         <span data-testid="tv-question-prompt">
-          <Display size={86} color={t.ink} weight={500} tracking={-0.025}>
+          <Display size={imageUrl ? 72 : 86} color={t.ink} weight={500} tracking={-0.025}>
             {question}
           </Display>
         </span>

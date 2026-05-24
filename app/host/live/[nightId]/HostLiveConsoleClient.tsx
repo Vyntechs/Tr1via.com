@@ -372,6 +372,7 @@ export function HostLiveConsoleClient({
         playersTotal={room.players.length}
         lockedCount={answers.length}
         canUndo={canUndo}
+        roomCode={roomCode}
         onRevealCell={(qid) => void handleReveal(qid)}
         onEndEarly={() => void handleEndEarly()}
         onUndo={() => void handleUndo()}
