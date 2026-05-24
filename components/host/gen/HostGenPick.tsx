@@ -11,6 +11,7 @@
 
 "use client";
 
+import { useMemo } from "react";
 import {
   Eyebrow,
   Numeric,
@@ -19,6 +20,7 @@ import {
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
+import { previewPointValues } from "@/lib/game/difficulty";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { DifficultyBar, StockImage } from "./_shared";
 
@@ -122,6 +124,16 @@ function HostGenPickInner({
   const cc = categoryColor(topic, t.accent);
   const picked = pickedIds ?? new Set(["1", "2", "3", "4", "7", "8"]);
   const pickedQs = questions.filter((q) => picked.has(q.id));
+  // Mirror the server's lock-time assignment so the host sees the actual
+  // tier each pick will land at — not the (often-clumped) Claude-rated
+  // difficulty. At 7 picks this matches the server result exactly.
+  const tierByPickId = useMemo(
+    () =>
+      previewPointValues(
+        pickedQs.map((q) => ({ id: q.id, difficulty: q.difficulty })),
+      ),
+    [pickedQs],
+  );
   return (
     <LaptopShell title={shellTitle}>
       <div style={{ padding: "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -197,6 +209,7 @@ function HostGenPickInner({
                 q={q}
                 cc={cc}
                 isPicked={picked.has(q.id)}
+                assignedPointValue={tierByPickId.get(q.id)}
                 onTogglePick={() => onTogglePick?.(q.id)}
                 onEdit={() => onEdit?.(q.id)}
                 onSwapImage={() => onSwapImage?.(q.id)}
@@ -215,6 +228,7 @@ function HostGenPickInner({
         <PickSidebar
           cc={cc}
           picked={pickedQs}
+          tierByPickId={tierByPickId}
           onLock={onLock}
           isLocking={isLocking}
         />
@@ -227,6 +241,7 @@ function QuestionCard({
   q,
   cc,
   isPicked,
+  assignedPointValue,
   onTogglePick,
   onEdit,
   onSwapImage,
@@ -234,6 +249,8 @@ function QuestionCard({
   q: HostGenPickQuestion;
   cc: string;
   isPicked: boolean;
+  /** Tier the question will lock at, if currently picked. Undefined for unpicked. */
+  assignedPointValue: number | undefined;
   onTogglePick: () => void;
   onEdit: () => void;
   onSwapImage: () => void;
@@ -291,7 +308,23 @@ function QuestionCard({
         <div style={{ marginTop: 4, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <DifficultyBar value={q.difficulty} color={cc} />
-            <Numeric size={12} color={cc} weight={700}>{q.difficulty * 100}</Numeric>
+            {(() => {
+              const inherent = q.difficulty * 100;
+              const displayed = isPicked && assignedPointValue !== undefined
+                ? assignedPointValue
+                : inherent;
+              const shifted = isPicked && assignedPointValue !== undefined && assignedPointValue !== inherent;
+              return (
+                <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+                  {shifted && (
+                    <Numeric size={10} color={t.inkMute} weight={500} style={{ textDecoration: "line-through" }}>
+                      {inherent}
+                    </Numeric>
+                  )}
+                  <Numeric size={12} color={cc} weight={700}>{displayed}</Numeric>
+                </div>
+              );
+            })()}
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <button
@@ -318,19 +351,25 @@ function QuestionCard({
 function PickSidebar({
   cc,
   picked,
+  tierByPickId,
   onLock,
   isLocking,
 }: {
   cc: string;
   picked: HostGenPickQuestion[];
+  tierByPickId: Map<string, number>;
   onLock?: () => void;
   isLocking: boolean;
 }) {
   const { t } = useTheme();
   const slots = [100, 200, 300, 400, 500, 600, 700];
-  const byDiff: Record<number, HostGenPickQuestion | undefined> = {};
+  // Key by the preview-assigned tier — not raw difficulty*100 — so picks
+  // with the same Claude rating no longer overwrite each other. Matches
+  // exactly what the server stores on lock.
+  const byTier: Record<number, HostGenPickQuestion | undefined> = {};
   picked.forEach((p) => {
-    byDiff[p.difficulty * 100] = p;
+    const tier = tierByPickId.get(p.id);
+    if (tier !== undefined) byTier[tier] = p;
   });
   const ready = picked.length === 7;
   return (
@@ -345,7 +384,7 @@ function PickSidebar({
 
       <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1, overflow: "auto" }}>
         {slots.map((v) => {
-          const filled = byDiff[v];
+          const filled = byTier[v];
           return (
             <div key={v} style={{
               display: "grid", gridTemplateColumns: "52px 1fr", alignItems: "center", gap: 12,

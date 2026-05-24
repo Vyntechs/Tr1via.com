@@ -31,3 +31,29 @@ export function assignPointValues(
     pointValue: POINT_VALUES[index] as number,
   }));
 }
+
+/**
+ * Preview the tier each pick WILL receive on lock, given any partial
+ * selection 0..7. Same sort-and-sequence rule as `assignPointValues`, so
+ * once the host has 7 picks the preview matches the server result exactly.
+ *
+ * At N<7 picks the ladder fills bottom-up by inherent difficulty: the
+ * easiest pick lands at 100, the next at 200, etc. The remaining slots
+ * stay open. This means a single hard first pick shows up at 100 ("easiest
+ * of one"); as more picks come in, the assignments redistribute.
+ *
+ * Returned as a Map so the caller can look up `q.id -> pointValue` cheaply
+ * during render.
+ */
+export function previewPointValues(
+  picked: Array<{ id: string; difficulty: number }>
+): Map<string, number> {
+  if (picked.length === 0) return new Map();
+  const sorted = [...picked].sort((a, b) => a.difficulty - b.difficulty);
+  return new Map(
+    sorted.map((q, i) => [
+      q.id,
+      POINT_VALUES[Math.min(i, POINT_VALUES.length - 1)] as number,
+    ])
+  );
+}
