@@ -24,7 +24,7 @@
 
 import "server-only";
 
-export type RoomEventName = "reveal" | "undo" | "resolve" | "end-early";
+export type RoomEventName = "reveal" | "undo" | "resolve" | "end-early" | "game-ended";
 export type CategoryEventName =
   | "question_added"
   | "photo_attached"
@@ -95,6 +95,28 @@ export async function broadcastToRoom(
       topic: `room:${roomCode}`,
       event,
       payload: payload as unknown as Record<string, unknown>,
+    },
+  ]);
+}
+
+/**
+ * Broadcast that a game just ended. Carries the gameId (not a questionId —
+ * end-of-game is a game-level event). Subscribers use this as a wake-up to
+ * re-fetch their snapshot so phones flip to PlayerJoinGame2 / TV flips to
+ * Intermission without waiting on postgres_changes for the games row.
+ */
+export async function broadcastGameEnded(
+  roomCode: string,
+  gameId: string,
+): Promise<void> {
+  await postBroadcasts([
+    {
+      topic: `room:${roomCode}`,
+      event: "game-ended",
+      payload: {
+        gameId,
+        serverNow: new Date().toISOString(),
+      },
     },
   ]);
 }

@@ -252,10 +252,18 @@ function RoomStateMachine({
 
   // Player's game-2 opt-in (separate read; one row per game/player).
   const myParticipations = useMyParticipations(me.id);
+  // Optimistic flag: postgres_changes for game_participations doesn't reach
+  // device-cookie sessions (RLS evaluation differs from REST). When the
+  // player taps Join Game 2, the API succeeds but the local hook never sees
+  // the new row, so the screen would never advance. Flip this on success so
+  // the state machine moves forward immediately. Same pattern as the
+  // optimistic answer fix.
+  const [optimisticInGame2, setOptimisticInGame2] = useState(false);
   const inGame2 = useMemo(() => {
+    if (optimisticInGame2) return true;
     if (!game2) return false;
     return myParticipations.some((p) => p.game_id === game2.id);
-  }, [myParticipations, game2]);
+  }, [myParticipations, game2, optimisticInGame2]);
 
   // ── PlayerJoinGame2: game 1 'done' and game 2 not done and we haven't opted in ──
   if (
@@ -274,6 +282,7 @@ function RoomStateMachine({
         playerName={me.display_name}
         myAnswers={myAnswers}
         categories={snapshot.categories}
+        onJoinSuccess={() => setOptimisticInGame2(true)}
       />
     );
   }
@@ -723,6 +732,7 @@ function PlayerJoinGame2Wired({
   playerName,
   myAnswers,
   categories,
+  onJoinSuccess,
 }: {
   roomCode: string;
   me: PlayerRow;
@@ -731,6 +741,9 @@ function PlayerJoinGame2Wired({
   playerName: string;
   myAnswers: AnswerRow[];
   categories: CategoryRow[];
+  /** Called once the join API returns OK so the parent can flip
+   *  optimistic state and stop rendering this screen. */
+  onJoinSuccess?: () => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
   const stats = useMemo(() => summarizeGame(myAnswers, categories, game1Id), [
@@ -743,18 +756,19 @@ function PlayerJoinGame2Wired({
     if (submitting) return;
     setSubmitting(true);
     try {
-      await fetch(`/api/players/${me.id}/join-game`, {
+      const res = await fetch(`/api/players/${me.id}/join-game`, {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ gameNo: 2 }),
       });
+      if (res.ok) onJoinSuccess?.();
     } catch (e) {
       console.warn("join-game-2 failed", e);
     } finally {
       setSubmitting(false);
     }
-  }, [me.id, submitting]);
+  }, [me.id, submitting, onJoinSuccess]);
 
   return (
     <PlayerJoinGame2

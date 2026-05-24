@@ -275,6 +275,13 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
           // question state so the reveal screen renders without delay.
           void refreshLiveState(nightId, String(p.questionId));
         })
+        .on("broadcast", { event: "game-ended" }, () => {
+          // Game state flipped to 'done' on the server. Refresh games rows
+          // so the player state machine moves out of the live screen (and
+          // into PlayerJoinGame2 for game 1, or the post-night flow for
+          // game 2). Doesn't need a questionId — game-level wake-up.
+          void refreshLiveState(nightId);
+        })
         .subscribe();
       channelHandles.push(() => {
         void supa.removeChannel(broadcastChannel);
