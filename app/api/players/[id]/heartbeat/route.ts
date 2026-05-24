@@ -9,7 +9,7 @@
 // The body is optional. With no body it's just a last_seen_at bump. With
 // `{ appSwitchSeconds: N }` it increments the running total.
 
-import type { NextRequest } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { HeartbeatSchema } from "@/lib/api/schemas";
 import { badRequest, noContent, serverError, unauthorized, notFound } from "@/lib/api/responses";
 import { requireOwnedPlayer } from "@/lib/api/auth";
@@ -23,6 +23,19 @@ export async function POST(
   const owned = await requireOwnedPlayer(id);
   if (!owned.ok) {
     return owned.status === 401 ? unauthorized(owned.error) : notFound(owned.error);
+  }
+
+  // If the host kicked this player, surface that to the phone. The phone
+  // uses 410 as the signal to bounce out of /room and back to /join. We
+  // can't rely on postgres_changes here — the player's WebSocket is on a
+  // device cookie, and the players table updates don't always reach those
+  // subscribers (RLS quirk we hit in session 3). Heartbeat is the durable
+  // periodic check.
+  if (owned.player.removed_at) {
+    return NextResponse.json(
+      { removed: true, removedAt: owned.player.removed_at },
+      { status: 410 },
+    );
   }
 
   // Body is optional — if missing or empty, treat as a bare heartbeat.
