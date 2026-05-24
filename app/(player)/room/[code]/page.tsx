@@ -129,7 +129,7 @@ function RoomBody({
   }, [snapshot.players, deviceId]);
 
   // ── Side effects: heartbeat + visibility tracking ──
-  useHeartbeat(me?.id ?? null);
+  useHeartbeat(me?.id ?? null, roomCode);
   useAppSwitchTracking(me?.id ?? null);
 
   // ── Side effect: redirect to /won or /recap when the night closes ──
@@ -891,23 +891,41 @@ function RejoinScreen({ roomCode }: { roomCode: string }) {
 
 // ─── HEARTBEAT + VISIBILITY ──────────────────────────────────────────────
 
-/** Pings POST /api/players/:id/heartbeat every 10s while the player is alive. */
-function useHeartbeat(playerId: string | null) {
+/**
+ * Pings POST /api/players/:id/heartbeat every 10s while the player is alive.
+ *
+ * The route returns 410 Gone when the host has kicked this player. The phone
+ * uses that as the durable signal to exit — postgres_changes is unreliable
+ * for device-cookie sessions (RLS quirk), so the periodic heartbeat doubles
+ * as a removal check. On 410 we hard-navigate to /join so the player either
+ * rejoins under a fresh row OR sees that the room is closed.
+ */
+function useHeartbeat(playerId: string | null, roomCode: string) {
   useEffect(() => {
     if (!playerId) return;
-    const send = () => {
-      void fetch(`/api/players/${playerId}/heartbeat`, {
-        method: "POST",
-        credentials: "same-origin",
-      }).catch(() => {
+    let cancelled = false;
+    const send = async () => {
+      try {
+        const res = await fetch(`/api/players/${playerId}/heartbeat`, {
+          method: "POST",
+          credentials: "same-origin",
+        });
+        if (cancelled) return;
+        if (res.status === 410 && typeof window !== "undefined") {
+          window.location.assign(`/join?code=${roomCode}`);
+        }
+      } catch {
         /* heartbeat is best-effort */
-      });
+      }
     };
     // Immediate ping so the host sees us right away.
-    send();
-    const handle = setInterval(send, HEARTBEAT_INTERVAL_MS);
-    return () => clearInterval(handle);
-  }, [playerId]);
+    void send();
+    const handle = setInterval(() => void send(), HEARTBEAT_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(handle);
+    };
+  }, [playerId, roomCode]);
 }
 
 /**
