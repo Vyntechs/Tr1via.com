@@ -10,6 +10,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { useRouter } from "next/navigation";
 import { LaptopShell } from "@/components/shells";
 import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
@@ -40,6 +41,7 @@ export default function HostLoginPage() {
 
 function HostLoginInner() {
   const { t } = useTheme();
+  const router = useRouter();
   const [email, setEmail] = useState("");
   const [state, setState] = useState<FormState>({ kind: "idle" });
 
@@ -50,6 +52,20 @@ function HostLoginInner() {
 
     setState({ kind: "sending" });
     try {
+      // Try founder bypass first — if this email belongs to the founder
+      // row, the server mints a session directly (no email round-trip).
+      // 404 just means "not the founder," so we silently fall through to
+      // the normal magic-link flow.
+      const founderRes = await fetch("/api/auth/founder-login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      if (founderRes.ok) {
+        router.replace("/host");
+        return;
+      }
+
       const supabase = getSupabaseBrowser();
       const { error } = await supabase.auth.signInWithOtp({
         email: trimmed,
