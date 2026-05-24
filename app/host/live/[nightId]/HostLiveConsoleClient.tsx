@@ -246,6 +246,21 @@ export function HostLiveConsoleClient({
     if (!currentGame) return;
     setError(null);
     try {
+      // First reveal of a draft/ready game also starts it. The host UI
+      // treats "tap a cell" as the start signal (per the BOARD READY copy),
+      // and the TV/phone state machines gate the lobby on games.state ===
+      // 'live'. Without this promotion both surfaces sit on the lobby
+      // forever while the host plays through the game on her own console.
+      // /start is idempotent so we can be liberal about calling it.
+      if (currentGame.state === "draft" || currentGame.state === "ready") {
+        const startRes = await fetch(`/api/games/${currentGame.id}/start`, {
+          method: "POST",
+        });
+        if (!startRes.ok) {
+          const body = (await startRes.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "could not start the game");
+        }
+      }
       const res = await fetch(`/api/games/${currentGame.id}/reveal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
