@@ -38,10 +38,11 @@ export function HostSetupOverviewClient({
   }, [games, categories]);
 
   const lockedCount = categories.filter((c) => c.state === "ready").length;
-  const isReadyToOpen =
-    overview !== null &&
-    overview[0].rows.filter((r) => r.status === "locked").length >= 1 &&
-    overview[1].rows.filter((r) => r.status === "locked").length >= 1;
+  // Host can open the room as soon as a single topic is locked anywhere.
+  // The full 12-slot setup is still the canonical UX (visible in HostGenOverview),
+  // but enforcing it as a hard gate blocked dev/demo flows where you want
+  // a one-category dry run with real players before committing the night.
+  const isReadyToOpen = overview !== null && lockedCount >= 1;
   const pct = Math.round((lockedCount / 12) * 100);
 
   async function handleOpenRoom() {

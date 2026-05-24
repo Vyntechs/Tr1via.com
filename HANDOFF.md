@@ -150,7 +150,7 @@ These are NEW vs session 2's lessons doc — keep both:
    - [ ] Phase 6 API integration tests per resource
    - [ ] Phase 7 `smoke-routes.spec.ts` — visit every route, assert no console errors. `prod-ui-smoke.spec.ts` is a tiny version of this.
    - [ ] Phase 9 gaps doc
-   - [ ] Regression test for the session-4 fixes: a Playwright spec that creates a clump-heavy pick set (all same Claude difficulty) and asserts the sidebar fills all 7 tiers AND the locked `point_value` column distributes 100..700. And a multi-context spec that asserts game.state flips to 'live' on first cell click (the lock-in for `70fcc55`).
+   - [x] Regression test for the session-4 fixes — `tests/component/HostGenPick.test.tsx` (4 tests, clump-heavy pick sidebar) and `tests/e2e/auto-start-on-reveal.spec.ts` (multi-context, asserts TV leaves lobby on first cell click). Both mutation-killed against reverts of the original fixes. The pick-tier regression is a component test rather than a Playwright spec because the bug is pure-UI keying with no server involvement; the server-side `assignPointValues` invariant is already covered by `tests/unit/difficulty.test.ts`.
 
    **UI gaps**
    - [ ] Wire `StockImage` to real `q.imageUrl` on the rest of the gen screens — `HostGenEdit:195`, `HostGenImageSwap:232,285`, `HostGenImageUploadReady:49,85`, `HostGenImageUpload:255`, `HostGenFlavor:94`. Only matters if Brandon manually swaps an image during the demo. The pick + loading cards were fixed in session 3 (`1f1edb8`).
