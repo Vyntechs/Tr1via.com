@@ -33,6 +33,11 @@ import { PexelsRateLimitError } from "@/lib/pexels/search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// The background `after()` job runs within the function's lifetime. Real
+// Anthropic (Haiku) is ~20s and Pexels photo attach across 20 questions
+// adds another ~30-40s — well over Vercel's default per-function ceiling.
+// 300s is Vercel's hard max on most plans; we use 120 for headroom.
+export const maxDuration = 120;
 
 export async function POST(
   req: NextRequest,

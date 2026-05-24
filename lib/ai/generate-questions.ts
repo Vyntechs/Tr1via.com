@@ -23,7 +23,16 @@
 // Tests live in tests/unit/generate-questions.test.ts (Anthropic SDK
 // mocked, no live network).
 //
-// Model: claude-sonnet-4-6. Timeout: 30 seconds.
+// Model: claude-haiku-4-5-20251001. Timeout: 30 seconds.
+//
+// Why Haiku over Sonnet for this: head-to-head benchmark on 4 topics
+// (movie actors, 90s hip-hop, world capitals, kitchen science, classic
+// rock albums) showed Haiku is ~2.5× faster (20s vs 50s avg) and ~3.2×
+// cheaper, with comparable distractor quality. Speed matters here — at
+// 50s Sonnet was hitting the production 30s timeout under load. Sonnet
+// has a slight edge on difficulty spread for narrow/easy topics; if
+// that becomes a problem we'll add a "regenerate with deeper model"
+// fallback rather than paying the latency tax every time.
 
 import "server-only";
 
@@ -165,10 +174,11 @@ function makeClient(): Anthropic {
 }
 
 /**
- * Default Sonnet model id. Exposed for the test that asserts we send the
- * configured model. The plan calls for `claude-sonnet-4-6`.
+ * Default model id. Haiku 4.5 was benchmarked against Sonnet 4.6 on four
+ * topics — 2.5× faster (20s vs 50s) and 3.2× cheaper with comparable
+ * distractor quality. See scripts/compare-models-batch.mjs.
  */
-export const DEFAULT_MODEL = "claude-sonnet-4-6";
+export const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 
 /** Default request timeout in ms. */
 export const DEFAULT_TIMEOUT_MS = 30_000;
