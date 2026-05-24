@@ -18,6 +18,8 @@ import {
   TVTimerArc,
   useTheme,
 } from "@/components/system";
+import { TVStateMachine } from "@/components/tv";
+import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { RemovePlayerButton } from "./RemovePlayerButton";
 
@@ -95,6 +97,18 @@ export interface HostLiveConsoleProps {
   onRemovePlayer?: (playerId: string) => void;
   /** Host opens the add-latecomer flow. When undefined the + button hides. */
   onAddPlayer?: () => void;
+  /** Inline TV snapshot. When provided, a 16:9 panel renders the venue-TV
+   *  view via <TVStateMachine /> at the top of the console — same component
+   *  the standalone /tv/[code] route renders. Used for HDMI'd hosts so the
+   *  laptop drives both surfaces in a single window. Omit to hide the
+   *  panel (e.g. the /dev gallery demo). */
+  tvSnapshot?: TVSnapshot | null;
+  /** Reveal-broadcast server timestamp, threaded through to the TV state
+   *  machine so the live question timer aligns with the broadcast moment
+   *  instead of the (slightly later) played_at column. */
+  tvLastBroadcastRevealedAt?: string | null;
+  /** Server "now" at the broadcast moment, for client-clock skew. */
+  tvLastBroadcastServerNow?: string | null;
 }
 
 export function HostLiveConsole(props: HostLiveConsoleProps) {
@@ -170,6 +184,9 @@ function HostLiveConsoleInner({
   onAdjustPoints,
   onRemovePlayer,
   onAddPlayer,
+  tvSnapshot,
+  tvLastBroadcastRevealedAt = null,
+  tvLastBroadcastServerNow = null,
 }: Omit<HostLiveConsoleProps, "themeKey">) {
   const { t } = useTheme();
   const totalPlayers = playersTotal ?? players.length;
@@ -192,30 +209,41 @@ function HostLiveConsoleInner({
           overflow: "hidden",
         }}
       >
-        {roomCode ? (
+        {tvSnapshot ? (
           <div
             data-testid="host-tv-panel"
             style={{
               flexShrink: 0,
               width: "100%",
-              aspectRatio: "16 / 9",
-              maxHeight: "62vh",
               borderBottom: `1px solid ${t.line}`,
               background: "#000",
               position: "relative",
               overflow: "hidden",
+              // Constrain the panel height so the controls below stay
+              // reachable on a 13" laptop. The inner 16:9 stage scales to
+              // fill the largest box that fits within these bounds.
+              maxHeight: "62vh",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            <iframe
-              src={`/tv/${roomCode}`}
-              title="TV view"
+            <div
               style={{
-                width: "100%",
-                height: "100%",
-                border: "none",
-                display: "block",
+                // Take the largest 16:9 rectangle that fits this slot. The
+                // outer wrapper caps height; the limiting dimension wins.
+                width: "min(100%, calc(62vh * 16 / 9))",
+                aspectRatio: "16 / 9",
+                position: "relative",
+                overflow: "hidden",
               }}
-            />
+            >
+              <TVStateMachine
+                snapshot={tvSnapshot}
+                lastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
+                lastBroadcastServerNow={tvLastBroadcastServerNow}
+              />
+            </div>
           </div>
         ) : null}
         <div

@@ -69,6 +69,12 @@ export async function GET(
         "id, category_id, point_value, prompt, options, correct_index, image_url, fact_blurb, played_at, finished_at, is_picked",
       )
       .eq("is_picked", true),
+    // Live question candidates across ALL rooms — we'll post-filter to this
+    // night's categories below. `.maybeSingle()` here would error/return null
+    // any time another room has an unresolved question (Brandon mid-test in
+    // another tab, a half-played manual session, etc.), causing the TV in
+    // THIS room to silently lose its live question. A bounded list + JS
+    // filter dodges that without needing a join.
     admin
       .from("questions")
       .select(
@@ -76,7 +82,7 @@ export async function GET(
       )
       .not("played_at", "is", null)
       .is("finished_at", null)
-      .maybeSingle(),
+      .limit(50),
     admin
       .from("reveals")
       .select("id, game_id, question_id, event, occurred_at, metadata")
@@ -100,12 +106,14 @@ export async function GET(
     categoryIds.has(q.category_id),
   );
 
-  // Live question: must belong to this night.
-  let liveQuestion: typeof questions[number] | null = null;
-  const rawLive = liveQuestionRes.data ?? null;
-  if (rawLive && categoryIds.has(rawLive.category_id)) {
-    liveQuestion = rawLive;
-  }
+  // Live question: must belong to this night. The query returns up to 50
+  // candidates across all rooms; pick the first one whose category lives
+  // in this night. In a healthy single-room night there's at most one such
+  // row; multi-tab scenarios used to silently lose it (see comment on the
+  // query above).
+  const liveQuestion =
+    (liveQuestionRes.data ?? []).find((q) => categoryIds.has(q.category_id)) ??
+    null;
 
   // Recent reveals belonging to this night, newest first.
   const reveals = (recentRevealsRes.data ?? []).filter((r) => gameIds.has(r.game_id));

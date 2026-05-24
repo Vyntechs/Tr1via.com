@@ -2,12 +2,14 @@
 //
 // The original bug: /api/games/[id]/start was defined but never called from
 // the host live console. Clicking a board cell only fired /reveal, leaving
-// games.state = 'ready' (the seed default). The TV's state machine renders
-// TVLobby whenever state is 'draft' or 'ready' — so every player phone and
-// the venue TV sat on the QR-code lobby while the host played through the
-// whole game on her laptop. Brandon caught this only by driving three real
-// page contexts (host + TV + phone). The API smoke + the existing e2e specs
-// missed it because they call startGame() explicitly before the reveal loop.
+// the game in whatever pre-live state it was in (originally 'ready' under
+// the old seed-night, now 'draft' under the prod-driving seed-night). The
+// TV's state machine renders TVLobby whenever state is 'draft' or 'ready' —
+// so every player phone and the venue TV sat on the QR-code lobby while the
+// host played through the whole game on her laptop. Brandon caught this
+// only by driving three real page contexts (host + TV + phone). The API
+// smoke + the existing e2e specs missed it because they call startGame()
+// explicitly before the reveal loop.
 //
 // Fix in 70fcc55: handleReveal in HostLiveConsoleClient.tsx now POSTs
 // /start before /reveal whenever currentGame.state is 'draft' or 'ready'.
@@ -69,20 +71,20 @@ test.describe("auto-start on first reveal (regression 70fcc55)", () => {
     const hostPage = await host.newPage();
     const tvPage = await tv.newPage();
 
-    // Seed a night. The default scenario leaves game1.state === 'ready' —
-    // exactly the bug-trigger condition. If seed-night ever changes that
-    // default, this test must be revisited (the assertion below would still
-    // catch the regression, but the precondition would no longer mirror the
-    // production code path on session-1 night-1).
+    // Seed a night. The new seed-night drives the real /api/nights endpoint,
+    // which inserts both games in 'draft' (the prod default a real host
+    // sees before clicking Start). 'draft' is the auto-start branch's
+    // primary condition; if the branch is reverted, the TV assertion
+    // below fails because /reveal alone doesn't promote 'draft' → 'live'.
     const { hostId } = await loginAsHost(
       hostPage,
       `autostart-${Date.now()}@tr1via.test`,
     );
     const seed = await seedNight(hostPage, hostId, "happy-path-3-cats-game1");
-    expect(seed.game1.state).toBe("ready");
+    expect(seed.game1.state).toBe("draft");
 
     // TV joins the room. It should sit on the lobby since the game is still
-    // 'ready' — this assertion proves the bug's preconditions are real, not
+    // 'draft' — this assertion proves the bug's preconditions are real, not
     // an artifact of seed timing.
     await openTV(tvPage, seed.roomCode);
     await expect(tvPage.getByTestId(TID.tvLobby.root)).toBeVisible({

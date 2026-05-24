@@ -1,217 +1,309 @@
-// Creates a fully-realized night for a test host. Body: {hostId, scenario?,
-// themeKey?, roomCode?, venueName?}. Scenarios:
+// Creates a fully-realized night for a test host by DRIVING the real prod
+// HTTP endpoints — same path a human host walks (POST /api/nights →
+// POST /api/categories → POST /api/categories/[id]/manual). This route
+// is a test-only sequencer; it owns no direct DB writes that prod doesn't.
+//
+// Body: {hostId?, scenario?, themeKey?, roomCode?, venueName?}.
+// hostId is ignored (auth comes from cookies, same as prod). It's kept in
+// the body for backwards compat with old fixtures that still pass it.
+//
+// Scenarios:
 //   - "happy-path-3-cats-game1": 3 categories of 7 picked questions in game 1
 //   - "two-games-ready": same + 1 category of 7 picked questions in game 2
 //   - "empty-night": no categories
+//
 // Returns: {nightId, roomCode, game1, game2,
 //           categories:[{id,name,position,question_ids:[uuid,...]}],
 //           game2Categories:[{id,name,position,question_ids:[uuid,...]}]}.
-// question_ids are returned sorted ascending by point_value (100 -> 700) so
-// tests can drive a category through reveal one question at a time without
+// question_ids are sorted ascending by point_value (100 -> 700) so tests
+// can drive a category through reveal one question at a time without
 // a separate fetch.
+//
+// Why the round-trip through prod endpoints: a previous version inserted
+// games in 'ready' state and questions with is_picked=true directly. Real
+// prod inserts games in 'draft' and walks them through /open + /start at
+// reveal time. Four critical gameplay bugs (participation, kick, reveal,
+// all-locked-no-resolve) lived in code paths e2e fixtures bypassed. The
+// rule going forward: tests enter the same doors users do.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isTestModeEnabled } from "@/lib/api/require-test-mode";
-import { newRoomCode } from "@/lib/game/room-code";
 
 interface SeedReq {
-  hostId: string;
+  hostId?: string;
   scenario?: "happy-path-3-cats-game1" | "two-games-ready" | "empty-night";
   themeKey?: string;
   roomCode?: string;
   venueName?: string;
 }
 
+interface SeededCategory {
+  id: string;
+  name: string;
+  position: number;
+  question_ids: string[];
+}
+
+// 7 sample questions per category, easiest → hardest. Row order drives
+// difficulty 1..7 inside /manual, which assigns point_value 100..700 in
+// the same order. Options must be 4 distinct strings (manual route
+// enforces this via Zod).
+const SAMPLE_QUESTIONS = [
+  { prompt: "Sample question 1 (easy)",    options: ["Alpha", "Bravo", "Charlie", "Delta"], correctIndex: 0 },
+  { prompt: "Sample question 2 (easyish)", options: ["Alpha", "Bravo", "Charlie", "Delta"], correctIndex: 1 },
+  { prompt: "Sample question 3 (medium)",  options: ["Alpha", "Bravo", "Charlie", "Delta"], correctIndex: 2 },
+  { prompt: "Sample question 4 (medplus)", options: ["Alpha", "Bravo", "Charlie", "Delta"], correctIndex: 3 },
+  { prompt: "Sample question 5 (hardish)", options: ["Alpha", "Bravo", "Charlie", "Delta"], correctIndex: 0 },
+  { prompt: "Sample question 6 (hard)",    options: ["Alpha", "Bravo", "Charlie", "Delta"], correctIndex: 1 },
+  { prompt: "Sample question 7 (hardest)", options: ["Alpha", "Bravo", "Charlie", "Delta"], correctIndex: 2 },
+] as const;
+
+const GAME1_CATEGORIES = [
+  { name: "Pixar movies",    topic: "pixar movies",           position: 1 },
+  { name: "World geography", topic: "world geography",        position: 2 },
+  { name: "1990s music",     topic: "1990s alternative rock", position: 3 },
+] as const;
+
+const GAME2_CATEGORIES = [
+  { name: "Bonus round", topic: "general trivia", position: 1 },
+] as const;
+
 export async function POST(req: NextRequest) {
   if (!isTestModeEnabled(req)) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
   const body = (await req.json().catch(() => null)) as SeedReq | null;
-  if (!body?.hostId) {
-    return NextResponse.json({ error: "hostId required" }, { status: 400 });
+  if (!body) {
+    return NextResponse.json({ error: "invalid body" }, { status: 400 });
   }
 
-  const admin = getSupabaseAdmin();
   const scenario = body.scenario ?? "happy-path-3-cats-game1";
-  const roomCode = body.roomCode ?? newRoomCode();
-  const themeKey = body.themeKey ?? "house";
   const venueName = body.venueName ?? "Test Venue";
+  const themeKey = body.themeKey ?? "house";
+  const origin = new URL(req.url).origin;
+  const testSecret = req.headers.get("x-test-secret") ?? "";
 
-  const { data: night, error: nightErr } = await admin
-    .from("nights")
-    .insert({
-      host_id: body.hostId,
-      venue_name: venueName,
-      room_code: roomCode,
-      theme_key: themeKey,
-      opened_at: new Date().toISOString(),
-    })
-    .select("id, room_code")
-    .single();
-  if (nightErr || !night) {
-    return NextResponse.json({ error: nightErr?.message ?? "night insert failed" }, { status: 500 });
+  // Cookie jar threaded through every internal fetch. The Supabase SSR
+  // client refreshes auth tokens mid-request and writes new cookies on
+  // the response; if we don't capture and forward them, the SECOND
+  // internal call (and later) sends stale cookies and getAuthedHost
+  // returns 401 "not signed in". The jar starts from the inbound
+  // request's cookie header.
+  const cookieJar = new Map<string, string>();
+  function ingestRawCookieHeader(raw: string | null) {
+    if (!raw) return;
+    for (const pair of raw.split(/;\s*/)) {
+      const eq = pair.indexOf("=");
+      if (eq === -1) continue;
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1).trim();
+      if (name) cookieJar.set(name, value);
+    }
+  }
+  function ingestSetCookieHeader(raw: string | null) {
+    if (!raw) return;
+    // Split on commas that precede a `name=` (not commas inside attribute
+    // values like Expires=Mon, 23-May-...).
+    for (const part of raw.split(/,(?=[^ ;]+=)/)) {
+      const [pair] = part.split(";");
+      if (!pair) continue;
+      const eq = pair.indexOf("=");
+      if (eq === -1) continue;
+      const name = pair.slice(0, eq).trim();
+      const value = pair.slice(eq + 1).trim();
+      if (name) cookieJar.set(name, value);
+    }
+  }
+  function jarCookieHeader(): string {
+    return [...cookieJar.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+  }
+  ingestRawCookieHeader(req.headers.get("cookie"));
+
+  // Internal fetch helper. Forwards (and updates) cookies so getAuthedHost()
+  // resolves the same Supabase session that hit /seed-night, even as that
+  // session's tokens refresh between calls. The x-test-secret header is
+  // also forwarded in case any downstream endpoint ever wants it.
+  async function callProd(path: string, init: RequestInit = {}) {
+    const res = await fetch(`${origin}${path}`, {
+      ...init,
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: jarCookieHeader(),
+        "x-test-secret": testSecret,
+        ...(init.headers ?? {}),
+      },
+    });
+    ingestSetCookieHeader(res.headers.get("set-cookie"));
+    return res;
   }
 
-  const game1State = scenario === "empty-night" ? "draft" : "ready";
-  const game2State = scenario === "two-games-ready" ? "ready" : "draft";
+  // 1. Create the night via the REAL endpoint. This creates both games
+  //    in 'draft' state (the prod default) — same path a real host hits.
+  const nightRes = await callProd("/api/nights", {
+    method: "POST",
+    body: JSON.stringify({ venueName, themeKey }),
+  });
+  if (!nightRes.ok) {
+    return NextResponse.json(
+      { error: `create night failed: ${nightRes.status} ${await nightRes.text()}` },
+      { status: 500 },
+    );
+  }
+  const nightBody = (await nightRes.json()) as { nightId: string; roomCode: string };
+  const nightId = nightBody.nightId;
+
+  // The caller may have requested a specific roomCode (older fixtures did
+  // this for deterministic URLs). The new /api/nights endpoint mints its
+  // own code; if the caller asked for one we overwrite it post-hoc via
+  // admin client. This is the only DB write left in this route.
+  const admin = getSupabaseAdmin();
+  let roomCode = nightBody.roomCode;
+  if (body.roomCode) {
+    const { error: codeErr } = await admin
+      .from("nights")
+      .update({ room_code: body.roomCode })
+      .eq("id", nightId);
+    if (!codeErr) roomCode = body.roomCode;
+  }
+
+  // 2. Look up the two game shells that /api/nights just created.
   const { data: games, error: gamesErr } = await admin
     .from("games")
-    .insert([
-      { night_id: night.id, game_no: 1, state: game1State },
-      { night_id: night.id, game_no: 2, state: game2State },
-    ])
-    .select("id, game_no, state");
-  if (gamesErr || !games) {
-    return NextResponse.json({ error: gamesErr?.message ?? "games insert failed" }, { status: 500 });
+    .select("id, game_no, state")
+    .eq("night_id", nightId)
+    .order("game_no");
+  if (gamesErr || !games || games.length !== 2) {
+    return NextResponse.json(
+      { error: gamesErr?.message ?? "games lookup failed" },
+      { status: 500 },
+    );
   }
   const game1 = games.find((g) => g.game_no === 1)!;
   const game2 = games.find((g) => g.game_no === 2)!;
 
+  // Empty night: bail here. Caller wanted shell rows only.
   if (scenario === "empty-night") {
     return NextResponse.json({
-      nightId: night.id,
-      roomCode: night.room_code,
+      nightId,
+      roomCode,
       game1,
       game2,
-      categories: [] as { id: string; name: string; position: number; question_ids: string[] }[],
+      categories: [] as SeededCategory[],
+      game2Categories: [] as SeededCategory[],
     });
   }
 
-  // 3 categories, 7 questions each, point values 100..700, all picked + ready
-  const catDefs = [
-    { name: "Pixar movies",    topic: "pixar movies",            position: 0, color: "#E64A8C" },
-    { name: "World geography", topic: "world geography",         position: 1, color: "#4ECDC4" },
-    { name: "1990s music",     topic: "1990s alternative rock",  position: 2, color: "#9B7BD8" },
-  ];
-  const { data: cats, error: catsErr } = await admin
-    .from("categories")
-    .insert(catDefs.map((c) => ({
-      game_id: game1.id,
-      name: c.name,
-      topic: c.topic,
-      position: c.position,
-      color: c.color,
-      state: "ready",
-    })))
-    .select("id, name, position");
-  if (catsErr || !cats) {
-    return NextResponse.json({ error: catsErr?.message ?? "categories insert failed" }, { status: 500 });
-  }
-
-  const POINT_VALUES = [100, 200, 300, 400, 500, 600, 700] as const;
-  type Q = { prompt: string; options: [string, string, string, string]; correct_index: 0 | 1 | 2 | 3; difficulty: number };
-  const SAMPLE_QUESTIONS: Q[] = [
-    { prompt: "Sample easy",     options: ["A", "B", "C", "D"], correct_index: 0, difficulty: 1 },
-    { prompt: "Sample easyish",  options: ["A", "B", "C", "D"], correct_index: 1, difficulty: 2 },
-    { prompt: "Sample medium",   options: ["A", "B", "C", "D"], correct_index: 2, difficulty: 3 },
-    { prompt: "Sample medplus",  options: ["A", "B", "C", "D"], correct_index: 3, difficulty: 4 },
-    { prompt: "Sample hardish",  options: ["A", "B", "C", "D"], correct_index: 0, difficulty: 5 },
-    { prompt: "Sample hard",     options: ["A", "B", "C", "D"], correct_index: 1, difficulty: 6 },
-    { prompt: "Sample hardest",  options: ["A", "B", "C", "D"], correct_index: 2, difficulty: 7 },
-  ];
-  const rows = [];
-  for (const cat of cats) {
-    for (let i = 0; i < 7; i++) {
-      rows.push({
-        category_id: cat.id,
-        point_value: POINT_VALUES[i],
-        prompt: `${cat.name}: ${SAMPLE_QUESTIONS[i]!.prompt}`,
-        options: SAMPLE_QUESTIONS[i]!.options,
-        correct_index: SAMPLE_QUESTIONS[i]!.correct_index,
-        difficulty: SAMPLE_QUESTIONS[i]!.difficulty,
-        source: "host-edit",
-        is_picked: true,
-      });
+  // Helper: create a category + populate 7 manual questions via the real
+  // endpoints. Returns the category id, name, position, and the picked
+  // question ids in point-value order (100..700).
+  async function seedCategoryViaProdApis(
+    gameId: string,
+    name: string,
+    topic: string,
+    position: number,
+  ): Promise<SeededCategory> {
+    // a. POST /api/categories — creates the category in 'draft' state.
+    const catRes = await callProd("/api/categories", {
+      method: "POST",
+      body: JSON.stringify({ gameId, name, topic, position }),
+    });
+    if (!catRes.ok) {
+      throw new Error(
+        `create category ${name}: ${catRes.status} ${await catRes.text()}`,
+      );
     }
-  }
-  const { data: insertedQs, error: qErr } = await admin
-    .from("questions")
-    .insert(rows)
-    .select("id, category_id, point_value");
-  if (qErr || !insertedQs) {
-    return NextResponse.json({ error: qErr?.message ?? "questions insert failed" }, { status: 500 });
-  }
+    const { category } = (await catRes.json()) as {
+      category: { id: string; name: string; position: number; state: string };
+    };
 
-  // Group question ids by category, sorted ascending by point_value so the
-  // first id is the 100-pointer, the seventh is the 700-pointer. This lets
-  // tests march a category through reveal without a follow-up fetch.
-  const questionIdsByCategory = new Map<string, string[]>();
-  for (const cat of cats) questionIdsByCategory.set(cat.id, []);
-  const sortedQs = [...insertedQs].sort(
-    (a, b) => (a.point_value ?? 0) - (b.point_value ?? 0),
-  );
-  for (const q of sortedQs) {
-    const list = questionIdsByCategory.get(q.category_id);
-    if (list) list.push(q.id);
-  }
-  const categoriesWithQs = cats.map((c) => ({
-    ...c,
-    question_ids: questionIdsByCategory.get(c.id) ?? [],
-  }));
-
-  // For "two-games-ready" scenario, also fill game 2 with one category of 7
-  // picked questions. Keeps the full-game test budget manageable (28 reveals
-  // total) while still exercising the intermission → game-2 → finale path.
-  let game2CategoriesWithQs: typeof categoriesWithQs = [];
-  if (scenario === "two-games-ready") {
-    const { data: g2Cats, error: g2CatsErr } = await admin
-      .from("categories")
-      .insert([
-        {
-          game_id: game2.id,
-          name: "Bonus round",
-          topic: "general trivia",
-          position: 0,
-          color: "#F4A261",
-          state: "ready",
-        },
-      ])
-      .select("id, name, position");
-    if (g2CatsErr || !g2Cats) {
-      return NextResponse.json({ error: g2CatsErr?.message ?? "game-2 categories insert failed" }, { status: 500 });
+    // b. POST /api/categories/[id]/manual — the prod "I'll type them myself"
+    //    path. Wipes any prior questions, inserts the 7 we hand in (row
+    //    order = difficulty 1..7 → point_value 100..700), sets is_picked=
+    //    true, and flips category.state from 'draft' → 'ready'. Exactly the
+    //    state a real lock-in produces, just without Claude in the loop.
+    const manualRes = await callProd(`/api/categories/${category.id}/manual`, {
+      method: "POST",
+      body: JSON.stringify({
+        questions: SAMPLE_QUESTIONS.map((q) => ({
+          prompt: `${name}: ${q.prompt}`,
+          options: q.options,
+          correctIndex: q.correctIndex,
+        })),
+      }),
+    });
+    if (!manualRes.ok) {
+      throw new Error(
+        `manual ${name}: ${manualRes.status} ${await manualRes.text()}`,
+      );
     }
+    const manualBody = (await manualRes.json()) as {
+      questions: Array<{ id: string; point_value: number | null }>;
+    };
+    // The route returns rows in insert order; sort ascending by
+    // point_value to honor the documented contract (id[0] is 100pt …
+    // id[6] is 700pt). Manual inserts them in order so this is a no-op
+    // in practice, but be explicit.
+    const sorted = [...manualBody.questions].sort(
+      (a, b) => (a.point_value ?? 0) - (b.point_value ?? 0),
+    );
+    return {
+      id: category.id,
+      name: category.name,
+      position: category.position,
+      question_ids: sorted.map((q) => q.id),
+    };
+  }
 
-    const g2Rows = [];
-    for (const cat of g2Cats) {
-      for (let i = 0; i < 7; i++) {
-        g2Rows.push({
-          category_id: cat.id,
-          point_value: POINT_VALUES[i],
-          prompt: `${cat.name}: ${SAMPLE_QUESTIONS[i]!.prompt}`,
-          options: SAMPLE_QUESTIONS[i]!.options,
-          correct_index: SAMPLE_QUESTIONS[i]!.correct_index,
-          difficulty: SAMPLE_QUESTIONS[i]!.difficulty,
-          source: "host-edit",
-          is_picked: true,
-        });
+  let categoriesWithQs: SeededCategory[] = [];
+  let game2CategoriesWithQs: SeededCategory[] = [];
+  try {
+    for (const def of GAME1_CATEGORIES) {
+      const seeded = await seedCategoryViaProdApis(
+        game1.id,
+        def.name,
+        def.topic,
+        def.position,
+      );
+      categoriesWithQs.push(seeded);
+    }
+    if (scenario === "two-games-ready") {
+      for (const def of GAME2_CATEGORIES) {
+        const seeded = await seedCategoryViaProdApis(
+          game2.id,
+          def.name,
+          def.topic,
+          def.position,
+        );
+        game2CategoriesWithQs.push(seeded);
       }
     }
-    const { data: g2Qs, error: g2QErr } = await admin
-      .from("questions")
-      .insert(g2Rows)
-      .select("id, category_id, point_value");
-    if (g2QErr || !g2Qs) {
-      return NextResponse.json({ error: g2QErr?.message ?? "game-2 questions insert failed" }, { status: 500 });
-    }
-    const g2QIds = new Map<string, string[]>();
-    for (const cat of g2Cats) g2QIds.set(cat.id, []);
-    const g2Sorted = [...g2Qs].sort((a, b) => (a.point_value ?? 0) - (b.point_value ?? 0));
-    for (const q of g2Sorted) {
-      const list = g2QIds.get(q.category_id);
-      if (list) list.push(q.id);
-    }
-    game2CategoriesWithQs = g2Cats.map((c) => ({
-      ...c,
-      question_ids: g2QIds.get(c.id) ?? [],
-    }));
+  } catch (e) {
+    // Best-effort cleanup so a failed seed doesn't leave stale rows; the
+    // cascade deletes games → categories → questions.
+    await admin.from("nights").delete().eq("id", nightId);
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : String(e) },
+      { status: 500 },
+    );
   }
 
+  // Re-read game states (they're still 'draft' — same as prod). Test
+  // helpers that need 'live' must call startGame() explicitly, which
+  // mirrors what the host's "Start" button does at runtime.
+  const { data: gamesAfter } = await admin
+    .from("games")
+    .select("id, game_no, state")
+    .eq("night_id", nightId)
+    .order("game_no");
+  const game1After = gamesAfter?.find((g) => g.game_no === 1) ?? game1;
+  const game2After = gamesAfter?.find((g) => g.game_no === 2) ?? game2;
+
   return NextResponse.json({
-    nightId: night.id,
-    roomCode: night.room_code,
-    game1,
-    game2,
+    nightId,
+    roomCode,
+    game1: game1After,
+    game2: game2After,
     categories: categoriesWithQs,
     game2Categories: game2CategoriesWithQs,
   });
