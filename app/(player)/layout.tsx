@@ -9,7 +9,6 @@
 // the Question or Reveal screens.
 
 import type { ReactNode } from "react";
-import { PalettePeekProvider } from "@/components/player/PalettePeekProvider";
 import { ConnectionRibbonProvider } from "@/components/player/ConnectionRibbonProvider";
 
 export default function PlayerLayout({ children }: { children: ReactNode }) {
@@ -30,7 +29,6 @@ export default function PlayerLayout({ children }: { children: ReactNode }) {
     >
       <ConnectionRibbonProvider />
       {children}
-      <PalettePeekProvider />
     </div>
   );
 }
