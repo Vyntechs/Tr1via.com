@@ -191,7 +191,7 @@ async function runGenerationJob(opts: {
     const q = generated[i];
     if (!row || !q) continue;
     try {
-      const photo = await autoAttachPhoto(q);
+      const photo = await autoAttachPhoto(q, { topic: opts.topic });
       if (photo.imageUrl) {
         await admin
           .from("questions")
