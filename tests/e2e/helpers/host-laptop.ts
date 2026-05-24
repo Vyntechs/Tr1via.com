@@ -51,6 +51,8 @@ export interface SeededNight {
   game1: { id: string; game_no: number; state: string };
   game2: { id: string; game_no: number; state: string };
   categories: SeededCategory[];
+  /** Populated only when scenario === "two-games-ready". */
+  game2Categories: SeededCategory[];
 }
 
 /**
@@ -110,14 +112,44 @@ export async function startGame(page: Page, gameId: string): Promise<void> {
 }
 
 /**
- * Reveal a specific question. The HostLiveConsole UI: each grid cell carries
- * data-testid={`host-question-${qid}`} and clicking it triggers reveal
- * directly (no separate "reveal" button). Asserts the cell exists then clicks.
+ * Reveal a specific question via the UI cell click. Asserts the cell exists
+ * then clicks. Use for one-off reveal tests where exercising the UI path
+ * matters (e.g. reveal-sync.spec.ts).
  */
 export async function revealQuestion(page: Page, questionId: string): Promise<void> {
   const cell = page.getByTestId(TID.hostLiveConsole.question(questionId));
   await expect(cell).toBeVisible();
   await cell.click();
+}
+
+/**
+ * Reveal a specific question via direct API POST. Used by full-game tests
+ * where chaining 28 UI reveals would be slow + brittle (host cells flip
+ * between clickable/disabled states based on snapshot freshness).
+ */
+export async function revealViaApi(
+  page: Page,
+  gameId: string,
+  questionId: string,
+): Promise<void> {
+  const res = await page.request.post(`/api/games/${gameId}/reveal`, {
+    data: { questionId },
+  });
+  if (!res.ok()) {
+    throw new Error(`revealViaApi failed: ${res.status()} ${await res.text()}`);
+  }
+}
+
+/**
+ * End a game via POST /api/games/:id/end. The TV transitions from leaderboard
+ * to intermission (game 1) or finale (game 2). After this call, no new
+ * answers can be inserted.
+ */
+export async function endGame(page: Page, gameId: string): Promise<void> {
+  const res = await page.request.post(`/api/games/${gameId}/end`);
+  if (!res.ok()) {
+    throw new Error(`endGame failed: ${res.status()} ${await res.text()}`);
+  }
 }
 
 /**
