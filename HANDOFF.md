@@ -4,16 +4,18 @@
 
 ---
 
-## State as of 2026-05-24 (~1am, end of session 3)
+## State as of 2026-05-24 (~5am, end of session 4)
 
 **Live, deployed, working on `tr1via.com`:**
-- `main` is 9 commits ahead of where session 2 ended. Latest: `40691d9 fix(photo): cascade three Pexels queries so something ALWAYS attaches`.
-- TypeScript build clean. 181/181 unit + component tests pass.
+- `main` latest: `70fcc55 fix(live): auto-start game on first reveal so TV/phones leave lobby` (2 new commits this session on top of session 3).
+- TypeScript build clean. **187/187** unit + component tests pass (was 181 — added 6 for `previewPointValues`).
 - `full-game.spec.ts` (28-reveal multi-context test against localhost + MSW mocks) passes in 2.4 min.
 - `reveal-sync.spec.ts` passes when Supabase is responsive (variance day-to-day; 1.8–9 s arrivals against 3 s budget).
 - **Brandon can log in at `tr1via.com/login` with `brandon@vyntechs.com` and lands on `/host` in ~1 s via the founder bypass.** No email needed.
 - **Question generation works end-to-end:** ~20 s for Claude Haiku 4.5 + ~10 s for 20 Pexels photos = ~30 s total per category, then auto-navigates to the pick-7 screen.
-- **Realtime works in prod** (was completely broken until tonight — see "Lessons" below).
+- **Realtime works in prod** (was completely broken in session 3 — see "Lessons" below).
+- **NEW: pick-tier sidebar honestly previews the lock distribution** — picks at the same Claude rating no longer overwrite each other; cards show "originalRating → assignedTier" when they shift.
+- **NEW: host → TV + phone reveal sync verified end-to-end on real prod** — first reveal now auto-starts the game so all three surfaces leave lobby together. Tested with chrome-devtools-MCP driving three pages (host laptop + TV + phone in isolated browser context, 390×844).
 
 **Production resources (canonical):**
 - Supabase **Trivia** (`citweuctcnuxmqjxcbiz`). 5 migrations applied. Site URL = `https://tr1via.com`, redirect allowlist contains `https://tr1via.com/auth/callback`. SMTP is still default — emails to `@vyntechs.com` are dropped silently (use bypass instead of magic link).
@@ -25,6 +27,24 @@
 |---|---|---|---|
 | brandon@vyntechs.com | **founder** | false (sees onboarding) | 0 |
 | brandon.james.nichols@gmail.com | host | false | 0 |
+
+---
+
+## What was built in session 4 (2026-05-24 ~3–5am)
+
+### Two demo-blocking bugs found and shipped to prod
+
+1. **`32bb985` — pick-tier preview.** PickSidebar in `components/host/gen/HostGenPick.tsx` was keying `byDiff[difficulty * 100]`, silently overwriting when two picks shared Claude's rating. Brandon screenshotted "7/7 picked but 100/600/700 empty" on a grunge-bands batch where Claude rated everything 200-400. Fix: new `previewPointValues(picked)` helper in `lib/game/difficulty.ts` mirrors the server's `assignPointValues` rule but tolerates any N from 0..7. Sidebar + cards both consume the preview map. Picked cards now show "originalRating → assignedTier" with the original struck through when shifted. Server-side `assignPointValues` was already correct — the bug was purely client display.
+
+2. **`70fcc55` — auto-start on first reveal.** `/api/games/[id]/start` was defined but **never called anywhere** in the app. Host clicking a board cell only fired `/api/games/[id]/reveal`, which leaves `games.state = 'draft'`. The TV (`app/tv/[code]/page.tsx:194`) AND phone (`app/(player)/room/[code]/page.tsx:291`) both render `TVLobbyView` / "host is setting up" whenever `currentGame.state === 'draft' || === 'ready'`. Net effect: host plays through the whole game on her laptop while every player phone + the venue TV stares at the QR code. Found by multi-page chrome-devtools-MCP drive, not by API smoke. Fix: `handleReveal` now POSTs `/start` before `/reveal` whenever the game is draft/ready. `/start` is idempotent so the e2e helper that calls it explicitly still works unchanged.
+
+Both fixes verified live on prod via chrome-devtools-MCP driving three independent page contexts (host + TV + phone in isolated browser context). Smoke CI green on both pushes.
+
+### Architectural lessons worth carrying forward (session 4 additions)
+
+17. **Idempotent endpoints make "belt + suspenders" cheap.** `/start` returning 200 if already-live let `handleReveal` always call it without breaking existing helpers. Worth applying the same pattern to any state-transition endpoint future-us is tempted to gate behind a "should I call this?" client-side check.
+18. **Implemented-but-unused endpoints are a code smell.** `app/api/games/[id]/start/route.ts` existed for ~3 sessions and Brandon almost demoed without anyone ever calling it. A grep for `import.*[Rr]oute` against route paths, or a "0 callers" check in CI, would have flagged it.
+19. **Two distinct UI bugs, same testing root cause.** The pick-tier bug (silent overwrite in the sidebar) and the reveal-sync bug (lobby stuck because game.state stayed 'draft') were both invisible to pure code review and to the existing API/UI smokes. Both were caught by *driving the actual screens the user/audience sees*. This is the third concrete instance backing `feedback_validate_dont_just_claim` — keep that memory load-bearing.
 
 ---
 
@@ -66,11 +86,11 @@
 
 ### Demo-blocking risk (untested but inferred-to-work)
 
-These are NOT proven on prod but should work based on adjacent paths:
-- **Reveal sync on prod** (host → TV + phones via room-channel broadcast). Same WebSocket + same anon key as the category broadcast which IS proven working tonight. Strong inference but never directly driven on tr1via.com.
-- **`/tv/[code]` on real prod** — only validated against localhost.
-- **`/join` + PlayerJoin → PlayerLobby on real prod** — only validated against localhost.
-- **Multi-device sync at venue scale** (30–50 phones on real wifi). Code is the same as the 3-phone local test that passes. Wifi at the venue and iOS Safari quirks are the unknowns.
+Session 4 closed three of the four entries here. What remains:
+- ~~**Reveal sync on prod** (host → TV + phones via room-channel broadcast).~~ ✅ **Proven on real prod 2026-05-24 session 4** — drove host laptop + `/tv/[code]` + `/join` (phone viewport, isolated browser context). Found the missing `/start` call along the way; fixed in `70fcc55`. TV question view + phone reveal-then-resolve frames both render correctly.
+- ~~**`/tv/[code]` on real prod**~~ ✅ **Proven on real prod 2026-05-24 session 4** — TVLobby + TVGrid + TVQuestion all rendered correctly with real Supabase + real anon key.
+- ~~**`/join` + PlayerJoin → PlayerLobby on real prod**~~ ✅ **Proven on real prod 2026-05-24 session 4** — phone entered code, picked a name, landed in lobby, then transitioned through question + resolve frames.
+- **Multi-device sync at venue scale** (30–50 phones on real wifi). Code is the same as the 1-phone prod test that passes (session 4) and the 3-phone local test that passes. Wifi at the venue and iOS Safari quirks remain the unknowns. Only the real-device dry run will close this.
 
 ### UI still uses placeholder StockImage on these screens
 
@@ -116,20 +136,31 @@ These are NEW vs session 2's lessons doc — keep both:
 
 ## How to resume (next session)
 
-1. **`git pull`** — make sure you have through `40691d9`.
+1. **`git pull`** — make sure you have through `70fcc55` (session 4 tip).
 2. **Verify Brandon can still log in:** open https://tr1via.com/login, enter `brandon@vyntechs.com`, click Send. Should redirect to /host showing "Welcome, Brandon · Set up Wednesday".
 3. **Run the prod smoke as a sanity check:**
    ```bash
    node --env-file=.env.local scripts/prod-smoke.mjs "any topic"
    ```
    Exit 0 = green.
-4. **Decide priority with Brandon.** Open items, in rough order of risk-to-demo:
-   - [ ] Drive reveal-sync on real prod (multi-context chrome-devtools or new Playwright spec) — the highest-value remaining validation
-   - [ ] Wire the other gen-screen `StockImage` usages so swap UI works
-   - [ ] Phase 5.2 edge-case specs
-   - [ ] Phase 6 API integration tests
-   - [ ] UX polish on HostGenLoading (still feels static — counter moves now but the design could be more alive)
-   - [ ] Real-device dry run (2-3 phones, host laptop, TV, on real wifi) — Brandon's call when to schedule
+4. **Demo-blocking work is DONE through session 4.** The remaining queue is polish + coverage that Brandon explicitly deferred at the end of session 4. Pick from this list — they're independent, work them in any order:
+
+   **Test coverage**
+   - [ ] Phase 5.2 edge-case Playwright specs (rejoin, network-drop, mid-game-edits, manual-entry, generation-failure) — see `docs/superpowers/plans/2026-05-23-smoke-orchestration.md`
+   - [ ] Phase 6 API integration tests per resource
+   - [ ] Phase 7 `smoke-routes.spec.ts` — visit every route, assert no console errors. `prod-ui-smoke.spec.ts` is a tiny version of this.
+   - [ ] Phase 9 gaps doc
+   - [ ] Regression test for the session-4 fixes: a Playwright spec that creates a clump-heavy pick set (all same Claude difficulty) and asserts the sidebar fills all 7 tiers AND the locked `point_value` column distributes 100..700. And a multi-context spec that asserts game.state flips to 'live' on first cell click (the lock-in for `70fcc55`).
+
+   **UI gaps**
+   - [ ] Wire `StockImage` to real `q.imageUrl` on the rest of the gen screens — `HostGenEdit:195`, `HostGenImageSwap:232,285`, `HostGenImageUploadReady:49,85`, `HostGenImageUpload:255`, `HostGenFlavor:94`. Only matters if Brandon manually swaps an image during the demo. The pick + loading cards were fixed in session 3 (`1f1edb8`).
+   - [ ] UX polish on `HostGenLoading` — counter ticks now (session 3) but Brandon flagged it still "feels static." Could add the photo-attach progress as a separate streaming animation, or motion on the difficulty-distribution bar.
+   - [ ] Hydration mismatches in browser console on a few player pages (flagged session 2, never investigated).
+
+   **Operational**
+   - [ ] Real-device dry run (2-3 phones, host laptop, TV, on real wifi) — Brandon's call when to schedule.
+   - [ ] Open-question UX: there's no separate "About to start Game 1 — players, look up!" moment between lobby and the first question now that `70fcc55` auto-starts on cell click. If Brandon wants a dramatic START button as a separate beat, that's a small UI add (a primary button on the host live console that's only enabled when game.state='draft'/'ready' and disabled after first reveal).
+
 5. **Don't:** ask Brandon questions whose answers he can't meaningfully evaluate. Just commit and execute. See `feedback_build_without_asking.md`.
 
 ---
