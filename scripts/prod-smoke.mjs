@@ -143,10 +143,14 @@ try {
     }
     if (cat?.state === 'draft') throw new Error('category rolled back to draft (generation failed)');
     if (cat?.state === 'review' || cat?.state === 'ready') {
-      const { data: qs } = await admin.from('questions')
-        .select('id, prompt, options, correct_index, difficulty, fact_blurb, image_url, photo_query')
+      const { data: qs, error: qErr } = await admin.from('questions')
+        .select('id, prompt, options, correct_index, difficulty, fact_blurb, image_url')
         .eq('category_id', categoryId);
+      if (qErr) {
+        note(`questions query error: ${qErr.message}`);
+      }
       questions = qs ?? [];
+      note(`state=${cat.state}, questions found: ${questions.length}`);
       if (questions.length > 0) break;
     }
     await new Promise((r) => setTimeout(r, POLL_MS));
