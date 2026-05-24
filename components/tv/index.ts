@@ -25,3 +25,5 @@ export type {
   TVFinalePodiumRow,
   TVFinaleStat,
 } from "./TVFinaleWinner";
+export { TVStateMachine } from "./TVStateMachine";
+export type { TVStateMachineProps } from "./TVStateMachine";
