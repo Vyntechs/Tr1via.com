@@ -205,7 +205,7 @@ function PickCardSmall({ q, cc }: { q: HostGenLoadingQuestion; cc: string }) {
       background: t.dark ? "rgba(244,230,196,.03)" : "#FFF",
       animation: "tr1via-rise .4s cubic-bezier(.2,.7,.3,1) both",
     }}>
-      <StockImage seed={q.seed ?? q.id} height={120} radius="11px 11px 0 0" caption={null} />
+      <StockImage src={q.imageUrl && q.imageUrl !== "demo" ? q.imageUrl : null} seed={q.seed ?? q.id} height={120} radius="11px 11px 0 0" caption={null} />
       <div style={{ padding: "12px 14px" }}>
         <div style={{ fontSize: 13.5, color: t.ink, fontWeight: 600, letterSpacing: "-0.005em", lineHeight: 1.35, minHeight: 38 }}>{q.prompt}</div>
         <div style={{ marginTop: 10, display: "flex", alignItems: "center", justifyContent: "space-between" }}>

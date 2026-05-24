@@ -14,6 +14,9 @@ import type { CSSProperties, ReactNode } from "react";
 
 export interface StockImageProps {
   seed?: string;
+  /** Real photo URL (e.g. Pexels). When set, renders an <img>; when null,
+   *  falls back to the seeded striped placeholder. */
+  src?: string | null;
   height?: number | string;
   radius?: string;
   caption?: string | null;
@@ -22,13 +25,16 @@ export interface StockImageProps {
 }
 
 /**
- * Striped photo placeholder. The `seed` deterministically picks a hue so
- * adjacent placeholders read as distinct images at a glance. A subtle bottom
- * vignette mirrors the production component so captions and overlays sit
- * cleanly on top.
+ * Photo slot. When `src` is provided (production path — Pexels-backed) it
+ * renders the actual image with object-fit:cover. When `src` is null/empty
+ * (demo gallery, mid-generation, or photo attach failed) it falls back to
+ * a seeded striped placeholder so adjacent slots read as distinct.
+ * A subtle bottom vignette stays on top in both cases so captions and
+ * overlays remain legible.
  */
 export function StockImage({
   seed = "p1",
+  src,
   height = 168,
   radius = "10px 10px 0 0",
   caption,
@@ -40,6 +46,7 @@ export function StockImage({
   for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0;
   const hue = Math.abs(h) % 360;
   const hueB = (hue + 28) % 360;
+  const hasSrc = typeof src === "string" && src.length > 0;
   return (
     <div
       style={{
@@ -48,11 +55,28 @@ export function StockImage({
         borderRadius: radius,
         position: "relative",
         overflow: "hidden",
-        background:
-          `repeating-linear-gradient(135deg, hsl(${hue}deg 38% 28%) 0 14px, hsl(${hueB}deg 32% 22%) 14px 28px), #222`,
+        background: hasSrc
+          ? "#222"
+          : `repeating-linear-gradient(135deg, hsl(${hue}deg 38% 28%) 0 14px, hsl(${hueB}deg 32% 22%) 14px 28px), #222`,
         ...style,
       }}
     >
+      {hasSrc && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={src as string}
+          alt=""
+          loading="lazy"
+          style={{
+            position: "absolute",
+            inset: 0,
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            display: "block",
+          }}
+        />
+      )}
       {/* Subtle bottom vignette so captions and overlays sit cleanly */}
       <div
         style={{
