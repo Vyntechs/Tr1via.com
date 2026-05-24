@@ -12,8 +12,14 @@ const PALETTE_PEEK_FLAG_SCRIPT =
 
 /**
  * A phone joins the room with the given display name. Lands on PlayerLobby.
+ * Returns the player_id so callers can target this specific player for
+ * mid-game actions (join-game-2, remove, etc).
  */
-export async function joinPhone(page: Page, roomCode: string, name: string): Promise<void> {
+export async function joinPhone(
+  page: Page,
+  roomCode: string,
+  name: string,
+): Promise<{ playerId: string }> {
   // Suppress the first-visit palette egg modal before any page script runs.
   await page.addInitScript(PALETTE_PEEK_FLAG_SCRIPT);
   await page.goto(`/join?code=${roomCode}`);
@@ -23,6 +29,47 @@ export async function joinPhone(page: Page, roomCode: string, name: string): Pro
   await page.getByTestId(TID.playerJoin.submit).click();
   // Generous: first POST /api/players + first room snapshot can be slow.
   await expect(page.getByTestId(TID.playerLobby.root)).toBeVisible({ timeout: 60_000 });
+  // Pull the player id from the public TV snapshot — matching by display name
+  // works because each phone in a test uses a unique name.
+  const playerId = await playerIdByName(page, roomCode, name);
+  return { playerId };
+}
+
+/**
+ * Look up a player_id by display_name via the public TV snapshot. Useful
+ * when a helper or test needs the id but only knows the name.
+ */
+export async function playerIdByName(
+  page: Page,
+  roomCode: string,
+  name: string,
+): Promise<string> {
+  const res = await page.request.get(`/api/tv/${roomCode}/snapshot`);
+  if (!res.ok()) {
+    throw new Error(`playerIdByName snapshot failed: ${res.status()}`);
+  }
+  const snap = (await res.json()) as {
+    players: Array<{ id: string; displayName: string }>;
+  };
+  const found = snap.players.find((p) => p.displayName === name);
+  if (!found) {
+    throw new Error(`playerIdByName: no player named "${name}" in room ${roomCode}`);
+  }
+  return found.id;
+}
+
+/**
+ * Opt into game 2 via direct API call (the production button does the same
+ * POST). Uses the phone's page so the device cookie travels with the
+ * request — the API requires the device session to own this player row.
+ */
+export async function joinGame2ViaApi(page: Page, playerId: string): Promise<void> {
+  const res = await page.request.post(`/api/players/${playerId}/join-game`, {
+    data: { gameNo: 2 },
+  });
+  if (!res.ok()) {
+    throw new Error(`joinGame2ViaApi failed: ${res.status()} ${await res.text()}`);
+  }
 }
 
 /**

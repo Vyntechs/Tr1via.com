@@ -1,12 +1,14 @@
 // Creates a fully-realized night for a test host. Body: {hostId, scenario?,
 // themeKey?, roomCode?, venueName?}. Scenarios:
 //   - "happy-path-3-cats-game1": 3 categories of 7 picked questions in game 1
-//   - "two-games-ready": same + 1 category in game 2
+//   - "two-games-ready": same + 1 category of 7 picked questions in game 2
 //   - "empty-night": no categories
-// Returns: {nightId, roomCode, game1, game2, categories:[{id,name,position,
-// question_ids:[uuid, ...]}]}. question_ids are returned sorted ascending by
-// point_value (100 -> 700) so tests can drive a category through reveal one
-// question at a time without a separate fetch.
+// Returns: {nightId, roomCode, game1, game2,
+//           categories:[{id,name,position,question_ids:[uuid,...]}],
+//           game2Categories:[{id,name,position,question_ids:[uuid,...]}]}.
+// question_ids are returned sorted ascending by point_value (100 -> 700) so
+// tests can drive a category through reveal one question at a time without
+// a separate fetch.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -148,11 +150,69 @@ export async function POST(req: NextRequest) {
     question_ids: questionIdsByCategory.get(c.id) ?? [],
   }));
 
+  // For "two-games-ready" scenario, also fill game 2 with one category of 7
+  // picked questions. Keeps the full-game test budget manageable (28 reveals
+  // total) while still exercising the intermission → game-2 → finale path.
+  let game2CategoriesWithQs: typeof categoriesWithQs = [];
+  if (scenario === "two-games-ready") {
+    const { data: g2Cats, error: g2CatsErr } = await admin
+      .from("categories")
+      .insert([
+        {
+          game_id: game2.id,
+          name: "Bonus round",
+          topic: "general trivia",
+          position: 0,
+          color: "#F4A261",
+          state: "ready",
+        },
+      ])
+      .select("id, name, position");
+    if (g2CatsErr || !g2Cats) {
+      return NextResponse.json({ error: g2CatsErr?.message ?? "game-2 categories insert failed" }, { status: 500 });
+    }
+
+    const g2Rows = [];
+    for (const cat of g2Cats) {
+      for (let i = 0; i < 7; i++) {
+        g2Rows.push({
+          category_id: cat.id,
+          point_value: POINT_VALUES[i],
+          prompt: `${cat.name}: ${SAMPLE_QUESTIONS[i]!.prompt}`,
+          options: SAMPLE_QUESTIONS[i]!.options,
+          correct_index: SAMPLE_QUESTIONS[i]!.correct_index,
+          difficulty: SAMPLE_QUESTIONS[i]!.difficulty,
+          source: "host-edit",
+          is_picked: true,
+        });
+      }
+    }
+    const { data: g2Qs, error: g2QErr } = await admin
+      .from("questions")
+      .insert(g2Rows)
+      .select("id, category_id, point_value");
+    if (g2QErr || !g2Qs) {
+      return NextResponse.json({ error: g2QErr?.message ?? "game-2 questions insert failed" }, { status: 500 });
+    }
+    const g2QIds = new Map<string, string[]>();
+    for (const cat of g2Cats) g2QIds.set(cat.id, []);
+    const g2Sorted = [...g2Qs].sort((a, b) => (a.point_value ?? 0) - (b.point_value ?? 0));
+    for (const q of g2Sorted) {
+      const list = g2QIds.get(q.category_id);
+      if (list) list.push(q.id);
+    }
+    game2CategoriesWithQs = g2Cats.map((c) => ({
+      ...c,
+      question_ids: g2QIds.get(c.id) ?? [],
+    }));
+  }
+
   return NextResponse.json({
     nightId: night.id,
     roomCode: night.room_code,
     game1,
     game2,
     categories: categoriesWithQs,
+    game2Categories: game2CategoriesWithQs,
   });
 }
