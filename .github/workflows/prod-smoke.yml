@@ -1,0 +1,70 @@
+name: Prod smoke
+
+# Runs the end-to-end smoke against tr1via.com automatically:
+#   • After every push to main (waits for Vercel to deploy, then smokes)
+#   • Hourly via cron — catches things that drift between deploys
+#     (e.g. Anthropic rate-limit, Pexels key flip, Supabase upstream incident)
+#   • On-demand via "Run workflow" button on the Actions tab
+#
+# Silence means green. If anything turns red GitHub emails the repo owner.
+# That's the entire UX — Brandon never runs a check manually.
+#
+# One-time setup: add three secrets at Settings → Secrets and variables →
+# Actions:
+#   NEXT_PUBLIC_SUPABASE_URL     (e.g. https://citweuctcnuxmqjxcbiz.supabase.co)
+#   SUPABASE_SERVICE_ROLE_KEY    (the prod key, NOT the anon key)
+#   SMOKE_FOUNDER_EMAIL          (brandon@vyntechs.com)
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Every hour at :07 — offset to avoid Vercel deploy storms at the top
+    # of the hour.
+    - cron: '7 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  # Avoid stacking smokes if multiple pushes land close together. The
+  # latest run wins; older queued ones get cancelled.
+  group: prod-smoke
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install deps (production only)
+        run: npm ci --omit=dev --no-audit --no-fund
+
+      - name: Wait for Vercel deploy to settle (push trigger only)
+        if: github.event_name == 'push'
+        run: |
+          # Vercel typically deploys in 30-60s. Poll the site's health for
+          # up to 5 minutes before giving up. We hit a known route to
+          # confirm the deploy is responding.
+          for i in $(seq 1 30); do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" https://tr1via.com/api/auth/founder-login -X POST -H "Content-Type: application/json" -d '{"email":"smoke-check@invalid.invalid"}')
+            echo "[$i] health probe -> $CODE"
+            # 404 = our route is live and correctly rejecting the non-founder email
+            # 405 = method not allowed (route not deployed yet)
+            # 500/502/503 = backend issue
+            if [ "$CODE" = "404" ]; then echo "deploy live"; break; fi
+            sleep 10
+          done
+
+      - name: Run prod smoke
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
+          SMOKE_BASE_URL: https://tr1via.com
+        run: node scripts/prod-smoke.mjs "smoke check $(date +%s)"
