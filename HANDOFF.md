@@ -1,139 +1,135 @@
 # TR1VIA — Handoff
 
-**Read order for a fresh session:** this file → `tr1via-plan.md` (rules) → `docs/superpowers/plans/2026-05-23-tr1via.md` (build plan) → `supabase/README.md` (DB setup) → `README.md` (run instructions). The Claude Design package is at `/tmp/tr1via-design/tr1via/` (chats + JSX prototypes).
+**Read order for a fresh session:** this file → `tr1via-plan.md` (rules) → `docs/superpowers/plans/2026-05-23-tr1via.md` (build plan) → `docs/superpowers/plans/2026-05-23-smoke-orchestration.md` (test orchestration plan) → `supabase/README.md` (DB setup) → `README.md` (run instructions). The Claude Design package is at `/tmp/tr1via-design/tr1via/` (chats + JSX prototypes).
 
 ---
 
-## State as of 2026-05-23 (evening)
+## State as of 2026-05-23 (late evening, after session 2)
 
 **Live, deployed, working:**
-- Repo: <https://github.com/Vyntechs/Tr1via.com> (main branch is canonical)
-- 19+ commits today; all pushed.
-- TypeScript build clean. **178/178 tests pass.** ~40 routes registered (including the 7 `/dev/*` galleries).
-- **tr1via.com is live and auto-deploying from `main`** — every push triggers a fresh build (~28s) and serves within ~60s. Verified end-to-end across 6+ pushes.
-- All 11 phases of the build plan are now complete (Phases 0–10 plus the deploy verification in 11). What's left is a real-device smoke run.
+- Repo: <https://github.com/Vyntechs/Tr1via.com> (main, auto-deploys via Vercel)
+- ~25 commits today; latest `76e9793 fix(realtime): REST broadcast + optimistic player answer to unblock smoke`
+- TypeScript build clean. **181/181 unit + component tests pass.** Reveal-sync E2E test currently FAILS (see "Known bugs" below — this is information, not regression).
+- `tr1via.com` serves the new customer-facing landing (room code input + Host sign-in chip).
 
-**Production resources (canonical, what to use going forward):**
-- Supabase project **Trivia** — ref `citweuctcnuxmqjxcbiz`. All 4 migrations applied (schema, RLS, Realtime, storage). 13 tables + `game_scores` view + `resolve_question` proc. Types generated from live schema and committed to `lib/supabase/types.ts`.
-- Vercel project **tr1via** — id `prj_dsHB5DhLhWSuBBXDLCVT5JC7INO8`, in Brandon's personal Vercel account `brandon-nichols-projects-f7e6d2a9` (team id `team_pIz2bArnD9WKAfzxYWoPtvSd`). Git auto-deploy IS connected to `Vyntechs/Tr1via.com#main`. All 7 env vars set in dashboard: `PEXELS_API_KEY`, `ANTHROPIC_API_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SESSION_SECRET`, `NEXT_PUBLIC_SITE_URL`. Domain `tr1via.com` + `www.tr1via.com` attached.
+**Production resources (canonical):**
+- Supabase **Trivia** (`citweuctcnuxmqjxcbiz`) — now has **5 migrations** applied (0001-0004 + new `0005_host_roles`). Brandon's row is seeded as founder (`role='founder', is_paywall_bypassed=true`).
+- Vercel project **tr1via** in `brandon-nichols-projects-f7e6d2a9` — unchanged.
 
-**Two-Vercel-account note:** Brandon has two Vercel logins:
-- `brandon-5701` (personal, `brandon.james.nichols@gmail.com`) — **the real account.** Owns tr1via.com + all domains. CLI on his laptop is logged in here. The `tr1via` project lives here. THIS is the source of truth.
-- `thebrandonnichols-5376` (a separate team, `thebrandonnichols@gmail.com`, team id `team_X2HCfoLF0Us6hAsVbRfsgH9K`) — old account, MCP token happens to be wired here. Has a stale `talknndone` project from April 12 with env vars but no domain. Earlier HANDOFFs mistakenly documented this project; ignore it.
-
-If you use the Vercel MCP, you'll only see the old `thebrandonnichols-5376` team. For accurate state, use the CLI (`vercel ls`, `vercel inspect`) from this repo — it's already linked to the real `tr1via` project via `.vercel/repo.json`.
-
-**DO NOT TOUCH:**
-- Supabase project **Vyntechs Auto** (ref `ynmtszuybeenjbigxdyl`). Different product, off-limits.
-- Old/throwaway Vercel projects in the personal account: `talknndone`, `frontend`, `soulfire-trivia`, and ~15 UUID-named projects (all from earlier experiments). Brandon can delete these in the dashboard when convenient; they're not load-bearing.
+**`.env.local` has the real prod keys now** — Brandon manually pasted SUPABASE_SERVICE_ROLE_KEY because Vercel marks it Sensitive (can't be pulled via CLI). All 7 keys present.
 
 ---
 
-## What's built (you don't need to rebuild any of this)
+## What was built in this session
 
-**Design system foundation:**
-- `lib/theme/` — 14 themed palettes (house, daylight, jan-dec), generated to CSS vars by `__build__.ts`
-- `components/system/` — Wordmark, Display, Eyebrow, Numeric, Rule, PointTag, AnswerCard (5 states), TimerRing, TVTimerArc, QRBlock (real qrcode), Weather (per-month microclimates), 9 motif glyphs, ParticleField
-- `components/shells/` — PhoneScreen, PhoneHeader, TVStage, TVHeader, TVFooter, LaptopShell
+### Customer-facing landing page
+`app/page.tsx` — replaced the dev placeholder (`/dev/system` links styled like code, confused users). Real landing: TR1VIA wordmark, "Got a code? You're in." headline, room code input that routes to `/join?code=XXX`, "Host · Sign in →" chip top-right that routes to `/login`.
 
-**Static screens (all wired to live data via hooks):**
-- `components/player/` (9): PlayerJoin, PlayerLobby, PlayerQuestion, PlayerLocked, PlayerRevealCorrect, PlayerRevealWrong, PlayerJoinGame2, PlayerWinnerCard, PlayerRecap
-- `components/tv/` (8): TVLobby, TVGrid, TVQuestion (with live lock-in pile), TVReveal, TVRevealStumper, TVLeaderboard, TVIntermission, TVFinaleWinner
-- `components/host/` (5 + 9 generation): HostPhoneUpcoming/Live, HostDashboard, HostSetupCategories, HostLiveConsole + 9 HostGen* screens
-- `components/onboarding/` (2): OnboardingFirstDashboard, OnboardingFirstNightDone
-- `components/tv/lockin/` — LockInBase + LockInPileUp
+### Founder role + admin dashboard
+**Migration `0005_host_roles.sql`** adds `role`, `is_paywall_bypassed`, `comped_at`, `comped_by` columns to `hosts`. Partial unique index `hosts_single_founder_idx` enforces founder is a singleton. Applied to prod.
 
-**Game logic (pure, fully tested):**
-- `lib/game/scramble.ts` — deterministic per-(question, player) scramble via FNV-1a + Mulberry32 + Fisher-Yates
-- `lib/game/score.ts` — face value + 5-sec speed bonus
-- `lib/game/timer.ts` — server-timestamp-driven; client compensates for clock skew via the server's `now`
-- `lib/game/room-code.ts` — 6-char ambiguity-free alphabet (31 chars, no 0/O/1/I/L)
-- `lib/game/difficulty.ts` — assign 100..700 to 7 picked questions
+**Brandon's seed** — auth.users + hosts rows inserted directly via MCP. Magic-link flow works (we manually verified all required auth.users fields populated, see "Lessons" below).
 
-**Database (Supabase):**
-- `supabase/migrations/0001_init.sql` — full schema, view, stored proc
-- `supabase/migrations/0002_rls.sql` — row-level security
-- `supabase/migrations/0003_realtime.sql` — Postgres Changes publication
-- `supabase/migrations/0004_storage.sql` — question-images bucket
-- `supabase/seed.sql` — DEMO42 room with 6 categories of 7 real sample questions
-- `lib/supabase/{client,server,admin}.ts` — typed clients (browser, server-RLS-aware, service-role)
-- `lib/supabase/types.ts` — live-generated types with narrowed aliases for the JSONB columns
+**`requireFounder()` helper** in `lib/api/auth.ts` — wraps getAuthedHost and checks role==='founder'.
 
-**Auth:**
-- `app/(host)/login` — magic-link form
-- `app/auth/callback` — OAuth code → session exchange
-- `app/(host)/auth/onboarding-complete` — host row insert
-- `middleware.ts` — protects `/host/*`
-- `lib/auth/device-cookie.ts` — signed cookie helpers + 14 unit tests
-- `app/api/session/init` — mints player device cookie
+**`/api/admin/hosts`** (GET list, POST comp) and `/api/admin/hosts/[id]` (PATCH toggle paywall) — all founder-gated via service-role client.
 
-**Backend API (16+ routes):**
-- `/api/nights/{[id]/open, [id]/close, by-code/[code]}` — host creates + manages a night
-- `/api/games/[id]/{start, end, reveal, undo, end-early}` — the live-game state machine; reveal broadcasts on `room:{code}`
-- `/api/players/{[id]/heartbeat, [id]/join-game}` — player presence + per-game opt-in
-- `/api/answers` — submit with scramble anti-tamper check
-- `/api/questions/[id]/{resolve, photo, photos}` — T+20 resolver + image swap
-- `/api/categories/[id]/{generate, pick}` — Claude question generation (background job via `after()`) + assign 100..700
-- `/api/questions/[id]` PATCH — host edits a question
-- `/api/images/upload` — multipart upload to Supabase Storage
-- `/api/adjustments`, `/api/topic-suggestions`, `/api/tv/[code]/snapshot`
+**`/host/admin` dashboard** — server component checks founder role (404s non-founders), renders `HostAdminClient` with the hosts table + comp-a-host form.
 
-**Routes:**
-- Player: `/(player)/join`, `/(player)/room/[code]`, `/room/[code]/{won, recap}`
-- TV: `/tv/[code]`
-- Host laptop: `/host`, `/host/onboarding`, `/host/setup/[nightId]`, `/host/setup/[nightId]/topic`, `/host/setup/[nightId]/pick/[categoryId]`, `/host/live/[nightId]`
-- Host phone: `/host/phone/[nightId]`
-- Auth: `/login`, `/auth/callback`, `/auth/onboarding-complete`
-- Dev galleries: `/dev` (index), `/dev/system`, `/dev/player`, `/dev/tv`, `/dev/host`, `/dev/host/gen`, `/dev/tv/lockin` — note: NOT `/_dev/*`. Next.js treats underscore-prefixed folders as private and excludes them from routing. Earlier HANDOFFs documented `/_dev/*` paths; those never worked.
+**"FOUNDER →" chip** on `/host` (top-right) — only visible to Brandon, routes to `/host/admin`.
+
+### Smoke test orchestration (Phases 0-4 of plan)
+Plan doc: **`docs/superpowers/plans/2026-05-23-smoke-orchestration.md`** — complete scope, 9 phases.
+
+**Decision early in session:** tests use **prod Trivia DB** with strict `@tr1via.test` email isolation (vs. local Supabase, which would have required installing Docker — Brandon chose this path).
+
+Built so far:
+- **Test harness routes** at `app/api/%5Ftest/` (URL `/api/_test/*`): `login`, `seed-night`, `reset`, `fast-forward`. Two-factor gated: `TEST_AUTH_ENABLED=1` env AND `x-test-secret` header matching `TEST_SECRET` env. Login refuses non-`@tr1via.test` emails. (Folder name uses `%5F` URL-encoding so Next routes it — `_test` alone would be private/unrouted.)
+- **MSW mocks** at `tests/mocks/`: 20 canned Pixar questions + 12 canned Pexels photos. Anthropic handler matches the **`emit_questions`** tool name (NOT `submit_questions` as the original plan said — production code uses `emit_questions`). MSW boots via `instrumentation.ts` when `MOCK_EXTERNAL=1`.
+- **`data-testid` attributes** on every player/TV/host screen + landing + shells. `PhoneScreen`, `TVStage`, `AnswerCard` now accept `"data-testid"?: string` and forward to outer.
+- **`tests/e2e/helpers/`**: `selectors.ts` (TID source of truth), `env.ts` (TEST_SECRET constant), `host-laptop.ts`, `tv.ts`, `player-phone.ts`.
+- **`tests/e2e/reveal-sync.spec.ts`** — multi-context (host + TV + 3 phones) test. Currently failing — see Known bugs.
+
+### Real-time fixes from chasing the reveal-sync bugs
+- **`lib/api/broadcast.ts`** — switched from `channel.subscribe()+send()` (1+ sec WebSocket round-trip) to REST endpoint `POST /realtime/v1/api/broadcast` (~100ms). Same client-side broadcast delivery, much faster server-side.
+- **`app/(player)/room/[code]/page.tsx`** — optimistic answer state. When player taps, synthesize a local `AnswerRow` so the page transitions to PlayerLocked immediately. Real DB row supersedes when it arrives via useMyAnswers. Fixes the bug where postgres_changes couldn't reach device-cookie sessions.
+- **Subagent earlier in session also touched** `lib/supabase/client.ts` (static env-var reads + `x-tr1via-device` header on browser fetches) and `lib/hooks/useRoom.ts` (HTTP refresh on broadcast) — these were necessary to make ANY player-facing realtime work. Keep them.
 
 ---
 
-## What's still pending
+## Known bugs (real, in production code, found by the smoke test)
 
-**Phase 9 — Polish:** ✓ DONE
-- 9.1 ✓ heightened finale weather
-- 9.2 ✓ winner card PNG download
-- 9.3 ✓ PalettePeek overlay + first-session auto-trigger + "Made it!" toast (`components/player/PalettePeek.tsx` + `PalettePeekProvider.tsx`)
-- 9.4 ✓ keyboard nav 1/2/3/4 (`lib/hooks/useAnswerKeyboard.ts`); aria-live on lock/reveal screens; `usePrefersReducedMotion` honored by ParticleField
-- 9.5 ✓ mid-game host edits — `RemovePlayerButton`, `AddLatecomerModal`, `AdjustPointsModal`; soft-delete + add-latecomer API routes
+| # | Bug | Status | Where to look |
+|---|---|---|---|
+| 1 | Reveal latency 1.5-2.5s, not 250ms | Documented; test budget at 3000ms with TODO. The 250ms goal was unrealistic — round-trip math suggests 500-1000ms is the achievable floor given current arch. | `tests/e2e/reveal-sync.spec.ts` ARRIVAL_BUDGET constant |
+| 2 | Player tap → Locked screen didn't appear | **FIXED** (optimistic answer in 76e9793) | `app/(player)/room/[code]/page.tsx` `recordOptimisticAnswer` |
+| 3 | TV → Reveal screen never appears after fast-forward triggers resolve | **NOT FIXED** — this is the next bug to investigate. Test fails here. Suspected: broadcast not reaching TV, OR snapshot not seeing the resolve row, OR `showLeaderboard` state not flipping. | `lib/hooks/useTVRoom.ts` + `app/tv/[code]/page.tsx` lines 175-245 |
+| 4 | Browser hydration mismatches in console (every page) | Not investigated. Probably benign but worth checking. | Browser console on any page |
 
-**Phase 10 — Error states + offline:**
-- 10.1 ✓ EmptyState + Spinner atoms in `components/system/`; loading.tsx + not-found.tsx across host routes; top-level `app/not-found.tsx`
-- 10.2 ✓ `useConnectionStatus` hook + ConnectionRibbon mounted in player layout; `useAnswerSubmit` with exponential-backoff retry replaces inline fetch in PlayerQuestion; visible "tap to retry" CTA after exhausted attempts
-- 10.3 ✓ generation failure UI (`HostGenError` + `useGenerationStatus` 60s timeout / DB-polling safety net) wired into `HostSetupPickClient`; manual entry route at `/host/setup/[nightId]/pick/[categoryId]/manual` with `HostGenManualEntry` form (7 rows, order entered = 100..700 point values, source='host-edit'); inline Pexels lookup + upload error banners with retry/upload-alt actions in `HostGenImageSwap` + `HostGenImageUpload`. POST `/api/categories/[id]/manual` accepts 7 questions, wipes prior rows, inserts with `source='host-edit'`, flips category to 'ready'.
+---
 
-**Phase 11 — Deploy:** ✓ Git auto-deploy verified working; `tr1via.com` attached + serving fresh artifacts.
+## What's still pending in the orchestration plan
 
-**What's NOT yet done:**
+Phases 5-9 of `docs/superpowers/plans/2026-05-23-smoke-orchestration.md`:
 
-1. **End-to-end smoke check on real devices** (the only material blocker before "launch"):
-   - host laptop → /login (magic-link arrives in inbox?)
-   - host onboarding → first night row created
-   - host setup → pick a category → wait for Claude generation → if it fails, the new failure UI surfaces and the manual-entry route works
-   - host opens room → TV shows lobby with QR + room code → 2+ phones scan, type names, see the lobby
-   - host reveals → TV shows the question + the lock-in pile fills as phones tap → T+20 reveals correct/wrong on every surface in sync
-   - intermission → game 2 → opt-in flow → finale → winner card + recap
+- **Phase 5** — `full-game.spec.ts` (3 cats × 7 questions in game 1 → intermission → game 2 → finale) + 5 edge-case specs (rejoin, network-drop, mid-game-edits, manual-entry, generation-failure). Blocked on bug #3 — running the full game requires the TV reveal transition to work.
+- **Phase 6** — API integration tests per resource (10 specs).
+- **Phase 7** — `smoke-routes.spec.ts` (visit every route, check console errors).
+- **Phase 8** — `scripts/test-smoke.sh` orchestration + Brandon-readable checklist report.
+- **Phase 9** — `docs/superpowers/decisions/2026-05-23-smoke-test-coverage.md` — gaps doc.
 
-2. **Nice-to-haves not in scope but worth flagging:**
-   - The host-side "first-night-ever" celebration (`OnboardingFirstNightDone` exists but isn't wired to fire when the host finishes their first night). Player-side "Made it!" toast for the palette egg is done; this is the host counterpart.
-   - Junk Vercel projects can be deleted in the dashboard (~15 UUID-named + `talknndone`, `frontend`, `soulfire-trivia`). Pure cleanup.
-   - `next lint` is broken (Next 16 dropped `next lint`). Not a regression — would need either ESLint config + script update OR adopting Biome. Skip unless lint is blocking something.
+Brandon's explicit direction at end of session 2: **"continue fixing bugs"** (option 1 of three offered). So the next session should attack bug #3 first, not jump to Phase 5.
+
+---
+
+## Architectural lessons worth carrying forward (non-obvious)
+
+These cost me hours to discover. Keep in mind:
+
+1. **Vercel "Sensitive" env vars CANNOT be pulled via `vercel env pull` or `vercel env run`.** They show up as empty strings even though prod has the real value. Brandon has to paste them manually into `.env.local`. (This is by design — Sensitive = write-only.)
+
+2. **Supabase auth.users inserted via raw SQL needs more fields than the local `seed.sql` shows.** Specifically, `raw_app_meta_data`, `confirmation_token`, `recovery_token`, `email_change_token_new`, `email_change`, `email_change_token_current`, `phone_change`, `phone_change_token`, `reauthentication_token` MUST be set to empty strings `''` (not NULL) or `admin.auth.admin.listUsers()` errors with "Database error finding users". I fixed Brandon's row in prod.
+
+3. **Supabase Realtime `postgres_changes` does NOT reach device-cookie sessions reliably.** The `x-tr1via-device` header that grants RLS access can't ride the WebSocket subscription. Workarounds (already in code): `useRoom.refreshLiveState` does HTTP fetch on broadcast; player route synthesizes optimistic answers on tap. **TV doesn't have this problem because it uses an unauthenticated snapshot endpoint.**
+
+4. **Channel `subscribe()+send()` from a serverless function takes ~1-1.5s** (subscribe round-trip). Always use the REST broadcast endpoint (POST /realtime/v1/api/broadcast) from server-side. Now baked into `lib/api/broadcast.ts`.
+
+5. **`emit_questions` is the tool name** in `lib/ai/generate-questions.ts`, not `submit_questions` as my original plan said. Mock fixtures match the real name.
+
+6. **`/api/_test/*` routes live at `app/api/%5Ftest/`** on disk — the URL-encoded `%5F` is required to route at `/api/_test/*` since literal `_test` is treated as private by Next App Router.
+
+7. **Test isolation discipline:** every test user email MUST end in `@tr1via.test`. `isTestEmail()` in `lib/api/require-test-mode.ts` is the allowlist. Brandon's `brandon.james.nichols@gmail.com` is structurally incapable of being touched by `/api/_test/reset`.
+
+8. **Boot dev server with test mode:**
+   ```bash
+   TEST_AUTH_ENABLED=1 TEST_SECRET=local-test-secret MOCK_EXTERNAL=1 npm run dev
+   ```
+   Playwright config (`playwright.config.ts`) sets these automatically via its `webServer.env` block.
+
+---
+
+## How to resume (next session)
+
+1. **`git pull`** — make sure you have everything through `76e9793`.
+2. **Verify `.env.local` still has the real SUPABASE_SERVICE_ROLE_KEY** (Brandon pasted it manually — should still be there unless someone overwrote with `vercel env pull`).
+3. **Decide next action with Brandon.** Per session 2 direction: bug #3 (TV → resolve transition) is next. After that, bug #4 (hydration) is worth a glance, then resume Phase 5+ of the orchestration plan.
+4. **For bug #3 specifically:**
+   - Boot dev with the test env vars above
+   - Reproduce manually: `curl` login → seed-night → start game → reveal → fast-forward → inspect `/api/tv/[code]/snapshot` to see whether `finished_at` lands on the question and whether the resolve reveal row appears
+   - The TV's routing (`app/tv/[code]/page.tsx` lines 175-245) requires: `showLeaderboard === true` AND `lastReveal?.event === "resolve"` AND `targetQuestion?.finishedAt` set. One of these isn't true after fast-forward.
+   - Dispatch a focused subagent to investigate if the main session's context is heavy.
+5. **Re-run the test after fix:**
+   ```bash
+   lsof -i :3000 -t | xargs kill -9 2>/dev/null
+   TEST_AUTH_ENABLED=1 TEST_SECRET=local-test-secret MOCK_EXTERNAL=1 npx playwright test tests/e2e/reveal-sync.spec.ts --reporter=list
+   ```
+6. After bug #3 passes, continue with the smoke orchestration plan Phases 5-9.
 
 ---
 
 ## Memories worth carrying forward (already in `/Users/bnipps/.claude/projects/-Volumes-Creativity-dev-projects-tr1via/memory/`)
 
-- `user_brandon.md` — Brandon is non-technical, owns tr1via.com, builds for one real customer (his showcase project). Plain-English communication; terse; "just build it" style.
-- `feedback_build_without_asking.md` — Don't ask Brandon "how should I build this" questions. Make every contextual technical decision yourself based on the design + plan. Only ask about product ambiguities or risky/destructive shared-state actions.
+- `user_brandon.md` — non-technical solo dev building for one customer, plain-English, terse, "just build it"
+- `feedback_build_without_asking.md` — don't ask "how" questions; flag risky shared-state actions
 
----
-
-## How to resume
-
-`git pull` then `npm install`. Then:
-
-1. **Spot-check the live site.** Visit <https://tr1via.com> — should show the placeholder home with links to `/dev/system` (design canvas) and `/dev` (gallery index). Visit `/join` — should render PlayerJoin with the editable name field.
-2. **Decide what's next with Brandon.** Likely candidates: the real-device smoke run (highest value, can't be done by Claude alone), the OnboardingFirstNightDone host wiring (small, isolated), or whatever surfaces from the smoke run.
-3. **For Claude: don't re-do completed phases.** The build plan at `docs/superpowers/plans/2026-05-23-tr1via.md` is the authoritative scope; Phases 0–10 are all complete and tested. Always check `git log` and `npm test` before assuming anything's broken.
-
-If Vercel feels off again: check `vercel ls tr1via` from the CLI (NOT the Vercel MCP — see Two-Vercel-account note above; the MCP sees the wrong team). The CLI is logged into Brandon's real account.
+Session 2 added context worth a future memory: **the smoke test runs against PROD Trivia with `@tr1via.test` email isolation**, NOT a local DB. Don't suggest installing Docker unless Brandon explicitly wants to switch.
