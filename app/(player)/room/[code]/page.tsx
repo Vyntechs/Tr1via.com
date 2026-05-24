@@ -214,7 +214,13 @@ function RoomStateMachine({
   // whether they've answered the current question + look up their reveal
   // state. Filtered by player_id; cheap (a single player can produce at most
   // 14 answers across both games).
-  const realAnswers = useMyAnswers(me.id);
+  //
+  // Pass lastBroadcast.serverNow as a refetch trigger — every reveal /
+  // resolve / undo / end-early broadcast bumps it, and useMyAnswers re-pulls
+  // the latest rows from REST. Necessary because postgres_changes on the
+  // answers UPDATE (where is_correct + awarded_points get filled in by the
+  // resolve route) silently drops for device-cookie sessions.
+  const realAnswers = useMyAnswers(me.id, snapshot.lastBroadcast?.serverNow ?? null);
 
   // Optimistic local copy of answers the player just submitted. Lets the UI
   // flip to PlayerLocked the moment the tap fires, without waiting for the
@@ -986,35 +992,48 @@ function useAppSwitchTracking(playerId: string | null) {
 
 // ─── DATA HOOKS (player-scoped) ──────────────────────────────────────────
 
-/** Subscribes to all of this player's answers across the night. */
-function useMyAnswers(playerId: string | null): AnswerRow[] {
+/**
+ * Subscribes to all of this player's answers across the night.
+ *
+ * `refreshKey` is an external bump (typically the most recent broadcast's
+ * serverNow) — when it changes, we re-fetch from REST in addition to the
+ * postgres_changes subscription. This compensates for the known device-
+ * cookie-session RLS quirk: postgres_changes UPDATEs on the answers row
+ * (where the resolve route sets is_correct + awarded_points) often DON'T
+ * land for player sessions, so the local row stays at is_correct=null and
+ * RevealView falls into PlayerRevealWrong for everyone. A REST refetch on
+ * the resolve broadcast pulls the authoritative state.
+ */
+function useMyAnswers(playerId: string | null, refreshKey: string | null): AnswerRow[] {
   const [rows, setRows] = useState<AnswerRow[]>([]);
   useEffect(() => {
     if (!playerId) {
       setRows([]);
       return;
     }
+    const pid = playerId;
     let cancelled = false;
     const supa = getSupabaseBrowser();
-    void supa
-      .from("answers")
-      .select("*")
-      .eq("player_id", playerId)
-      .order("locked_at", { ascending: true })
-      .then(({ data }) => {
-        if (cancelled) return;
-        setRows((data as AnswerRow[] | null) ?? []);
-      });
+    async function refetch() {
+      const { data } = await supa
+        .from("answers")
+        .select("*")
+        .eq("player_id", pid)
+        .order("locked_at", { ascending: true });
+      if (cancelled) return;
+      setRows((data as AnswerRow[] | null) ?? []);
+    }
+    void refetch();
 
     const channel = supa
-      .channel(`answers:${playerId}`)
+      .channel(`answers:${pid}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "answers",
-          filter: `player_id=eq.${playerId}`,
+          filter: `player_id=eq.${pid}`,
         },
         (payload) => {
           if (cancelled) return;
@@ -1029,7 +1048,7 @@ function useMyAnswers(playerId: string | null): AnswerRow[] {
       cancelled = true;
       void supa.removeChannel(channel);
     };
-  }, [playerId]);
+  }, [playerId, refreshKey]);
   return rows;
 }
 
