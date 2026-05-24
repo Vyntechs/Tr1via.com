@@ -215,7 +215,40 @@ function RoomStateMachine({
   // whether they've answered the current question + look up their reveal
   // state. Filtered by player_id; cheap (a single player can produce at most
   // 14 answers across both games).
-  const myAnswers = useMyAnswers(me.id);
+  const realAnswers = useMyAnswers(me.id);
+
+  // Optimistic local copy of answers the player just submitted. Lets the UI
+  // flip to PlayerLocked the moment the tap fires, without waiting for the
+  // postgres_changes round-trip (which is unreliable for device-cookie
+  // sessions — the cookie can't ride the WebSocket). Eventually the real
+  // row arrives from useMyAnswers and supersedes the optimistic one.
+  const [optimisticAnswers, setOptimisticAnswers] = useState<AnswerRow[]>([]);
+  const recordOptimisticAnswer = useCallback(
+    (row: AnswerRow) => {
+      setOptimisticAnswers((prev) => {
+        const without = prev.filter((p) => p.question_id !== row.question_id);
+        return [...without, row];
+      });
+    },
+    [],
+  );
+  // Drop optimistic answers once the real DB row arrives for the same question.
+  useEffect(() => {
+    if (optimisticAnswers.length === 0) return;
+    const realIds = new Set(realAnswers.map((a) => a.question_id));
+    if (optimisticAnswers.some((o) => realIds.has(o.question_id))) {
+      setOptimisticAnswers((prev) => prev.filter((o) => !realIds.has(o.question_id)));
+    }
+  }, [realAnswers, optimisticAnswers]);
+  const myAnswers = useMemo<AnswerRow[]>(() => {
+    if (optimisticAnswers.length === 0) return realAnswers;
+    const realIds = new Set(realAnswers.map((a) => a.question_id));
+    const merged: AnswerRow[] = [...realAnswers];
+    for (const opt of optimisticAnswers) {
+      if (!realIds.has(opt.question_id)) merged.push(opt);
+    }
+    return merged.sort((a, b) => a.locked_at.localeCompare(b.locked_at));
+  }, [realAnswers, optimisticAnswers]);
 
   // Player's game-2 opt-in (separate read; one row per game/player).
   const myParticipations = useMyParticipations(me.id);
@@ -283,6 +316,7 @@ function RoomStateMachine({
           revealBroadcast={snapshot.lastBroadcast}
           game={currentGame}
           categories={snapshot.categories}
+          onAnswerOptimistic={recordOptimisticAnswer}
         />
       );
     }
@@ -364,6 +398,7 @@ function QuestionView({
   revealBroadcast,
   game: _game,
   categories,
+  onAnswerOptimistic,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -372,6 +407,7 @@ function QuestionView({
   revealBroadcast: ReturnType<typeof useRoom>["lastBroadcast"];
   game: GameRow;
   categories: CategoryRow[];
+  onAnswerOptimistic: (row: AnswerRow) => void;
 }) {
   // Compute the player-specific scramble. Same fn the server runs to verify
   // submissions, so the slot the player taps maps back to the canonical
@@ -428,8 +464,28 @@ function QuestionView({
     scramble: Array.from(scramble),
   });
   const handleTap = useCallback(
-    (slot: PlayerQuestionSlot) => submit(slot),
-    [submit],
+    (slot: PlayerQuestionSlot) => {
+      // Record optimistic answer locally so the page transitions to PlayerLocked
+      // IMMEDIATELY, without waiting for postgres_changes (which is unreliable
+      // for device-cookie sessions). The real row from useMyAnswers will
+      // arrive moments later and supersede this one.
+      const nowMs = Date.now();
+      const msToLock = revealedAtMs !== null ? Math.max(0, nowMs - revealedAtMs) : 0;
+      const chosenIndex = scramble[slot - 1] as 0 | 1 | 2 | 3;
+      onAnswerOptimistic({
+        id: `optimistic-${question.id}-${player.id}`,
+        question_id: question.id,
+        player_id: player.id,
+        chosen_index: chosenIndex,
+        scramble: [scramble[0], scramble[1], scramble[2], scramble[3]] as [number, number, number, number],
+        locked_at: new Date(nowMs).toISOString(),
+        ms_to_lock: msToLock,
+        is_correct: null,
+        awarded_points: null,
+      });
+      submit(slot);
+    },
+    [submit, onAnswerOptimistic, scramble, question.id, player.id, revealedAtMs],
   );
 
   const questionNumber = computeQuestionNumber(question, categories);
