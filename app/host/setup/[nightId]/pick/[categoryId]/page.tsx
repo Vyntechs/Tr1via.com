@@ -49,6 +49,7 @@ export default async function SetupPickPage({
       categoryTopic={owned.category.topic}
       initialState={owned.category.state}
       initialQuestions={questions}
+      themeKey={owned.night.theme_key ?? "house"}
     />
   );
 }

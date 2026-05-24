@@ -42,6 +42,7 @@ export default async function SetupManualPage({
       categoryId={categoryId}
       categoryName={owned.category.name}
       categoryTopic={owned.category.topic}
+      themeKey={owned.night.theme_key ?? "house"}
     />
   );
 }

@@ -33,6 +33,7 @@ import {
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { QuestionRow, CategoryRow } from "@/lib/supabase/types";
 import { useGenerationStatus } from "@/lib/hooks/useGenerationStatus";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostSetupPickClientProps {
   nightId: string;
@@ -41,6 +42,7 @@ export interface HostSetupPickClientProps {
   categoryTopic: string;
   initialState: CategoryRow["state"];
   initialQuestions: QuestionRow[];
+  themeKey: string;
 }
 
 type ModalState =
@@ -78,6 +80,7 @@ export function HostSetupPickClient({
   categoryTopic,
   initialState,
   initialQuestions,
+  themeKey,
 }: HostSetupPickClientProps) {
   const router = useRouter();
   const [questions, setQuestions] = useState<QuestionRow[]>(initialQuestions);
@@ -557,6 +560,7 @@ export function HostSetupPickClient({
     <>
       {showGenerationFailure ? (
         <HostGenError
+          themeKey={themeKey as ThemeKey}
           shellTitle={`generation didn't work · ${categoryName.toLowerCase()}`}
           topic={categoryName}
           message={generationFailureMessage}
@@ -567,6 +571,7 @@ export function HostSetupPickClient({
         />
       ) : state !== "review" && state !== "ready" ? (
         <HostGenLoading
+          themeKey={themeKey as ThemeKey}
           shellTitle={`pulling questions · ${categoryName.toLowerCase()}`}
           topic={categoryName}
           loaded={loadingList}
@@ -575,6 +580,7 @@ export function HostSetupPickClient({
         />
       ) : (
         <HostGenPick
+          themeKey={themeKey as ThemeKey}
           shellTitle={`pick 7 · ${categoryName.toLowerCase()}`}
           topic={categoryName}
           questions={pickList}
@@ -593,6 +599,7 @@ export function HostSetupPickClient({
       {editingQuestion && (
         <ModalOverlay onDismiss={() => setModal({ kind: "none" })}>
           <HostGenEdit
+            themeKey={themeKey as ThemeKey}
             shellTitle={`edit · ${categoryName.toLowerCase()}`}
             topic={categoryName}
             initial={{
@@ -612,6 +619,7 @@ export function HostSetupPickClient({
       {swapQuestion && (
         <ModalOverlay onDismiss={() => setModal({ kind: "none" })}>
           <HostGenImageSwap
+            themeKey={themeKey as ThemeKey}
             shellTitle={`image · ${categoryName.toLowerCase()}`}
             topic={categoryName}
             prompt={swapQuestion.prompt}
@@ -634,6 +642,7 @@ export function HostSetupPickClient({
       {uploadQuestion && (
         <ModalOverlay onDismiss={() => setModal({ kind: "none" })}>
           <HostGenImageUpload
+            themeKey={themeKey as ThemeKey}
             shellTitle={`upload · ${categoryName.toLowerCase()}`}
             topic={categoryName}
             prompt={uploadQuestion.prompt}

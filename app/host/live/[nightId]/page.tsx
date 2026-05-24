@@ -26,6 +26,7 @@ export default async function HostLivePage({
       nightId={owned.night.id}
       roomCode={owned.night.room_code}
       venueName={owned.night.venue_name}
+      themeKey={owned.night.theme_key ?? "house"}
     />
   );
 }

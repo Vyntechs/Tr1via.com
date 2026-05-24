@@ -34,6 +34,7 @@ import type {
   QuestionRow,
   GameScoreRow,
 } from "@/lib/supabase/types";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -41,12 +42,14 @@ export interface HostLiveConsoleClientProps {
   nightId: string;
   roomCode: string;
   venueName: string;
+  themeKey: string;
 }
 
 export function HostLiveConsoleClient({
   nightId,
   roomCode,
   venueName,
+  themeKey,
 }: HostLiveConsoleClientProps) {
   const room = useRoom({ roomCode });
   const [allQuestions, setAllQuestions] = useState<QuestionRow[]>([]);
@@ -365,6 +368,7 @@ export function HostLiveConsoleClient({
   return (
     <>
       <HostLiveConsole
+        themeKey={themeKey as ThemeKey}
         title={`${venueName.toLowerCase()} · ${titleSuffix} · ${roomCode}`}
         columns={columns}
         currentQuestion={currentQuestion}
