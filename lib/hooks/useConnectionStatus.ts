@@ -22,11 +22,16 @@ export interface UseConnectionStatusOptions {
 const HEALTHY_CHANNEL_STATES = new Set(["SUBSCRIBED", "JOINED"]);
 
 export function useConnectionStatus({ channelState }: UseConnectionStatusOptions = {}): ConnectionStatus {
-  const [browserOnline, setBrowserOnline] = useState(
-    typeof navigator === "undefined" ? true : navigator.onLine,
-  );
+  // Always initialize "online" so the server render and the client's first
+  // render agree. We read navigator.onLine inside useEffect after mount,
+  // which avoids a hydration mismatch when the browser reports offline at
+  // boot (Playwright headless does this; some mobile browsers do too).
+  const [browserOnline, setBrowserOnline] = useState(true);
 
   useEffect(() => {
+    if (typeof navigator !== "undefined") {
+      setBrowserOnline(navigator.onLine);
+    }
     const onOnline = () => setBrowserOnline(true);
     const onOffline = () => setBrowserOnline(false);
     window.addEventListener("online", onOnline);
