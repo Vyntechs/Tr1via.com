@@ -7,6 +7,8 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HostGenOverview, type GameOverviewData, type CategorySlotData } from "@/components/host/gen";
+import { PalettePeek } from "@/components/shared/PalettePeek";
+import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
 import type { CategoryRow, GameRow } from "@/lib/supabase/types";
 
 export interface HostSetupOverviewClientProps {
@@ -15,6 +17,8 @@ export interface HostSetupOverviewClientProps {
   games: GameRow[];
   categories: CategoryRow[];
   isOpen: boolean;
+  /** Current theme_key on the night row. Used as the initial active palette. */
+  initialThemeKey: string;
 }
 
 const SLOTS_PER_GAME = 6;
@@ -25,10 +29,46 @@ export function HostSetupOverviewClient({
   games,
   categories,
   isOpen,
+  initialThemeKey,
 }: HostSetupOverviewClientProps) {
   const router = useRouter();
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [themeKey, setThemeKey] = useState<ThemeKey>(
+    isThemeKey(initialThemeKey) ? initialThemeKey : "house",
+  );
+  const [themePickerOpen, setThemePickerOpen] = useState(false);
+  const [savingTheme, setSavingTheme] = useState(false);
+
+  async function handlePickTheme(key: ThemeKey) {
+    if (savingTheme || key === themeKey) {
+      setThemeKey(key);
+      setThemePickerOpen(false);
+      return;
+    }
+    setSavingTheme(true);
+    const previous = themeKey;
+    setThemeKey(key);
+    try {
+      const res = await fetch(`/api/nights/${nightId}/theme`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ themeKey: key }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setThemeKey(previous);
+        setError(body.error ?? "Could not save theme.");
+      } else {
+        setThemePickerOpen(false);
+      }
+    } catch {
+      setThemeKey(previous);
+      setError("Could not save theme.");
+    } finally {
+      setSavingTheme(false);
+    }
+  }
 
   const overview = useMemo<[GameOverviewData, GameOverviewData] | null>(() => {
     const g1 = games.find((g) => g.game_no === 1);
@@ -85,6 +125,7 @@ export function HostSetupOverviewClient({
   return (
     <>
       <HostGenOverview
+        themeKey={themeKey}
         shellTitle={`set up tonight · ${venueName.toLowerCase()}`}
         eyebrow={`TONIGHT · ${venueName.toUpperCase()}`}
         games={overview}
@@ -96,6 +137,42 @@ export function HostSetupOverviewClient({
         onOpenRoom={handleOpenRoom}
         isReadyToOpen={isReadyToOpen}
         isOpening={opening}
+      />
+      <button
+        type="button"
+        onClick={() => setThemePickerOpen(true)}
+        aria-label="Pick the room's theme"
+        style={{
+          position: "fixed",
+          right: 24,
+          bottom: 24,
+          zIndex: 30,
+          padding: "10px 16px",
+          borderRadius: 99,
+          border: "1px solid rgba(255,255,255,.12)",
+          background: "rgba(20,19,15,.92)",
+          color: "#F4E6C4",
+          fontSize: 12,
+          fontWeight: 600,
+          fontFamily: "var(--font-sans)",
+          letterSpacing: "0.04em",
+          cursor: "pointer",
+          boxShadow: "0 12px 28px rgba(0,0,0,.45)",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <span aria-hidden="true">◐</span>
+        Theme · {themeKey}
+      </button>
+      <PalettePeek
+        open={themePickerOpen}
+        onClose={() => setThemePickerOpen(false)}
+        activeThemeKey={themeKey}
+        onPick={(k) => void handlePickTheme(k)}
+        title="Pick the room's theme."
+        footer={savingTheme ? "Saving…" : "Applies to the TV and every player phone in this room."}
       />
       {error && (
         <div
