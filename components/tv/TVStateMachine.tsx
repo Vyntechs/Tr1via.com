@@ -59,12 +59,24 @@ export interface TVStateMachineProps {
   /** Server's "now" at the moment the broadcast was sent — used to derive
    *  client-clock skew. Optional. */
   lastBroadcastServerNow?: string | null;
+  /** Host-only: when provided, the in-grid cells become clickable buttons
+   *  and fire this handler with the picked question id. The standalone
+   *  `/tv/[code]` route omits it so the audience surface stays inert. */
+  onGridCellClick?: (questionId: string) => void;
+  /** Host-only: when true, the sticky-reveal branch is skipped and the
+   *  grid renders instead — used after the host taps "Pick next →" during
+   *  a stuck reveal frame so they can choose the next cell. The audience
+   *  sees the same flip, which is intended ("the host is choosing the
+   *  next one"). */
+  hostAdvanced?: boolean;
 }
 
 export function TVStateMachine({
   snapshot,
   lastBroadcastRevealedAt = null,
   lastBroadcastServerNow = null,
+  onGridCellClick,
+  hostAdvanced = false,
 }: TVStateMachineProps) {
   const games = snapshot.games;
   const game1 = games.find((g) => g.gameNo === 1) ?? null;
@@ -103,7 +115,7 @@ export function TVStateMachine({
   // replaced by the leaderboard before she could read it. The reveal now
   // sticks until the next live question arrives (which the state machine
   // catches via `liveQuestion && !finishedAt`) OR the game ends.
-  const stickyReveal = !!lastResolve;
+  const stickyReveal = !!lastResolve && !hostAdvanced;
 
   // ── Lobby branch ──
   if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
@@ -149,7 +161,13 @@ export function TVStateMachine({
     }
 
     // No live question, no recent resolve → TVGrid.
-    return <TVGridView snapshot={snapshot} game={currentGame} />;
+    return (
+      <TVGridView
+        snapshot={snapshot}
+        game={currentGame}
+        onCellClick={onGridCellClick}
+      />
+    );
   }
 
   // Default: lobby.
@@ -194,9 +212,11 @@ function TVLobbyView({ snapshot }: { snapshot: TVSnapshot }) {
 function TVGridView({
   snapshot,
   game,
+  onCellClick,
 }: {
   snapshot: TVSnapshot;
   game: { id: string };
+  onCellClick?: (questionId: string) => void;
 }) {
   const cats = snapshot.categories
     .filter((c) => c.gameId === game.id)
@@ -216,6 +236,7 @@ function TVGridView({
         // there is one. Otherwise nothing is selected.
         selected: q ? q.id === snapshot.liveQuestionId : false,
         value: v,
+        questionId: q?.id ?? null,
       };
     });
   });
@@ -253,6 +274,7 @@ function TVGridView({
       upNext={upNext}
       footerLeft={pickLiveQuestion(snapshot) ? "REVEAL TO BEGIN" : "WAITING ON HOST"}
       footerRight={`TR1VIA.COM · ${formatRoomCode(snapshot.night.roomCode)}`}
+      onCellClick={onCellClick}
     />
   );
 }

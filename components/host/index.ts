@@ -16,9 +16,6 @@ export { HostLiveConsole } from "./HostLiveConsole";
 export type {
   HostLiveConsoleProps,
   HostLivePlayer,
-  HostLiveBoardCell,
-  HostLiveBoardColumn,
-  HostLiveCurrentQuestion,
 } from "./HostLiveConsole";
 export { AdjustPointsModal } from "./AdjustPointsModal";
 export type { AdjustPointsModalProps } from "./AdjustPointsModal";

@@ -3,35 +3,38 @@
 // Owns:
 //   - useRoom(roomCode): the snapshot of nights, games, categories,
 //     players, current question + reveal.
-//   - useTimer: derives secondsRemaining from the live question's
-//     played_at + serverNow (broadcast hint or fallback).
+//   - useTimer (indirect via tvSnapshot): derives secondsRemaining from
+//     the live question's played_at + serverNow inside the TV state machine.
 //   - A subscription to `answers` rows for the current question so we can
 //     show the lock-in count + the per-player locked flag in real time.
 //   - Action handlers: reveal (POST /api/games/[id]/reveal), undo (POST
 //     /api/games/[id]/undo), end-early (POST /api/games/[id]/end-early),
+//     start (POST /api/games/[id]/start), end (POST /api/games/[id]/end),
 //     adjust (POST /api/adjustments), remove player (DELETE /api/players/[id]),
 //     add latecomer (POST /api/nights/[id]/players). The mid-game edits live
 //     in dedicated modal components so the live console stays uncluttered.
+//
+// The host laptop IS the venue TV (HDMI-mirrored), so the wrapper translates
+// the host's existing useRoom snapshot — plus the auxiliary state already
+// loaded on this page (allQuestions, scores, answers) — into the TV's
+// expected shape and feeds it to HostLiveConsole. HostLiveConsole renders
+// the TV state machine fullscreen with a thin control strip.
 
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRoom } from "@/lib/hooks/useRoom";
-import { useTimer } from "@/lib/hooks/useTimer";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
   AddLatecomerModal,
   AdjustPointsModal,
   HostLiveConsole,
   type HostLivePlayer,
-  type HostLiveBoardColumn,
-  type HostLiveCurrentQuestion,
 } from "@/components/host";
 import type {
   AnswerRow,
-  CategoryRow,
-  GameRow,
   QuestionRow,
+  GameRow,
   GameScoreRow,
 } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -102,8 +105,6 @@ export function HostLiveConsoleClient({
       setScores(((data as GameScoreRow[] | null) ?? []));
     }
     void load();
-    // Re-pull when any answer or adjustment lands — the view derives from
-    // both tables.
     const channel = supa
       .channel(`host-scores:${room.currentGame.id}`)
       .on(
@@ -183,25 +184,9 @@ export function HostLiveConsoleClient({
   const canUndo =
     lastRevealAt !== null && Date.now() - lastRevealAt < UNDO_WINDOW_MS;
 
-  // ── timer for the live question ──────────────────────────────────────
-  const timer = useTimer({
-    revealedAtMs: room.currentQuestion?.played_at
-      ? new Date(room.currentQuestion.played_at).getTime()
-      : null,
-    serverNowMs: room.lastBroadcast
-      ? new Date(room.lastBroadcast.serverNow).getTime()
-      : null,
-  });
-
-  // ── derive the board, players, currentQuestion for the component ─────
-  const columns = useMemo<HostLiveBoardColumn[]>(
-    () => deriveColumns(room.currentGame, room.categories, allQuestions),
-    [room.currentGame, room.categories, allQuestions],
-  );
+  // ── derive players for the Players sheet ─────────────────────────────
   const scoreByPlayer = useMemo(() => {
     const map = new Map<string, GameScoreRow>();
-    // GameScoreRow.player_id is nullable because game_scores is a LEFT
-    // JOIN view; in practice it never is. Skip defensively.
     for (const s of scores) if (s.player_id) map.set(s.player_id, s);
     return map;
   }, [scores]);
@@ -227,32 +212,12 @@ export function HostLiveConsoleClient({
     [room.players, scoreByPlayer, lockedPlayerIds],
   );
 
-  const currentQuestion = useMemo<HostLiveCurrentQuestion | null>(() => {
-    if (!room.currentQuestion) return null;
-    const q = room.currentQuestion;
-    const cat = room.categories.find((c) => c.id === q.category_id);
-    return {
-      questionId: q.id,
-      prompt: q.prompt,
-      categoryName: cat?.name ?? "",
-      pointValue: q.point_value ?? q.difficulty * 100,
-      secondsRemaining: q.played_at ? Math.floor(timer.secondsRemaining) : null,
-    };
-  }, [room.currentQuestion, room.categories, timer.secondsRemaining]);
-
   const currentGame: GameRow | null = room.currentGame;
   const titleSuffix = currentGame
     ? `game ${currentGame.game_no} · ${currentGame.state}`
     : "waiting";
 
   // ── derive the inline TV snapshot for the embedded TV panel ──────────
-  // The host page IS the venue TV when the laptop is HDMI'd to a screen
-  // (which Brandon's customer does). Rather than iframe /tv/[code] (which
-  // would duplicate the snapshot fetch + a second Realtime subscription),
-  // we translate the host's existing useRoom snapshot — plus the
-  // auxiliary state already loaded on this page (allQuestions, scores,
-  // answers) — into the TV's expected shape. Same component the
-  // standalone /tv/[code] route renders.
   const tvSnapshot = useMemo(
     () =>
       roomToTVSnapshot({
@@ -277,12 +242,10 @@ export function HostLiveConsoleClient({
     if (!currentGame) return;
     setError(null);
     try {
-      // First reveal of a draft/ready game also starts it. The host UI
-      // treats "tap a cell" as the start signal (per the BOARD READY copy),
-      // and the TV/phone state machines gate the lobby on games.state ===
-      // 'live'. Without this promotion both surfaces sit on the lobby
-      // forever while the host plays through the game on her own console.
-      // /start is idempotent so we can be liberal about calling it.
+      // First reveal of a draft/ready game also starts it (idempotent on
+      // already-live). Kept for safety even though "Start Game 1" now
+      // promotes the game explicitly via handleStartGame — older snapshots
+      // may still race.
       if (currentGame.state === "draft" || currentGame.state === "ready") {
         const startRes = await fetch(`/api/games/${currentGame.id}/start`, {
           method: "POST",
@@ -333,6 +296,44 @@ export function HostLiveConsoleClient({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-early failed.");
+    }
+  }
+  async function handleStartGame(gameId: string | null) {
+    if (!gameId) return;
+    setError(null);
+    try {
+      const res = await fetch(`/api/games/${gameId}/start`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "start failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Start failed.");
+    }
+  }
+  async function handleEndGame() {
+    if (!currentGame) return;
+    setError(null);
+    try {
+      const res = await fetch(`/api/games/${currentGame.id}/end`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "end-game failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "End-game failed.");
+    }
+  }
+  async function handleCloseNight() {
+    setError(null);
+    try {
+      const res = await fetch(`/api/nights/${nightId}/close`, { method: "POST" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "close-night failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Close-night failed.");
     }
   }
   async function handleAdjust(playerId: string, delta: number, reason: string) {
@@ -390,16 +391,15 @@ export function HostLiveConsoleClient({
     setAddingLatecomer(false);
   }
 
-  // The HostLiveConsole's grid click handler currently picks the cell
-  // and reveals immediately. For mid-game the host can stage on her phone;
-  // for the laptop console we treat a click as "reveal now."
+  // Identify game 1 / game 2 ids so the control strip can route Start CTAs.
+  const game1Id = room.games.find((g) => g.game_no === 1)?.id ?? null;
+  const game2Id = room.games.find((g) => g.game_no === 2)?.id ?? null;
+
   return (
     <>
       <HostLiveConsole
         themeKey={themeKey as ThemeKey}
         title={`${venueName.toLowerCase()} · ${titleSuffix} · ${roomCode}`}
-        columns={columns}
-        currentQuestion={currentQuestion}
         players={players}
         playersTotal={room.players.length}
         lockedCount={answers.length}
@@ -414,6 +414,10 @@ export function HostLiveConsoleClient({
         }}
         onRemovePlayer={(pid) => void handleRemovePlayer(pid)}
         onAddPlayer={() => setAddingLatecomer(true)}
+        onStartGame1={game1Id ? () => void handleStartGame(game1Id) : undefined}
+        onStartGame2={game2Id ? () => void handleStartGame(game2Id) : undefined}
+        onEndGame={() => void handleEndGame()}
+        onCloseNight={() => void handleCloseNight()}
         tvSnapshot={tvSnapshot}
         tvLastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
         tvLastBroadcastServerNow={tvLastBroadcastServerNow}
@@ -477,29 +481,6 @@ export function HostLiveConsoleClient({
   );
 }
 
-function deriveColumns(
-  game: GameRow | null,
-  categories: CategoryRow[],
-  questions: QuestionRow[],
-): HostLiveBoardColumn[] {
-  if (!game) return [];
-  const cats = categories
-    .filter((c) => c.game_id === game.id)
-    .sort((a, b) => a.position - b.position);
-  return cats.map((cat) => {
-    const cells = questions
-      .filter((q) => q.category_id === cat.id && q.is_picked)
-      .sort((a, b) => (a.point_value ?? 0) - (b.point_value ?? 0))
-      .map((q) => ({
-        questionId: q.id,
-        pointValue: q.point_value ?? q.difficulty * 100,
-        played: q.finished_at !== null,
-        live: q.played_at !== null && q.finished_at === null,
-      }));
-    return { categoryId: cat.id, name: cat.name, cells };
-  });
-}
-
 function formatAppOff(seconds: number): string {
   if (seconds < 1) return "0s";
   if (seconds < 60) return `${Math.floor(seconds)}s`;
@@ -507,4 +488,3 @@ function formatAppOff(seconds: number): string {
   const s = Math.floor(seconds % 60);
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
-
