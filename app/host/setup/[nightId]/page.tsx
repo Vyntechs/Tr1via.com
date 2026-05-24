@@ -63,6 +63,7 @@ export default async function SetupOverviewPage({
       games={games}
       categories={categories}
       isOpen={night.opened_at !== null}
+      initialThemeKey={night.theme_key ?? "house"}
     />
   );
 }

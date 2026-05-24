@@ -1,19 +1,24 @@
-// Player-side PalettePeek overlay — the egg that the 5-tap wordmark
-// reveals. Shows all 14 themed palettes; tapping one switches the live
-// theme; closes via Esc, backdrop, or the X button.
+// Shared PalettePeek overlay — the picker used by the host setup screen
+// to choose the night's palette. Shows all 14 themed palettes; tapping one
+// fires onPick(key); closes via Esc, backdrop, or the X button.
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
-import { PalettePeek } from "@/components/player/PalettePeek";
+import { PalettePeek } from "@/components/shared/PalettePeek";
 import { ThemeProvider } from "@/components/system/ThemeProvider";
 
-function renderPeek(open: boolean, onClose = vi.fn()) {
+function renderPeek(open: boolean, onClose = vi.fn(), onPick = vi.fn()) {
   const utils = render(
     <ThemeProvider themeKey="house">
-      <PalettePeek open={open} onClose={onClose} />
+      <PalettePeek
+        open={open}
+        onClose={onClose}
+        onPick={onPick}
+        activeThemeKey="house"
+      />
     </ThemeProvider>,
   );
-  return { ...utils, onClose };
+  return { ...utils, onClose, onPick };
 }
 
 describe("PalettePeek", () => {
@@ -39,11 +44,20 @@ describe("PalettePeek", () => {
     expect(within(dialog).getAllByRole("button", { name: /palette/i })).toHaveLength(14);
   });
 
-  it("switches the document theme attribute when a palette is picked", () => {
-    renderPeek(true);
+  it("fires onPick with the chosen theme key when a palette card is tapped", () => {
+    const { onPick } = renderPeek(true);
     const card = screen.getByRole("button", { name: /February · Valentine palette/i });
     fireEvent.click(card);
-    expect(document.documentElement.getAttribute("data-theme")).toBe("february");
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(onPick).toHaveBeenCalledWith("february");
+  });
+
+  it("marks the activeThemeKey card with aria-pressed", () => {
+    renderPeek(true);
+    const houseCard = screen.getByRole("button", { name: /House · Pub Night palette/i });
+    expect(houseCard.getAttribute("aria-pressed")).toBe("true");
+    const otherCard = screen.getByRole("button", { name: /February · Valentine palette/i });
+    expect(otherCard.getAttribute("aria-pressed")).toBe("false");
   });
 
   it("calls onClose when the Escape key is pressed", () => {
@@ -64,11 +78,11 @@ describe("PalettePeek", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the 'Made it!' toast briefly after a pick", () => {
+  it("shows a transient confirmation toast after a pick", () => {
     vi.useFakeTimers();
     renderPeek(true);
     fireEvent.click(screen.getByRole("button", { name: /march · st. patrick palette/i }));
-    expect(screen.getByText(/made it/i)).toBeInTheDocument();
+    expect(screen.getByText(/locked in/i)).toBeInTheDocument();
     vi.runAllTimers();
     vi.useRealTimers();
   });
