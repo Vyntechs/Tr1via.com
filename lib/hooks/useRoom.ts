@@ -46,6 +46,12 @@ export interface RoomSnapshot {
   currentGame: GameRow | null;
   /** Question with played_at set but finished_at null. There can be at most one. */
   currentQuestion: QuestionRow | null;
+  /** The most recently finished question (finished_at set). Holds until the
+   *  next live question starts. Player surfaces use this to render the
+   *  reveal-correct/reveal-wrong frame after a resolve fires — the live row
+   *  is gone from currentQuestion but players still need to see what they
+   *  picked vs. the right answer before the host moves on. */
+  lastResolvedQuestion: QuestionRow | null;
   /** The most recent reveals row for the current question, or null. */
   currentReveal: RevealRow | null;
   /** Most recent broadcast event tag — useful for triggering one-shot animations. */
@@ -74,6 +80,7 @@ const EMPTY: RoomSnapshot = {
   players: [],
   currentGame: null,
   currentQuestion: null,
+  lastResolvedQuestion: null,
   currentReveal: null,
   lastBroadcast: null,
   isLoading: true,
@@ -123,11 +130,27 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
       const nextQ = (qRes.data ?? null) as QuestionRow | null;
       setSnapshot((prev) => {
         const games = nextGames ?? prev.games;
+        // When the refetch returns a row whose finished_at is set AND it
+        // matches the live question we were tracking, treat it as a resolve
+        // event coming in via the HTTP fallback (postgres_changes can drop
+        // for device-cookie sessions).
+        let currentQuestion: QuestionRow | null = prev.currentQuestion;
+        let lastResolvedQuestion: QuestionRow | null = prev.lastResolvedQuestion;
+        if (nextQ) {
+          if (nextQ.finished_at) {
+            if (prev.currentQuestion?.id === nextQ.id) currentQuestion = null;
+            lastResolvedQuestion = nextQ;
+          } else {
+            currentQuestion = nextQ;
+            if (lastResolvedQuestion?.id !== nextQ.id) lastResolvedQuestion = null;
+          }
+        }
         return {
           ...prev,
           games,
           currentGame: pickCurrentGame(games),
-          currentQuestion: nextQ ?? prev.currentQuestion,
+          currentQuestion,
+          lastResolvedQuestion,
         };
       });
     }
@@ -152,6 +175,7 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
         categoryRows,
         playerRows,
         liveQuestion,
+        lastResolved,
         recentReveals,
       ] = await Promise.all([
         supa.from("nights").select("*").eq("id", nightId).single(),
@@ -179,6 +203,14 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
           .is("finished_at", null)
           .maybeSingle(),
         supa
+          .from("questions")
+          .select("*, categories!inner(games!inner(night_id))")
+          .eq("categories.games.night_id", nightId)
+          .not("finished_at", "is", null)
+          .order("finished_at", { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supa
           .from("reveals")
           .select("*, games!inner(night_id)")
           .eq("games.night_id", nightId)
@@ -196,6 +228,9 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
       const currentQuestion = sanitizeQuestionRow(
         liveQuestion.data as (QuestionRow & { categories?: unknown }) | null,
       );
+      const lastResolvedQuestion = sanitizeQuestionRow(
+        lastResolved.data as (QuestionRow & { categories?: unknown }) | null,
+      );
       const reveals = (recentReveals.data ?? []) as Array<
         RevealRow & { games?: unknown }
       >;
@@ -209,6 +244,7 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
         players,
         currentGame: pickCurrentGame(games),
         currentQuestion,
+        lastResolvedQuestion,
         currentReveal,
         lastBroadcast: null,
         isLoading: false,
@@ -384,19 +420,32 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
         }
         setSnapshot((prev) => {
           let nextQ = prev.currentQuestion;
+          let nextResolved = prev.lastResolvedQuestion;
           if (payload.eventType === "DELETE") {
             if (nextQ?.id === row.id) nextQ = null;
+            if (nextResolved?.id === row.id) nextResolved = null;
           } else {
             const updated = payload.new as QuestionRow;
             const isLive = updated.played_at !== null && updated.finished_at === null;
             if (isLive) {
               nextQ = updated;
+              // A new question going live supersedes any older reveal — clear
+              // the reveal frame so the phone moves on to the new question.
+              if (nextResolved?.id !== updated.id) nextResolved = null;
             } else if (nextQ?.id === updated.id) {
               // It's the live question that just resolved or got cleared.
-              nextQ = updated.finished_at ? null : updated;
+              if (updated.finished_at) {
+                nextResolved = updated;
+                nextQ = null;
+              } else {
+                nextQ = updated;
+              }
+            } else if (updated.finished_at && nextResolved?.id === updated.id) {
+              // Updates (e.g. fact_blurb backfill) on the already-resolved row.
+              nextResolved = updated;
             }
           }
-          return { ...prev, currentQuestion: nextQ };
+          return { ...prev, currentQuestion: nextQ, lastResolvedQuestion: nextResolved };
         });
       }
       function mergeRevealChange(payload: ChangePayload<RevealRow>) {

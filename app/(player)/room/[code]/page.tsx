@@ -67,7 +67,6 @@ import type {
 
 const QUESTION_DURATION_S = 20;
 const HEARTBEAT_INTERVAL_MS = 10_000;
-const RECENT_REVEAL_WINDOW_MS = 30_000;
 
 export default function PlayerRoomPage() {
   const params = useParams<{ code: string }>();
@@ -343,20 +342,31 @@ function RoomStateMachine({
     );
   }
 
-  // ── Between questions: hold on the last reveal if recent. ──
-  const lastResolved = pickRecentReveal(snapshot, myAnswers);
-  if (lastResolved) {
-    return (
-      <RevealView
-        question={lastResolved.question}
-        category={lastResolved.category}
-        myAnswer={lastResolved.myAnswer}
-        player={me}
-        myAnswers={myAnswers}
-        categories={snapshot.categories}
-        game={currentGame}
-      />
+  // ── Between questions: hold on the last reveal until the host moves on. ──
+  // useRoom keeps the most-recently-finished question in lastResolvedQuestion
+  // (separate from currentQuestion which is cleared when finished_at fires).
+  // Render the reveal frame for it so the player sees correct/wrong + score
+  // before the host clicks the next cell.
+  const lastResolvedQuestion = snapshot.lastResolvedQuestion;
+  if (lastResolvedQuestion) {
+    const resolvedCategory = snapshot.categories.find(
+      (c) => c.id === lastResolvedQuestion.category_id,
     );
+    if (resolvedCategory) {
+      const myAnswerForResolved =
+        myAnswers.find((a) => a.question_id === lastResolvedQuestion.id) ?? null;
+      return (
+        <RevealView
+          question={lastResolvedQuestion}
+          category={resolvedCategory}
+          myAnswer={myAnswerForResolved}
+          player={me}
+          myAnswers={myAnswers}
+          categories={snapshot.categories}
+          game={currentGame}
+        />
+      );
+    }
   }
 
   // Live game with no question on deck and no recent reveal → idle.
@@ -1136,38 +1146,8 @@ function summarizeGame(
   };
 }
 
-// ─── RECENT REVEAL ───────────────────────────────────────────────────────
-
-function pickRecentReveal(
-  snapshot: ReturnType<typeof useRoom>,
-  myAnswers: AnswerRow[],
-): {
-  question: QuestionRow;
-  category: CategoryRow;
-  myAnswer: AnswerRow | null;
-} | null {
-  const reveal = snapshot.currentReveal;
-  if (!reveal) return null;
-  if (reveal.event !== "resolve" && reveal.event !== "end-early") return null;
-  // Only show if it happened recently — older reveals shouldn't keep
-  // hijacking the screen between sessions.
-  const occurredMs = new Date(reveal.occurred_at).getTime();
-  if (Date.now() - occurredMs > RECENT_REVEAL_WINDOW_MS) return null;
-
-  // The question is no longer in snapshot.currentQuestion (cleared on
-  // finish), so we need to look it up across categories. The room snapshot
-  // doesn't carry all questions — only the live one. We rely on the answer
-  // row if we have it; else we have no fallback so we return null and the
-  // screen idles.
-  const myAnswer = myAnswers.find((a) => a.question_id === reveal.question_id) ?? null;
-  if (!myAnswer) return null;
-  // Build a synthetic QuestionRow from the answer (we don't have prompt /
-  // options here without an extra fetch). For the player surface, the
-  // reveal screens only need point_value, options, correct_index — none of
-  // which we have without going back to the DB. Keeping this path
-  // best-effort: when we don't have the full row, fall back to idle.
-  return null;
-}
+// pickRecentReveal removed: its job is now handled by useRoom's
+// lastResolvedQuestion + the new RevealView fallback in RoomBody.
 
 // ─── WINNER LOOKUP ───────────────────────────────────────────────────────
 
