@@ -588,11 +588,29 @@ function LockedView({
   const chosenSlot = (scramble.indexOf(myAnswer.chosen_index) + 1) as 1 | 2 | 3 | 4;
 
   // Re-tick the timer client-side so the LOCKED screen also shows seconds
-  // counting down (everyone else is still racing).
+  // counting down (everyone else is still racing). Also fire /resolve when
+  // the timer hits zero — same handler as QuestionView. Without this, if
+  // every player locks in early there is nobody mounted in QuestionView to
+  // trigger the resolve, the server never sets finished_at, and every
+  // phone sits on "Waiting for the room to lock in…" indefinitely. The
+  // resolve route is idempotent — first call wins, the rest no-op.
   const revealedAtMs = question.played_at ? new Date(question.played_at).getTime() : null;
+  const resolveCalled = useRef(false);
+  const handleZero = useCallback(() => {
+    if (resolveCalled.current) return;
+    resolveCalled.current = true;
+    void fetch(`/api/questions/${question.id}/resolve`, {
+      method: "POST",
+      credentials: "same-origin",
+    }).catch((e) => console.warn("resolve failed (locked)", e));
+  }, [question.id]);
+  useEffect(() => {
+    resolveCalled.current = false;
+  }, [question.id]);
   const { displaySeconds } = useTimer({
     revealedAtMs,
     durationS: QUESTION_DURATION_S,
+    onZero: handleZero,
   });
 
   const questionNumber = computeQuestionNumber(question, categories);
