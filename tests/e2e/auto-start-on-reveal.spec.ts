@@ -91,12 +91,19 @@ test.describe("lobby → start → cell click → question (P0.32 refactor regre
     });
     await hostPage.getByTestId("host-start-game-1-btn").click();
 
-    // After Start, the game flips 'draft' → 'live' and the TV state machine
-    // moves from TVLobby to TVGrid. Both surfaces should see it.
+    // After Start, the game flips 'draft' → 'live' and both surfaces — the
+    // standalone /tv/[code] TV (tvPage) and the inline TV on the host's
+    // console (hostPage) — move from TVLobby to TVGrid. The host's snapshot
+    // is driven by useRoom (postgres_changes on the games table), which can
+    // lag the TV's useTVRoom by a few seconds in dev environments, so wait
+    // on the slower of the two before tapping a cell.
     await expect(tvPage.getByTestId(TID.tvGrid.root)).toBeVisible({
       timeout: 15_000,
     });
     await expect(tvPage.getByTestId(TID.tvLobby.root)).toBeHidden();
+    await expect(hostPage.getByTestId(TID.tvGrid.root)).toBeVisible({
+      timeout: 15_000,
+    });
 
     // Now the host taps the first cell on the inline TVGrid. The clickable
     // cell carries data-testid=host-question-{qid} (kept for backwards
