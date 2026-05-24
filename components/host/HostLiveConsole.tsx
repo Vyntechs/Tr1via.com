@@ -1,25 +1,29 @@
-// HOST LAPTOP — MID-GAME. Board + live player list + quick controls. This
-// mirrors to the TV.
+// HOST LAPTOP — MID-GAME. The host laptop IS the TV: it's HDMI-mirrored to
+// the venue screen, so whatever Heather sees, the patrons see. That means
+// host chrome is patron-visible chrome — so it stays minimal.
 //
-// Wired form: the live route passes the full game state — current question,
-// the grid of revealed/picked cells, players + their lock status, and the
-// action handlers (revealCell, undo, endEarly, adjustPoints, removePlayer,
-// addPlayer). Every prop is optional with demo defaults so the /dev/host
-// gallery still renders.
+// Layout: TV state machine fills the whole viewport. A thin bottom control
+// strip surfaces only the buttons that are relevant for the current TV
+// state (derived via deriveHostMode). Player management lives behind a
+// Players sheet so the patron-visible surface stays clean.
+//
+// Cell-picking happens directly on the TV (TVGrid becomes interactive on
+// the host's side via the `onCellClick` prop) — no separate host board.
 
 "use client";
 
+import { useEffect, useMemo, useState } from "react";
 import { LaptopShell } from "@/components/shells";
 import {
   Eyebrow,
   Numeric,
   QRBlock,
   ThemeProvider,
-  TVTimerArc,
   useTheme,
 } from "@/components/system";
 import { TVStateMachine } from "@/components/tv";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
+import { deriveHostMode } from "@/lib/host/deriveHostMode";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { RemovePlayerButton } from "./RemovePlayerButton";
 
@@ -34,45 +38,11 @@ export interface HostLivePlayer {
   flag?: boolean;
 }
 
-export interface HostLiveBoardCell {
-  /** Logical question id for the cell. Used as the reveal target. */
-  questionId: string;
-  /** Numeric point value (100..700). */
-  pointValue: number;
-  /** True if this cell has been played (revealed and resolved). */
-  played: boolean;
-  /** True if this cell is the currently live question. */
-  live: boolean;
-}
-
-export interface HostLiveBoardColumn {
-  categoryId: string;
-  /** Display name (uppercase rendered in the header). */
-  name: string;
-  /** 7 cells per column, ordered low → high point value. */
-  cells: HostLiveBoardCell[];
-}
-
-export interface HostLiveCurrentQuestion {
-  questionId: string;
-  /** Question text (host sees it; the TV mirrors). */
-  prompt: string;
-  /** Category name shown in the eyebrow. */
-  categoryName: string;
-  pointValue: number;
-  /** Seconds remaining (0..20). Pass null to hide the ring. */
-  secondsRemaining: number | null;
-}
-
 export interface HostLiveConsoleProps {
   themeKey?: ThemeKey;
   /** Title displayed in the LaptopShell chrome (e.g. "game 1 · live"). */
   title?: string;
-  /** All board columns. Provide an empty array for the pre-start state. */
-  columns?: HostLiveBoardColumn[];
-  /** Live question — null when the host is between reveals. */
-  currentQuestion?: HostLiveCurrentQuestion | null;
-  /** Live roster sorted by score (host's view). */
+  /** Live roster sorted by score — surfaced in the Players sheet. */
   players?: HostLivePlayer[];
   /** Total players checked into the night. */
   playersTotal?: number;
@@ -80,12 +50,13 @@ export interface HostLiveConsoleProps {
   lockedCount?: number;
   /** True while the 2s undo window is still open. */
   canUndo?: boolean;
-  /** Room code (e.g. "WB3C3V"). Surfaced prominently so the host can show
-   *  the customer how to get players in — the live route already knows it. */
+  /** Room code (e.g. "WB3C3V"). Shown inside the Players sheet so the
+   *  host can read it out to latecomers without exposing patron-visible
+   *  chrome. */
   roomCode?: string;
   /** Full URL the QR encodes. Defaults to `${origin}/join?code=<roomCode>`. */
   joinUrl?: string;
-  /** Called when the host taps a cell on the grid. */
+  /** Called when the host taps a cell on the TV grid. */
   onRevealCell?: (questionId: string) => void;
   /** End-early reveals the live question now. */
   onEndEarly?: () => void;
@@ -97,11 +68,18 @@ export interface HostLiveConsoleProps {
   onRemovePlayer?: (playerId: string) => void;
   /** Host opens the add-latecomer flow. When undefined the + button hides. */
   onAddPlayer?: () => void;
-  /** Inline TV snapshot. When provided, a 16:9 panel renders the venue-TV
-   *  view via <TVStateMachine /> at the top of the console — same component
-   *  the standalone /tv/[code] route renders. Used for HDMI'd hosts so the
-   *  laptop drives both surfaces in a single window. Omit to hide the
-   *  panel (e.g. the /dev gallery demo). */
+  /** Promote game 1 from draft/ready to live so Heather can start playing.
+   *  Surfaces a "Start Game 1" button during lobby mode. */
+  onStartGame1?: () => void;
+  /** Promote game 2 to live from intermission. Surfaces "Start Game 2". */
+  onStartGame2?: () => void;
+  /** End the current live game (game→done). Surfaces "End Game →" when
+   *  every picked question is finished (P0.33). */
+  onEndGame?: () => void;
+  /** Close the night entirely. Surfaces "Done" during the finale. */
+  onCloseNight?: () => void;
+  /** Inline TV snapshot. When provided, the TV state machine renders
+   *  fullscreen — Heather's laptop drives both surfaces in one window. */
   tvSnapshot?: TVSnapshot | null;
   /** Reveal-broadcast server timestamp, threaded through to the TV state
    *  machine so the live question timer aligns with the broadcast moment
@@ -123,28 +101,6 @@ export function HostLiveConsole(props: HostLiveConsoleProps) {
   return <HostLiveConsoleInner {...rest} />;
 }
 
-const DEMO_COLUMNS: HostLiveBoardColumn[] = [
-  "GEOGRAPHY",
-  "ANIMALS",
-  "FOOD",
-  "MOVIES",
-  "MUSIC",
-  "HISTORY",
-].map((name, ci) => ({
-  categoryId: `demo-cat-${ci}`,
-  name,
-  cells: [100, 200, 300, 400, 500, 600, 700].map((v, ri) => ({
-    questionId: `demo-q-${ci}-${ri}`,
-    pointValue: v,
-    played:
-      (ci === 0 && ri === 0) ||
-      (ci === 0 && ri === 1) ||
-      (ci === 1 && ri === 0) ||
-      (ci === 2 && ri === 0),
-    live: ci === 0 && ri === 0,
-  })),
-}));
-
 const DEMO_PLAYERS: HostLivePlayer[] = [
   { id: "p1",  name: "Devon",  score: 2140, locked: true, appOff: "0s" },
   { id: "p2",  name: "Iris",   score: 1990, locked: true, appOff: "0s" },
@@ -152,26 +108,10 @@ const DEMO_PLAYERS: HostLivePlayer[] = [
   { id: "p4",  name: "Cole",   score: 1740, locked: true, appOff: "12s" },
   { id: "p5",  name: "Ezra",   score: 1610, locked: true, appOff: "0s" },
   { id: "p6",  name: "Nadia",  score: 1530, locked: true, appOff: "0s" },
-  { id: "p7",  name: "Maya",   score: 1460, locked: true, appOff: "0s" },
-  { id: "p8",  name: "Theo",   score: 1380, locked: true, appOff: "0s" },
-  { id: "p9",  name: "Jules",  score: 1290, locked: false, appOff: "0s" },
-  { id: "p10", name: "Marcus", score: 1180, locked: false, appOff: "0s" },
-  { id: "p11", name: "Sara",   score: 1110, locked: false, appOff: "0s" },
-  { id: "p12", name: "Eli",    score: 1040, locked: false, appOff: "4m 12s", flag: true },
-  { id: "p13", name: "Ana",    score: 980,  locked: false, appOff: "0s" },
-  { id: "p14", name: "June",   score: 920,  locked: false, appOff: "0s" },
 ];
 
 function HostLiveConsoleInner({
   title = "game 1 · live",
-  columns = DEMO_COLUMNS,
-  currentQuestion = {
-    questionId: "demo-q-0-0",
-    prompt: "Which U.S. state has the longest coastline?",
-    categoryName: "GEOGRAPHY",
-    pointValue: 100,
-    secondsRemaining: 11,
-  },
   players = DEMO_PLAYERS,
   playersTotal,
   lockedCount,
@@ -184,6 +124,10 @@ function HostLiveConsoleInner({
   onAdjustPoints,
   onRemovePlayer,
   onAddPlayer,
+  onStartGame1,
+  onStartGame2,
+  onEndGame,
+  onCloseNight,
   tvSnapshot,
   tvLastBroadcastRevealedAt = null,
   tvLastBroadcastServerNow = null,
@@ -193,10 +137,29 @@ function HostLiveConsoleInner({
   const locks = lockedCount ?? players.filter((p) => p.locked).length;
   const resolvedJoinUrl =
     joinUrl ?? (roomCode ? `https://tr1via.com/join?code=${roomCode}` : null);
-  const eyebrow = currentQuestion
-    ? `QUESTION LIVE · ${currentQuestion.categoryName.toUpperCase()} · ${currentQuestion.pointValue}`
-    : "BOARD READY · WAITING";
-  const promptText = currentQuestion?.prompt ?? "Tap a cell to reveal the next question.";
+
+  const [hostAdvanced, setHostAdvanced] = useState(false);
+  const [playersOpen, setPlayersOpen] = useState(false);
+
+  // Reset the "Pick next" override when a new live question arrives — the
+  // override only matters for the brief window after a resolve before the
+  // host picks the next cell. Once they pick, the snapshot's live-question
+  // branch in TVStateMachine wins regardless.
+  const liveQuestionId = tvSnapshot?.liveQuestionId ?? null;
+  useEffect(() => {
+    if (liveQuestionId) setHostAdvanced(false);
+  }, [liveQuestionId]);
+
+  const modeCtx = useMemo(
+    () => deriveHostMode(tvSnapshot ?? null, hostAdvanced),
+    [tvSnapshot, hostAdvanced],
+  );
+  const { mode, canEndGame } = modeCtx;
+
+  function handleRevealCell(questionId: string) {
+    setHostAdvanced(false);
+    onRevealCell?.(questionId);
+  }
 
   return (
     <LaptopShell title={title}>
@@ -207,444 +170,531 @@ function HostLiveConsoleInner({
           flexDirection: "column",
           flex: 1,
           overflow: "hidden",
+          background: "#000",
+          position: "relative",
         }}
       >
-        {tvSnapshot ? (
-          <div
-            data-testid="host-tv-panel"
-            style={{
-              flexShrink: 0,
-              width: "100%",
-              borderBottom: `1px solid ${t.line}`,
-              background: "#000",
-              position: "relative",
-              overflow: "hidden",
-              // Constrain the panel height so the controls below stay
-              // reachable on a 13" laptop. The inner 16:9 stage scales to
-              // fill the largest box that fits within these bounds.
-              maxHeight: "62vh",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <div
-              style={{
-                // Take the largest 16:9 rectangle that fits this slot. The
-                // outer wrapper caps height; the limiting dimension wins.
-                width: "min(100%, calc(62vh * 16 / 9))",
-                aspectRatio: "16 / 9",
-                position: "relative",
-                overflow: "hidden",
-              }}
-            >
-              <TVStateMachine
-                snapshot={tvSnapshot}
-                lastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
-                lastBroadcastServerNow={tvLastBroadcastServerNow}
-              />
-            </div>
-          </div>
-        ) : null}
         <div
+          data-testid="host-tv-panel"
           style={{
-            padding: "20px 28px",
-            display: "grid",
-            gridTemplateColumns: "1fr 320px",
-            gap: 24,
             flex: 1,
+            position: "relative",
             overflow: "hidden",
-            minHeight: 0,
+            display: "flex",
           }}
         >
-        {/* Board mini + question status */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <div>
-              <Eyebrow color={t.accent} size={11}>
-                {eyebrow}
-              </Eyebrow>
-              <div
-                style={{
-                  marginTop: 6,
-                  fontSize: 22,
-                  color: t.ink,
-                  fontWeight: 500,
-                  letterSpacing: "-0.015em",
-                }}
-              >
-                {promptText}
-              </div>
-            </div>
-            {currentQuestion?.secondsRemaining !== null &&
-            currentQuestion?.secondsRemaining !== undefined ? (
-              <TVTimerArc seconds={currentQuestion.secondsRemaining} size={84} />
-            ) : null}
-          </div>
-
-          <div
-            style={{
-              flex: 1,
-              display: "grid",
-              gridTemplateColumns: `repeat(${Math.max(columns.length, 1)}, 1fr)`,
-              gridTemplateRows: "24px repeat(7, 1fr)",
-              gap: 6,
-            }}
-          >
-            {columns.map((c) => (
-              <div
-                key={c.categoryId}
-                style={{
-                  padding: "4px 8px",
-                  borderRadius: 4,
-                  background: t.dark ? "rgba(255,255,255,.04)" : "rgba(20,19,15,.03)",
-                  fontSize: 9,
-                  fontWeight: 600,
-                  letterSpacing: "0.06em",
-                  color: t.ink,
-                  textAlign: "center",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                {c.name.toUpperCase()}
-              </div>
-            ))}
-            {/* Walk rows then columns so the layout matches the grid CSS. */}
-            {Array.from({ length: 7 }).map((_, rIdx) =>
-              columns.map((col) => {
-                const cell = col.cells[rIdx];
-                if (!cell) {
-                  return (
-                    <div
-                      key={`${col.categoryId}-empty-${rIdx}`}
-                      style={{
-                        background: t.dark ? "rgba(255,255,255,.02)" : t.surface,
-                        borderRadius: 6,
-                      }}
-                    />
-                  );
-                }
-                const clickable =
-                  !cell.played && !cell.live && Boolean(onRevealCell);
-                return (
-                  <button
-                    key={`${col.categoryId}-${cell.questionId}`}
-                    type="button"
-                    onClick={
-                      clickable
-                        ? () => onRevealCell?.(cell.questionId)
-                        : undefined
-                    }
-                    disabled={!clickable}
-                    data-testid={`host-question-${cell.questionId}`}
-                    style={{
-                      background: cell.live
-                        ? t.accent
-                        : cell.played
-                          ? "transparent"
-                          : t.dark
-                            ? "rgba(255,255,255,.06)"
-                            : t.surface,
-                      border:
-                        cell.played && !cell.live
-                          ? `1px dashed ${t.line}`
-                          : "none",
-                      borderRadius: 6,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      color: cell.live
-                        ? t.dark
-                          ? "#0E0E0C"
-                          : "#FFF"
-                        : cell.played
-                          ? t.inkMute
-                          : t.ink,
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 14,
-                      fontWeight: 500,
-                      opacity: cell.played && !cell.live ? 0.4 : 1,
-                      cursor: clickable ? "pointer" : "default",
-                      padding: 0,
-                    }}
-                  >
-                    {cell.pointValue}
-                  </button>
-                );
-              }),
-            )}
-          </div>
-
-          <div style={{ display: "flex", gap: 8 }}>
-            {/* Test wrapper exposes the same End-early action under both
-                host-end-early-btn AND host-reveal-btn — in this UI the
-                end-early button IS the manual reveal trigger, so both
-                selectors point to it. */}
-            <div data-testid="host-reveal-btn" style={{ flex: 1, display: "flex" }}>
-              <button
-                type="button"
-                onClick={onEndEarly}
-                disabled={!currentQuestion}
-                data-testid="host-end-early-btn"
-                style={{
-                  flex: 1,
-                  padding: "12px 0",
-                  borderRadius: 10,
-                  background: t.ink,
-                  color: t.paper,
-                  border: "none",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  fontFamily: "var(--font-sans)",
-                  cursor: currentQuestion ? "pointer" : "not-allowed",
-                  opacity: currentQuestion ? 1 : 0.5,
-                }}
-              >
-                End early · reveal
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={onUndo}
-              disabled={!canUndo}
-              data-testid="host-undo-btn"
-              style={{
-                flex: 1,
-                padding: "12px 0",
-                borderRadius: 10,
-                background: "transparent",
-                color: canUndo ? t.ink : t.inkMute,
-                border: `1px solid ${t.line}`,
-                fontSize: 13,
-                fontWeight: 500,
-                fontFamily: "var(--font-sans)",
-                cursor: canUndo ? "pointer" : "not-allowed",
-                opacity: canUndo ? 1 : 0.55,
-              }}
-            >
-              ↺ Undo
-            </button>
-            <button
-              type="button"
-              onClick={onAdjustPoints}
-              style={{
-                flex: 1,
-                padding: "12px 0",
-                borderRadius: 10,
-                background: "transparent",
-                color: t.inkMid,
-                border: `1px solid ${t.line}`,
-                fontSize: 13,
-                fontWeight: 500,
-                fontFamily: "var(--font-sans)",
-                cursor: "pointer",
-              }}
-            >
-              Adjust points
-            </button>
-          </div>
-        </div>
-
-        {/* Player list */}
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          {(roomCode || resolvedJoinUrl) && (
-            <div
-              style={{
-                display: "flex",
-                gap: 14,
-                alignItems: "center",
-                padding: "12px 14px",
-                marginBottom: 12,
-                background: t.dark ? "rgba(244,230,196,.04)" : "rgba(20,19,15,.03)",
-                border: `1px solid ${t.line}`,
-                borderRadius: 12,
-              }}
-            >
-              {resolvedJoinUrl ? (
-                <div style={{ flexShrink: 0 }}>
-                  <QRBlock url={resolvedJoinUrl} size={92} light />
-                </div>
-              ) : null}
-              <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
-                <Eyebrow color={t.accent} size={9}>
-                  PLAYERS JOIN
-                </Eyebrow>
-                {roomCode ? (
-                  <div
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 24,
-                      fontWeight: 700,
-                      color: t.ink,
-                      letterSpacing: "0.08em",
-                      lineHeight: 1,
-                    }}
-                  >
-                    {roomCode}
-                  </div>
-                ) : null}
-                <div
-                  style={{
-                    fontSize: 10.5,
-                    color: t.inkMid,
-                    lineHeight: 1.4,
-                  }}
-                >
-                  tr1via.com/join
-                  <br />
-                  <span style={{ color: t.inkMute }}>scan or type the code</span>
-                </div>
-              </div>
-            </div>
+          {tvSnapshot ? (
+            <TVStateMachine
+              snapshot={tvSnapshot}
+              lastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
+              lastBroadcastServerNow={tvLastBroadcastServerNow}
+              onGridCellClick={handleRevealCell}
+              hostAdvanced={hostAdvanced}
+            />
+          ) : (
+            <DevPlaceholder />
           )}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              paddingBottom: 12,
-              borderBottom: `1px solid ${t.line}`,
-              gap: 8,
-            }}
-          >
-            <Eyebrow color={t.inkMid} size={10}>
-              PLAYERS · {totalPlayers} LIVE
-            </Eyebrow>
-            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-              <Numeric size={12} color={t.inkMid}>
-                {locks} / {totalPlayers} in
-              </Numeric>
-              {onAddPlayer && (
-                <button
-                  type="button"
-                  onClick={onAddPlayer}
-                  aria-label="Add a latecomer"
-                  style={{
-                    padding: "2px 8px",
-                    borderRadius: 6,
-                    border: `1px solid ${t.line}`,
-                    background: "transparent",
-                    color: t.inkMid,
-                    fontFamily: "var(--font-mono)",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    cursor: "pointer",
-                    lineHeight: 1.4,
-                  }}
-                >
-                  + add
-                </button>
-              )}
-            </div>
-          </div>
-          <div
-            style={{
-              flex: 1,
-              overflow: "auto",
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            {players.length === 0 ? (
-              <div
-                style={{
-                  padding: "24px 0",
-                  color: t.inkMute,
-                  fontSize: 13,
-                  textAlign: "center",
-                }}
-              >
-                Waiting for the first player to join…
-              </div>
-            ) : (
-              players.map((p, i) => (
-                <div
-                  key={p.id}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: onRemovePlayer
-                      ? "20px 1fr 70px 18px 28px"
-                      : "20px 1fr 70px 18px",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "10px 0",
-                    borderBottom: `1px solid ${t.lineSoft}`,
-                    background: p.flag
-                      ? t.dark
-                        ? "rgba(229,138,138,.05)"
-                        : "rgba(156,47,47,.03)"
-                      : "transparent",
-                    paddingLeft: p.flag ? 8 : 0,
-                    paddingRight: p.flag ? 8 : 0,
-                    marginLeft: p.flag ? -8 : 0,
-                    marginRight: p.flag ? -8 : 0,
-                    borderRadius: p.flag ? 6 : 0,
-                  }}
-                >
-                  <Numeric size={11} color={t.inkMute}>
-                    {i + 1}
-                  </Numeric>
-                  <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
-                    <span
-                      style={{
-                        fontSize: 13,
-                        color: t.ink,
-                        fontWeight: 500,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {p.name}
-                    </span>
-                    {p.flag && (
-                      <span
-                        style={{
-                          fontSize: 10,
-                          color: t.wrong,
-                          fontFamily: "var(--font-mono)",
-                          marginTop: 1,
-                        }}
-                      >
-                        off-app {p.appOff}
-                      </span>
-                    )}
-                  </div>
-                  <Numeric size={12} color={t.ink} style={{ textAlign: "right" }}>
-                    {p.score.toLocaleString()}
-                  </Numeric>
-                  <span
-                    style={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 99,
-                      background: p.flag ? t.wrong : p.locked ? t.correct : t.inkMute,
-                      opacity: p.locked || p.flag ? 1 : 0.4,
-                    }}
-                  />
-                  {onRemovePlayer && (
-                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                      <RemovePlayerButton
-                        playerName={p.name}
-                        onConfirm={() => onRemovePlayer(p.id)}
-                      />
-                    </div>
-                  )}
-                </div>
-              ))
-            )}
-          </div>
         </div>
-        </div>
+
+        <HostControlStrip
+          mode={mode}
+          canEndGame={canEndGame}
+          canUndo={canUndo && (mode === "question-live" || mode === "picking" || mode === "reveal-sticky")}
+          lockedCount={locks}
+          totalPlayers={totalPlayers}
+          onStartGame1={onStartGame1}
+          onStartGame2={onStartGame2}
+          onEndEarly={onEndEarly}
+          onUndo={onUndo}
+          onAdjustPoints={onAdjustPoints}
+          onPickNext={() => setHostAdvanced(true)}
+          onEndGame={onEndGame}
+          onCloseNight={onCloseNight}
+          onOpenPlayers={() => setPlayersOpen(true)}
+        />
+
+        {playersOpen && (
+          <PlayersSheet
+            players={players}
+            roomCode={roomCode}
+            joinUrl={resolvedJoinUrl}
+            onClose={() => setPlayersOpen(false)}
+            onRemove={onRemovePlayer}
+            onAdd={onAddPlayer}
+          />
+        )}
       </div>
     </LaptopShell>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Control strip — state-aware bottom toolbar
+// ─────────────────────────────────────────────────────────────────────────
+
+interface HostControlStripProps {
+  mode:
+    | "loading"
+    | "lobby"
+    | "picking"
+    | "question-live"
+    | "reveal-sticky"
+    | "intermission"
+    | "finale";
+  canEndGame: boolean;
+  canUndo: boolean;
+  lockedCount: number;
+  totalPlayers: number;
+  onStartGame1?: () => void;
+  onStartGame2?: () => void;
+  onEndEarly?: () => void;
+  onUndo?: () => void;
+  onAdjustPoints?: () => void;
+  onPickNext?: () => void;
+  onEndGame?: () => void;
+  onCloseNight?: () => void;
+  onOpenPlayers: () => void;
+}
+
+function HostControlStrip({
+  mode,
+  canEndGame,
+  canUndo,
+  lockedCount,
+  totalPlayers,
+  onStartGame1,
+  onStartGame2,
+  onEndEarly,
+  onUndo,
+  onAdjustPoints,
+  onPickNext,
+  onEndGame,
+  onCloseNight,
+  onOpenPlayers,
+}: HostControlStripProps) {
+  const { t } = useTheme();
+
+  const lockLine =
+    mode === "question-live"
+      ? `${lockedCount} / ${totalPlayers} locked`
+      : `${totalPlayers} player${totalPlayers === 1 ? "" : "s"}`;
+
+  return (
+    <div
+      data-testid="host-control-strip"
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 14px",
+        background: t.dark ? "rgba(14,8,5,.92)" : "rgba(20,19,15,.04)",
+        borderTop: `1px solid ${t.line}`,
+        minHeight: 52,
+      }}
+    >
+      {/* Primary CTAs — left side */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
+        {mode === "lobby" && onStartGame1 && (
+          <PrimaryButton onClick={onStartGame1} testId="host-start-game-1-btn">
+            Start Game 1
+          </PrimaryButton>
+        )}
+        {mode === "intermission" && onStartGame2 && (
+          <PrimaryButton onClick={onStartGame2} testId="host-start-game-2-btn">
+            Start Game 2
+          </PrimaryButton>
+        )}
+        {mode === "question-live" && onEndEarly && (
+          <PrimaryButton onClick={onEndEarly} testId="host-end-early-btn">
+            End early · reveal
+          </PrimaryButton>
+        )}
+        {mode === "reveal-sticky" && onPickNext && (
+          <PrimaryButton onClick={onPickNext} testId="host-pick-next-btn">
+            Pick next →
+          </PrimaryButton>
+        )}
+        {mode === "picking" && canEndGame && onEndGame && (
+          <PrimaryButton onClick={onEndGame} testId="host-end-game-btn">
+            End Game →
+          </PrimaryButton>
+        )}
+        {mode === "picking" && !canEndGame && (
+          <span
+            style={{
+              fontSize: 12,
+              color: t.inkMute,
+              fontFamily: "var(--font-sans)",
+              fontWeight: 500,
+              letterSpacing: "0.02em",
+            }}
+          >
+            Tap a cell to reveal the next question
+          </span>
+        )}
+        {mode === "finale" && onCloseNight && (
+          <PrimaryButton onClick={onCloseNight} testId="host-close-night-btn">
+            Done
+          </PrimaryButton>
+        )}
+        {mode === "loading" && (
+          <span style={{ fontSize: 12, color: t.inkMute, fontStyle: "italic" }}>
+            loading…
+          </span>
+        )}
+      </div>
+
+      {/* Status — middle */}
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          color: t.inkMid,
+          padding: "0 12px",
+          borderLeft: `1px solid ${t.line}`,
+          borderRight: `1px solid ${t.line}`,
+        }}
+      >
+        {lockLine}
+      </div>
+
+      {/* Secondary controls — right side */}
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {canUndo && onUndo && (
+          <SecondaryButton onClick={onUndo} testId="host-undo-btn">
+            ↺ Undo
+          </SecondaryButton>
+        )}
+        {onAdjustPoints &&
+          (mode === "picking" || mode === "reveal-sticky" || mode === "intermission") && (
+            <SecondaryButton onClick={onAdjustPoints} testId="host-adjust-btn">
+              Adjust
+            </SecondaryButton>
+          )}
+        <SecondaryButton onClick={onOpenPlayers} testId="host-players-btn">
+          Players ({totalPlayers})
+        </SecondaryButton>
+      </div>
+    </div>
+  );
+}
+
+function PrimaryButton({
+  children,
+  onClick,
+  testId,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  testId: string;
+}) {
+  const { t } = useTheme();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      style={{
+        padding: "8px 18px",
+        borderRadius: 8,
+        background: t.accent,
+        color: "#0E0805",
+        border: "none",
+        fontSize: 13,
+        fontWeight: 700,
+        fontFamily: "var(--font-sans)",
+        cursor: "pointer",
+        letterSpacing: "-0.005em",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SecondaryButton({
+  children,
+  onClick,
+  testId,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  testId: string;
+}) {
+  const { t } = useTheme();
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid={testId}
+      style={{
+        padding: "7px 14px",
+        borderRadius: 8,
+        background: "transparent",
+        color: t.ink,
+        border: `1px solid ${t.line}`,
+        fontSize: 12,
+        fontWeight: 500,
+        fontFamily: "var(--font-sans)",
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Players sheet — slides in from the right, hidden until opened
+// ─────────────────────────────────────────────────────────────────────────
+
+interface PlayersSheetProps {
+  players: HostLivePlayer[];
+  roomCode?: string;
+  joinUrl: string | null;
+  onClose: () => void;
+  onRemove?: (playerId: string) => void;
+  onAdd?: () => void;
+}
+
+function PlayersSheet({
+  players,
+  roomCode,
+  joinUrl,
+  onClose,
+  onRemove,
+  onAdd,
+}: PlayersSheetProps) {
+  const { t } = useTheme();
+  return (
+    <div
+      data-testid="host-players-sheet"
+      role="dialog"
+      aria-label="Players"
+      style={{
+        position: "absolute",
+        inset: 0,
+        background: "rgba(0,0,0,0.45)",
+        display: "flex",
+        justifyContent: "flex-end",
+        zIndex: 40,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        style={{
+          width: 360,
+          maxWidth: "92vw",
+          height: "100%",
+          background: t.paper,
+          color: t.ink,
+          padding: "20px 22px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+          overflow: "hidden",
+          boxShadow: "-10px 0 28px -6px rgba(0,0,0,0.4)",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <Eyebrow color={t.accent} size={11}>
+            PLAYERS · {players.length}
+          </Eyebrow>
+          <button
+            type="button"
+            onClick={onClose}
+            data-testid="host-players-sheet-close"
+            style={{
+              padding: "4px 10px",
+              borderRadius: 6,
+              border: `1px solid ${t.line}`,
+              background: "transparent",
+              color: t.inkMid,
+              fontSize: 12,
+              cursor: "pointer",
+            }}
+          >
+            Close
+          </button>
+        </div>
+
+        {(roomCode || joinUrl) && (
+          <div
+            style={{
+              display: "flex",
+              gap: 12,
+              alignItems: "center",
+              padding: "10px 12px",
+              background: t.dark ? "rgba(244,230,196,.04)" : "rgba(20,19,15,.03)",
+              border: `1px solid ${t.line}`,
+              borderRadius: 10,
+            }}
+          >
+            {joinUrl ? <QRBlock url={joinUrl} size={72} light /> : null}
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {roomCode && (
+                <div
+                  style={{
+                    fontFamily: "var(--font-mono)",
+                    fontSize: 20,
+                    fontWeight: 700,
+                    color: t.ink,
+                    letterSpacing: "0.08em",
+                  }}
+                >
+                  {roomCode}
+                </div>
+              )}
+              <div style={{ fontSize: 11, color: t.inkMid }}>
+                tr1via.com/join
+              </div>
+            </div>
+          </div>
+        )}
+
+        {onAdd && (
+          <button
+            type="button"
+            onClick={onAdd}
+            data-testid="host-add-player-btn"
+            style={{
+              padding: "8px 12px",
+              borderRadius: 8,
+              border: `1px dashed ${t.line}`,
+              background: "transparent",
+              color: t.ink,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              textAlign: "left",
+            }}
+          >
+            + Add a latecomer
+          </button>
+        )}
+
+        <div
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {players.length === 0 ? (
+            <div
+              style={{
+                padding: "24px 0",
+                color: t.inkMute,
+                fontSize: 13,
+                textAlign: "center",
+              }}
+            >
+              Waiting for the first player to join…
+            </div>
+          ) : (
+            players.map((p, i) => (
+              <div
+                key={p.id}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: onRemove
+                    ? "22px 1fr 72px 18px 28px"
+                    : "22px 1fr 72px 18px",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "9px 0",
+                  borderBottom: `1px solid ${t.lineSoft}`,
+                }}
+              >
+                <Numeric size={11} color={t.inkMute}>
+                  {i + 1}
+                </Numeric>
+                <div style={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+                  <span
+                    style={{
+                      fontSize: 13,
+                      color: t.ink,
+                      fontWeight: 500,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {p.name}
+                  </span>
+                  {p.flag && (
+                    <span
+                      style={{
+                        fontSize: 10,
+                        color: t.wrong,
+                        fontFamily: "var(--font-mono)",
+                        marginTop: 1,
+                      }}
+                    >
+                      off-app {p.appOff}
+                    </span>
+                  )}
+                </div>
+                <Numeric size={12} color={t.ink} style={{ textAlign: "right" }}>
+                  {p.score.toLocaleString()}
+                </Numeric>
+                <span
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: 99,
+                    background: p.flag ? t.wrong : p.locked ? t.correct : t.inkMute,
+                    opacity: p.locked || p.flag ? 1 : 0.4,
+                  }}
+                />
+                {onRemove && (
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <RemovePlayerButton
+                      playerName={p.name}
+                      onConfirm={() => onRemove(p.id)}
+                    />
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Dev placeholder — shown in the /dev/host gallery where tvSnapshot is
+// not wired. Real /host/live/[nightId] always supplies a snapshot.
+// ─────────────────────────────────────────────────────────────────────────
+
+function DevPlaceholder() {
+  const { t } = useTheme();
+  return (
+    <div
+      style={{
+        flex: 1,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        color: t.inkMute,
+        fontFamily: "var(--font-mono)",
+        fontSize: 13,
+        letterSpacing: "0.06em",
+      }}
+    >
+      TV STATE MACHINE · provide tvSnapshot to render
+    </div>
   );
 }
