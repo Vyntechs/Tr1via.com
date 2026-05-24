@@ -186,14 +186,47 @@ function HostLiveConsoleInner({
       <div
         data-testid="host-live-console"
         style={{
-          padding: "20px 28px",
-          display: "grid",
-          gridTemplateColumns: "1fr 320px",
-          gap: 24,
+          display: "flex",
+          flexDirection: "column",
           flex: 1,
           overflow: "hidden",
         }}
       >
+        {roomCode ? (
+          <div
+            data-testid="host-tv-panel"
+            style={{
+              flexShrink: 0,
+              height: "52vh",
+              borderBottom: `1px solid ${t.line}`,
+              background: "#000",
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
+            <iframe
+              src={`/tv/${roomCode}`}
+              title="TV view"
+              style={{
+                width: "100%",
+                height: "100%",
+                border: "none",
+                display: "block",
+              }}
+            />
+          </div>
+        ) : null}
+        <div
+          style={{
+            padding: "20px 28px",
+            display: "grid",
+            gridTemplateColumns: "1fr 320px",
+            gap: 24,
+            flex: 1,
+            overflow: "hidden",
+            minHeight: 0,
+          }}
+        >
         {/* Board mini + question status */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div
@@ -579,6 +612,7 @@ function HostLiveConsoleInner({
               ))
             )}
           </div>
+        </div>
         </div>
       </div>
     </LaptopShell>
