@@ -392,6 +392,56 @@ function HostLiveConsoleInner({
 
         {/* Player list */}
         <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          {(roomCode || resolvedJoinUrl) && (
+            <div
+              style={{
+                display: "flex",
+                gap: 14,
+                alignItems: "center",
+                padding: "12px 14px",
+                marginBottom: 12,
+                background: t.dark ? "rgba(244,230,196,.04)" : "rgba(20,19,15,.03)",
+                border: `1px solid ${t.line}`,
+                borderRadius: 12,
+              }}
+            >
+              {resolvedJoinUrl ? (
+                <div style={{ flexShrink: 0 }}>
+                  <QRBlock url={resolvedJoinUrl} size={92} light />
+                </div>
+              ) : null}
+              <div style={{ display: "flex", flexDirection: "column", gap: 4, minWidth: 0 }}>
+                <Eyebrow color={t.accent} size={9}>
+                  PLAYERS JOIN
+                </Eyebrow>
+                {roomCode ? (
+                  <div
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 24,
+                      fontWeight: 700,
+                      color: t.ink,
+                      letterSpacing: "0.08em",
+                      lineHeight: 1,
+                    }}
+                  >
+                    {roomCode}
+                  </div>
+                ) : null}
+                <div
+                  style={{
+                    fontSize: 10.5,
+                    color: t.inkMid,
+                    lineHeight: 1.4,
+                  }}
+                >
+                  tr1via.com/join
+                  <br />
+                  <span style={{ color: t.inkMute }}>scan or type the code</span>
+                </div>
+              </div>
+            </div>
+          )}
           <div
             style={{
               display: "flex",
@@ -443,47 +493,13 @@ function HostLiveConsoleInner({
             {players.length === 0 ? (
               <div
                 style={{
-                  padding: "20px 0",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  gap: 12,
+                  padding: "24px 0",
+                  color: t.inkMute,
+                  fontSize: 13,
+                  textAlign: "center",
                 }}
               >
-                <Eyebrow color={t.accent} size={10}>
-                  PLAYERS · JOIN HERE
-                </Eyebrow>
-                {roomCode ? (
-                  <div
-                    style={{
-                      fontFamily: "var(--font-mono)",
-                      fontSize: 36,
-                      fontWeight: 700,
-                      color: t.ink,
-                      letterSpacing: "0.08em",
-                      lineHeight: 1,
-                    }}
-                  >
-                    {roomCode}
-                  </div>
-                ) : null}
-                {resolvedJoinUrl ? (
-                  <QRBlock url={resolvedJoinUrl} size={180} light />
-                ) : null}
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: t.inkMid,
-                    textAlign: "center",
-                    lineHeight: 1.45,
-                  }}
-                >
-                  Players go to <strong style={{ color: t.ink }}>tr1via.com/join</strong>
-                  <br />
-                  and enter <strong style={{ color: t.ink }}>{roomCode ?? "the code"}</strong>
-                  <br />
-                  or scan the QR.
-                </div>
+                Waiting for the first player to join…
               </div>
             ) : (
               players.map((p, i) => (
