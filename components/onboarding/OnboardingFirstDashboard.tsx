@@ -69,6 +69,7 @@ function OnboardingFirstDashboardInner({
   return (
     <LaptopShell title="tr1via.com / linda">
       <div
+        data-testid="host-onboarding-first"
         style={{
           padding: "40px 56px",
           display: "grid",
