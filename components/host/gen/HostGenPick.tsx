@@ -248,7 +248,7 @@ function QuestionCard({
       position: "relative",
       animation: "tr1via-rise .35s cubic-bezier(.2,.7,.3,1) both",
     }}>
-      <StockImage seed={q.seed ?? q.id} height={140} radius="13px 13px 0 0">
+      <StockImage src={q.imageUrl ?? null} seed={q.seed ?? q.id} height={140} radius="13px 13px 0 0">
         <div style={{ position: "absolute", top: 10, right: 10, display: "flex", gap: 6 }}>
           {q.edited && <span style={{ padding: "2px 7px", borderRadius: 99, background: "rgba(0,0,0,.55)", fontFamily: "var(--font-mono)", fontSize: 9, fontWeight: 600, color: "#FFF", letterSpacing: "0.08em" }}>EDITED</span>}
           {q.flavorTag && <span style={{ padding: "2px 7px", borderRadius: 99, background: "rgba(0,0,0,.55)", fontFamily: "var(--font-mono)", fontSize: 9, fontWeight: 600, color: "#FFF", letterSpacing: "0.08em" }}>{q.flavorTag}</span>}
