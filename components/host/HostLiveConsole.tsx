@@ -13,6 +13,7 @@ import { LaptopShell } from "@/components/shells";
 import {
   Eyebrow,
   Numeric,
+  QRBlock,
   ThemeProvider,
   TVTimerArc,
   useTheme,
@@ -77,6 +78,11 @@ export interface HostLiveConsoleProps {
   lockedCount?: number;
   /** True while the 2s undo window is still open. */
   canUndo?: boolean;
+  /** Room code (e.g. "WB3C3V"). Surfaced prominently so the host can show
+   *  the customer how to get players in — the live route already knows it. */
+  roomCode?: string;
+  /** Full URL the QR encodes. Defaults to `${origin}/join?code=<roomCode>`. */
+  joinUrl?: string;
   /** Called when the host taps a cell on the grid. */
   onRevealCell?: (questionId: string) => void;
   /** End-early reveals the live question now. */
@@ -156,6 +162,8 @@ function HostLiveConsoleInner({
   playersTotal,
   lockedCount,
   canUndo = true,
+  roomCode,
+  joinUrl,
   onRevealCell,
   onEndEarly,
   onUndo,
@@ -166,6 +174,8 @@ function HostLiveConsoleInner({
   const { t } = useTheme();
   const totalPlayers = playersTotal ?? players.length;
   const locks = lockedCount ?? players.filter((p) => p.locked).length;
+  const resolvedJoinUrl =
+    joinUrl ?? (roomCode ? `https://tr1via.com/join?code=${roomCode}` : null);
   const eyebrow = currentQuestion
     ? `QUESTION LIVE · ${currentQuestion.categoryName.toUpperCase()} · ${currentQuestion.pointValue}`
     : "BOARD READY · WAITING";
@@ -431,8 +441,49 @@ function HostLiveConsoleInner({
             }}
           >
             {players.length === 0 ? (
-              <div style={{ padding: "24px 0", color: t.inkMute, fontSize: 13 }}>
-                No players in the room yet.
+              <div
+                style={{
+                  padding: "20px 0",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  gap: 12,
+                }}
+              >
+                <Eyebrow color={t.accent} size={10}>
+                  PLAYERS · JOIN HERE
+                </Eyebrow>
+                {roomCode ? (
+                  <div
+                    style={{
+                      fontFamily: "var(--font-mono)",
+                      fontSize: 36,
+                      fontWeight: 700,
+                      color: t.ink,
+                      letterSpacing: "0.08em",
+                      lineHeight: 1,
+                    }}
+                  >
+                    {roomCode}
+                  </div>
+                ) : null}
+                {resolvedJoinUrl ? (
+                  <QRBlock url={resolvedJoinUrl} size={180} light />
+                ) : null}
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: t.inkMid,
+                    textAlign: "center",
+                    lineHeight: 1.45,
+                  }}
+                >
+                  Players go to <strong style={{ color: t.ink }}>tr1via.com/join</strong>
+                  <br />
+                  and enter <strong style={{ color: t.ink }}>{roomCode ?? "the code"}</strong>
+                  <br />
+                  or scan the QR.
+                </div>
               </div>
             ) : (
               players.map((p, i) => (
