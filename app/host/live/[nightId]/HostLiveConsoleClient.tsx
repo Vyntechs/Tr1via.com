@@ -35,6 +35,7 @@ import type {
   GameScoreRow,
 } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -244,6 +245,33 @@ export function HostLiveConsoleClient({
     ? `game ${currentGame.game_no} · ${currentGame.state}`
     : "waiting";
 
+  // ── derive the inline TV snapshot for the embedded TV panel ──────────
+  // The host page IS the venue TV when the laptop is HDMI'd to a screen
+  // (which Brandon's customer does). Rather than iframe /tv/[code] (which
+  // would duplicate the snapshot fetch + a second Realtime subscription),
+  // we translate the host's existing useRoom snapshot — plus the
+  // auxiliary state already loaded on this page (allQuestions, scores,
+  // answers) — into the TV's expected shape. Same component the
+  // standalone /tv/[code] route renders.
+  const tvSnapshot = useMemo(
+    () =>
+      roomToTVSnapshot({
+        room,
+        allQuestions,
+        scores,
+        answers,
+      }),
+    [room, allQuestions, scores, answers],
+  );
+  const tvLastBroadcastRevealedAt =
+    room.lastBroadcast?.event === "reveal"
+      ? room.lastBroadcast.revealedAt ?? null
+      : null;
+  const tvLastBroadcastServerNow =
+    room.lastBroadcast?.event === "reveal"
+      ? room.lastBroadcast.serverNow
+      : null;
+
   // ── action handlers ──────────────────────────────────────────────────
   async function handleReveal(questionId: string) {
     if (!currentGame) return;
@@ -386,6 +414,9 @@ export function HostLiveConsoleClient({
         }}
         onRemovePlayer={(pid) => void handleRemovePlayer(pid)}
         onAddPlayer={() => setAddingLatecomer(true)}
+        tvSnapshot={tvSnapshot}
+        tvLastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
+        tvLastBroadcastServerNow={tvLastBroadcastServerNow}
       />
       {adjusting && (
         <AdjustPointsModal

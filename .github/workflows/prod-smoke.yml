@@ -27,7 +27,7 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
 
@@ -71,3 +71,17 @@ jobs:
           SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
           SMOKE_BASE_URL: https://tr1via.com
         run: npx playwright test --config=playwright-prod.config.ts
+
+      # Full game-night driver: 3 simulated phones, 2 games, ~14 reveals end
+      # to end. ~80s green on prod. Catches the test-fixture/prod-divergence
+      # bug class that bypassed seed-night this week: real /api/nights →
+      # 'draft' state → /open → join → /start → reveal → /answers → resolve.
+      # If this step turns red, a real player just hit a bug.
+      - name: Full-flow driver (3 phones × 2 games against prod)
+        timeout-minutes: 3
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
+          SMOKE_BASE_URL: https://tr1via.com
+        run: node scripts/full-flow-prod.mjs
