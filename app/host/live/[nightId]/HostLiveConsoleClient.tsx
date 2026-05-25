@@ -124,33 +124,44 @@ export function HostLiveConsoleClient({
     };
   }, [room.currentGame]);
 
-  // ── subscribe to answers for the current question ────────────────────
+  // ── subscribe to answers for the current OR most-recently-resolved
+  //    question ─────────────────────────────────────────────────────────
+  // The sticky-reveal frame (after resolve, before host clicks next cell)
+  // needs the same answers rows the live frame had — that's how TVReveal /
+  // TVRevealStumper compute "X of N got it" + the fastest list. Targeting
+  // only `currentQuestion` clears the state the moment finished_at lands
+  // on the row (the row no longer matches useRoom's "live" definition),
+  // which leaves the sticky reveal painting "Nobody nailed this one." even
+  // when players did answer correctly. Mirror the fallback that
+  // roomToTVSnapshot.ts already uses for targetQuestionId.
+  const answerTargetId =
+    room.currentQuestion?.id ?? room.lastResolvedQuestion?.id ?? null;
   useEffect(() => {
-    if (!room.currentQuestion) {
+    if (!answerTargetId) {
       setAnswers([]);
       return;
     }
+    const targetId = answerTargetId;
     const supa = getSupabaseBrowser();
     let cancelled = false;
     async function load() {
-      if (!room.currentQuestion) return;
       const { data } = await supa
         .from("answers")
         .select("*")
-        .eq("question_id", room.currentQuestion.id);
+        .eq("question_id", targetId);
       if (cancelled) return;
       setAnswers(((data as AnswerRow[] | null) ?? []));
     }
     void load();
     const channel = supa
-      .channel(`host-answers:${room.currentQuestion.id}`)
+      .channel(`host-answers:${targetId}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "answers",
-          filter: `question_id=eq.${room.currentQuestion.id}`,
+          filter: `question_id=eq.${targetId}`,
         },
         () => void load(),
       )
@@ -159,7 +170,7 @@ export function HostLiveConsoleClient({
       cancelled = true;
       void supa.removeChannel(channel);
     };
-  }, [room.currentQuestion]);
+  }, [answerTargetId]);
 
   // ── track the last reveal timestamp for the undo window ──────────────
   useEffect(() => {
