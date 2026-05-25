@@ -60,6 +60,7 @@ import type {
   AnswerRow,
   CategoryRow,
   GameRow,
+  GameScoreRow,
   ParticipationRow,
   PlayerRow,
   QuestionRow,
@@ -255,6 +256,65 @@ function RoomStateMachine({
     return merged.sort((a, b) => a.locked_at.localeCompare(b.locked_at));
   }, [realAnswers, optimisticAnswers]);
 
+  // ── load + subscribe to game_scores for the current game ───────────────
+  // Same load+subscribe pattern HostLiveConsoleClient + the recap page use.
+  // Tri-state: `null` = pending (haven't completed a fetch yet) so the reveal
+  // surfaces render an unnumbered "in the mix" tag instead of "#0" while
+  // the initial REST query is in flight, or when the player is missing from
+  // the view (no game_participations row → silently absent forever).
+  const [scores, setScores] = useState<GameScoreRow[] | null>(null);
+  const currentGameId = currentGame?.id ?? null;
+  useEffect(() => {
+    if (!currentGameId) {
+      setScores(null);
+      return;
+    }
+    const gameId = currentGameId;
+    let cancelled = false;
+    const supa = getSupabaseBrowser();
+    async function load() {
+      const { data } = await supa
+        .from("game_scores")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("score", { ascending: false });
+      if (cancelled) return;
+      setScores((data as GameScoreRow[] | null) ?? []);
+    }
+    void load();
+    const channel = supa
+      .channel(`player-scores:${gameId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "answers" },
+        () => void load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "adjustments" },
+        () => void load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "game_participations" },
+        () => void load(),
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      void supa.removeChannel(channel);
+    };
+  }, [currentGameId]);
+
+  // 1-based rank, or `null` if the scores fetch hasn't landed yet OR the
+  // player isn't in the view (missing participation row). `null` propagates
+  // down to the reveal components, which render "in the mix" instead of "#0".
+  const myRank = useMemo<number | null>(() => {
+    if (scores === null) return null;
+    const idx = scores.findIndex((s) => s.player_id === me.id);
+    return idx >= 0 ? idx + 1 : null;
+  }, [scores, me.id]);
+
   // Player's game-2 opt-in (separate read; one row per game/player).
   const myParticipations = useMyParticipations(me.id);
   // Optimistic flag: postgres_changes for game_participations doesn't reach
@@ -344,6 +404,7 @@ function RoomStateMachine({
         myAnswers={myAnswers}
         categories={snapshot.categories}
         game={currentGame}
+        rank={myRank}
       />
     );
   }
@@ -370,6 +431,7 @@ function RoomStateMachine({
           myAnswers={myAnswers}
           categories={snapshot.categories}
           game={currentGame}
+          rank={myRank}
         />
       );
     }
@@ -644,6 +706,7 @@ function RevealView({
   myAnswers,
   categories,
   game,
+  rank,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -652,6 +715,10 @@ function RevealView({
   myAnswers: AnswerRow[];
   categories: CategoryRow[];
   game: GameRow | null;
+  /** Player's 1-based rank from game_scores. `null` while the scores
+   *  fetch hasn't landed or the player isn't in the view — propagates
+   *  down to PlayerRevealCorrect/Wrong which render "in the mix". */
+  rank: number | null;
 }) {
   // Use the player's saved scramble when we have an answer; otherwise compute
   // it deterministically so the correct slot still maps correctly.
@@ -674,8 +741,6 @@ function RevealView({
         msToLock: myAnswer.ms_to_lock,
       });
     const streak = computeStreak(myAnswers, question, categories, game);
-    // Without a leaderboard query, surface a friendly "running total" panel.
-    // Rank deferred until we wire game_scores into the page.
     const totalScore = sumAwarded(myAnswers, game);
     return (
       <PlayerRevealCorrect
@@ -684,7 +749,7 @@ function RevealView({
         awardedPoints={awarded}
         msToLock={myAnswer.ms_to_lock}
         streak={streak}
-        rank={0}
+        rank={rank}
         totalScore={totalScore}
         rankDelta={0}
         nextHint="Hold tight — the next question is on its way."
@@ -706,7 +771,7 @@ function RevealView({
       chosenText={chosenText}
       correctSlot={correctSlot}
       correctText={correctText}
-      rank={0}
+      rank={rank}
       totalScore={totalScore}
     />
   );
@@ -786,6 +851,55 @@ function PlayerJoinGame2Wired({
     game1Id,
   ]);
 
+  // The parent RoomStateMachine's scores subscription is scoped to
+  // `currentGame` which here is game 2 (game 1 is done) — wrong game for this
+  // screen. Scope a separate load+subscribe to game 1's scores so we can
+  // render the player's game-1 final placement. Tri-state `null` = pending
+  // → renders "Wrapped. Nice run." instead of "#0" while in flight.
+  const [game1Scores, setGame1Scores] = useState<GameScoreRow[] | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const supa = getSupabaseBrowser();
+    async function load() {
+      const { data } = await supa
+        .from("game_scores")
+        .select("*")
+        .eq("game_id", game1Id)
+        .order("score", { ascending: false });
+      if (cancelled) return;
+      setGame1Scores((data as GameScoreRow[] | null) ?? []);
+    }
+    void load();
+    const channel = supa
+      .channel(`player-join-g2-scores:${game1Id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "answers" },
+        () => void load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "adjustments" },
+        () => void load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "game_participations" },
+        () => void load(),
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      void supa.removeChannel(channel);
+    };
+  }, [game1Id]);
+
+  const finalRank = useMemo<number | null>(() => {
+    if (game1Scores === null) return null;
+    const idx = game1Scores.findIndex((s) => s.player_id === me.id);
+    return idx >= 0 ? idx + 1 : null;
+  }, [game1Scores, me.id]);
+
   const handleJoin = useCallback(async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -807,7 +921,7 @@ function PlayerJoinGame2Wired({
   return (
     <PlayerJoinGame2
       playerName={playerName}
-      finalRank={0}
+      finalRank={finalRank}
       finalScore={stats.score}
       bestCategory={stats.bestCategory}
       bestCategoryRatio={stats.bestCategoryRatio}
