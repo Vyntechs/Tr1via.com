@@ -19,13 +19,17 @@ import {
 import { LaptopShell } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
-import { DifficultyBar, StockImage } from "./_shared";
+import { StockImage } from "./_shared";
 
 export interface HostGenEditValues {
   prompt: string;
   options: [string, string, string, string];
   correctIndex: 0 | 1 | 2 | 3;
-  difficulty: number;
+  /** Host-placed slot on the board (100..700) or null to let the
+   *  lock-time auto-assign choose. The `difficulty` field is still on
+   *  the underlying row but no longer host-facing — Claude's rating
+   *  becomes a tiebreaker for picks the host hasn't placed manually. */
+  pointValue: 100 | 200 | 300 | 400 | 500 | 600 | 700 | null;
 }
 
 export interface HostGenEditProps {
@@ -54,7 +58,7 @@ const DEMO_INITIAL: HostGenEditValues = {
   prompt: "Ratatouille is set in which city?",
   options: ["Paris", "Lyon", "Marseille", "Nice"],
   correctIndex: 0,
-  difficulty: 2,
+  pointValue: 200,
 };
 
 export function HostGenEdit(props: HostGenEditProps) {
@@ -85,7 +89,9 @@ function HostGenEditInner({
   const [prompt, setPrompt] = useState(initial.prompt);
   const [options, setOptions] = useState<[string, string, string, string]>(initial.options);
   const [correctIndex, setCorrectIndex] = useState<0 | 1 | 2 | 3>(initial.correctIndex);
-  const [difficulty, setDifficulty] = useState<number>(initial.difficulty);
+  const [pointValue, setPointValue] = useState<HostGenEditValues["pointValue"]>(
+    initial.pointValue,
+  );
 
   function updateOption(idx: number, value: string) {
     setOptions((prev) => {
@@ -96,7 +102,7 @@ function HostGenEditInner({
   }
 
   function handleSave() {
-    onSave?.({ prompt, options, correctIndex, difficulty });
+    onSave?.({ prompt, options, correctIndex, pointValue });
   }
 
   return (
@@ -207,37 +213,65 @@ function HostGenEditInner({
             </div>
 
             <div>
-              <Eyebrow color={t.inkMute} size={9}>DIFFICULTY · AUTO</Eyebrow>
+              <Eyebrow color={t.inkMute} size={9}>POINT VALUE · PICK ONE</Eyebrow>
               <div style={{ marginTop: 10, padding: "14px 16px", borderRadius: 10, background: t.surface }}>
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
-                  <Numeric size={28} weight={700} color={cc}>{difficulty * 100}</Numeric>
+                  <Numeric size={28} weight={700} color={cc}>
+                    {pointValue ?? "—"}
+                  </Numeric>
                   <span style={{ fontSize: 11, color: t.inkMid, fontFamily: "var(--font-mono)", letterSpacing: "0.04em" }}>
-                    {difficulty <= 2 ? "EASY-MEDIUM" : difficulty <= 5 ? "MEDIUM" : "HARD"}
+                    {pointValue === null ? "AUTO ON LOCK" : "PLACED"}
                   </span>
                 </div>
-                <div style={{ marginTop: 10 }}>
-                  <DifficultyBar value={difficulty} color={cc} />
+                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+                  {([100, 200, 300, 400, 500, 600, 700] as const).map((v) => {
+                    const active = v === pointValue;
+                    return (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => setPointValue(v)}
+                        style={{
+                          padding: "8px 0",
+                          borderRadius: 6,
+                          border: `1px solid ${active ? cc : t.line}`,
+                          background: active ? cc : "transparent",
+                          color: active ? "#0E0805" : t.inkMid,
+                          fontSize: 11,
+                          fontWeight: 700,
+                          fontFamily: "var(--font-mono)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        {v}
+                      </button>
+                    );
+                  })}
                 </div>
-                <div style={{ marginTop: 8, display: "flex", gap: 6 }}>
-                  {[1, 2, 3, 4, 5, 6, 7].map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => setDifficulty(d)}
-                      style={{
-                        flex: 1,
-                        padding: "4px 0", borderRadius: 6,
-                        border: `1px solid ${d === difficulty ? cc : t.line}`,
-                        background: d === difficulty ? cc : "transparent",
-                        color: d === difficulty ? "#0E0805" : t.inkMid,
-                        fontSize: 11, fontWeight: 700, fontFamily: "var(--font-mono)", cursor: "pointer",
-                      }}
-                    >
-                      {d}
-                    </button>
-                  ))}
+                <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                  <div style={{ fontSize: 11, color: t.inkMute, fontWeight: 500, flex: 1 }}>
+                    Pick a slot already taken? Whatever was there moves to yours.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setPointValue(null)}
+                    disabled={pointValue === null}
+                    style={{
+                      padding: "4px 10px",
+                      borderRadius: 6,
+                      border: `1px solid ${t.line}`,
+                      background: "transparent",
+                      color: pointValue === null ? t.inkMute : t.ink,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      fontFamily: "var(--font-sans)",
+                      cursor: pointValue === null ? "default" : "pointer",
+                      opacity: pointValue === null ? 0.55 : 1,
+                    }}
+                  >
+                    Clear
+                  </button>
                 </div>
-                <div style={{ marginTop: 8, fontSize: 11, color: t.inkMute, fontWeight: 500 }}>Override if you disagree.</div>
               </div>
             </div>
           </div>
