@@ -73,10 +73,14 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(redirect);
   }
 
-  // Already signed in but visiting /login? Send them home.
-  if (user && pathname === "/login") {
-    return NextResponse.redirect(new URL("/host", request.url));
-  }
+  // /login deliberately renders even when the user is already signed in
+  // — the page detects the existing session and shows an "ALREADY SIGNED
+  // IN AS [email]" banner with a Sign Out option above the form. Without
+  // this escape hatch, a visitor who inherited someone else's cookie
+  // (shared device, founder-bypass remnant, etc.) had no way to switch
+  // accounts. The previous behavior was to redirect authed /login hits
+  // to /host, which is exactly how the first host ended up locked into the
+  // founder's session.
 
   return response;
 }
