@@ -15,6 +15,11 @@
 // library, settings, themes, admin) inherit the host's preference here,
 // keeping the experience consistent as the host navigates between them.
 //
+// Account chip: fixed top-right on every /host/* route, shows the
+// signed-in email + a Sign Out button. Solves the silent-session
+// inheritance problem (visit /host on a borrowed device → silently land
+// in someone else's account because there was no sign-out anywhere).
+//
 // Falls through to SYSTEM_DEFAULT when the host row hasn't loaded yet
 // (e.g. between auth + first DB read) so the layout never renders an
 // untyped theme. The root layout's <ThemeProvider> at the document level
@@ -22,7 +27,9 @@
 
 import type { ReactNode } from "react";
 import { ThemeProvider } from "@/components/system";
+import { AccountChip } from "@/components/host/AccountChip";
 import { getAuthedHost } from "@/lib/api/auth";
+import { getSupabaseServer } from "@/lib/supabase/server";
 import { resolveTheme, SYSTEM_DEFAULT_THEME } from "@/lib/theme/resolveTheme";
 
 export default async function HostLayout({ children }: { children: ReactNode }) {
@@ -30,6 +37,17 @@ export default async function HostLayout({ children }: { children: ReactNode }) 
   const themeKey = auth.ok
     ? resolveTheme(null, auth.host)
     : SYSTEM_DEFAULT_THEME;
+
+  // Email surfaces in the AccountChip so the host always knows whose
+  // account they're using. Pulled from the Supabase auth user (not the
+  // hosts row, which doesn't carry it). When auth is missing the chip
+  // hides — middleware will bounce the request to /login regardless.
+  let email: string | null = null;
+  if (auth.ok) {
+    const supa = await getSupabaseServer();
+    const { data: { user } } = await supa.auth.getUser();
+    email = user?.email ?? null;
+  }
 
   return (
     <ThemeProvider themeKey={themeKey}>
@@ -45,6 +63,7 @@ export default async function HostLayout({ children }: { children: ReactNode }) 
         }}
       >
         {children}
+        {email && <AccountChip email={email} />}
       </div>
     </ThemeProvider>
   );
