@@ -280,7 +280,7 @@ export function HostSetupPickClient({
           prompt: values.prompt,
           options: values.options,
           correctIndex: values.correctIndex,
-          difficulty: values.difficulty,
+          pointValue: values.pointValue,
         }),
       });
       if (!res.ok) {
@@ -534,6 +534,9 @@ export function HostSetupPickClient({
         options: q.options,
         correctIndex: q.correct_index,
         difficulty: q.difficulty,
+        // Surfaces any host-set point_value (from the Edit panel's
+        // POINT VALUE picker) so YOUR BOARD respects it.
+        pointValue: q.point_value,
         edited: q.source === "host-edit",
         imageUrl: q.image_url,
       })),
@@ -597,7 +600,7 @@ export function HostSetupPickClient({
               prompt: editingQuestion.prompt,
               options: editingQuestion.options,
               correctIndex: editingQuestion.correct_index,
-              difficulty: editingQuestion.difficulty,
+              pointValue: editingQuestion.point_value,
             }}
             imageSeed={editingQuestion.image_url ?? categoryTopic}
             onSave={handleSaveEdit}

@@ -20,7 +20,6 @@ import {
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
-import { previewPointValues } from "@/lib/game/difficulty";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { DifficultyBar, StockImage } from "./_shared";
 
@@ -32,6 +31,10 @@ export interface HostGenPickQuestion {
   options: [string, string, string, string];
   correctIndex: 0 | 1 | 2 | 3;
   difficulty: number;
+  /** Host-placed slot on the board (set via the Edit panel's POINT
+   *  VALUE picker). When present, supersedes the Claude-difficulty
+   *  derivation in YOUR BOARD. Mirrors `questions.point_value`. */
+  pointValue?: 100 | 200 | 300 | 400 | 500 | 600 | 700 | null;
   /** True if the host edited any field on this question. */
   edited?: boolean;
   /** Optional flavor tag for the badge ("OBSCURE", "POP", "LOCAL"). */
@@ -85,7 +88,7 @@ const DEMO_QUESTIONS: HostGenPickQuestion[] = [
   { id: "1", seed: "pixar1", prompt: "What was Pixar's first feature film?", options: ["Toy Story", "A Bug's Life", "Monsters, Inc.", "Finding Nemo"], correctIndex: 0, difficulty: 1 },
   { id: "2", seed: "pixar2", prompt: "In Up, what is the name of Carl's dog?", options: ["Dug", "Buddy", "Russell", "Charles"], correctIndex: 0, difficulty: 2 },
   { id: "3", seed: "pixar3", prompt: "Which year did Toy Story open in theaters?", options: ["1993", "1995", "1997", "2000"], correctIndex: 1, difficulty: 3 },
-  { id: "4", seed: "pixar4", prompt: "Wall·E's love interest is named what?", options: ["EVE", "AVA", "M-O", "BURN-E"], correctIndex: 0, difficulty: 4, edited: true },
+  { id: "4", seed: "pixar4", prompt: "Wall·E's love interest is named what?", options: ["EVE", "AVA", "M-O", "BURN-E"], correctIndex: 0, difficulty: 4, edited: true, pointValue: 700 }, // host-placed for design preview
   { id: "5", seed: "pixar5", prompt: "Inside Out's five emotions include joy, sadness, anger, fear, and what?", options: ["Disgust", "Surprise", "Envy", "Pride"], correctIndex: 0, difficulty: 4 },
   { id: "6", seed: "pixar6", prompt: "Ratatouille is set in which city?", options: ["Paris", "Lyon", "Marseille", "Nice"], correctIndex: 0, difficulty: 2 },
   { id: "7", seed: "pixar7", prompt: "In Monsters, Inc., what does CDA stand for?", options: ["Child Detection Agency", "City Defense Authority", "Closet Discovery Alliance", "Citizen Disposal Act"], correctIndex: 0, difficulty: 6, flavorTag: "OBSCURE" },
@@ -125,15 +128,33 @@ function HostGenPickInner({
   const picked = pickedIds ?? new Set(["1", "2", "3", "4", "7", "8"]);
   const pickedQs = questions.filter((q) => picked.has(q.id));
   // Mirror the server's lock-time assignment so the host sees the actual
-  // tier each pick will land at — not the (often-clumped) Claude-rated
-  // difficulty. At 7 picks this matches the server result exactly.
-  const tierByPickId = useMemo(
-    () =>
-      previewPointValues(
-        pickedQs.map((q) => ({ id: q.id, difficulty: q.difficulty })),
-      ),
-    [pickedQs],
-  );
+  // tier each pick will land at. Two-pass:
+  //   1. Explicit host-set point_values claim their slots directly
+  //      (matches the Edit panel's "PLACED" state — these are what the
+  //      Lock endpoint will honor via assignPointValues).
+  //   2. Remaining picks fill the open slots by Claude-rated difficulty
+  //      ascending — stable, same rule as the original algorithm.
+  // At 7 picks this matches the server result exactly.
+  const tierByPickId = useMemo(() => {
+    const map = new Map<string, number>();
+    const takenSlots = new Set<number>();
+    for (const q of pickedQs) {
+      if (q.pointValue !== undefined && q.pointValue !== null) {
+        map.set(q.id, q.pointValue);
+        takenSlots.add(q.pointValue);
+      }
+    }
+    const openSlots = [100, 200, 300, 400, 500, 600, 700].filter(
+      (v) => !takenSlots.has(v),
+    );
+    const unplaced = pickedQs
+      .filter((q) => q.pointValue === undefined || q.pointValue === null)
+      .sort((a, b) => a.difficulty - b.difficulty);
+    for (let i = 0; i < unplaced.length && i < openSlots.length; i++) {
+      map.set(unplaced[i]!.id, openSlots[i] as number);
+    }
+    return map;
+  }, [pickedQs]);
   return (
     <LaptopShell title={shellTitle}>
       <div style={{ padding: "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
