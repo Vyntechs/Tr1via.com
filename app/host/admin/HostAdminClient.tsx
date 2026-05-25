@@ -97,6 +97,8 @@ function Inner({ meDisplayName, initialHosts }: { meDisplayName: string; initial
         }}
       />
 
+      <GrantLinkForm />
+
       {founder && (
         <section>
           <Eyebrow color={t.inkMid} size={10}>YOU</Eyebrow>
@@ -277,6 +279,205 @@ function CompForm({ onCreated }: { onCreated: (row: AdminHostRow) => void }) {
           ✓ Comped <strong>{state.email}</strong>. They can sign in at tr1via.com/login now.
         </div>
       )}
+      {state.kind === "error" && (
+        <div
+          role="alert"
+          style={{
+            marginTop: 12,
+            padding: "10px 14px",
+            borderRadius: 10,
+            background: `${t.wrong}22`,
+            color: t.wrong,
+            fontSize: 13,
+            lineHeight: 1.4,
+            fontWeight: 600,
+          }}
+        >
+          {state.message}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Founder-only tool: generate a one-click sign-in URL for any registered
+ * host and hand it to them out-of-band (text, AirDrop). Solves the
+ * Supabase magic-link rate limit + email-deliverability friction that
+ * stalled Heather on 2026-05-25 the day before her go-live.
+ *
+ * Out of scope here: creating brand-new hosts (use "Comp a host" above).
+ * The endpoint returns 404 for emails that aren't already registered.
+ */
+function GrantLinkForm() {
+  const { t } = useTheme();
+  const [email, setEmail] = useState("");
+  const [state, setState] = useState<
+    | { kind: "idle" }
+    | { kind: "sending" }
+    | { kind: "ready"; url: string; email: string; displayName: string | null }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+  const [copied, setCopied] = useState(false);
+
+  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (state.kind === "sending") return;
+    const trimmed = email.trim();
+    if (!trimmed) return;
+    setState({ kind: "sending" });
+    setCopied(false);
+    try {
+      const res = await fetch("/api/admin/grant-magic-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: trimmed }),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { url?: string; email?: string; displayName?: string | null; error?: string }
+        | null;
+      if (!res.ok || !body?.url) {
+        setState({
+          kind: "error",
+          message: body?.error ?? `request failed (${res.status})`,
+        });
+        return;
+      }
+      setState({
+        kind: "ready",
+        url: body.url,
+        email: body.email ?? trimmed,
+        displayName: body.displayName ?? null,
+      });
+    } catch (err) {
+      setState({
+        kind: "error",
+        message: err instanceof Error ? err.message : "network error",
+      });
+    }
+  }
+
+  async function handleCopy() {
+    if (state.kind !== "ready") return;
+    try {
+      await navigator.clipboard.writeText(state.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      // clipboard blocked — user can still select-copy manually
+    }
+  }
+
+  const sending = state.kind === "sending";
+
+  return (
+    <section
+      style={{
+        padding: "24px 24px 22px",
+        borderRadius: 16,
+        background: t.surface,
+        border: `1px solid ${t.line}`,
+      }}
+    >
+      <Eyebrow color={t.accent} size={11}>SEND A SIGN-IN LINK</Eyebrow>
+      <p style={{ color: t.inkMid, fontSize: 14, lineHeight: 1.5, marginTop: 8, marginBottom: 18 }}>
+        Generate a one-click URL for any host. Text it to them — they
+        click it and land on their dashboard signed in. No email check,
+        no rate limit. Link expires in about an hour.
+      </p>
+
+      <form onSubmit={handleSubmit} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
+        <Field
+          label="Host email"
+          value={email}
+          onChange={setEmail}
+          placeholder="host@theirplace.com"
+          type="email"
+          required
+          disabled={sending}
+        />
+        <button
+          type="submit"
+          disabled={sending || !email.trim()}
+          style={{
+            padding: "14px 22px",
+            background: t.accent,
+            color: "#FFF",
+            border: "none",
+            borderRadius: 12,
+            fontFamily: "var(--font-sans)",
+            fontSize: 15,
+            fontWeight: 700,
+            cursor: sending ? "default" : "pointer",
+            opacity: sending ? 0.6 : 1,
+            boxShadow: `0 14px 30px -10px ${t.accent}66`,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {sending ? "Generating…" : "Generate link  →"}
+        </button>
+      </form>
+
+      {state.kind === "ready" && (
+        <div
+          style={{
+            marginTop: 14,
+            padding: "14px 16px",
+            borderRadius: 12,
+            background: `${t.correct}11`,
+            border: `1px solid ${t.correct}55`,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          <div style={{ fontSize: 13, color: t.ink, lineHeight: 1.4 }}>
+            ✓ Link ready for <strong>{state.email}</strong>
+            {state.displayName ? ` (${state.displayName})` : ""}. Text or
+            AirDrop this URL — when they tap it, they land signed in.
+          </div>
+          <div style={{ display: "flex", gap: 10, alignItems: "stretch" }}>
+            <code
+              data-testid="grant-link-url"
+              style={{
+                flex: 1,
+                padding: "10px 12px",
+                borderRadius: 8,
+                background: t.paper,
+                border: `1px solid ${t.line}`,
+                fontFamily: "var(--font-mono)",
+                fontSize: 11.5,
+                color: t.ink,
+                wordBreak: "break-all",
+                lineHeight: 1.4,
+                userSelect: "all",
+              }}
+            >
+              {state.url}
+            </code>
+            <button
+              type="button"
+              onClick={() => void handleCopy()}
+              data-testid="grant-link-copy"
+              style={{
+                padding: "10px 16px",
+                borderRadius: 8,
+                border: `1px solid ${t.line}`,
+                background: copied ? t.correct : t.paper,
+                color: copied ? "#FFF" : t.ink,
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {copied ? "Copied ✓" : "Copy"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {state.kind === "error" && (
         <div
           role="alert"
