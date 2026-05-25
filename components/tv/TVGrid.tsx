@@ -26,6 +26,9 @@ export interface TVGridCell {
   selected: boolean;
   /** Point value displayed in the cell, e.g. 100 ... 700. */
   value: number;
+  /** Underlying question id. Required for cells the host can click via
+   *  `onCellClick`; omit (or set null) on the audience-only TV route. */
+  questionId?: string | null;
 }
 
 export interface TVGridLeader {
@@ -58,6 +61,12 @@ export interface TVGridProps {
   footerRight?: string;
   /** Optional "up next" sidebar card; null hides it. */
   upNext?: { category: string; value: number; sub?: string } | null;
+  /** When provided, unplayed cells with a `questionId` render as buttons —
+   *  click fires the callback with that id. The host laptop uses this to
+   *  let Heather tap cells directly on the same surface patrons watch on
+   *  the HDMI'd TV, so the venue screen never shows separate host chrome.
+   *  Omit on the standalone `/tv/[code]` route to keep cells inert. */
+  onCellClick?: (questionId: string) => void;
 }
 
 const DEMO_CATEGORIES = ["Geography", "Animals", "Food", "Movies", "Music", "History"];
@@ -97,6 +106,7 @@ function TVGridInner({
   footerLeft = "WAITING ON LINDA",
   footerRight = "TR1VIA.COM · K9·PR4M",
   upNext = { category: "Food", value: 300, sub: "standing by to reveal" },
+  onCellClick,
 }: Omit<TVGridProps, "themeKey">) {
   const { t } = useTheme();
   const board = cells ?? demoCells();
@@ -171,48 +181,89 @@ function TVGridInner({
                   const cell = board[cIdx]?.[rIdx] ?? { played: false, selected: false, value: v };
                   const isPlayed = cell.played;
                   const isSelected = cell.selected;
+                  const clickable =
+                    !!onCellClick &&
+                    !!cell.questionId &&
+                    !isPlayed &&
+                    !isSelected;
+                  const cellStyle = {
+                    borderRadius: 10,
+                    background: isSelected
+                      ? cc
+                      : isPlayed
+                        ? "transparent"
+                        : t.dark
+                          ? "rgba(244,230,196,.06)"
+                          : "rgba(27,19,12,.04)",
+                    border: isPlayed
+                      ? `1px dashed ${t.line}`
+                      : isSelected
+                        ? `2px solid ${cc}`
+                        : `1px solid ${t.line}`,
+                    boxShadow: isSelected
+                      ? `0 10px 36px -10px ${cc}77, 0 0 0 4px ${cc}22`
+                      : "none",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    position: "relative" as const,
+                    overflow: "hidden",
+                    transition: "all .3s cubic-bezier(.2,.7,.3,1)",
+                    transform: isSelected ? "scale(1.04)" : "scale(1)",
+                    cursor: clickable ? "pointer" : "default",
+                  };
+                  const innerNumeric = (
+                    <Numeric
+                      size={36}
+                      weight={700}
+                      color={isSelected ? "#0E0805" : isPlayed ? t.inkMute : t.ink}
+                      tracking={-0.03}
+                      style={{
+                        textDecoration: isPlayed ? "line-through" : "none",
+                        opacity: isPlayed ? 0.4 : 1,
+                      }}
+                    >
+                      {cell.value}
+                    </Numeric>
+                  );
+                  if (clickable && cell.questionId) {
+                    const qid = cell.questionId;
+                    return (
+                      <button
+                        key={`${cIdx}-${rIdx}`}
+                        type="button"
+                        data-testid={`host-question-${qid}`}
+                        onClick={() => onCellClick?.(qid)}
+                        style={{
+                          ...cellStyle,
+                          padding: 0,
+                          appearance: "none",
+                          font: "inherit",
+                          color: "inherit",
+                        }}
+                      >
+                        <span
+                          data-testid={`tv-grid-cell-${cIdx}-${cell.value}`}
+                          style={{
+                            position: "absolute",
+                            inset: 0,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                          }}
+                        >
+                          {innerNumeric}
+                        </span>
+                      </button>
+                    );
+                  }
                   return (
                     <div
                       key={`${cIdx}-${rIdx}`}
                       data-testid={`tv-grid-cell-${cIdx}-${cell.value}`}
-                      style={{
-                        borderRadius: 10,
-                        background: isSelected
-                          ? cc
-                          : isPlayed
-                            ? "transparent"
-                            : t.dark
-                              ? "rgba(244,230,196,.06)"
-                              : "rgba(27,19,12,.04)",
-                        border: isPlayed
-                          ? `1px dashed ${t.line}`
-                          : isSelected
-                            ? `2px solid ${cc}`
-                            : `1px solid ${t.line}`,
-                        boxShadow: isSelected
-                          ? `0 10px 36px -10px ${cc}77, 0 0 0 4px ${cc}22`
-                          : "none",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        position: "relative",
-                        overflow: "hidden",
-                        transition: "all .3s cubic-bezier(.2,.7,.3,1)",
-                        transform: isSelected ? "scale(1.04)" : "scale(1)",
-                      }}
+                      style={cellStyle}
                     >
-                      <Numeric
-                        size={36}
-                        weight={700}
-                        color={isSelected ? "#0E0805" : isPlayed ? t.inkMute : t.ink}
-                        tracking={-0.03}
-                        style={{
-                          textDecoration: isPlayed ? "line-through" : "none",
-                          opacity: isPlayed ? 0.4 : 1,
-                        }}
-                      >
-                        {cell.value}
-                      </Numeric>
+                      {innerNumeric}
                     </div>
                   );
                 })}
