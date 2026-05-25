@@ -213,3 +213,108 @@ describe("previewPointValues", () => {
     expect(picked).toEqual(snapshot);
   });
 });
+
+// ─── PR G1: host-set pointValue (Heather complaint #1 + #4) ────────────────
+// Heather couldn't make the Edit panel's "400" button actually land a
+// question at 400. Root cause: assignPointValues only looked at difficulty.
+// These tests pin the new contract: explicit pointValue wins; auto-assign
+// fills only the remaining slots.
+
+describe("assignPointValues — explicit point_value support", () => {
+  it("respects an explicit point_value on a single pick", () => {
+    const picked = [
+      // host pinned a difficulty-1 question all the way at 700
+      { id: "q-easy", difficulty: 1, pointValue: 700 },
+      { id: "q1", difficulty: 2 },
+      { id: "q2", difficulty: 3 },
+      { id: "q3", difficulty: 4 },
+      { id: "q4", difficulty: 5 },
+      { id: "q5", difficulty: 6 },
+      // would normally land at 700, but the explicit took it
+      { id: "q6", difficulty: 7 },
+    ];
+    const result = assignPointValues(picked);
+    const byId = new Map(result.map((r) => [r.id, r.pointValue]));
+    expect(byId.get("q-easy")).toBe(700);
+    expect(byId.get("q1")).toBe(100);
+    expect(byId.get("q2")).toBe(200);
+    expect(byId.get("q3")).toBe(300);
+    expect(byId.get("q4")).toBe(400);
+    expect(byId.get("q5")).toBe(500);
+    expect(byId.get("q6")).toBe(600);
+  });
+
+  it("respects multiple explicit values; auto-fills the gaps", () => {
+    const picked = [
+      { id: "a", difficulty: 1, pointValue: 400 },
+      { id: "b", difficulty: 2, pointValue: 700 },
+      { id: "c", difficulty: 3 },
+      { id: "d", difficulty: 4 },
+      { id: "e", difficulty: 5 },
+      { id: "f", difficulty: 6 },
+      { id: "g", difficulty: 7 },
+    ];
+    const result = assignPointValues(picked);
+    const byId = new Map(result.map((r) => [r.id, r.pointValue]));
+    expect(byId.get("a")).toBe(400);
+    expect(byId.get("b")).toBe(700);
+    // c..g (difficulties 3..7) fill open slots 100, 200, 300, 500, 600 in order
+    expect(byId.get("c")).toBe(100);
+    expect(byId.get("d")).toBe(200);
+    expect(byId.get("e")).toBe(300);
+    expect(byId.get("f")).toBe(500);
+    expect(byId.get("g")).toBe(600);
+  });
+
+  it("treats pointValue:null the same as omitted (auto-fill)", () => {
+    const picked = [
+      { id: "a", difficulty: 1, pointValue: null },
+      { id: "b", difficulty: 2 },
+      { id: "c", difficulty: 3, pointValue: 700 },
+      { id: "d", difficulty: 4 },
+      { id: "e", difficulty: 5 },
+      { id: "f", difficulty: 6 },
+      { id: "g", difficulty: 7 },
+    ];
+    const result = assignPointValues(picked);
+    const byId = new Map(result.map((r) => [r.id, r.pointValue]));
+    expect(byId.get("c")).toBe(700);
+    expect(byId.get("a")).toBe(100);
+    expect(byId.get("b")).toBe(200);
+    expect(byId.get("d")).toBe(300);
+    expect(byId.get("e")).toBe(400);
+    expect(byId.get("f")).toBe(500);
+    expect(byId.get("g")).toBe(600);
+  });
+
+  it("throws when two picks claim the same explicit point value", () => {
+    const picked = [
+      { id: "a", difficulty: 1, pointValue: 400 },
+      { id: "b", difficulty: 2, pointValue: 400 },
+      { id: "c", difficulty: 3 },
+      { id: "d", difficulty: 4 },
+      { id: "e", difficulty: 5 },
+      { id: "f", difficulty: 6 },
+      { id: "g", difficulty: 7 },
+    ];
+    expect(() => assignPointValues(picked)).toThrow(/duplicate.*400/i);
+  });
+
+  it("accepts a fully-explicit valid permutation", () => {
+    // Sanity: 7 explicit, all distinct → no error, just returns as-is.
+    const picked = [
+      { id: "a", difficulty: 7, pointValue: 100 },
+      { id: "b", difficulty: 6, pointValue: 200 },
+      { id: "c", difficulty: 5, pointValue: 300 },
+      { id: "d", difficulty: 4, pointValue: 400 },
+      { id: "e", difficulty: 3, pointValue: 500 },
+      { id: "f", difficulty: 2, pointValue: 600 },
+      { id: "g", difficulty: 1, pointValue: 700 },
+    ];
+    const result = assignPointValues(picked);
+    const byId = new Map(result.map((r) => [r.id, r.pointValue]));
+    expect(byId.get("a")).toBe(100);
+    expect(byId.get("d")).toBe(400);
+    expect(byId.get("g")).toBe(700);
+  });
+});
