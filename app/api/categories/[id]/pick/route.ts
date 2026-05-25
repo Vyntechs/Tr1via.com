@@ -63,7 +63,7 @@ export async function POST(
   // ids on update, but checking up front lets us return a clean 400.
   const { data: belongs, error: belongsError } = await admin
     .from("questions")
-    .select("id, difficulty")
+    .select("id, difficulty, point_value")
     .eq("category_id", categoryId)
     .in("id", questionIds);
   if (belongsError) {
@@ -75,9 +75,17 @@ export async function POST(
     );
   }
 
-  // Assign point values 100..700 based on Claude-rated difficulty (stable).
+  // Assign point values 100..700. Any question the host has already
+  // explicitly placed via the Edit panel keeps its slot; the remaining
+  // picks fill open slots by Claude-rated difficulty asc (stable). This
+  // is the change that fixes the first host's "I edited to 400 but it shows
+  // 200" complaint: her override now flows all the way through to lock.
   const assignments = assignPointValues(
-    belongs.map((row) => ({ id: row.id, difficulty: row.difficulty })),
+    belongs.map((row) => ({
+      id: row.id,
+      difficulty: row.difficulty,
+      pointValue: row.point_value,
+    })),
   );
 
   // Two-phase update: unpick everything first (idempotent in case of

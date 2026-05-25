@@ -60,6 +60,45 @@ export async function PATCH(
     update.correct_index = patch.correctIndex;
   if (patch.difficulty !== undefined) update.difficulty = patch.difficulty;
   if (patch.factBlurb !== undefined) update.fact_blurb = patch.factBlurb;
+  if (patch.pointValue !== undefined) {
+    update.point_value = patch.pointValue as
+      | 100 | 200 | 300 | 400 | 500 | 600 | 700 | null;
+  }
+
+  // Atomic swap: if this question is already PICKED and the host is
+  // moving it to a slot held by ANOTHER picked question in the same
+  // category, vacate the current slot, hand it to the displaced question,
+  // then fall through to the main update which lands the new value.
+  // Three writes, never overlapping, so the deferrable unique
+  // (category_id, point_value) partial index never fires.
+  if (
+    patch.pointValue !== undefined &&
+    patch.pointValue !== null &&
+    owned.question.is_picked === true
+  ) {
+    const { data: occupant } = await admin
+      .from("questions")
+      .select("id, point_value")
+      .eq("category_id", owned.question.category_id)
+      .eq("is_picked", true)
+      .eq("point_value", patch.pointValue)
+      .neq("id", questionId)
+      .maybeSingle();
+
+    if (occupant && occupant.point_value !== null) {
+      const previousValue = owned.question.point_value;
+      await admin
+        .from("questions")
+        .update({ point_value: null })
+        .eq("id", questionId);
+      await admin
+        .from("questions")
+        .update({ point_value: previousValue })
+        .eq("id", occupant.id);
+      // Falls through to the main update which sets this question's
+      // point_value to patch.pointValue.
+    }
+  }
 
   const { data: updated, error } = await admin
     .from("questions")

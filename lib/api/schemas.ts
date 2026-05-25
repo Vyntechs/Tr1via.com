@@ -208,6 +208,22 @@ export const PatchQuestionBodySchema = z
     correctIndex: CorrectIndexSchema.optional(),
     difficulty: z.number().int().min(1).max(7).optional(),
     factBlurb: z.string().trim().min(1).max(280).optional(),
+    /** Host-placed slot on the board. `null` clears any host override
+     *  (lock-time auto-assign refills it). When the question is already
+     *  picked AND another picked question in the same category holds
+     *  that slot, the PATCH performs an atomic swap. */
+    pointValue: z
+      .union([
+        z.literal(100),
+        z.literal(200),
+        z.literal(300),
+        z.literal(400),
+        z.literal(500),
+        z.literal(600),
+        z.literal(700),
+        z.null(),
+      ])
+      .optional(),
   })
   .strict()
   .refine(
@@ -216,7 +232,8 @@ export const PatchQuestionBodySchema = z
       body.options !== undefined ||
       body.correctIndex !== undefined ||
       body.difficulty !== undefined ||
-      body.factBlurb !== undefined,
+      body.factBlurb !== undefined ||
+      body.pointValue !== undefined,
     { message: "PATCH body must include at least one field to update" },
   );
 
