@@ -250,6 +250,7 @@ function HostGenPickInner({
           cc={cc}
           picked={pickedQs}
           tierByPickId={tierByPickId}
+          onUnpick={onTogglePick}
           onLock={onLock}
           isLocking={isLocking}
         />
@@ -373,12 +374,17 @@ function PickSidebar({
   cc,
   picked,
   tierByPickId,
+  onUnpick,
   onLock,
   isLocking,
 }: {
   cc: string;
   picked: HostGenPickQuestion[];
   tierByPickId: Map<string, number>;
+  /** Unpick a question directly from the board (the first host's request: she
+   *  doesn't want to scroll the 20-card grid to find + unclick). When
+   *  omitted, the × button is hidden. */
+  onUnpick?: (questionId: string) => void;
   onLock?: () => void;
   isLocking: boolean;
 }) {
@@ -406,21 +412,55 @@ function PickSidebar({
       <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1, overflow: "auto" }}>
         {slots.map((v) => {
           const filled = byTier[v];
+          // Three-column when the unpick button can render (filled + handler);
+          // two-column otherwise so the empty-slot row keeps its existing
+          // alignment.
+          const showUnpick = !!filled && !!onUnpick;
           return (
             <div key={v} style={{
-              display: "grid", gridTemplateColumns: "52px 1fr", alignItems: "center", gap: 12,
+              display: "grid",
+              gridTemplateColumns: showUnpick ? "52px 1fr 24px" : "52px 1fr",
+              alignItems: "center", gap: 12,
               padding: "10px 12px", borderRadius: 10,
               background: filled ? (t.dark ? `${cc}10` : `${cc}06`) : "transparent",
               border: `1px ${filled ? "solid" : "dashed"} ${filled ? cc : t.line}`,
             }}>
               <Numeric size={18} color={filled ? cc : t.inkMute} weight={700}>{v}</Numeric>
               {filled ? (
-                <div>
+                <div style={{ minWidth: 0 }}>
                   <div style={{ fontSize: 12, color: t.ink, fontWeight: 600, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{filled.prompt}</div>
                   <div style={{ marginTop: 2, fontSize: 10, color: t.inkMute, fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>{filled.options[filled.correctIndex]}</div>
                 </div>
               ) : (
                 <span style={{ fontSize: 12, color: t.inkMute, fontWeight: 500 }}>open · pick a {v === 100 ? "easy" : v === 700 ? "hard" : ""} one</span>
+              )}
+              {showUnpick && (
+                <button
+                  type="button"
+                  onClick={() => onUnpick(filled.id)}
+                  aria-label={`Remove from slot ${v}`}
+                  title={`Remove (slot ${v} opens up)`}
+                  data-testid={`pick-sidebar-unpick-${v}`}
+                  style={{
+                    width: 24,
+                    height: 24,
+                    borderRadius: 99,
+                    border: `1px solid ${t.line}`,
+                    background: "transparent",
+                    color: t.inkMid,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    fontFamily: "var(--font-sans)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 0,
+                    lineHeight: 1,
+                  }}
+                >
+                  ×
+                </button>
               )}
             </div>
           );

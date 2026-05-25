@@ -73,8 +73,10 @@ export default function HostGenGallery() {
     {
       step: "4",
       title: "Pick 7 of 20",
-      note: "Picking the seven for the board; sidebar fills as she picks.",
-      render: () => <HostGenPick />,
+      note: "Picking the seven for the board; sidebar fills as she picks. Click × on a sidebar slot to unpick.",
+      // Empty noop wires the unpick × button in the sidebar preview.
+      // Real callers pass the real onTogglePick handler.
+      render: () => <HostGenPick onTogglePick={() => {}} />,
     },
     {
       step: "5",
