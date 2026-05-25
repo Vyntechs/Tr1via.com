@@ -89,17 +89,26 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .eq("user_id", target.id)
     .maybeSingle();
 
-  const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
-    type: "magiclink",
-    email: parsed.email,
-    options: { redirectTo: `${siteUrl(req)}/auth/callback` },
-  });
-  if (linkErr || !linkData?.properties?.action_link) {
+  // generateLink mints a one-shot OTP token tied to this email. We don't
+  // want the recipient to follow Supabase's verify URL directly — that
+  // flow returns the session via URL hash (implicit) and lands them on
+  // the bare site URL with no SSR cookies. Instead we wrap the
+  // hashed_token in our own /auth/grant route which does the OTP
+  // exchange server-side and writes cookies on the response.
+  const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink(
+    {
+      type: "magiclink",
+      email: parsed.email,
+    },
+  );
+  if (linkErr || !linkData?.properties?.hashed_token) {
     return serverError(linkErr?.message ?? "generateLink failed");
   }
 
+  const grantUrl = `${siteUrl(req)}/auth/grant?t=${encodeURIComponent(linkData.properties.hashed_token)}`;
+
   return ok({
-    url: linkData.properties.action_link,
+    url: grantUrl,
     email: parsed.email,
     displayName: hostRow?.display_name ?? null,
   });
