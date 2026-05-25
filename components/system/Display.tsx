@@ -6,7 +6,9 @@ import type { CSSProperties, ReactNode } from "react";
 
 export interface DisplayProps {
   children: ReactNode;
-  size?: number;
+  /** Pixel size as a number, or any CSS length string (e.g. `"clamp(80px, 16vh, 188px)"`)
+   *  for callers that need the headline to respond to viewport. */
+  size?: number | string;
   color?: string;
   weight?: number;
   tracking?: number;
@@ -31,7 +33,7 @@ export function Display({
         fontWeight: weight,
         fontStretch: "85%",
         fontStyle: italic ? "italic" : "normal",
-        fontSize: size,
+        fontSize: typeof size === "number" ? size : size,
         letterSpacing: `${tracking}em`,
         lineHeight: 0.92,
         color: color ?? "currentColor",

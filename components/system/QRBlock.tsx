@@ -15,7 +15,10 @@ import { useTheme } from "./ThemeProvider";
 
 export interface QRBlockProps {
   url: string;
-  size?: number;
+  /** Pixel size as a number, or any CSS length string (e.g. `"clamp(180px, 25vh, 300px)"`)
+   *  for callers that need the QR to respond to viewport. Padding scales
+   *  proportionally via CSS `calc()` when a string is passed. */
+  size?: number | string;
   /** Force a white card with dark code — for use on the venue TV where
    *  contrast against the room matters more than theme harmony. */
   light?: boolean;
@@ -34,6 +37,10 @@ export function QRBlock({ url, size = 220, light = false }: QRBlockProps) {
   const bg = light ? "#FFFFFF" : t.dark ? t.ink : "#FFFFFF";
   const fg = light ? "#0E0805" : t.dark ? t.paper : t.ink;
 
+  // Padding scales with size — 4.5% of the box keeps the quiet zone
+  // proportional whether `size` is a pixel number or a clamp() expression.
+  const padding = typeof size === "number" ? size * 0.045 : `calc(${size} * 0.045)`;
+
   return (
     <div
       style={{
@@ -41,7 +48,7 @@ export function QRBlock({ url, size = 220, light = false }: QRBlockProps) {
         height: size,
         background: bg,
         borderRadius: 14,
-        padding: size * 0.045,
+        padding,
         boxSizing: "border-box",
       }}
     >

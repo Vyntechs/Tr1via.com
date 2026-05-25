@@ -77,7 +77,9 @@ function TVLobbyInner({
       <div
         style={{
           flex: 1,
-          padding: "36px 56px 16px",
+          // Padding scales with viewport so a 13" laptop doesn't lose 80px
+          // of vertical to fixed top/bottom gutters.
+          padding: "clamp(8px, 2vh, 28px) 56px clamp(4px, 1vh, 12px)",
           display: "grid",
           gridTemplateColumns: "1.25fr 1fr",
           gap: 56,
@@ -87,17 +89,31 @@ function TVLobbyInner({
         }}
       >
         <div>
-          <Display size={188} color={t.ink} weight={700} tracking={-0.05}>
+          <Display
+            // Headline scales with viewport height. The 3-line stack at
+            // lineHeight 0.92 multiplies the font size by ~2.76, so the
+            // viewport-relative term has to leave room for the rest of the
+            // column (instructional text + tr1via.com/room-code block) AND
+            // the host control strip + LaptopShell chrome that consume the
+            // viewport outside TVStage. 14vh keeps the 3 lines comfortably
+            // above the fold down to ~700px usable height. Original 188px
+            // is preserved as the ceiling for ≥1340px viewports (real TVs
+            // and external displays the venue would normally use).
+            size="clamp(72px, 14vh, 188px)"
+            color={t.ink}
+            weight={700}
+            tracking={-0.05}
+          >
             Scan,<br />
             <span style={{ color: t.accent }}>play,</span><br />
             <span style={{ color: t.pop }}>win.</span>
           </Display>
 
-          <div style={{ marginTop: 28, fontSize: 22, color: t.inkMid, lineHeight: 1.4, maxWidth: 580 }}>
+          <div style={{ marginTop: "clamp(10px, 2vh, 28px)", fontSize: 22, color: t.inkMid, lineHeight: 1.4, maxWidth: 580 }}>
             Open your camera, point at the code, pick a name. You&apos;re in the room in under ten seconds.
           </div>
 
-          <div style={{ marginTop: 44, display: "flex", gap: 36, alignItems: "flex-start" }}>
+          <div style={{ marginTop: "clamp(16px, 3vh, 44px)", display: "flex", gap: 36, alignItems: "flex-start" }}>
             <div>
               <Eyebrow color={t.inkMute} size={11}>OR ON YOUR PHONE</Eyebrow>
               <div
@@ -146,7 +162,13 @@ function TVLobbyInner({
               border: `1px solid ${t.line}`,
             }}
           >
-            <QRBlock url={joinUrl} size={300} light />
+            <QRBlock
+              url={joinUrl}
+              // QR scales with viewport but never drops below 160px —
+              // scannable from across a small bar room even at the floor.
+              size="clamp(160px, 25vh, 300px)"
+              light
+            />
           </div>
 
           <div
