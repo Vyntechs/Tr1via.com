@@ -13,6 +13,7 @@
 import { notFound, redirect } from "next/navigation";
 import { requireOwnedCategory } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import type { QuestionRow } from "@/lib/supabase/types";
 import { HostSetupPickClient } from "./HostSetupPickClient";
 
@@ -49,7 +50,7 @@ export default async function SetupPickPage({
       categoryTopic={owned.category.topic}
       initialState={owned.category.state}
       initialQuestions={questions}
-      themeKey={owned.night.theme_key ?? "house"}
+      themeKey={resolveTheme(owned.night, owned.host)}
     />
   );
 }
