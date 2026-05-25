@@ -45,8 +45,13 @@ const Body = z
   .strict();
 
 function siteUrl(req: NextRequest): string {
-  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  // Always derive from the incoming request — the founder is generating
+  // the URL on whichever surface they're on (prod, preview, even local
+  // dev), and the URL needs to round-trip through that same surface's
+  // /auth/grant route so the cookies land in the right cookie jar.
+  // We deliberately do NOT use NEXT_PUBLIC_SITE_URL here because that's
+  // a build-time-inlined value and can drift (e.g. preview deploys can
+  // end up with a localhost value from .env.local at build time).
   return new URL(req.url).origin;
 }
 
