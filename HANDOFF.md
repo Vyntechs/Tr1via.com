@@ -1,162 +1,133 @@
-# TR1VIA — Handoff (end of session 9, 2026-05-24 late night)
+# TR1VIA — Handoff (end of session 10, 2026-05-25)
 
-**Next session: read this → `MEMORY.md` (auto-loaded) → `tr1via-plan.md` → `supabase/README.md` → `README.md`.** Prior session handoffs live in git history (session 7 at `4f889c8`; session 8 was never committed but its content was rolled into this file early in session 9).
+**Next session: read this → `MEMORY.md` (auto-loaded) → `tr1via-plan.md` → `supabase/README.md` → `README.md`.** Prior session handoffs live in git history (session 9 at `3b14f4c`).
 
 ---
 
 ## Critical context
 
-**Heather (`heatherhmoore@yahoo.com`) goes live on tr1via.com Wednesday 2026-05-27.** Real paying patrons, not a demo. **3 days out.**
+**Heather (`heatherhmoore@yahoo.com`) goes live on tr1via.com Wednesday 2026-05-27.** Real paying patrons, not a demo. **2 days out.**
 
-🚨 **PRs #10 and #11 merged but NOT yet validated end-to-end on prod.** Brandon merged at the end of the session and stopped before retesting. Next session's first action should be a full single-player walk-through on tr1via.com to confirm the two bugs actually went away.
+🚨 **Two PRs are OPEN awaiting your validation + merge** — see "What's still open" below. Migration 0006 + 0007 are ALREADY APPLIED to prod Trivia (`citweuctcnuxmqjxcbiz`), so don't re-apply them.
 
 ---
 
-## What shipped tonight (session 9, all merged to main)
+## What shipped this session (session 10)
+
+### Merged to main (your call, during the session)
 
 | PR | What | Status |
 |---|---|---|
-| #9  | `fix(gen)`: every option must be a direct answer to the prompt — explicit "same kind of thing the prompt asks for" rule in `SYSTEM_PROMPT` with the real prod Patronus failure as the negative example | merged |
-| #10 | `fix(recap)`: stop rendering "#0" while game_scores loads + null-rank fallback — tri-state `scores`, postgres_changes subscription, `PlayerRecap` renders "Nice run." instead of "#0" when player isn't in the view | merged |
-| #11 | `fix(host-reveal)`: keep answers loaded for sticky-reveal frame — host's `answers` subscription was clearing on resolve, causing TV to show "Nobody nailed this one" / "0 of N got it" even when players got it right | merged |
-| #13 | `fix(theme)`: swap layout default `house` → `daylight` (this PR also brings these handoff notes) — stopgap for "dark dark dark" default. Real picker work still pending. | this PR |
+| #14 | `fix(reveal)`: wire game_scores into player room so in-game rank stops showing "#0" — mirrors PR #10 pattern, also fixes PlayerJoinGame2 (third surface with same bug) | merged |
+| #15 | `feat(player)`: phone shows question prompt + image during gameplay — question text gets primary weight, ~72px thumbnail when image present, drops "Read the question on the TV" caption | merged |
+| #16 | `feat(host)`: section-ended picker — option B with auto-start lowest. New `TVSectionEndedPicker` replaces dead grid when one section ends + others have unplayed questions. One tap → auto-reveal lowest-points unplayed question. | merged |
 
-Brandon's observed bugs that drove the night:
-- Host TV at reveal: "0 of 1 got it" / "Nobody nailed this one" when a player HAD answered correctly → PR #11
-- Phone post-game wrap-up: "You finished #0" → PR #10 (tested on preview before build deployed; needs prod retest)
-- Earlier in night: Claude generating questions whose options weren't actually candidate answers → PR #9
+### Open (need your validation + merge)
+
+| PR | What | Notes |
+|---|---|---|
+| **#17** | `feat(theme)`: host-default theme architecture — adds `hosts.default_theme_key` column, makes `nights.theme_key` an optional override, central `resolveTheme()` helper, wraps host layout in ThemeProvider. **Migrations 0006 + 0007 already applied to prod.** Code merge will activate the cascade. | OPEN |
+| **#18** | `chore(host)`: strip broken sidebar shortcuts — kills 5 stub routes (`/host/library`, `/host/nights`, `/host/settings`, `/host/themes`, `/host/venues`) + the `ComingSoonPage` component. SHORTCUTS section removed from dashboard sidebar. | OPEN |
+
+**Validation order recommended**: merge #18 first (pure subtraction, lowest risk), then #17 (theme architecture — visual smoke test on preview after merge).
 
 ---
 
 ## What's still open
 
-### 1. 🚨 P0: Validate PRs #10 + #11 on prod (FIRST thing next session)
+### 1. 🚨 P0: Build the real `/host/themes` picker page
 
-Walk through a single-player game on **tr1via.com** (host + one phone in another window) and confirm:
+**This was explicitly scheduled for THIS session by Brandon.** Quote: "a first. then lets handoff and have next session after i clear context to do b" — where (a) = strip sidebar (PR #18, done) and (b) = build the real themes picker.
 
-- **Host TV reveal** shows "1 of 1 got it" with the player's name in the fastest-five — NOT "Nobody nailed this one" — when the player answered correctly. This is PR #11.
-- **Phone post-game wrap-up** shows a real rank like "#1" — NOT "#0", NOT "Nice run." — when the player is in `game_scores`. This is PR #10.
+Context: PR #17 added `hosts.default_theme_key` (column on the `hosts` table) + `resolveTheme()` helper. The host layout now wraps in `<ThemeProvider themeKey={host.default_theme_key}>`. But the only way to **change** the host default is via SQL — the `/host/themes` route was a stub and PR #18 deleted it entirely.
 
-If either still shows the broken state on a fresh prod build:
-- PR #11 broken: dig into `HostLiveConsoleClient.tsx` answer-target effect; `roomToTVSnapshot.ts` already does the right fallback so check the host adapter wiring.
-- PR #10 broken: check the recap page's tri-state guard + the postgres_changes subscription. Confirm the Vercel preview build hash matches the merge commit before assuming code fault.
+Build it back as a real picker:
 
-Token-efficient path: extend `scripts/full-flow-prod.mjs` to assert both states via API + Supabase MCP queries.
+**Files to touch:**
+- **NEW** `app/host/themes/page.tsx` — server component, fetches authed host, hands off to client wrapper
+- **NEW** `app/host/themes/HostThemesClient.tsx` — client component, renders the theme grid + on-pick PATCH
+- **NEW** `app/api/hosts/default-theme/route.ts` — `PATCH` endpoint that updates `hosts.default_theme_key` for the authed host (use `getAuthedHost()` from `lib/api/auth.ts`)
+- **Edit** `components/host/HostDashboard.tsx` — re-add a single "Themes" link to the (now-empty) sidebar shortcuts area, pointing to `/host/themes`
 
-### 2. 🚨 P0: Dead-state picker between sections — option B chosen, click behavior PENDING
+**Reuse:**
+- `components/shared/PalettePeek.tsx` — the existing per-night theme picker overlay. The new page can wrap or copy from it. Same `ThemeKey` set.
+- `lib/theme/tokens.ts` — `THEME_KEYS`, `TR1VIA_THEMES`, `isThemeKey` helpers
 
-Brandon's complaint: "After there's no more questions in a section, why does it just sit there? Why not either go ahead and bring up the next topic or a selection to select the next topic that's already been generated."
+**Use brainstorming skill first** — this is creative UI work (theme grid layout, what happens after pick, preview). Brandon explicitly asked for design care in similar work last session (PR #15 phone Q+photo).
 
-He picked **option B**: panel listing the remaining locked topics. Host taps one → that topic activates.
+After this lands: Brandon has full UI control over host theme. The whole arc that started with PR #13 is closed.
 
-**Pending product decision Brandon didn't get to answer:** when host taps a topic from the panel, should it…
+### 2. P1: Working-dir cleanup
 
-- **(a)** Auto-start that topic's lowest-points question (one tap → game on)
-- **(b)** Reveal the grid focused on that column so host still picks a specific question
-- **(c)** Hybrid — auto-start lowest, with a "switch question" override
+The repo has accumulated test artifacts that aren't gitignored:
+- `.playwright-mcp/`, `.tmp-smoke-shots/`
+- `VERIFY-2026-05-24.md`
+- 14+ `verify-*.png` and `pr-*.png` screenshots
+- `.next/`, `node_modules/`, etc. are properly ignored
 
-My recommendation: **(a)** for live-event simplicity. Get Brandon's call before building.
+Two clean-up paths:
+- Add `.gitignore` entries for `verify-*.png`, `pr-*.png`, `.playwright-mcp/`, `.tmp-smoke-shots/`, and one-time `git rm --cached` them
+- Or `rm` the local files
 
-Files likely involved:
-- `lib/host/deriveHostMode.ts` — add a "section-ended-picking-next" mode triggered when the just-resolved question was the last in its category and other categories still have un-played questions.
-- `components/tv/TVStateMachine.tsx` — new state branch.
-- `components/host/HostLiveConsole.tsx` — wires the panel into the host UI.
+Not blocking, just clutter.
 
-Last-section completing → existing "End Game →" CTA (PR #3 already builds this).
-
-### 3. 🚨 P0: In-game "#0" rank on every reveal
-
-`app/(player)/room/[code]/page.tsx:687,709` hardcodes `rank={0}` for `PlayerRevealCorrect` and `PlayerRevealWrong` with a `"// Rank deferred until we wire game_scores into the page."` comment. Players see "#0" on their phones after EVERY question, not just at end-of-game.
-
-Fix: mirror the load+subscribe pattern from PR #10's recap fix. Fetch `game_scores` for the current game with a postgres_changes subscription, sort by score desc, compute the player's index + 1 for `rank`. `rankDelta` is bonus — compare to previous rank between reveals; if it's a stretch, ship rank=0 delta for now and polish later.
-
-This was almost started in session 9 but Brandon called for handoff before the first edit.
-
-### 4. P1: Theming — "set and find without instructions" + "why always defaulted"
-
-Two distinct root causes, one shared "themes are painful" symptom:
-
-**Why always defaulted:** `app/layout.tsx` wraps the entire app in `<ThemeProvider themeKey="…">`. Only per-night routes (`/host/setup/[nightId]`, player room, recap) wrap a CHILD `ThemeProvider` with `nights.theme_key` to override. Non-night routes (`/host/library`, `/host/settings`, `/host/themes`, `/host/admin`, etc.) inherit the layout default and never override. There is **no per-host theme storage** — even if you pick a theme on one night, it doesn't carry to non-night routes or to other nights.
-
-**Why the picker is painful to find:** the actual picker is a tiny pill button at the bottom-right of `/host/setup/[nightId]` (`HostSetupOverviewClient.tsx:141-168`, reads "Theme · house") that opens a `PalettePeek` overlay. The dedicated `/host/themes` route is literally a "Coming Soon" stub (`app/host/themes/page.tsx`, 11 lines). Unless you remember the pill exists, you can't change it from anywhere else.
-
-**Done in PR #13 (this PR):** default theme swapped from `house` (warm-dark) → `daylight` (its lighter sibling — paper #F4E6C4, ink #1B130C). One-line stopgap in `app/layout.tsx`; doesn't fix the architecture but immediately lifts the "dark dark dark" first-load feel everywhere the per-night override doesn't kick in.
-
-**Still pending — the real fix:**
-- Add `hosts.default_theme_key` column (~30 lines + migration). Wraps `<ThemeProvider>` at the host layout level using this column.
-- Convert `/host/themes` from stub into a full theme grid that reuses `components/shared/PalettePeek.tsx` and saves to `hosts.default_theme_key` (~80 lines).
-- Optional: thread `tonight?.themeKey` through `app/host/page.tsx` → `HostDashboard` if you want the dashboard to reflect the next night's theme specifically.
-
-Brandon also floated **auto-by-date theming** (e.g. October theme in October). Cute feature. Park past Wednesday.
-
-### 5. 🆕 P1: Player phone needs the question + photo during gameplay
-
-Right now the phone shows only the four tappable option cards. Players have to read the TV for the question text — fine in a venue, awkward when a player is looking at their phone. Brandon's brief verbatim: *"add the question and picture to the user's phone UI as they're playing. Don't just slam it on there. Plan it, make it look nice. It's user-facing. Also maybe a small little window to show that same little picture that was attached to it during the question generation process just as it does on the host side that's plugged into the TV."*
-
-Files involved:
-- `components/player/PlayerQuestion.tsx` — current option-card layout; needs a question/photo zone above or alongside.
-- `app/(player)/room/[code]/page.tsx:418-559` (`QuestionView`) — already passes `question.options` to PlayerQuestion; needs to also pass `question.prompt` + `question.image_url` (already in the snapshot).
-- Same data the TV already renders via `TVQuestion` — `imageUrl`, `prompt`. No new fetches needed.
-
-Design considerations Brandon called out:
-- Don't just bolt it on — proper hierarchy with the question text given primary weight; image as a small thumbnail-ish window, not full-bleed.
-- Must stay readable under a 20-second timer at the top of the screen.
-- Phone real estate is tight; option cards already dominate the lower half. The image probably wants to be ~80-100px square next to the question text rather than its own full row.
-
-**Use the brainstorming skill before building.** This is creative work with multiple valid layouts, and Brandon explicitly asked for a planned design rather than a slam-in.
-
-### 5. P2: Anthropic gen monitoring
+### 3. P2: Anthropic gen monitoring (carried from session 9)
 
 If gen failures resurface:
 ```bash
 vercel logs --environment production --since 1d --query "generateQuestions" --json --no-branch
 ```
-Tonight's logs showed normal calls completing in 18-21s under the 60s timeout.
 
 ---
 
 ## Workflow rules (non-negotiable on this project)
 
-- **PR-first always.** Never push to `main`. Even docs.
-- **Validate on PROD or the Vercel PREVIEW, never local.**
-- **One step at a time.** Tight single-action instructions. No 4-option questions on obvious calls.
+- **PR-first always.** Never push to `main`. Even docs. Brandon merges; Claude opens.
+- **Validate everything contextually possible BEFORE handoff.** Don't claim "done" or hand over a PR until typecheck/build/tests pass and the underlying mechanics are proven (e.g. via Supabase branch for migrations).
+- **Migrations: apply via MCP, don't touch other projects.** Trivia project id is `citweuctcnuxmqjxcbiz`. The org also has `ynmtszuybeenjbigxdyl` (Vyntechs Auto) and `vggftauiaplktwnwciey` (lurnt-discovery) — NEVER touch those.
 - **Drive the actual flow before claiming "fixed."** Use the `verify` skill or `scripts/full-flow-prod.mjs`.
-- **Build without asking when spec + design exist.** Ask only on product/intent ambiguities (e.g. the picker click behavior above).
+- **Build without asking when spec + design exist.** Ask only on product/intent ambiguities.
 - **Cross-check log inference.** Don't infer cause from Supabase timing alone; pull Vercel function logs.
 
 ---
 
-## Recurring pattern worth remembering: load + subscribe
+## Recurring pattern: tri-state load + subscribe
 
-PRs #10 and #11 both surfaced the same SHAPE of bug — a `useEffect` subscription gated on a state field (`finalGame`, `room.currentQuestion`) that becomes stale during a state transition. Fix in both cases: widen the target with a fallback (tri-state `scores` for "not loaded yet"; `room.currentQuestion ?? room.lastResolvedQuestion` for the sticky-reveal window).
+PRs #10, #11, #14, #17 all share the same fix shape — a `useEffect` that fetches data + subscribes to postgres_changes for refresh. Tri-state `T | null` ("not loaded yet" vs "loaded empty" vs "loaded with data") to gate render so we don't paint placeholder values.
 
-The in-game `#0` rank (open item 3) is the SAME pattern — the player room page never wired up `game_scores` at all. When you fix it, also grep the codebase for other surfaces that display `rank` and audit whether they have the same gap.
+Currently inlined in 4 callsites (host live console, recap, player room, PlayerJoinGame2Wired). If a 5th surface needs it, extract `useGameScores(gameId)` hook — that's the threshold per Brandon's "3 similar lines > premature abstraction" rule.
 
 ---
 
 ## Tools confirmed working on this project
 
 - **`vercel logs`** (CLI) with `--no-branch --since 1d --query "<text>" --json` — Vercel MCP returns 403, the CLI is the workaround.
-- **Supabase MCP** — `mcp__plugin_supabase_supabase__execute_sql` + `get_logs`. Project id: `citweuctcnuxmqjxcbiz`.
+- **Supabase MCP** — `mcp__plugin_supabase_supabase__execute_sql`, `apply_migration`, `get_logs`, `create_branch`, `delete_branch`. Trivia project id: `citweuctcnuxmqjxcbiz`.
+- **Supabase branch testing** — `create_branch` costs $0.01344/hour. Add column + alter constraints can be tested for ~$0.005 in 15 minutes. **CAVEAT**: branch creation currently fails on parent schema (orphan "Jeopardy Rebuild Migration" referencing non-existent `trivia_settings` table from some pre-tr1via experiment). Workaround: apply just the minimum needed parent tables manually via `apply_migration` to the branch, then test your migration on top.
 - **Playwright MCP** — works against `tr1via.com` and preview deploys. Vercel SSO disabled.
 - **Founder bypass login** — `/login` → `brandon@vyntechs.com` → Send → immediate redirect to `/host`. No email needed.
-- **`scripts/full-flow-prod.mjs`** — drives a full 2-game lifecycle in ~80s against tr1via.com.
+- **`scripts/full-flow-prod.mjs`** — drives a full 2-game lifecycle in ~80s against tr1via.com. (DON'T run unless asked — it creates + cascade-deletes a real prod night with real Anthropic + Pexels API costs.)
 - **`gh pr create`** / **`gh pr view`** — used for every PR this session.
 
 ---
 
-## Working-dir cruft Brandon may want to clean up
+## Schema state on prod (post-PR-17 migrations)
 
-These accumulated across sessions but aren't tracked:
+```
+hosts.default_theme_key  text  NOT NULL  default 'daylight'   -- NEW
+nights.theme_key         text  NULL      no default            -- WAS NOT NULL default 'house'
+```
 
-- `.playwright-mcp/`, `.tmp-smoke-shots/` — Playwright/scratch dirs (probably `.gitignore` candidates)
-- `VERIFY-2026-05-24.md` — earlier session-8 verification notes
-- 11x `verify-*.png` — screenshot captures from PR verification runs
+Existing data (as of session 10 end):
+- 3 hosts: all backfilled to `default_theme_key='daylight'` (column default)
+- 32 nights: 30 backfilled from 'house' → null (will inherit host default once PR #17 code is merged), 1 = 'may' override, 1 = 'january' override
 
-None blocking; trim or `.gitignore` next session if it bothers you.
+If PR #17 doesn't merge but the migration stays applied: the OLD code reads `night.theme_key ?? "house"`, so null nights render "house" (visually identical to pre-migration). No prod break. Safe.
 
 ---
 
 ## Resumption prompt
 
-Just say "**read HANDOFF.md and continue**" — this file plus auto-loaded memory will have everything needed. If you have a specific bug, lead with the observable symptom (URL + what you see) and let the next session pull logs/code.
+Just say "**read HANDOFF.md and continue**" — this file plus auto-loaded memory will have everything needed. The next concrete task is **build the real `/host/themes` picker page** (see "What's still open #1" above).
+
+If anything looks off in prod first, lead with the observable symptom (URL + what you see) and let the next session pull logs/code.
