@@ -18,18 +18,7 @@ import { getSupabaseBrowser } from "@/lib/supabase/client";
 type FormState =
   | { kind: "idle" }
   | { kind: "sending" }
-  | { kind: "sent"; email: string }
   | { kind: "error"; message: string };
-
-function siteUrl(): string {
-  // The redirect target needs to be absolute. In the browser we can derive
-  // it from the current origin; we still prefer NEXT_PUBLIC_SITE_URL when
-  // set so previews + production behave the same.
-  const fromEnv = process.env.NEXT_PUBLIC_SITE_URL?.trim();
-  if (fromEnv) return fromEnv.replace(/\/$/, "");
-  if (typeof window !== "undefined") return window.location.origin;
-  return "http://localhost:3000";
-}
 
 export default function HostLoginPage() {
   return (
@@ -80,30 +69,31 @@ function HostLoginInner() {
 
     setState({ kind: "sending" });
     try {
-      // Try founder bypass first — if this email belongs to the founder
-      // row, the server mints a session directly (no email round-trip).
-      // 404 just means "not the founder," so we silently fall through to
-      // the normal magic-link flow.
-      const founderRes = await fetch("/api/auth/founder-login", {
+      // The server looks up the email against the hosts table and mints
+      // that host's session on the response. No magic link, no email
+      // round-trip — sign-in completes in one request.
+      const res = await fetch("/api/auth/founder-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: trimmed }),
       });
-      if (founderRes.ok) {
+      if (res.ok) {
         router.replace("/host");
         return;
       }
-
-      const supabase = getSupabaseBrowser();
-      const { error } = await supabase.auth.signInWithOtp({
-        email: trimmed,
-        options: { emailRedirectTo: `${siteUrl()}/auth/callback` },
-      });
-      if (error) {
-        setState({ kind: "error", message: error.message });
+      if (res.status === 404) {
+        setState({
+          kind: "error",
+          message:
+            "We don't recognize that email. Ask Brandon to add you on the founder dashboard, then try again.",
+        });
         return;
       }
-      setState({ kind: "sent", email: trimmed });
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      setState({
+        kind: "error",
+        message: body?.error ?? `Sign-in failed (${res.status})`,
+      });
     } catch (err) {
       setState({
         kind: "error",
@@ -152,8 +142,8 @@ function HostLoginInner() {
             fontWeight: 500,
           }}
         >
-          One sign-in link, one click. We never ask for a password &mdash; you&apos;ll
-          get an email with a fresh link every time you come back.
+          One click to sign in. No password, no email check &mdash; just
+          type the email Brandon set up for you.
         </p>
       </div>
 
@@ -215,24 +205,15 @@ function HostLoginInner() {
           </div>
         )}
 
-        {state.kind === "sent" ? (
-          <SentConfirmation
-            email={state.email}
-            onAnother={() => {
-              setState({ kind: "idle" });
-              setEmail("");
-            }}
-          />
-        ) : (
-          <form
-            onSubmit={handleSubmit}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 14,
-              maxWidth: 380,
-            }}
-          >
+        <form
+          onSubmit={handleSubmit}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: 14,
+            maxWidth: 380,
+          }}
+        >
             <label
               htmlFor="email"
               style={{
@@ -310,70 +291,11 @@ function HostLoginInner() {
             )}
 
             <Eyebrow color={t.inkMute} size={10} style={{ display: "block", marginTop: 10 }}>
-              NEW HERE? SAME FORM &mdash; FIRST EMAIL CREATES YOUR ACCOUNT.
+              NEW HERE? ASK BRANDON TO ADD YOU FROM THE FOUNDER DASHBOARD.
             </Eyebrow>
           </form>
-        )}
       </div>
     </div>
   );
 }
 
-function SentConfirmation({
-  email,
-  onAnother,
-}: {
-  email: string;
-  onAnother: () => void;
-}) {
-  const { t } = useTheme();
-  return (
-    <div style={{ maxWidth: 420 }}>
-      <Eyebrow color={t.accent} size={11}>
-        LINK SENT
-      </Eyebrow>
-      <Display
-        size={64}
-        color={t.ink}
-        weight={700}
-        tracking={-0.035}
-        style={{ marginTop: 14, display: "block", lineHeight: 0.95 }}
-      >
-        Check your
-        <br />
-        <span style={{ color: t.accent }}>email.</span>
-      </Display>
-      <p
-        style={{
-          marginTop: 22,
-          fontSize: 16,
-          color: t.inkMid,
-          lineHeight: 1.55,
-          fontWeight: 500,
-        }}
-      >
-        We sent a sign-in link to{" "}
-        <span style={{ color: t.ink, fontWeight: 600 }}>{email}</span>. Click it from
-        the same browser you&apos;re reading this in.
-      </p>
-      <button
-        type="button"
-        onClick={onAnother}
-        style={{
-          marginTop: 22,
-          padding: "12px 18px",
-          background: "transparent",
-          color: t.inkMid,
-          border: `1px solid ${t.line}`,
-          borderRadius: 10,
-          fontFamily: "var(--font-sans)",
-          fontSize: 13,
-          fontWeight: 600,
-          cursor: "pointer",
-        }}
-      >
-        Use a different email
-      </button>
-    </div>
-  );
-}
