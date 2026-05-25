@@ -135,8 +135,14 @@ function HostLiveConsoleInner({
   const { t } = useTheme();
   const totalPlayers = playersTotal ?? players.length;
   const locks = lockedCount ?? players.filter((p) => p.locked).length;
+  // Build the QR URL off the origin the laptop is actually serving from —
+  // so previews encode the preview URL, prod encodes prod, local tunnels
+  // encode the tunnel. SSR fallback only matters before hydration.
   const resolvedJoinUrl =
-    joinUrl ?? (roomCode ? `https://tr1via.com/join?code=${roomCode}` : null);
+    joinUrl ??
+    (roomCode
+      ? `${typeof window !== "undefined" ? window.location.origin : "https://tr1via.com"}/join?code=${roomCode}`
+      : null);
 
   const [hostAdvanced, setHostAdvanced] = useState(false);
   const [playersOpen, setPlayersOpen] = useState(false);
