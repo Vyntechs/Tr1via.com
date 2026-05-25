@@ -21,12 +21,28 @@ export default async function HostLivePage({
     if (owned.status === 404) notFound();
     redirect("/login");
   }
+  // Pin to the dynamic viewport and forbid overflow scroll. The mid-game
+  // console is a single fixed presentation surface — the host laptop is
+  // HDMI-mirrored to the venue TV, so any browser scroll on the host side
+  // would scroll the TV too. The shared HostLayout uses `minHeight: 100dvh`
+  // (so dashboard / setup screens can scroll), but the live console has to
+  // override that and clip instead.
   return (
-    <HostLiveConsoleClient
-      nightId={owned.night.id}
-      roomCode={owned.night.room_code}
-      venueName={owned.night.venue_name}
-      themeKey={owned.night.theme_key ?? "house"}
-    />
+    <div
+      style={{
+        height: "100dvh",
+        width: "100%",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <HostLiveConsoleClient
+        nightId={owned.night.id}
+        roomCode={owned.night.room_code}
+        venueName={owned.night.venue_name}
+        themeKey={owned.night.theme_key ?? "house"}
+      />
+    </div>
   );
 }
