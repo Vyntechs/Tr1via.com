@@ -33,16 +33,32 @@ interface ScreenEntry {
   Component: React.ComponentType;
 }
 
+// Sample Pexels URL — Alaska/landscape photo, lets the gallery preview the
+// PlayerQuestion "with image" variant. Same domain (`images.pexels.com`) the
+// real generation pipeline uses, so this matches production behavior.
+const SAMPLE_QUESTION_IMAGE =
+  "https://images.pexels.com/photos/1366630/pexels-photo-1366630.jpeg?auto=compress&cs=tinysrgb&w=200";
+
+function PlayerQuestionWithImage() {
+  return (
+    <PlayerQuestion
+      prompt="Which U.S. state has the largest land area?"
+      imageUrl={SAMPLE_QUESTION_IMAGE}
+    />
+  );
+}
+
 const SCREENS: ScreenEntry[] = [
-  { key: "join",            title: "01 · Join",                 Component: PlayerJoin },
-  { key: "lobby",           title: "02 · Lobby",                Component: PlayerLobby },
-  { key: "question",        title: "03 · Question · live",      Component: PlayerQuestion },
-  { key: "locked",          title: "04 · Locked",               Component: PlayerLocked },
-  { key: "reveal-correct",  title: "05 · Reveal · correct",     Component: PlayerRevealCorrect },
-  { key: "reveal-wrong",    title: "06 · Reveal · wrong",       Component: PlayerRevealWrong },
-  { key: "join-game-2",     title: "07 · Join Game 2",          Component: PlayerJoinGame2 },
-  { key: "winner-card",     title: "08 · Winner card · finale", Component: PlayerWinnerCard },
-  { key: "recap",           title: "09 · Recap · finale",       Component: PlayerRecap },
+  { key: "join",                title: "01 · Join",                       Component: PlayerJoin },
+  { key: "lobby",               title: "02 · Lobby",                      Component: PlayerLobby },
+  { key: "question-text-only",  title: "03 · Question · live (text)",     Component: PlayerQuestion },
+  { key: "question-with-image", title: "03b · Question · live (w/ image)", Component: PlayerQuestionWithImage },
+  { key: "locked",              title: "04 · Locked",                     Component: PlayerLocked },
+  { key: "reveal-correct",      title: "05 · Reveal · correct",           Component: PlayerRevealCorrect },
+  { key: "reveal-wrong",        title: "06 · Reveal · wrong",             Component: PlayerRevealWrong },
+  { key: "join-game-2",         title: "07 · Join Game 2",                Component: PlayerJoinGame2 },
+  { key: "winner-card",         title: "08 · Winner card · finale",       Component: PlayerWinnerCard },
+  { key: "recap",               title: "09 · Recap · finale",             Component: PlayerRecap },
 ];
 
 export default function PlayerGallery() {
