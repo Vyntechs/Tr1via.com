@@ -48,26 +48,57 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
     return [...snapshot.games].sort((a, b) => b.game_no - a.game_no)[0] ?? null;
   }, [snapshot.games]);
 
-  const [scores, setScores] = useState<GameScoreRow[]>([]);
+  // Tri-state: `null` means "we haven't completed a fetch yet" — the loading
+  // guard below uses this to gate render so we never paint "#0" while the
+  // initial REST query is still in flight. Once a fetch returns we move to
+  // `[]` (empty) or `[...]` (populated). The realtime subscription below
+  // refreshes the view as `answers`/`adjustments`/`game_participations`
+  // change, which matters when the close-night broadcast lands microseconds
+  // before the resolve-question writes complete.
+  const [scores, setScores] = useState<GameScoreRow[] | null>(null);
   const [answers, setAnswers] = useState<AnswerRow[]>([]);
 
   useEffect(() => {
     if (!finalGame) return;
+    const gameId = finalGame.id;
     let cancelled = false;
     const supa = getSupabaseBrowser();
-    void supa
-      .from("game_scores")
-      .select("*")
-      .eq("game_id", finalGame.id)
-      .order("score", { ascending: false })
-      .then(({ data }) => {
-        if (cancelled) return;
-        setScores((data as GameScoreRow[] | null) ?? []);
-      });
+    async function load() {
+      const { data } = await supa
+        .from("game_scores")
+        .select("*")
+        .eq("game_id", gameId)
+        .order("score", { ascending: false });
+      if (cancelled) return;
+      setScores((data as GameScoreRow[] | null) ?? []);
+    }
+    void load();
+    // Same load+subscribe pattern HostLiveConsoleClient uses for its own
+    // game_scores read (the view is derived, so we listen to the underlying
+    // tables rather than the view itself).
+    const channel = supa
+      .channel(`recap-scores:${gameId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "answers" },
+        () => void load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "adjustments" },
+        () => void load(),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "game_participations" },
+        () => void load(),
+      )
+      .subscribe();
     return () => {
       cancelled = true;
+      void supa.removeChannel(channel);
     };
-  }, [finalGame]);
+  }, [finalGame?.id]);
 
   useEffect(() => {
     if (!me) return;
@@ -101,7 +132,18 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
     }
   }, []);
 
-  if (snapshot.isLoading || deviceLoading || !snapshot.night || !me || !finalGame) {
+  // Block render until at least one game_scores fetch has completed.
+  // Without this gate, the page paints once with the initial state (which
+  // used to be `[]`), `computeRank` returns 0 for "player not found", and
+  // the player sees "#0" for the brief moment before the REST query lands.
+  if (
+    snapshot.isLoading ||
+    deviceLoading ||
+    !snapshot.night ||
+    !me ||
+    !finalGame ||
+    scores === null
+  ) {
     return (
       <ThemeProvider themeKey={themeKey}>
         <Placeholder roomCode={roomCode} />
@@ -110,7 +152,11 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
   }
 
   const myScoreRow = scores.find((s) => s.player_id === me.id) ?? null;
-  const finalRank = computeRank(scores, me.id);
+  const computedRank = computeRank(scores, me.id);
+  // Pass `null` rather than `0` when the player is missing from the view
+  // (e.g. no game_participations row) so PlayerRecap renders "Nice run."
+  // instead of the meaningless "#0".
+  const finalRank: number | null = computedRank > 0 ? computedRank : null;
   const stats = computeStats(answers, snapshot.categories, myScoreRow);
 
   const t = themeFallbackTokens(themeKey);
@@ -125,6 +171,11 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
     { label: "LONGEST STREAK", value: `× ${stats.longestStreak}`, color: t.accent },
   ];
 
+  const blurb =
+    finalRank !== null
+      ? `You finished #${finalRank} of ${scores.length}.`
+      : "Thanks for playing — your spot didn't make the standings this time.";
+
   return (
     <ThemeProvider themeKey={themeKey}>
       <PlayerRecap
@@ -133,7 +184,7 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
         finalRank={finalRank}
         finalScore={myScoreRow?.score ?? 0}
         stats={rows}
-        blurb={`You finished #${finalRank} of ${scores.length}.`}
+        blurb={blurb}
         highlight="WRAPPED."
         onSuggestTopic={handleSuggestTopic}
       />
