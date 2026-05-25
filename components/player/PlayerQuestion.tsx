@@ -1,6 +1,5 @@
 // Player phone — QUESTION (live).
-// The question itself never shows on the phone (TV-only per spec); the phone
-// is just the input surface. Saturated category banner + timer ring + four
+// Saturated category banner → question + thumbnail row → timer strip → four
 // chunky answer cards. Per-player numerals are scrambled — caption at bottom
 // is the player's reminder that "your 1 isn't Cole's 1".
 
@@ -36,6 +35,18 @@ export interface PlayerQuestionProps {
    * "QUESTION 10" eyebrow. Defaults to 10 to match the static preview.
    */
   questionNumber?: number;
+  /**
+   * The question prompt text. Renders above the timer strip alongside the
+   * thumbnail. When omitted, the question-content row collapses (preserves
+   * the legacy TV-only layout for the dev gallery's static preview).
+   */
+  prompt?: string;
+  /**
+   * Optional illustration URL (Pexels). Rendered as a 72px square thumbnail
+   * to the right of the prompt. Treated as decorative — `alt=""` because
+   * the prompt text alone carries the question's semantics.
+   */
+  imageUrl?: string | null;
   /** Called with the visible slot (1..4) the player tapped. */
   onTap?: (slotChosen: PlayerQuestionSlot) => void;
   /**
@@ -52,6 +63,11 @@ export function PlayerQuestion({
   value = 100,
   options = ["Florida", "Alaska", "California", "Maine"],
   questionNumber = 10,
+  // Default prompt + (no image) gives the dev gallery's static preview a
+  // realistic look. Real production passes both `question.prompt` and
+  // `question.image_url` from the page.
+  prompt = "Which U.S. state has the largest land area?",
+  imageUrl,
   onTap,
   disabled,
 }: PlayerQuestionProps = {}) {
@@ -85,6 +101,56 @@ export function PlayerQuestion({
         <PointTag value={value} color="#0E0805" ink={catColor} size="md" />
       </div>
 
+      {prompt && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "flex-start",
+            gap: 12,
+            marginBottom: 14,
+          }}
+        >
+          <div
+            data-testid="player-question-prompt"
+            style={{
+              flex: 1,
+              fontSize: 17,
+              fontWeight: 600,
+              color: t.ink,
+              lineHeight: 1.3,
+              letterSpacing: "-0.005em",
+              // Cap at ~3 lines so a long prompt can't shove the answer
+              // cards off-screen on shorter phones.
+              display: "-webkit-box",
+              WebkitLineClamp: 3,
+              WebkitBoxOrient: "vertical",
+              overflow: "hidden",
+            }}
+          >
+            {prompt}
+          </div>
+          {imageUrl && (
+            // eslint-disable-next-line @next/next/no-img-element -- Pexels
+            // URLs are external; no /api/image proxy + this is a small,
+            // non-LCP decorative thumbnail. Skipping next/image here.
+            <img
+              src={imageUrl}
+              alt=""
+              aria-hidden="true"
+              data-testid="player-question-image"
+              style={{
+                width: 72,
+                height: 72,
+                borderRadius: 10,
+                objectFit: "cover",
+                flexShrink: 0,
+                background: t.surface,
+              }}
+            />
+          )}
+        </div>
+      )}
+
       <div
         style={{
           display: "flex",
@@ -93,17 +159,15 @@ export function PlayerQuestion({
           padding: "10px 14px",
           borderRadius: 10,
           background: t.surface,
-          marginBottom: 16,
+          marginBottom: 14,
         }}
       >
         <TimerRing accent={catColor} seconds={seconds} />
-        <div style={{ flex: 1, fontSize: 13, color: t.inkMid, fontWeight: 500 }}>
-          Read the question on the TV. Tap your answer here.
-        </div>
+        <span style={{ flex: 1 }} />
         <Eyebrow color={t.inkMute} size={9}>+10% &lt; 5s</Eyebrow>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {slots.map((slot, i) => (
           <AnswerCard
             key={slot}

@@ -523,6 +523,8 @@ function QuestionView({
         value={question.point_value ?? 100}
         options={optionsInScrambleOrder}
         questionNumber={questionNumber}
+        prompt={question.prompt}
+        imageUrl={question.image_url}
         onTap={handleTap}
         disabled={submitStatus === "pending" || submitStatus === "sent"}
       />
