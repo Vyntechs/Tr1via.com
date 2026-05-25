@@ -8,7 +8,7 @@
 
 **the first host (`host@example.com`) goes live on tr1via.com Wednesday 2026-05-27.** Real paying patrons. **2 days out.** She's actively using the app right now, sending Brandon text bug reports.
 
-**the first host's account is now usable** — email confirmed via Supabase MCP (`UPDATE auth.users SET email_confirmed_at = now() WHERE email = 'host@example.com'` at 2026-05-25 17:12 UTC). She's never actually signed in yet (`last_sign_in_at IS NULL`). All her recent activity has been on **Brandon's founder account** because there was no sign-out anywhere in the app — **PR #25 (open) fixes that**.
+**the first host's account is now usable AND in use.** Email confirmed via Supabase MCP (`UPDATE auth.users SET email_confirmed_at = now() WHERE email = 'host@example.com'` at 2026-05-25 17:12 UTC). PR #25 (sign-out) merged at 17:29 UTC. **the first host signed in for the first time on her own account at 2026-05-25 17:37:59 UTC** and immediately created her first night on her own host_id (`b92b930d…`, venue: "the first host"). Her pre-#25 activity (pre-17:29 UTC) lives under Brandon's founder host_id; post-sign-in activity lands under her own.
 
 ---
 
@@ -18,17 +18,17 @@
 
 | PR | What | Status |
 |---|---|---|
+| #19 | session 10 handoff doc (carried in from session 10 close) | merged 11:53 UTC |
 | #21 | `feat(setup)`: host-controlled point values — Edit panel's POINT VALUE picker replaces DIFFICULTY; API + lock cascade respect explicit values; atomic swap on conflict | merged |
 | #22 | `feat(pick)`: click × on YOUR BOARD slot to unpick — small additive UI on the picker | merged |
 | #23 | `chore(dashboard)`: kill hardcoded "7:00 — 8:45 pm" placeholder | merged |
 | #24 | `chore(dashboard)`: add "Wednesday night" subtitle under the venue (the first host's follow-up after #23) | merged |
+| #25 | `feat(auth)`: sign-out everywhere — account chip + /login session guard + middleware fix | merged 17:29 UTC — first real prod use 8 min later (the first host signed in 17:37 UTC) |
 
-### Open PRs (awaiting validation + merge)
+### Open PRs
 
 | PR | What | Risk | Status |
 |---|---|---|---|
-| **#19** | session 10 handoff doc | trivial | docs |
-| **#25** | `feat(auth)`: sign-out everywhere — account chip + /login session guard + middleware fix | low | **fully validated visually on preview** — banner renders + chip renders + sign out works |
 | **(this PR)** | session 11 handoff doc | trivial | you're reading it |
 
 ### Open design specs (not PRs — planning artifacts)
@@ -51,40 +51,25 @@
 | 5 | "the time needs to get removed from that page, show the date" | ✅ #23 + #24 merged |
 | 6 | "click on a picked question to delete it directly" | ✅ #22 merged |
 | 7 | "why is Smoke Test Pub showing" | ✅ data cleanup + sign-out path prevents recurrence |
-| 8 | "It didn't give me a choice. It said sign in and I clicked it." | 🟡 #25 open — banner + chip + middleware fix all validated on preview |
+| 8 | "It didn't give me a choice. It said sign in and I clicked it." | ✅ #25 merged 17:29 UTC; the first host signed in on her own account 8 min later (17:37 UTC) |
 
 ---
 
 ## What's still open
 
-### 1. 🚨 P0: Merge + validate PR #25 (sign-out path)
-
-Without this, the first host has no way to escape Brandon's session on her device. **What I validated on the preview deploy:**
-
-- `/host` shows the **AccountChip** top-right with `brandon@vyntechs.com · Sign out` pill
-- `/login` (with active session) shows **"ALREADY SIGNED IN AS [email]" banner + Sign out button + the form** all on the same page
-- Middleware no longer redirects authed `/login` visits to `/host` (it used to — that's why the banner couldn't render)
-
-After merge, **tell the first host**:
-1. Go to `tr1via.com/login`
-2. If she sees "ALREADY SIGNED IN AS brandon@vyntechs.com" → click **Sign out**
-3. Type `host@example.com` in the form → click **Send sign-in link**
-4. Check her yahoo inbox for the magic link → click it
-5. She lands on `/host` as the first host — top-right chip should show `host@example.com`
-
-### 2. P0: Build PR G2 (rename category) — spec ready
+### 1. 🚨 P0: Build PR G2 (rename category) — spec ready
 
 Spec: `docs/superpowers/specs/2026-05-25-pr-g2-rename-category.md` on branch `docs-spec-g2-rename-category`.
 
 Tight scope: one new route + one inline pencil affordance. ~80 LOC. the first host will hit this on Wednesday if not shipped (her "skirts" rename is still pending from her earlier text).
 
-### 3. P1: Build PR G3 (write your own custom question) — spec ready
+### 2. P1: Build PR G3 (write your own custom question) — spec ready
 
 Spec: `docs/superpowers/specs/2026-05-25-pr-g3-custom-question.md` on branch `docs-spec-g3-custom-question`.
 
 Bigger surface: new endpoint + UI card + Edit panel "create mode". ~150 LOC. Not blocking Wednesday but the first host wanted it.
 
-### 4. P2: Working-dir cleanup (carried over)
+### 3. P2: Working-dir cleanup (carried over)
 
 Untracked validation screenshots accumulated:
 - `pr-b-*.png`, `pr-c-*.png`, `pr-g1-*.png`, `pr-h-*.png`, `validate-*.png`, `verify-*.png`
@@ -113,10 +98,10 @@ questions.point_value    smallint  null allowed  -- unchanged; respects host edi
 ```
 
 Data state:
-- 3 hosts: Brandon Nichols (gmail, host, never signed in), Brandon Nichols (vyntechs, founder, active), the first host (yahoo, host, **never signed in but email now confirmed**)
-- the first host's `is_first_night_complete = false` — onboarding flow will show on her first sign-in (PR #20 stripped the SHORTCUTS from that view, so it'll be clean)
+- 3 hosts: Brandon Nichols (gmail, host, never signed in), Brandon Nichols (vyntechs, founder, active), the first host (yahoo, host, **first signed in 2026-05-25 17:37:59 UTC**)
+- the first host's `is_first_night_complete = false` — still true; she's only created one un-played night so far (venue: "the first host", id `b92b930d…`)
+- Theme key distribution on `nights`: 32 null (→ inherit host default = daylight), 2 'may', 1 'january'. No 'house' rows remain.
 - All "Smoke Test Pub" + "Full Flow Driver" nights deleted from prod
-- All `nights.theme_key = 'house'` rows backfilled to null (inherit host default = daylight)
 
 ---
 
@@ -125,7 +110,7 @@ Data state:
 - **PR-first always.** Never push to `main`. Even docs. Brandon merges; Claude opens.
 - **Validate everything contextually possible BEFORE handoff.** Don't claim "done" until typecheck/build/tests pass AND visual smoke is done (preview deploy or dev gallery). When you find a redirect / middleware / async-render trap, fix it AND re-validate.
 - **Migrations: apply via MCP, don't touch other projects.** Trivia project id is `citweuctcnuxmqjxcbiz`. NEVER touch `ynmtszuybeenjbigxdyl` (Vyntechs Auto) or `vggftauiaplktwnwciey` (lurnt-discovery).
-- **Customer data**: the first host's setup data is currently mixed with Brandon's testing on the founder account. Once she signs in as herself (post-#25 merge), her setups will land on her own host row. Don't delete anything on her host_id (`772f91c9-c7fc-424b-9429-207e4527cad1`) without checking.
+- **Customer data**: the first host's pre-#25 setup work lives under Brandon's founder host_id (`60fe578c-f848-418d-a3af-3901d1ea7971`) because sign-out didn't exist before 17:29 UTC today. Post-#25 work lives under her own host_id (`772f91c9-c7fc-424b-9429-207e4527cad1`). Don't delete anything on her host_id without checking; treat Brandon's recent "Soul Fire Pizza" nights as ambiguous (could be Brandon-testing or the first host-pre-#25).
 - **Build without asking when spec + design exist.** Ask only on product/intent ambiguities.
 - **Brandon's customer is non-technical.** Plain English in PR descriptions + customer-facing copy. No jargon.
 
@@ -150,7 +135,7 @@ Data state:
 |---|---|---|---|
 | `brandon@vyntechs.com` | founder | yes | Founder bypass — instant sign-in via `/api/auth/founder-login`. Skip magic link. |
 | `host@example.com` | host | yes | Personal gmail. Never used. |
-| `host@example.com` | host | yes (manually confirmed 2026-05-25 17:12 UTC) | the first host's account. Magic link works. |
+| `host@example.com` | host | yes (manually confirmed 2026-05-25 17:12 UTC) | the first host's account. Magic link confirmed working — first sign-in 2026-05-25 17:37:59 UTC. |
 
 ---
 
@@ -176,6 +161,6 @@ PR #25 hit a subtle trap: middleware redirected `user && pathname === "/login"` 
 
 ## Resumption prompt
 
-Just say "**read HANDOFF.md and continue**" — this file plus auto-loaded memory will have everything needed. The most urgent next move is **merge PR #25 + tell the first host to sign in with her own email** so her setup data lands on her account, not yours.
+Just say "**read HANDOFF.md and continue**" — this file plus auto-loaded memory will have everything needed. The most urgent next move is **build PR G2 (rename category)** — the first host is now active on her own host_id and will hit the "rename a locked category" wall during Wednesday setup. Spec is ready on `docs-spec-g2-rename-category`.
 
-If you have a specific bug from the first host, lead with the observable symptom (URL + what she sees) and let the next session pull logs/code.
+If you have a specific bug from the first host, lead with the observable symptom (URL + what she sees) and let the next session pull logs/code. Her host_id for filtering Supabase queries: `772f91c9-c7fc-424b-9429-207e4527cad1`.
