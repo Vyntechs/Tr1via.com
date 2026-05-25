@@ -19,6 +19,7 @@
 | #9  | `fix(gen)`: every option must be a direct answer to the prompt — explicit "same kind of thing the prompt asks for" rule in `SYSTEM_PROMPT` with the real prod Patronus failure as the negative example | merged |
 | #10 | `fix(recap)`: stop rendering "#0" while game_scores loads + null-rank fallback — tri-state `scores`, postgres_changes subscription, `PlayerRecap` renders "Nice run." instead of "#0" when player isn't in the view | merged |
 | #11 | `fix(host-reveal)`: keep answers loaded for sticky-reveal frame — host's `answers` subscription was clearing on resolve, causing TV to show "Nobody nailed this one" / "0 of N got it" even when players got it right | merged |
+| #13 | `fix(theme)`: swap layout default `house` → `daylight` (this PR also brings these handoff notes) — stopgap for "dark dark dark" default. Real picker work still pending. | this PR |
 
 Brandon's observed bugs that drove the night:
 - Host TV at reveal: "0 of 1 got it" / "Nobody nailed this one" when a player HAD answered correctly → PR #11
@@ -71,14 +72,38 @@ Fix: mirror the load+subscribe pattern from PR #10's recap fix. Fetch `game_scor
 
 This was almost started in session 9 but Brandon called for handoff before the first edit.
 
-### 4. P1: Theming (session-8 research, still not implemented)
+### 4. P1: Theming — "set and find without instructions" + "why always defaulted"
 
-Three flagged issues:
-- "Theme reverts to default" — only `/host/setup/[nightId]` reads `nights.theme_key` into `ThemeProvider`. Smallest fix: thread `tonight?.themeKey` through `app/host/page.tsx` → `HostHomeClient` → `HostDashboard` (~6 lines). Real fix: add `default_theme_key` on `hosts` so it sticks across nights (~30 lines + migration).
-- "Picker is hidden/painful" — `/host/themes` is a "Coming Soon" stub (`app/host/themes/page.tsx`). The real picker is a tiny dark chip bottom-right of setup. Convert the stub into a full theme grid that reuses `components/shared/PalettePeek.tsx` (~80 lines).
-- "Default is dark dark dark" — current default is `house` (warm-dark). 2-line swap to `daylight` (`lib/theme/tokens.ts:39-54`) in `app/layout.tsx` + DB default if Brandon wants it permanent.
+Two distinct root causes, one shared "themes are painful" symptom:
 
-Brandon also floated **auto-by-date theming** (e.g. November theme in November). Cute feature. Park past Wednesday.
+**Why always defaulted:** `app/layout.tsx` wraps the entire app in `<ThemeProvider themeKey="…">`. Only per-night routes (`/host/setup/[nightId]`, player room, recap) wrap a CHILD `ThemeProvider` with `nights.theme_key` to override. Non-night routes (`/host/library`, `/host/settings`, `/host/themes`, `/host/admin`, etc.) inherit the layout default and never override. There is **no per-host theme storage** — even if you pick a theme on one night, it doesn't carry to non-night routes or to other nights.
+
+**Why the picker is painful to find:** the actual picker is a tiny pill button at the bottom-right of `/host/setup/[nightId]` (`HostSetupOverviewClient.tsx:141-168`, reads "Theme · house") that opens a `PalettePeek` overlay. The dedicated `/host/themes` route is literally a "Coming Soon" stub (`app/host/themes/page.tsx`, 11 lines). Unless you remember the pill exists, you can't change it from anywhere else.
+
+**Done in PR #13 (this PR):** default theme swapped from `house` (warm-dark) → `daylight` (its lighter sibling — paper #F4E6C4, ink #1B130C). One-line stopgap in `app/layout.tsx`; doesn't fix the architecture but immediately lifts the "dark dark dark" first-load feel everywhere the per-night override doesn't kick in.
+
+**Still pending — the real fix:**
+- Add `hosts.default_theme_key` column (~30 lines + migration). Wraps `<ThemeProvider>` at the host layout level using this column.
+- Convert `/host/themes` from stub into a full theme grid that reuses `components/shared/PalettePeek.tsx` and saves to `hosts.default_theme_key` (~80 lines).
+- Optional: thread `tonight?.themeKey` through `app/host/page.tsx` → `HostDashboard` if you want the dashboard to reflect the next night's theme specifically.
+
+Brandon also floated **auto-by-date theming** (e.g. October theme in October). Cute feature. Park past Wednesday.
+
+### 5. 🆕 P1: Player phone needs the question + photo during gameplay
+
+Right now the phone shows only the four tappable option cards. Players have to read the TV for the question text — fine in a venue, awkward when a player is looking at their phone. Brandon's brief verbatim: *"add the question and picture to the user's phone UI as they're playing. Don't just slam it on there. Plan it, make it look nice. It's user-facing. Also maybe a small little window to show that same little picture that was attached to it during the question generation process just as it does on the host side that's plugged into the TV."*
+
+Files involved:
+- `components/player/PlayerQuestion.tsx` — current option-card layout; needs a question/photo zone above or alongside.
+- `app/(player)/room/[code]/page.tsx:418-559` (`QuestionView`) — already passes `question.options` to PlayerQuestion; needs to also pass `question.prompt` + `question.image_url` (already in the snapshot).
+- Same data the TV already renders via `TVQuestion` — `imageUrl`, `prompt`. No new fetches needed.
+
+Design considerations Brandon called out:
+- Don't just bolt it on — proper hierarchy with the question text given primary weight; image as a small thumbnail-ish window, not full-bleed.
+- Must stay readable under a 20-second timer at the top of the screen.
+- Phone real estate is tight; option cards already dominate the lower half. The image probably wants to be ~80-100px square next to the question text rather than its own full row.
+
+**Use the brainstorming skill before building.** This is creative work with multiple valid layouts, and Brandon explicitly asked for a planned design rather than a slam-in.
 
 ### 5. P2: Anthropic gen monitoring
 
