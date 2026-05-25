@@ -16,20 +16,60 @@
 const POINT_VALUES = [100, 200, 300, 400, 500, 600, 700] as const;
 
 export function assignPointValues(
-  picked: Array<{ id: string; difficulty: number }>
+  picked: Array<{ id: string; difficulty: number; pointValue?: number | null }>
 ): Array<{ id: string; pointValue: number }> {
   if (picked.length !== POINT_VALUES.length) {
     throw new Error(
       `assignPointValues: expected exactly 7 picked questions, got ${picked.length}`
     );
   }
-  // Copy so we never mutate the caller's array. Spread also coerces tuple
-  // types into a plain array suitable for .sort.
-  const sorted = [...picked].sort((a, b) => a.difficulty - b.difficulty);
-  return sorted.map((q, index) => ({
-    id: q.id,
-    pointValue: POINT_VALUES[index] as number,
-  }));
+
+  // Two-pass: any pick the host has explicitly placed (via Edit's POINT
+  // VALUE picker → questions.point_value column) claims that slot directly.
+  // Picks left null (or with no pointValue field) get distributed across
+  // the remaining slots by difficulty ascending — the same stable-sort
+  // rule the original implementation used for ALL picks.
+  //
+  // `pointValue: null` is treated identically to omitted because the
+  // host's "Clear my override" button sends null over the wire and the
+  // DB column is nullable.
+  const explicit = picked.filter(
+    (p): p is { id: string; difficulty: number; pointValue: number } =>
+      typeof p.pointValue === "number",
+  );
+
+  // Reject duplicate explicits up front — the (category_id, point_value)
+  // unique index would catch this too, but a pre-flight throw beats a
+  // Postgres unique-violation surfacing as a 500.
+  const explicitSlots = new Set<number>();
+  for (const p of explicit) {
+    if (!POINT_VALUES.includes(p.pointValue as (typeof POINT_VALUES)[number])) {
+      throw new Error(
+        `assignPointValues: explicit pointValue ${p.pointValue} not in 100..700 set`,
+      );
+    }
+    if (explicitSlots.has(p.pointValue)) {
+      throw new Error(
+        `assignPointValues: duplicate explicit pointValue ${p.pointValue}`,
+      );
+    }
+    explicitSlots.add(p.pointValue);
+  }
+
+  const openSlots = POINT_VALUES.filter((v) => !explicitSlots.has(v));
+  const sortedOpen = picked
+    .filter((p) => typeof p.pointValue !== "number")
+    .slice() // never mutate caller
+    .sort((a, b) => a.difficulty - b.difficulty);
+
+  const result: Array<{ id: string; pointValue: number }> = [];
+  for (const p of explicit) {
+    result.push({ id: p.id, pointValue: p.pointValue });
+  }
+  for (let i = 0; i < sortedOpen.length; i++) {
+    result.push({ id: sortedOpen[i]!.id, pointValue: openSlots[i] as number });
+  }
+  return result;
 }
 
 /**
