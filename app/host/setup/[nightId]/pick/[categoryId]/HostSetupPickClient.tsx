@@ -33,6 +33,10 @@ import {
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { QuestionRow, CategoryRow } from "@/lib/supabase/types";
 import { useGenerationStatus } from "@/lib/hooks/useGenerationStatus";
+import {
+  deriveInitialGenerationMessage,
+  explainGenerationFailure,
+} from "@/lib/host/generationFailureMessages";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostSetupPickClientProps {
@@ -50,28 +54,6 @@ type ModalState =
   | { kind: "edit"; questionId: string }
   | { kind: "swap"; questionId: string }
   | { kind: "upload"; questionId: string };
-
-/**
- * Translate the various failure paths into a single host-facing message.
- * Internal stack traces and HTTP detail are abstracted away — the host
- * cares whether to retry or to bail to manual entry.
- */
-function explainGenerationFailure(input: {
-  broadcastMessage: string | null;
-  fromTimeout: boolean;
-  fromRollback: boolean;
-}): string {
-  if (input.broadcastMessage && input.broadcastMessage.trim().length > 0) {
-    return input.broadcastMessage;
-  }
-  if (input.fromRollback) {
-    return "The generator gave up partway through. A retry usually works.";
-  }
-  if (input.fromTimeout) {
-    return "Anthropic took longer than 60 seconds without sending back a single question. That's almost always a slow upstream — retry, or type your seven by hand.";
-  }
-  return "Something went sideways while pulling your questions.";
-}
 
 export function HostSetupPickClient({
   nightId,
@@ -99,9 +81,18 @@ export function HostSetupPickClient({
   const [photoCandidates, setPhotoCandidates] = useState<HostGenPhotoCandidate[]>([]);
   const [photoLookupError, setPhotoLookupError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Seed the failure message from the server-rendered state so a refresh
+  // into a rolled-back category surfaces the retry / manual-entry UI
+  // instead of stranding on the loading spinner. Without this seed the
+  // broadcast that fired before the browser subscribed is lost forever.
   const [generationFailureMessage, setGenerationFailureMessage] = useState<
     string | null
-  >(null);
+  >(() =>
+    deriveInitialGenerationMessage({
+      initialState,
+      initialQuestionCount: initialQuestions.length,
+    }),
+  );
   const [retrying, setRetrying] = useState(false);
 
   // ── live subscription ────────────────────────────────────────────────
