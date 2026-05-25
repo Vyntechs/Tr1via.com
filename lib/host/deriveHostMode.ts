@@ -37,6 +37,68 @@ export interface HostModeContext {
   /** Whether the current live game's picked questions are all finished —
    *  triggers the "End Game →" CTA in picking mode (P0.33). */
   canEndGame: boolean;
+  /** True only when in `picking` mode AND at least one category has had
+   *  every question played AND at least one OTHER category still has
+   *  unplayed questions. Lets the TV surface a "Pick the next topic"
+   *  panel (and the host strip its matching caption) so the host isn't
+   *  staring at the grid wondering what to click next. False during the
+   *  pre-first-question state (where the picker would feel premature)
+   *  and false once every category is exhausted (where End Game CTA wins). */
+  inSectionPicker: boolean;
+}
+
+/** Per-category row used by the section-ended picker. */
+export interface RemainingTopic {
+  categoryId: string;
+  name: string;
+  /** Category color from `categories.color` (nullable in the DB). Callers
+   *  should fall back to `categoryColor(name)` when this is null. */
+  color: string | null;
+  /** The lowest-points unplayed picked question — what we'd auto-reveal
+   *  when the host taps this topic. */
+  lowestQuestionId: string;
+  /** How many picked questions remain unplayed in this category. */
+  remainingCount: number;
+  /** Total picked questions in this category (e.g. 7). */
+  totalCount: number;
+}
+
+/**
+ * Returns the remaining-topics list used by the section-ended picker.
+ * A "remaining" topic is a category in the given game that has at least
+ * one picked question whose `finishedAt` is null. Sorted by category
+ * `position` (the order the host pinned them in setup). Empty when the
+ * game has no current id or no categories have unplayed questions.
+ */
+export function getRemainingTopics(
+  snapshot: { categories: TVSnapshot["categories"]; questions: TVSnapshot["questions"] },
+  gameId: string | null,
+): RemainingTopic[] {
+  if (!gameId) return [];
+  const gameCats = snapshot.categories
+    .filter((c) => c.gameId === gameId)
+    .sort((a, b) => a.position - b.position);
+  const out: RemainingTopic[] = [];
+  for (const cat of gameCats) {
+    const catQuestions = snapshot.questions.filter(
+      (q) => q.categoryId === cat.id && q.isPicked,
+    );
+    const unplayed = catQuestions.filter((q) => q.finishedAt === null);
+    if (unplayed.length === 0) continue;
+    const lowest = [...unplayed].sort(
+      (a, b) => (a.pointValue ?? 0) - (b.pointValue ?? 0),
+    )[0];
+    if (!lowest) continue;
+    out.push({
+      categoryId: cat.id,
+      name: cat.name,
+      color: cat.color,
+      lowestQuestionId: lowest.id,
+      remainingCount: unplayed.length,
+      totalCount: catQuestions.length,
+    });
+  }
+  return out;
 }
 
 export function deriveHostMode(
@@ -51,6 +113,7 @@ export function deriveHostMode(
     game1State: null,
     game2State: null,
     canEndGame: false,
+    inSectionPicker: false,
   };
 
   if (!snapshot) return base;
@@ -119,5 +182,20 @@ export function deriveHostMode(
   const canEndGame =
     pickedInGame.length > 0 && pickedInGame.every((q) => q.finishedAt !== null);
 
-  return { ...ctx, mode: "picking", canEndGame };
+  // Surface the section-ended picker only when a section JUST ended and
+  // others remain. At the very start of a game (nothing played yet) the
+  // picker would feel premature — the grid is the better first-pick
+  // surface. After every category is exhausted, canEndGame takes over.
+  const playedCount = pickedInGame.filter((q) => q.finishedAt !== null).length;
+  const remainingTopics = getRemainingTopics(snapshot, currentGame.id);
+  const totalCatsInGame = catIdsInGame.size;
+  const someCategoryDone =
+    totalCatsInGame > 0 && remainingTopics.length < totalCatsInGame;
+  const inSectionPicker =
+    !canEndGame &&
+    playedCount > 0 &&
+    someCategoryDone &&
+    remainingTopics.length > 0;
+
+  return { ...ctx, mode: "picking", canEndGame, inSectionPicker };
 }
