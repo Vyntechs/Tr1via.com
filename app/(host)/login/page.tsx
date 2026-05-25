@@ -157,65 +157,16 @@ function HostLoginInner() {
         </p>
       </div>
 
-      {/* Right — the form */}
+      {/* Right — the form, the sent-confirmation, or the signed-in panel */}
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
-        {signedInAs && (
-          <div
-            data-testid="login-signed-in-banner"
-            style={{
-              marginBottom: 20,
-              padding: "14px 18px",
-              borderRadius: 12,
-              background: t.surface,
-              border: `1px solid ${t.line}`,
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              flexWrap: "wrap",
-              maxWidth: 460,
-            }}
-          >
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <Eyebrow color={t.inkMute} size={10}>
-                ALREADY SIGNED IN AS
-              </Eyebrow>
-              <div
-                style={{
-                  marginTop: 4,
-                  fontSize: 15,
-                  fontWeight: 600,
-                  color: t.ink,
-                  wordBreak: "break-all",
-                }}
-              >
-                {signedInAs}
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleSignOut}
-              disabled={signingOut}
-              data-testid="login-sign-out-btn"
-              style={{
-                padding: "10px 16px",
-                borderRadius: 99,
-                border: `1px solid ${t.line}`,
-                background: "transparent",
-                color: t.ink,
-                fontSize: 12,
-                fontWeight: 700,
-                letterSpacing: "0.04em",
-                fontFamily: "var(--font-sans)",
-                cursor: signingOut ? "default" : "pointer",
-                opacity: signingOut ? 0.6 : 1,
-              }}
-            >
-              {signingOut ? "Signing out…" : "Sign out"}
-            </button>
-          </div>
-        )}
-
-        {state.kind === "sent" ? (
+        {signedInAs ? (
+          <SignedInPanel
+            email={signedInAs}
+            onGoToDashboard={() => router.replace("/host")}
+            onSignOut={handleSignOut}
+            signingOut={signingOut}
+          />
+        ) : state.kind === "sent" ? (
           <SentConfirmation
             email={state.email}
             onAnother={() => {
@@ -315,6 +266,91 @@ function HostLoginInner() {
           </form>
         )}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Right-column when the visitor already has a Supabase session. We do NOT
+ * render the magic-link form here: an authed visitor pounding "Send
+ * sign-in link" will hit Supabase's per-email OTP rate limit (Heather did,
+ * 2026-05-25). The dashboard CTA is the primary action; Sign out is the
+ * secondary path for switching accounts.
+ */
+function SignedInPanel({
+  email,
+  onGoToDashboard,
+  onSignOut,
+  signingOut,
+}: {
+  email: string;
+  onGoToDashboard: () => void;
+  onSignOut: () => void;
+  signingOut: boolean;
+}) {
+  const { t } = useTheme();
+  return (
+    <div
+      data-testid="login-signed-in-banner"
+      style={{ maxWidth: 460, display: "flex", flexDirection: "column", gap: 18 }}
+    >
+      <div>
+        <Eyebrow color={t.inkMute} size={10}>
+          ALREADY SIGNED IN AS
+        </Eyebrow>
+        <div
+          style={{
+            marginTop: 6,
+            fontSize: 22,
+            fontWeight: 700,
+            color: t.ink,
+            wordBreak: "break-all",
+            letterSpacing: "-0.01em",
+          }}
+        >
+          {email}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={onGoToDashboard}
+        data-testid="login-go-dashboard-btn"
+        style={{
+          padding: "18px 22px",
+          background: t.accent,
+          color: "#FFF",
+          border: "none",
+          borderRadius: 14,
+          fontFamily: "var(--font-sans)",
+          fontSize: 16,
+          fontWeight: 700,
+          cursor: "pointer",
+          boxShadow: `0 14px 28px -12px ${t.accent}66`,
+          letterSpacing: "-0.005em",
+        }}
+      >
+        Go to your dashboard  →
+      </button>
+      <button
+        type="button"
+        onClick={onSignOut}
+        disabled={signingOut}
+        data-testid="login-sign-out-btn"
+        style={{
+          padding: "12px 18px",
+          background: "transparent",
+          color: t.inkMid,
+          border: `1px solid ${t.line}`,
+          borderRadius: 10,
+          fontFamily: "var(--font-sans)",
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: signingOut ? "default" : "pointer",
+          opacity: signingOut ? 0.6 : 1,
+        }}
+      >
+        {signingOut ? "Signing out…" : "Sign out and use a different email"}
+      </button>
     </div>
   );
 }
