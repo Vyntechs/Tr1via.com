@@ -8,20 +8,10 @@
 
 "use client";
 
-import Link from "next/link";
 import { LaptopShell } from "@/components/shells";
 import { Eyebrow, Numeric, Rule, ThemeProvider, useTheme } from "@/components/system";
 import { formatRoomCode } from "@/lib/game/room-code";
 import type { ThemeKey } from "@/lib/theme/tokens";
-
-const SHORTCUT_LINKS: ReadonlyArray<{ label: string; href: string }> = [
-  { label: "Tonight", href: "/host" },
-  { label: "All nights", href: "/host/nights" },
-  { label: "Question library", href: "/host/library" },
-  { label: "Themes", href: "/host/themes" },
-  { label: "Venues", href: "/host/venues" },
-  { label: "Settings", href: "/host/settings" },
-];
 
 export interface HostDashboardPastNight {
   /** Formatted display label (e.g. "Wed May 21"). */
@@ -174,40 +164,6 @@ function HostDashboardInner({
           </div>
           <div style={{ color: t.inkMid, fontSize: 13, marginTop: 2 }}>
             {hostSubtitle}
-          </div>
-
-          <div style={{ marginTop: 36 }}>
-            <Eyebrow color={t.inkMute} size={10}>
-              SHORTCUTS
-            </Eyebrow>
-            <div
-              style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 4 }}
-            >
-              {SHORTCUT_LINKS.map((item, i) => (
-                <Link
-                  key={item.label}
-                  href={item.href}
-                  style={{
-                    padding: "10px 12px",
-                    borderRadius: 8,
-                    background:
-                      i === 0
-                        ? t.dark
-                          ? "rgba(255,255,255,.06)"
-                          : "rgba(20,19,15,.04)"
-                        : "transparent",
-                    color: i === 0 ? t.ink : t.inkMid,
-                    fontSize: 14,
-                    fontWeight: i === 0 ? 600 : 500,
-                    cursor: "pointer",
-                    textDecoration: "none",
-                    display: "block",
-                  }}
-                >
-                  {item.label}
-                </Link>
-              ))}
-            </div>
           </div>
         </div>
 
