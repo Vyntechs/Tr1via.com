@@ -28,7 +28,7 @@ export default async function SetupOverviewPage({
     if (owned.status === 404) notFound();
     redirect("/login");
   }
-  const { night } = owned;
+  const { night, host } = owned;
 
   const admin = getSupabaseAdmin();
   const [{ data: gameRows }, { data: catRows }] = await Promise.all([
@@ -63,7 +63,8 @@ export default async function SetupOverviewPage({
       games={games}
       categories={categories}
       isOpen={night.opened_at !== null}
-      initialThemeKey={night.theme_key ?? "house"}
+      initialThemeKey={night.theme_key}
+      hostDefaultThemeKey={host.default_theme_key}
     />
   );
 }

@@ -10,6 +10,7 @@
 
 import { notFound, redirect } from "next/navigation";
 import { requireOwnedCategory } from "@/lib/api/auth";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { HostSetupManualClient } from "./HostSetupManualClient";
 
 export const dynamic = "force-dynamic";
@@ -42,7 +43,7 @@ export default async function SetupManualPage({
       categoryId={categoryId}
       categoryName={owned.category.name}
       categoryTopic={owned.category.topic}
-      themeKey={owned.night.theme_key ?? "house"}
+      themeKey={resolveTheme(owned.night, owned.host)}
     />
   );
 }

@@ -81,7 +81,7 @@ export function roomToTVSnapshot(
   const { room, allQuestions, scores, answers } = input;
   if (!room.night) return null;
 
-  const night = nightToTVNight(room.night);
+  const night = nightToTVNight(room.night, room.hostDefaultThemeKey);
   const games = room.games.map(gameRowToTVGame);
   const categories = room.categories.map(categoryRowToTVCategory);
 
@@ -199,11 +199,15 @@ export function roomToTVSnapshot(
 
 // ─── pure row converters ──────────────────────────────────────────────────
 
-function nightToTVNight(n: NonNullable<RoomSnapshot["night"]>): TVSnapshot["night"] {
+function nightToTVNight(
+  n: NonNullable<RoomSnapshot["night"]>,
+  hostDefaultThemeKey: string | null,
+): TVSnapshot["night"] {
   return {
     id: n.id,
     venueName: n.venue_name,
     themeKey: n.theme_key,
+    hostDefaultThemeKey,
     roomCode: n.room_code,
     openedAt: n.opened_at,
     closedAt: n.closed_at,

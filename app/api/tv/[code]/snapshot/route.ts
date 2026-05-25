@@ -30,15 +30,23 @@ export async function GET(
 
   const admin = getSupabaseAdmin();
 
-  // Night
+  // Night + the host's default theme (for resolveTheme on the client when
+  // night.theme_key is null — i.e. no per-night override).
   const { data: night, error: nightError } = await admin
     .from("nights")
-    .select("id, venue_name, theme_key, room_code, opened_at, closed_at, scheduled_at, is_locked")
+    .select(
+      "id, venue_name, theme_key, room_code, opened_at, closed_at, scheduled_at, is_locked, hosts!inner(default_theme_key)",
+    )
     .eq("room_code", code)
     .maybeSingle();
   if (nightError) return serverError(nightError.message);
   if (!night) return notFound("room not found");
   const nightId = night.id;
+  // Supabase returns the joined `hosts` field as either an object or an
+  // array depending on relationship inference. Normalize to one object.
+  const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
+  const hostDefaultThemeKey: string | null =
+    host?.default_theme_key ?? null;
 
   const [
     gamesRes,
@@ -207,6 +215,7 @@ export async function GET(
       id: night.id,
       venueName: night.venue_name,
       themeKey: night.theme_key,
+      hostDefaultThemeKey,
       roomCode: night.room_code,
       openedAt: night.opened_at,
       closedAt: night.closed_at,

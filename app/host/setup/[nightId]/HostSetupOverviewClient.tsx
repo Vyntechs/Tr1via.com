@@ -8,7 +8,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HostGenOverview, type GameOverviewData, type CategorySlotData } from "@/components/host/gen";
 import { PalettePeek } from "@/components/shared/PalettePeek";
-import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
+import { type ThemeKey } from "@/lib/theme/tokens";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import type { CategoryRow, GameRow } from "@/lib/supabase/types";
 
 export interface HostSetupOverviewClientProps {
@@ -17,8 +18,11 @@ export interface HostSetupOverviewClientProps {
   games: GameRow[];
   categories: CategoryRow[];
   isOpen: boolean;
-  /** Current theme_key on the night row. Used as the initial active palette. */
-  initialThemeKey: string;
+  /** Current theme_key on the night row. `null` means "no per-night
+   *  override" — falls through to the host's default. */
+  initialThemeKey: string | null;
+  /** Host's preferred theme. Used when the night has no override. */
+  hostDefaultThemeKey: string;
 }
 
 const SLOTS_PER_GAME = 6;
@@ -30,12 +34,19 @@ export function HostSetupOverviewClient({
   categories,
   isOpen,
   initialThemeKey,
+  hostDefaultThemeKey,
 }: HostSetupOverviewClientProps) {
   const router = useRouter();
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Theme state starts at the resolved theme so first paint already matches
+  // what the host expects. The picker pill writes to night.theme_key (the
+  // per-night override) which then takes priority over host preference.
   const [themeKey, setThemeKey] = useState<ThemeKey>(
-    isThemeKey(initialThemeKey) ? initialThemeKey : "house",
+    resolveTheme(
+      { theme_key: initialThemeKey },
+      { default_theme_key: hostDefaultThemeKey },
+    ),
   );
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [savingTheme, setSavingTheme] = useState(false);
