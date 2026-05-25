@@ -601,7 +601,19 @@ function uniqueAscendingPointValues(
 }
 
 function joinUrl(roomCode: string): string {
-  const site = process.env.NEXT_PUBLIC_SITE_URL ?? "https://tr1via.com";
+  // Use whatever origin the host laptop is actually serving from so the
+  // QR works correctly on prod, preview deploys, and local tunnels —
+  // without needing a per-deployment env var. QRBlock renders client-side
+  // (canvas), so window.location.origin is what actually ends up in the
+  // scannable code. The SSR fallback only matters for the initial HTML
+  // before hydration, where we prefer the explicit env var, then the
+  // production canonical, then localhost as a last-ditch dev default.
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/join?code=${roomCode}`;
+  }
+  const site =
+    process.env.NEXT_PUBLIC_SITE_URL ??
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://tr1via.com");
   return `${site}/join?code=${roomCode}`;
 }
 
