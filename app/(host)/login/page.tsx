@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { LaptopShell } from "@/components/shells";
 import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
@@ -44,6 +44,34 @@ function HostLoginInner() {
   const router = useRouter();
   const [email, setEmail] = useState("");
   const [state, setState] = useState<FormState>({ kind: "idle" });
+  // If the visitor already has a session, show "signed in as X" with a
+  // sign-out option BEFORE the email form. Solves the "I never get asked
+  // for email" problem where a stale cookie silently inherited a session.
+  const [signedInAs, setSignedInAs] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+
+  useEffect(() => {
+    const supabase = getSupabaseBrowser();
+    supabase.auth.getUser().then(({ data }) => {
+      setSignedInAs(data.user?.email ?? null);
+    });
+  }, []);
+
+  async function handleSignOut() {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+    } catch {
+      // ignore — refresh shows the form regardless
+    }
+    setSignedInAs(null);
+    setSigningOut(false);
+    router.refresh();
+  }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -131,6 +159,62 @@ function HostLoginInner() {
 
       {/* Right — the form */}
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        {signedInAs && (
+          <div
+            data-testid="login-signed-in-banner"
+            style={{
+              marginBottom: 20,
+              padding: "14px 18px",
+              borderRadius: 12,
+              background: t.surface,
+              border: `1px solid ${t.line}`,
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+              maxWidth: 460,
+            }}
+          >
+            <div style={{ flex: 1, minWidth: 200 }}>
+              <Eyebrow color={t.inkMute} size={10}>
+                ALREADY SIGNED IN AS
+              </Eyebrow>
+              <div
+                style={{
+                  marginTop: 4,
+                  fontSize: 15,
+                  fontWeight: 600,
+                  color: t.ink,
+                  wordBreak: "break-all",
+                }}
+              >
+                {signedInAs}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={handleSignOut}
+              disabled={signingOut}
+              data-testid="login-sign-out-btn"
+              style={{
+                padding: "10px 16px",
+                borderRadius: 99,
+                border: `1px solid ${t.line}`,
+                background: "transparent",
+                color: t.ink,
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: "0.04em",
+                fontFamily: "var(--font-sans)",
+                cursor: signingOut ? "default" : "pointer",
+                opacity: signingOut ? 0.6 : 1,
+              }}
+            >
+              {signingOut ? "Signing out…" : "Sign out"}
+            </button>
+          </div>
+        )}
+
         {state.kind === "sent" ? (
           <SentConfirmation
             email={state.email}
