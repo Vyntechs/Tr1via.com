@@ -91,7 +91,6 @@ export default async function HostHomePage() {
         nightId: tonightRow.id,
         venue: tonightRow.venue_name,
         date: formatNightDate(tonightRow),
-        timeRange: undefined,
         roomCode: tonightRow.room_code,
         themeKey: (tonightRow.theme_key as unknown) as
           | "house"

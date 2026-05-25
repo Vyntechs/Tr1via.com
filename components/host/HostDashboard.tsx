@@ -28,10 +28,9 @@ export interface HostDashboardPastNight {
 export interface HostDashboardTonight {
   nightId: string;
   venue: string;
-  /** Formatted display label (e.g. "Wed May 27"). */
+  /** Formatted display label (e.g. "Wed May 27"). Surfaced in the
+   *  "TONIGHT · WED MAY 27" eyebrow above the venue name. */
   date: string;
-  /** Formatted display label (e.g. "7:00 — 8:45 pm"). */
-  timeRange?: string;
   /** Persisted room code; rendered with formatRoomCode for the K9·PR4M look. */
   roomCode: string;
   themeKey: ThemeKey;
@@ -114,7 +113,6 @@ function HostDashboardInner({
     ? `TONIGHT · ${tonight.date.toUpperCase()}`
     : "TONIGHT · WED MAY 27";
   const tonightVenue = tonight?.venue ?? "Soul Fire Pizza";
-  const tonightTimeRange = tonight?.timeRange ?? "7:00 — 8:45 pm";
   const lifetimeLabel = lifetime
     ? `${lifetime.nights} NIGHTS · ${lifetime.questions.toLocaleString()} QUESTIONS`
     : "78 NIGHTS · 2,140 QUESTIONS";
@@ -190,8 +188,6 @@ function HostDashboardInner({
                 }}
               >
                 {tonightVenue}
-                <br />
-                <span style={{ color: t.inkMid }}>{tonightTimeRange}</span>
               </div>
             </div>
             <button
