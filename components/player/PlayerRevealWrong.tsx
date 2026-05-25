@@ -27,8 +27,11 @@ export interface PlayerRevealWrongProps {
   correctSlot?: 1 | 2 | 3 | 4;
   /** Text of the canonical correct answer. */
   correctText?: string;
-  /** Player's current rank (post-question). */
-  rank?: number;
+  /** Player's 1-based rank (post-question). `null` when not yet known
+   *  (game_scores still loading, or player missing from the view) — header
+   *  drops the position chip and the footer shows "in the mix" instead of
+   *  "#0". */
+  rank?: number | null;
   /** Player's running score. */
   totalScore?: number;
 }
@@ -46,12 +49,13 @@ export function PlayerRevealWrong({
 }: PlayerRevealWrongProps = {}) {
   const { t } = useTheme();
   const noAnswer = chosenSlot === null;
+  const hasRank = rank !== null && rank !== undefined && rank > 0;
   return (
     <PhoneScreen data-testid="player-reveal-wrong">
       <PhoneHeader
         eyebrow={`${category.toUpperCase()} · ${value} PTS`}
         score={totalScore}
-        position={`#${rank}`}
+        position={hasRank ? `#${rank}` : undefined}
       />
 
       <div role="alert" aria-live="assertive">
@@ -85,7 +89,11 @@ export function PlayerRevealWrong({
         }}
       >
         <Eyebrow color={t.inkMid} size={10}>POSITION</Eyebrow>
-        <Numeric size={28} weight={600} color={t.ink}>#{rank}</Numeric>
+        {hasRank ? (
+          <Numeric size={28} weight={600} color={t.ink}>#{rank}</Numeric>
+        ) : (
+          <Numeric size={18} weight={500} color={t.inkMid}>in the mix</Numeric>
+        )}
         <span style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: t.inkMute, fontWeight: 500 }}>—</span>
         <span style={{ flex: 1 }} />
         <Numeric size={18} weight={500} color={t.inkMid}>{totalScore.toLocaleString()}</Numeric>

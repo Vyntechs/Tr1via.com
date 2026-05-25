@@ -25,8 +25,11 @@ export interface PlayerRevealCorrectProps {
   msToLock?: number;
   /** Current streak count (correct in a row). 0 hides the chip. */
   streak?: number;
-  /** Player's rank in the leaderboard right now. */
-  rank?: number;
+  /** Player's 1-based rank in the leaderboard right now. `null` when the
+   *  rank isn't yet known (game_scores still loading, or no participation
+   *  row for this player) — renders an unnumbered "in the mix" tag rather
+   *  than "#0". */
+  rank?: number | null;
   /** Total cumulative score. */
   totalScore?: number;
   /** Positions climbed since the previous question. Positive = up. */
@@ -162,11 +165,17 @@ export function PlayerRevealCorrect({
         }}
       >
         <Eyebrow color="rgba(200,226,94,.7)" size={10}>NOW AT</Eyebrow>
-        <Numeric size={36} weight={700} color={t.correct}>#{rank}</Numeric>
-        {rankDelta !== 0 && (
-          <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: t.correct, fontWeight: 600 }}>
-            {rankDelta > 0 ? `↑ ${rankDelta}` : `↓ ${Math.abs(rankDelta)}`}
-          </span>
+        {rank && rank > 0 ? (
+          <>
+            <Numeric size={36} weight={700} color={t.correct}>#{rank}</Numeric>
+            {rankDelta !== 0 && (
+              <span style={{ fontFamily: "var(--font-mono)", fontSize: 13, color: t.correct, fontWeight: 600 }}>
+                {rankDelta > 0 ? `↑ ${rankDelta}` : `↓ ${Math.abs(rankDelta)}`}
+              </span>
+            )}
+          </>
+        ) : (
+          <Numeric size={22} weight={600} color={t.correct}>in the mix</Numeric>
         )}
         <span style={{ flex: 1 }} />
         <Numeric size={22} weight={600} color="rgba(244,230,196,.95)">{totalScore.toLocaleString()}</Numeric>

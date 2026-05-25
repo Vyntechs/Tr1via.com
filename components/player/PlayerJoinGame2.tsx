@@ -19,8 +19,10 @@ export interface PlayerJoinGame2Props {
   themeKey?: ThemeKey;
   /** Player's display name — printed in the CTA caption. */
   playerName?: string;
-  /** Final placement in game 1 (1-based). */
-  finalRank?: number;
+  /** Final 1-based placement in game 1. `null` when not yet known
+   *  (game_scores still loading, or no participation row for game 1) —
+   *  renders "Wrapped. Nice run." instead of the meaningless "#0". */
+  finalRank?: number | null;
   /** Final cumulative score from game 1. */
   finalScore?: number;
   /** Best-performing category name (drives the color). */
@@ -56,7 +58,11 @@ export function PlayerJoinGame2({
         <Display size={56} color={t.ink}>
           Wrapped.
           <br />
-          You finished <span style={{ color: t.pop }}>#{finalRank}</span>.
+          {finalRank && finalRank > 0 ? (
+            <>You finished <span style={{ color: t.pop }}>#{finalRank}</span>.</>
+          ) : (
+            <span style={{ color: t.pop }}>Nice run.</span>
+          )}
         </Display>
 
         <div style={{ marginTop: 20, padding: "20px 22px", borderRadius: 14, background: t.surface }}>
