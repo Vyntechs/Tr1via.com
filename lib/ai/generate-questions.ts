@@ -23,16 +23,21 @@
 // Tests live in tests/unit/generate-questions.test.ts (Anthropic SDK
 // mocked, no live network).
 //
-// Model: claude-haiku-4-5-20251001. Timeout: 30 seconds.
+// Model: claude-haiku-4-5-20251001. Timeout: 60 seconds.
 //
 // Why Haiku over Sonnet for this: head-to-head benchmark on 4 topics
 // (movie actors, 90s hip-hop, world capitals, kitchen science, classic
 // rock albums) showed Haiku is ~2.5× faster (20s vs 50s avg) and ~3.2×
-// cheaper, with comparable distractor quality. Speed matters here — at
-// 50s Sonnet was hitting the production 30s timeout under load. Sonnet
-// has a slight edge on difficulty spread for narrow/easy topics; if
-// that becomes a problem we'll add a "regenerate with deeper model"
-// fallback rather than paying the latency tax every time.
+// cheaper, with comparable distractor quality. Sonnet has a slight edge
+// on difficulty spread for narrow/easy topics; if that becomes a problem
+// we'll add a "regenerate with deeper model" fallback rather than paying
+// the latency tax every time.
+//
+// Why 60s default (was 30s): production logs showed repeated
+// `Request timed out` failures at 30s on real host prompts. Haiku's
+// 20s average has long tails — 60s gives headroom while still leaving
+// the calling route 60s (within its maxDuration=120s budget) for the
+// sequential Pexels photo attach pass.
 
 import "server-only";
 
@@ -180,8 +185,11 @@ function makeClient(): Anthropic {
  */
 export const DEFAULT_MODEL = "claude-haiku-4-5-20251001";
 
-/** Default request timeout in ms. */
-export const DEFAULT_TIMEOUT_MS = 30_000;
+/** Default request timeout in ms. Bumped from 30s after observing repeated
+ *  Anthropic `Request timed out` failures in prod logs. The route's
+ *  `maxDuration` is 120s, so 60s here still leaves headroom for the
+ *  sequential Pexels photo attach pass that follows. */
+export const DEFAULT_TIMEOUT_MS = 60_000;
 
 // ─── Public API ───────────────────────────────────────────────────────
 
@@ -215,32 +223,53 @@ export async function generateQuestions(
     count,
   });
 
-  const response = await client.beta.promptCaching.messages.create(
-    {
-      model,
-      max_tokens: 8_000,
-      // System prompt as a single text block with the ephemeral cache
-      // hint. The SDK forwards this to the Prompt Caching beta endpoint.
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: [
-        {
-          role: "user",
-          content: userPrompt,
-        },
-      ],
-      tools: [emitQuestionsTool],
-      tool_choice: { type: "tool", name: EMIT_QUESTIONS_TOOL_NAME },
-      // Slight temperature for creative variety without going off-spec.
-      temperature: 0.7,
-    },
-    { timeout: timeoutMs },
+  // Time the Anthropic call so prod logs surface actual duration on
+  // every attempt — needed to know if a future timeout bump or model
+  // fallback is warranted. Log line is grep-able as `[generateQuestions]`.
+  const t0 = Date.now();
+  console.log(
+    `[generateQuestions] calling ${model} topic="${opts.topic}" timeoutMs=${timeoutMs}`,
   );
+  let response: Awaited<
+    ReturnType<typeof client.beta.promptCaching.messages.create>
+  >;
+  try {
+    response = await client.beta.promptCaching.messages.create(
+      {
+        model,
+        max_tokens: 8_000,
+        // System prompt as a single text block with the ephemeral cache
+        // hint. The SDK forwards this to the Prompt Caching beta endpoint.
+        system: [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+        messages: [
+          {
+            role: "user",
+            content: userPrompt,
+          },
+        ],
+        tools: [emitQuestionsTool],
+        tool_choice: { type: "tool", name: EMIT_QUESTIONS_TOOL_NAME },
+        // Slight temperature for creative variety without going off-spec.
+        temperature: 0.7,
+      },
+      { timeout: timeoutMs },
+    );
+  } catch (err) {
+    const dt = Date.now() - t0;
+    const errName = err instanceof Error ? err.constructor.name : typeof err;
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.log(
+      `[generateQuestions] FAILED after ${dt}ms (${errName}): ${errMsg}`,
+    );
+    throw err;
+  }
+  console.log(`[generateQuestions] returned in ${Date.now() - t0}ms`);
 
   const toolBlock = response.content.find(
     (block): block is Extract<typeof block, { type: "tool_use" }> =>
