@@ -160,7 +160,7 @@ function HostLiveConsoleInner({
     () => deriveHostMode(tvSnapshot ?? null, hostAdvanced),
     [tvSnapshot, hostAdvanced],
   );
-  const { mode, canEndGame } = modeCtx;
+  const { mode, canEndGame, inSectionPicker } = modeCtx;
 
   function handleRevealCell(questionId: string) {
     setHostAdvanced(false);
@@ -195,6 +195,7 @@ function HostLiveConsoleInner({
               lastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
               lastBroadcastServerNow={tvLastBroadcastServerNow}
               onGridCellClick={handleRevealCell}
+              onSectionPickerTopicClick={handleRevealCell}
               hostAdvanced={hostAdvanced}
             />
           ) : (
@@ -205,6 +206,7 @@ function HostLiveConsoleInner({
         <HostControlStrip
           mode={mode}
           canEndGame={canEndGame}
+          inSectionPicker={inSectionPicker}
           canUndo={canUndo && (mode === "question-live" || mode === "picking" || mode === "reveal-sticky")}
           lockedCount={locks}
           totalPlayers={totalPlayers}
@@ -248,6 +250,10 @@ interface HostControlStripProps {
     | "intermission"
     | "finale";
   canEndGame: boolean;
+  /** True when picking mode + section just ended; swaps the strip's
+   *  default "Tap a cell to reveal" caption for "Pick the next topic on
+   *  the TV" so the host knows where their action lives. */
+  inSectionPicker: boolean;
   canUndo: boolean;
   lockedCount: number;
   totalPlayers: number;
@@ -265,6 +271,7 @@ interface HostControlStripProps {
 function HostControlStrip({
   mode,
   canEndGame,
+  inSectionPicker,
   canUndo,
   lockedCount,
   totalPlayers,
@@ -336,7 +343,9 @@ function HostControlStrip({
               letterSpacing: "0.02em",
             }}
           >
-            Tap a cell to reveal the next question
+            {inSectionPicker
+              ? "Pick the next topic on the TV"
+              : "Tap a cell to reveal the next question"}
           </span>
         )}
         {mode === "finale" && onCloseNight && (

@@ -6,7 +6,7 @@
 // strand Heather mid-game again.
 
 import { describe, expect, it } from "vitest";
-import { deriveHostMode } from "@/lib/host/deriveHostMode";
+import { deriveHostMode, getRemainingTopics } from "@/lib/host/deriveHostMode";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 
 type Game = TVSnapshot["games"][number];
@@ -346,5 +346,196 @@ describe("deriveHostMode", () => {
       }),
     );
     expect(ctx.mode).toBe("finale");
+  });
+
+  // PR C — section-ended picker. The flag flips ON only when at least one
+  // category in the current game is exhausted AND others still have unplayed
+  // questions. The host's "Pick the next topic" panel surfaces on this flag.
+  describe("inSectionPicker", () => {
+    it("is false when nothing has been played yet (start of game)", () => {
+      const ctx = deriveHostMode(
+        snapshot({
+          games: [game({ id: "g1", gameNo: 1, state: "live" })],
+          currentGameId: "g1",
+          categories: [
+            category({ id: "c1", gameId: "g1" }),
+            category({ id: "c2", gameId: "g1" }),
+          ],
+          questions: [
+            question({ id: "q1", categoryId: "c1", finishedAt: null }),
+            question({ id: "q2", categoryId: "c2", finishedAt: null }),
+          ],
+        }),
+      );
+      expect(ctx.mode).toBe("picking");
+      expect(ctx.inSectionPicker).toBe(false);
+    });
+
+    it("is false when at least one question played but every category still has unplayed", () => {
+      const ctx = deriveHostMode(
+        snapshot({
+          games: [game({ id: "g1", gameNo: 1, state: "live" })],
+          currentGameId: "g1",
+          categories: [
+            category({ id: "c1", gameId: "g1" }),
+            category({ id: "c2", gameId: "g1" }),
+          ],
+          questions: [
+            question({
+              id: "q1",
+              categoryId: "c1",
+              finishedAt: "2026-05-24T00:00:30Z",
+            }),
+            question({ id: "q1b", categoryId: "c1", finishedAt: null }),
+            question({ id: "q2", categoryId: "c2", finishedAt: null }),
+          ],
+        }),
+        true, // hostAdvanced — skip reveal-sticky so we land in picking
+      );
+      expect(ctx.mode).toBe("picking");
+      expect(ctx.inSectionPicker).toBe(false);
+    });
+
+    it("flips ON when one category is exhausted and another still has unplayed", () => {
+      const ctx = deriveHostMode(
+        snapshot({
+          games: [game({ id: "g1", gameNo: 1, state: "live" })],
+          currentGameId: "g1",
+          categories: [
+            category({ id: "c1", gameId: "g1" }),
+            category({ id: "c2", gameId: "g1" }),
+          ],
+          questions: [
+            // c1 fully done
+            question({
+              id: "q1",
+              categoryId: "c1",
+              finishedAt: "2026-05-24T00:00:30Z",
+            }),
+            // c2 still has unplayed
+            question({ id: "q2", categoryId: "c2", finishedAt: null }),
+          ],
+        }),
+        true,
+      );
+      expect(ctx.mode).toBe("picking");
+      expect(ctx.inSectionPicker).toBe(true);
+    });
+
+    it("is false when every picked question is done (End Game CTA wins)", () => {
+      const ctx = deriveHostMode(
+        snapshot({
+          games: [game({ id: "g1", gameNo: 1, state: "live" })],
+          currentGameId: "g1",
+          categories: [category({ id: "c1", gameId: "g1" })],
+          questions: [
+            question({
+              id: "q1",
+              categoryId: "c1",
+              finishedAt: "2026-05-24T00:00:30Z",
+            }),
+          ],
+        }),
+        true,
+      );
+      expect(ctx.mode).toBe("picking");
+      expect(ctx.canEndGame).toBe(true);
+      expect(ctx.inSectionPicker).toBe(false);
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// getRemainingTopics — pure helper. The TV picker uses this to render its
+// clickable rows; deriveHostMode uses it to compute inSectionPicker.
+// ─────────────────────────────────────────────────────────────────────────
+
+describe("getRemainingTopics", () => {
+  it("returns empty when game id is null", () => {
+    expect(getRemainingTopics({ categories: [], questions: [] }, null)).toEqual([]);
+  });
+
+  it("skips categories whose every picked question is played", () => {
+    const out = getRemainingTopics(
+      {
+        categories: [
+          category({ id: "c1", gameId: "g1", position: 1, name: "Geography" }),
+          category({ id: "c2", gameId: "g1", position: 2, name: "Music" }),
+        ],
+        questions: [
+          question({
+            id: "q1",
+            categoryId: "c1",
+            finishedAt: "2026-05-24T00:00:30Z",
+          }),
+          question({ id: "q2", categoryId: "c2", finishedAt: null }),
+        ],
+      },
+      "g1",
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.categoryId).toBe("c2");
+    expect(out[0]?.name).toBe("Music");
+  });
+
+  it("picks the lowest-points UNPLAYED question per category", () => {
+    const out = getRemainingTopics(
+      {
+        categories: [category({ id: "c1", gameId: "g1", name: "Geography" })],
+        questions: [
+          // 100 is finished, 200 is the lowest unplayed, 300/400 also unplayed
+          question({
+            id: "q-100",
+            categoryId: "c1",
+            pointValue: 100,
+            finishedAt: "2026-05-24T00:00:30Z",
+          }),
+          question({ id: "q-300", categoryId: "c1", pointValue: 300, finishedAt: null }),
+          question({ id: "q-200", categoryId: "c1", pointValue: 200, finishedAt: null }),
+          question({ id: "q-400", categoryId: "c1", pointValue: 400, finishedAt: null }),
+        ],
+      },
+      "g1",
+    );
+    expect(out[0]?.lowestQuestionId).toBe("q-200");
+    expect(out[0]?.remainingCount).toBe(3);
+    expect(out[0]?.totalCount).toBe(4);
+  });
+
+  it("sorts results by category position", () => {
+    const out = getRemainingTopics(
+      {
+        categories: [
+          category({ id: "c-late", gameId: "g1", position: 3, name: "Late" }),
+          category({ id: "c-early", gameId: "g1", position: 1, name: "Early" }),
+          category({ id: "c-mid", gameId: "g1", position: 2, name: "Mid" }),
+        ],
+        questions: [
+          question({ id: "qa", categoryId: "c-late", finishedAt: null }),
+          question({ id: "qb", categoryId: "c-early", finishedAt: null }),
+          question({ id: "qc", categoryId: "c-mid", finishedAt: null }),
+        ],
+      },
+      "g1",
+    );
+    expect(out.map((r) => r.name)).toEqual(["Early", "Mid", "Late"]);
+  });
+
+  it("ignores categories that belong to OTHER games", () => {
+    const out = getRemainingTopics(
+      {
+        categories: [
+          category({ id: "c1", gameId: "g1" }),
+          category({ id: "c2", gameId: "g2" }),
+        ],
+        questions: [
+          question({ id: "q1", categoryId: "c1", finishedAt: null }),
+          question({ id: "q2", categoryId: "c2", finishedAt: null }),
+        ],
+      },
+      "g1",
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.categoryId).toBe("c1");
   });
 });
