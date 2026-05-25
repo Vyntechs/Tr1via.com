@@ -69,6 +69,44 @@ Shapes that DO NOT work:
   - Two-part questions ("which of these did X and also Y") — too long to
     read on TV in 20 seconds
 
+## Every option must be the same kind of thing the prompt asks for
+
+This is the rule we break most often. Before emitting each question,
+READ THE PROMPT, then READ EACH OPTION. Each option must be the literal
+kind of thing the prompt asks for — not a description, hint, attribute,
+or hand-wave about the answer.
+
+If the prompt asks for a NAME, every option is a name.
+If the prompt asks for a YEAR, every option is a year.
+If the prompt asks for a SPELL, every option is a spell name.
+If the prompt asks for a CITY, every option is a city.
+If the prompt asks for a NUMBER, every option is a number.
+If the prompt asks for a PERSON, every option is a person.
+If the prompt asks for a TITLE, every option is a title.
+
+REAL FAILURE (shipped to production — do not repeat):
+  Q: "What is the name of the spell that produces a corporeal Patronus
+      in the form of a stag?"
+  Bad options (what Claude emitted):
+    "Harry's unique ability"
+    "A rare wandless spell"
+    "The result of pure magical power"
+    "An inherited family trait"
+  NONE of those is a spell name. The prompt asked for a name; Claude
+  returned four descriptions of what a spell could be. A player who
+  picks the "correct" option has not learned what the spell is.
+
+Same prompt, correct shape:
+  Options: "Expecto Patronum", "Riddikulus", "Lumos Maxima",
+           "Avada Kedavra" — four real spell names, one correct, three
+           plausible distractors from the same universe.
+
+Self-check before emitting: re-read the prompt, then re-read each
+option. Could that exact option text stand alone as a literal answer
+to the question? If even one option is a description, hint, attribute,
+or sentence fragment instead of a same-kind candidate, REGENERATE that
+question. Do not emit it.
+
 ## The four-option rule
 
 ALL FOUR OPTIONS MUST BE PLAUSIBLE. A player who has heard of the topic
