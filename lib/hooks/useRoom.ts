@@ -36,6 +36,11 @@ import type {
 export interface RoomSnapshot {
   /** Night row (venue, theme, lock status, room code) or null while loading. */
   night: NightRow | null;
+  /** The host's default_theme_key, used by `resolveTheme(night, host)` when
+   *  the night has no per-night theme override (`night.theme_key === null`).
+   *  Null when the snapshot hasn't loaded yet OR when the migration adding
+   *  the column hasn't been applied. */
+  hostDefaultThemeKey: string | null;
   /** Up to 2 games, ordered by game_no. */
   games: GameRow[];
   /** All categories across both games, ordered by (game, position). */
@@ -75,6 +80,7 @@ export interface BroadcastTag {
 
 const EMPTY: RoomSnapshot = {
   night: null,
+  hostDefaultThemeKey: null,
   games: [],
   categories: [],
   players: [],
@@ -178,7 +184,11 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
         lastResolved,
         recentReveals,
       ] = await Promise.all([
-        supa.from("nights").select("*").eq("id", nightId).single(),
+        supa
+          .from("nights")
+          .select("*, hosts!inner(default_theme_key)")
+          .eq("id", nightId)
+          .single(),
         supa
           .from("games")
           .select("*")
@@ -237,8 +247,26 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
       const currentReveal = reveals[0]
         ? (stripJoin(reveals[0], "games") as RevealRow)
         : null;
+      // The join on hosts returns `{ ..., hosts: { default_theme_key } }`
+      // (object) or `{ ..., hosts: [{...}] }` (array) depending on relation
+      // inference. Normalize then strip so RoomSnapshot.night stays a plain
+      // NightRow.
+      const nightWithHost = nightRow.data as
+        | (NightRow & { hosts?: { default_theme_key?: string } | Array<{ default_theme_key?: string }> })
+        | null;
+      const hostJoin = nightWithHost
+        ? Array.isArray(nightWithHost.hosts)
+          ? nightWithHost.hosts[0]
+          : nightWithHost.hosts
+        : null;
+      const hostDefaultThemeKey: string | null =
+        hostJoin?.default_theme_key ?? null;
+      const cleanNight: NightRow | null = nightWithHost
+        ? (({ hosts: _hosts, ...rest }) => rest as NightRow)(nightWithHost)
+        : null;
       setSnapshot({
-        night: nightRow.data as NightRow | null,
+        night: cleanNight,
+        hostDefaultThemeKey,
         games,
         categories,
         players,

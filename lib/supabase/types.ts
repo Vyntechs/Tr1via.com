@@ -309,6 +309,7 @@ export type Database = {
           comped_at: string | null
           comped_by: string | null
           created_at: string
+          default_theme_key: string
           default_venue: string | null
           display_name: string
           id: string
@@ -321,6 +322,7 @@ export type Database = {
           comped_at?: string | null
           comped_by?: string | null
           created_at?: string
+          default_theme_key?: string
           default_venue?: string | null
           display_name: string
           id?: string
@@ -333,6 +335,7 @@ export type Database = {
           comped_at?: string | null
           comped_by?: string | null
           created_at?: string
+          default_theme_key?: string
           default_venue?: string | null
           display_name?: string
           id?: string
@@ -361,7 +364,7 @@ export type Database = {
           opened_at: string | null
           room_code: string
           scheduled_at: string | null
-          theme_key: string
+          theme_key: string | null
           venue_name: string
         }
         Insert: {
@@ -373,7 +376,7 @@ export type Database = {
           opened_at?: string | null
           room_code: string
           scheduled_at?: string | null
-          theme_key?: string
+          theme_key?: string | null
           venue_name: string
         }
         Update: {
@@ -385,7 +388,7 @@ export type Database = {
           opened_at?: string | null
           room_code?: string
           scheduled_at?: string | null
-          theme_key?: string
+          theme_key?: string | null
           venue_name?: string
         }
         Relationships: [

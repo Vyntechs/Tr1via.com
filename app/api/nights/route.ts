@@ -46,7 +46,10 @@ export async function POST(req: NextRequest) {
         host_id: auth.host.id,
         venue_name: parsed.data.venueName,
         room_code: code,
-        theme_key: parsed.data.themeKey ?? "house",
+        // Leave theme_key null unless the caller explicitly sets one (e.g.
+        // an "Override theme for this night" flow). Null means "use host
+        // preference," which is now stored in hosts.default_theme_key.
+        theme_key: parsed.data.themeKey ?? null,
         scheduled_at: parsed.data.scheduledAt ?? null,
       })
       .select("id, room_code")

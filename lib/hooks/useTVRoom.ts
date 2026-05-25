@@ -27,7 +27,13 @@ const SAFETY_REFETCH_MS = 4000;
 export interface TVNight {
   id: string;
   venueName: string;
-  themeKey: string;
+  /** Per-night theme override. Null when the host hasn't picked a special
+   *  theme for this night — falls through to `hostDefaultThemeKey`. */
+  themeKey: string | null;
+  /** Host's default theme. Used when `themeKey` is null. May be null when
+   *  the snapshot was fetched before migration 0006 was applied — the
+   *  client falls through to SYSTEM_DEFAULT in that case. */
+  hostDefaultThemeKey: string | null;
   roomCode: string;
   openedAt: string | null;
   closedAt: string | null;

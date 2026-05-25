@@ -32,12 +32,17 @@ import {
   isValidRoomCode,
   parseRoomCode,
 } from "@/lib/game/room-code";
-import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
+import { type ThemeKey } from "@/lib/theme/tokens";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 
 interface NightLookup {
   nightId: string;
   venueName: string;
-  themeKey: string;
+  /** Per-night theme override; null when no override is set. */
+  themeKey: string | null;
+  /** Host's default theme; null when the column doesn't exist yet
+   *  (pre-migration-0006). */
+  hostDefaultThemeKey: string | null;
   isLocked: boolean;
   isOpen: boolean;
 }
@@ -74,7 +79,9 @@ function JoinPageInner() {
 // ─── No-code state: type/scan a room code ────────────────────────────────
 
 function CodeEntryScreen({ onSubmit }: { onSubmit: (code: string) => void }) {
-  // Theme is the global default ("house") since we don't know the night yet.
+  // Theme inherits the root layout's <ThemeProvider> default since we don't
+  // know the night (or the host's preference) yet — they're not part of the
+  // URL until the code is typed/scanned.
   return (
     <PhoneScreen data-testid="player-code-entry">
       <PhoneHeader eyebrow="JOIN A ROOM" />
@@ -289,9 +296,10 @@ function JoinWithCode({ roomCode }: { roomCode: string }) {
     return <NotFoundScreen roomCode={roomCode} message={lookup.message} />;
   }
 
-  const themeKey: ThemeKey = isThemeKey(lookup.night.themeKey)
-    ? lookup.night.themeKey
-    : "house";
+  const themeKey: ThemeKey = resolveTheme(
+    { theme_key: lookup.night.themeKey },
+    { default_theme_key: lookup.night.hostDefaultThemeKey },
+  );
 
   if (lookup.night.isLocked) {
     return (
