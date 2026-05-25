@@ -26,7 +26,11 @@ export interface PlayerRecapProps {
   themeKey?: ThemeKey;
   venueName?: string;
   nightDateLabel?: string;
-  finalRank?: number;
+  /** Final 1-based rank, or `null` when the rank can't be determined (the
+   *  player is missing from `game_scores` — e.g. no participation row).
+   *  Rendering falls back to a non-numbered "Nice run." headline rather than
+   *  showing the literal "#0" the old code path would produce. */
+  finalRank?: number | null;
   finalScore?: number;
   stats?: PlayerRecapStat[];
   /** Caption above the stats. */
@@ -72,7 +76,11 @@ export function PlayerRecap({
       >
         Wrapped.
         <br />
-        You finished <span style={{ color: t.accent }}>#{finalRank}</span>.
+        {finalRank && finalRank > 0 ? (
+          <>You finished <span style={{ color: t.accent }}>#{finalRank}</span>.</>
+        ) : (
+          <span style={{ color: t.accent }}>Nice run.</span>
+        )}
       </Display>
 
       <div style={{ marginTop: 22, padding: "18px 22px", borderRadius: 16, background: t.surface }}>
