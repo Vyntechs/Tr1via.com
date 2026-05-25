@@ -269,7 +269,7 @@ function HostLoginInner() {
                 letterSpacing: "-0.005em",
               }}
             >
-              {isSending ? "Sending..." : "Send sign-in link"}
+              {isSending ? "Signing in…" : "Sign in  →"}
             </button>
 
             {state.kind === "error" && (
