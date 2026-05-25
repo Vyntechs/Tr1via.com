@@ -37,12 +37,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
-      data-theme="house"
+      data-theme="daylight"
       className={`${geist.variable} ${geistMono.variable} ${bricolage.variable}`}
       suppressHydrationWarning
     >
       <body>
-        <ThemeProvider themeKey="house">{children}</ThemeProvider>
+        <ThemeProvider themeKey="daylight">{children}</ThemeProvider>
       </body>
     </html>
   );
