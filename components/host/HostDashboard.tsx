@@ -31,6 +31,10 @@ export interface HostDashboardTonight {
   /** Formatted display label (e.g. "Wed May 27"). Surfaced in the
    *  "TONIGHT · WED MAY 27" eyebrow above the venue name. */
   date: string;
+  /** Plain-English long-form label (e.g. "Wednesday night"). Surfaced
+   *  as a prominent subtitle under the venue. Optional — the venue
+   *  stays standalone when missing. */
+  dateLong?: string;
   /** Persisted room code; rendered with formatRoomCode for the K9·PR4M look. */
   roomCode: string;
   themeKey: ThemeKey;
@@ -189,6 +193,20 @@ function HostDashboardInner({
               >
                 {tonightVenue}
               </div>
+              {tonight?.dateLong && (
+                <div
+                  style={{
+                    marginTop: 8,
+                    fontSize: 22,
+                    fontWeight: 500,
+                    letterSpacing: "-0.01em",
+                    color: t.inkMid,
+                    lineHeight: 1.2,
+                  }}
+                >
+                  {tonight.dateLong}
+                </div>
+              )}
             </div>
             <button
               onClick={handleCta}

@@ -91,6 +91,7 @@ export default async function HostHomePage() {
         nightId: tonightRow.id,
         venue: tonightRow.venue_name,
         date: formatNightDate(tonightRow),
+        dateLong: formatNightDateLong(tonightRow),
         roomCode: tonightRow.room_code,
         themeKey: (tonightRow.theme_key as unknown) as
           | "house"
@@ -133,6 +134,25 @@ function formatNightDate(n: NightRow): string {
   const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
   const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return `${days[d.getDay()]} ${months[d.getMonth()]} ${d.getDate()}`;
+}
+
+/** "Wednesday night" — long-form, plain-English day name suffixed with
+ *  "night" because trivia is an evening event. Drives the prominent
+ *  date subtitle Heather asked for after PR I removed the placeholder
+ *  time. */
+function formatNightDateLong(n: NightRow): string {
+  const iso = n.scheduled_at ?? n.created_at;
+  const d = new Date(iso);
+  const days = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+  ];
+  return `${days[d.getDay()]} night`;
 }
 
 async function fetchCategoriesByNight(
