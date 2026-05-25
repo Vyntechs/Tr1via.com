@@ -55,7 +55,8 @@ import {
   isValidRoomCode,
   parseRoomCode,
 } from "@/lib/game/room-code";
-import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
+import { type ThemeKey } from "@/lib/theme/tokens";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import type {
   AnswerRow,
   CategoryRow,
@@ -89,10 +90,10 @@ function PlayerRoomInner({ roomCode }: { roomCode: string }) {
   const snapshot = useRoom({ roomCode });
   const { deviceId, isLoading: deviceLoading } = useDeviceSession();
 
-  const themeKey: ThemeKey =
-    snapshot.night && isThemeKey(snapshot.night.theme_key)
-      ? snapshot.night.theme_key
-      : "house";
+  const themeKey: ThemeKey = resolveTheme(
+    snapshot.night,
+    { default_theme_key: snapshot.hostDefaultThemeKey },
+  );
 
   return (
     <ThemeProvider themeKey={themeKey}>

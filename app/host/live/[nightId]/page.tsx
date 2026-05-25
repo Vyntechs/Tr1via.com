@@ -6,6 +6,7 @@
 
 import { notFound, redirect } from "next/navigation";
 import { requireOwnedNight } from "@/lib/api/auth";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { HostLiveConsoleClient } from "./HostLiveConsoleClient";
 
 export const dynamic = "force-dynamic";
@@ -41,7 +42,7 @@ export default async function HostLivePage({
         nightId={owned.night.id}
         roomCode={owned.night.room_code}
         venueName={owned.night.venue_name}
-        themeKey={owned.night.theme_key ?? "house"}
+        themeKey={resolveTheme(owned.night, owned.host)}
       />
     </div>
   );

@@ -27,7 +27,8 @@
 import { use } from "react";
 import { TVStateMachine } from "@/components/tv";
 import { ThemeProvider } from "@/components/system";
-import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
+import { type ThemeKey } from "@/lib/theme/tokens";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { formatRoomCode } from "@/lib/game/room-code";
 import { useTVRoom } from "@/lib/hooks/useTVRoom";
 
@@ -59,9 +60,10 @@ export default function TVPage({
     );
   }
 
-  const themeKey: ThemeKey = isThemeKey(snapshot.night.themeKey)
-    ? snapshot.night.themeKey
-    : "house";
+  const themeKey: ThemeKey = resolveTheme(
+    { theme_key: snapshot.night.themeKey },
+    { default_theme_key: snapshot.night.hostDefaultThemeKey },
+  );
 
   const broadcastRevealedAt =
     lastBroadcast?.event === "reveal" ? lastBroadcast.revealedAt ?? null : null;

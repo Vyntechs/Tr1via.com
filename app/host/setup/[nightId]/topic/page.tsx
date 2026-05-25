@@ -12,6 +12,7 @@
 import { notFound, redirect } from "next/navigation";
 import { requireOwnedNight } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { HostSetupTopicClient } from "./HostSetupTopicClient";
 
 export const dynamic = "force-dynamic";
@@ -59,7 +60,7 @@ export default async function SetupTopicPage({
       gameId={gameId}
       gameNo={game.game_no}
       position={position}
-      themeKey={owned.night.theme_key ?? "house"}
+      themeKey={resolveTheme(owned.night, owned.host)}
     />
   );
 }
