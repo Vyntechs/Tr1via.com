@@ -14,6 +14,7 @@ import {
   TVLeaderboard,
   TVIntermission,
   TVRevealStumper,
+  TVSectionEndedPicker,
   TVFinaleWinner,
 } from "@/components/tv";
 import { useTheme, Wordmark, Eyebrow } from "@/components/system";
@@ -88,10 +89,13 @@ export default function TVGallery() {
           <Frame label="06 · Leaderboard">
             <TVLeaderboard />
           </Frame>
-          <Frame label="07 · Intermission">
+          <Frame label="07 · Section ended · pick next topic">
+            <TVSectionEndedPicker />
+          </Frame>
+          <Frame label="08 · Intermission">
             <TVIntermission />
           </Frame>
-          <Frame label="08 · Finale winner · heightened weather">
+          <Frame label="09 · Finale winner · heightened weather">
             <TVFinaleWinner />
           </Frame>
         </div>
