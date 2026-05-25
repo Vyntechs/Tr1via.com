@@ -1,214 +1,137 @@
-# TR1VIA — Handoff (session 7, mid-investigation, written to ~ because /Volumes/Creativity unmounted)
+# TR1VIA — Handoff (end of session 9, 2026-05-24 late night)
 
-**When you can: copy this file into the repo as `HANDOFF.md`, commit, push to the `p0-32-33-tv-fullscreen-end-game` branch. Then next session reads it from the canonical location.**
-
-**Read order in the next session:** this → `MEMORY.md` (auto-memory) → `tr1via-plan.md` (rules) → `docs/superpowers/plans/2026-05-23-tr1via.md` (build plan) → `supabase/README.md` (DB) → `README.md` (run). Prior handoff is preserved in git history at `1f05685` (end of session 6).
+**Next session: read this → `MEMORY.md` (auto-loaded) → `tr1via-plan.md` → `supabase/README.md` → `README.md`.** Prior session handoffs live in git history (session 7 at `4f889c8`; session 8 was never committed but its content was rolled into this file early in session 9).
 
 ---
 
 ## Critical context
 
-**Wednesday 2026-05-27 is the real go-live.** the first host (`host@example.com`) opens it that night to host actual trivia at her venue. NOT a demo — paying patrons. ~3 days from this handoff (Sun 2026-05-24 evening).
+**the first host (`host@example.com`) goes live on tr1via.com Wednesday 2026-05-27.** Real paying patrons, not a demo. **3 days out.**
 
-**Session 7 hit a stop-hook + a filesystem unmount mid-investigation of a NEW P0 bug. Session must restart cold.** Two threads are in flight:
-
-1. **PR #3 (TV-fullscreen layout + End Game CTA) is shipped + awaiting Brandon's eyeball check.** Code is good — pre-validated via 206 unit tests, all 4 e2e specs, full-flow driver against prod. Vercel preview deploy URL is on the PR.
-
-2. **A new bug surfaced when Brandon tried to generate questions as a host:** the pick page hangs on the "pulling questions" spinner indefinitely. He walked away from the tab for a moment; refresh did not fix it. Investigation was systematic (via the `superpowers:systematic-debugging` skill) and reached the end of Phase 1.B before the stop-hook hit. The evidence already collected (below) **changes the initial hypothesis** — don't redo it from scratch.
+🚨 **PRs #10 and #11 merged but NOT yet validated end-to-end on prod.** Brandon merged at the end of the session and stopped before retesting. Next session's first action should be a full single-player walk-through on tr1via.com to confirm the two bugs actually went away.
 
 ---
 
-## Thread 1: PR #3 — TV-fullscreen + End Game
+## What shipped tonight (session 9, all merged to main)
 
-**URL:** https://github.com/Vyntechs/Tr1via.com/pull/3
-**Branch:** `p0-32-33-tv-fullscreen-end-game`
-**Status:** Mergeable. Vercel preview deploying. Awaiting Brandon's eyeball check.
+| PR | What | Status |
+|---|---|---|
+| #9  | `fix(gen)`: every option must be a direct answer to the prompt — explicit "same kind of thing the prompt asks for" rule in `SYSTEM_PROMPT` with the real prod Patronus failure as the negative example | merged |
+| #10 | `fix(recap)`: stop rendering "#0" while game_scores loads + null-rank fallback — tri-state `scores`, postgres_changes subscription, `PlayerRecap` renders "Nice run." instead of "#0" when player isn't in the view | merged |
+| #11 | `fix(host-reveal)`: keep answers loaded for sticky-reveal frame — host's `answers` subscription was clearing on resolve, causing TV to show "Nobody nailed this one" / "0 of N got it" even when players got it right | merged |
 
-**What it changes:**
-- TV state machine fills the host laptop viewport (no more 30% black bars / clipping — P0.32).
-- Host taps cells directly on the same TVGrid the audience watches.
-- "End Game →" button surfaces when the board is exhausted (P0.33).
-- Bottom control strip changes per state. Players list + QR moved behind a "Players" button.
-
-**What Brandon needs to do:** pull up the preview deploy, play one game with one phone, confirm:
-1. TV fills the screen.
-2. Cell taps work on the TV grid (no separate board).
-3. "End Game →" appears when the board's empty.
-4. "Players (N)" button opens the sheet.
-5. "Pick next →" appears during reveal.
-
-**Pre-validated:**
-- 206/206 unit + component tests pass (added 14 for `deriveHostMode`).
-- TypeScript clean.
-- All 4 Playwright e2e specs green (including the rewritten `auto-start-on-reveal.spec.ts` for the new lobby → Start → cell flow).
-- `scripts/full-flow-prod.mjs` against prod: green at 81s.
+Brandon's observed bugs that drove the night:
+- Host TV at reveal: "0 of 1 got it" / "Nobody nailed this one" when a player HAD answered correctly → PR #11
+- Phone post-game wrap-up: "You finished #0" → PR #10 (tested on preview before build deployed; needs prod retest)
+- Earlier in night: Claude generating questions whose options weren't actually candidate answers → PR #9
 
 ---
 
-## Thread 2: Gen-stuck bug — Phase 1 evidence (do NOT redo)
+## What's still open
 
-### What Brandon hit
+### 1. 🚨 P0: Validate PRs #10 + #11 on prod (FIRST thing next session)
 
-He tried to generate questions on the host setup pick page. The page sat on the "Pulling questions · TOPIC" spinner indefinitely. He walked away briefly. Returned: still spinning. Refreshed: still spinning. His exact words: *"It's still sitting there thinking it's loading, generating questions."*
+Walk through a single-player game on **tr1via.com** (host + one phone in another window) and confirm:
 
-### The investigation flow used (next session continues from here)
+- **Host TV reveal** shows "1 of 1 got it" with the player's name in the fastest-five — NOT "Nobody nailed this one" — when the player answered correctly. This is PR #11.
+- **Phone post-game wrap-up** shows a real rank like "#1" — NOT "#0", NOT "Nice run." — when the player is in `game_scores`. This is PR #10.
 
-Use the `superpowers:systematic-debugging` skill. Iron Law: **NO FIXES WITHOUT ROOT CAUSE INVESTIGATION FIRST.** Symptom patches are failure. Brandon was explicit: *"I don't want an immediate unlock. I want the root cause. Explored, researched, planned, corrected, validated. I want it ran through the toolkit."*
+If either still shows the broken state on a fresh prod build:
+- PR #11 broken: dig into `HostLiveConsoleClient.tsx` answer-target effect; `roomToTVSnapshot.ts` already does the right fallback so check the host adapter wiring.
+- PR #10 broken: check the recap page's tri-state guard + the postgres_changes subscription. Confirm the Vercel preview build hash matches the merge commit before assuming code fault.
 
-**Phase 1 (evidence gathering) — partial, finished below:**
+Token-efficient path: extend `scripts/full-flow-prod.mjs` to assert both states via API + Supabase MCP queries.
 
-- ✅ **1.A — query Supabase for Brandon's stuck categories.** Done via Supabase MCP. **Surprise finding:** they're all in state `'draft'`, NOT `'generating'`. Three rows, all `q_count = 0`. See "Evidence" below.
-- ✅ **1.B — inspect questions tables for those categories.** All zero. Generation never inserted any rows for these categories.
-- ❌ **1.C — pull Vercel function logs for `/api/categories/[id]/generate` around the time each stuck category was created.** Not done yet. This is the next concrete action.
-- ❌ **1.D — pinpoint failing component boundary** (Anthropic? Insert? after() crash? Vercel function timeout? Bad topic?). Depends on 1.C.
+### 2. 🚨 P0: Dead-state picker between sections — option B chosen, click behavior PENDING
 
-**Phase 2 (pattern analysis), 3 (hypothesis), 4 (TDD fix) — not started.**
+Brandon's complaint: "After there's no more questions in a section, why does it just sit there? Why not either go ahead and bring up the next topic or a selection to select the next topic that's already been generated."
 
-### Evidence collected (Supabase, project `citweuctcnuxmqjxcbiz` = "Trivia")
+He picked **option B**: panel listing the remaining locked topics. Host taps one → that topic activates.
 
-Query used:
-```sql
-SELECT c.id, c.name, c.topic, c.state, c.position, c.flavor::text, c.created_at,
-       EXTRACT(EPOCH FROM (now() - c.created_at))::int AS age_sec,
-       (SELECT count(*) FROM questions q WHERE q.category_id = c.id) AS q_count,
-       (SELECT count(*) FROM questions q WHERE q.category_id = c.id AND q.image_url IS NOT NULL) AS q_with_photo,
-       (SELECT count(*) FROM questions q WHERE q.category_id = c.id AND q.is_picked) AS q_picked,
-       n.venue_name, n.room_code, u.email, g.game_no
-FROM categories c
-JOIN games g ON g.id = c.game_id
-JOIN nights n ON n.id = g.night_id
-JOIN hosts h ON h.id = n.host_id
-JOIN auth.users u ON u.id = h.user_id
-WHERE c.state IN ('generating','draft','review')
-ORDER BY c.created_at DESC
-LIMIT 30;
+**Pending product decision Brandon didn't get to answer:** when host taps a topic from the panel, should it…
+
+- **(a)** Auto-start that topic's lowest-points question (one tap → game on)
+- **(b)** Reveal the grid focused on that column so host still picks a specific question
+- **(c)** Hybrid — auto-start lowest, with a "switch question" override
+
+My recommendation: **(a)** for live-event simplicity. Get Brandon's call before building.
+
+Files likely involved:
+- `lib/host/deriveHostMode.ts` — add a "section-ended-picking-next" mode triggered when the just-resolved question was the last in its category and other categories still have un-played questions.
+- `components/tv/TVStateMachine.tsx` — new state branch.
+- `components/host/HostLiveConsole.tsx` — wires the panel into the host UI.
+
+Last-section completing → existing "End Game →" CTA (PR #3 already builds this).
+
+### 3. 🚨 P0: In-game "#0" rank on every reveal
+
+`app/(player)/room/[code]/page.tsx:687,709` hardcodes `rank={0}` for `PlayerRevealCorrect` and `PlayerRevealWrong` with a `"// Rank deferred until we wire game_scores into the page."` comment. Players see "#0" on their phones after EVERY question, not just at end-of-game.
+
+Fix: mirror the load+subscribe pattern from PR #10's recap fix. Fetch `game_scores` for the current game with a postgres_changes subscription, sort by score desc, compute the player's index + 1 for `rank`. `rankDelta` is bonus — compare to previous rank between reveals; if it's a stretch, ship rank=0 delta for now and polish later.
+
+This was almost started in session 9 but Brandon called for handoff before the first edit.
+
+### 4. P1: Theming (session-8 research, still not implemented)
+
+Three flagged issues:
+- "Theme reverts to default" — only `/host/setup/[nightId]` reads `nights.theme_key` into `ThemeProvider`. Smallest fix: thread `tonight?.themeKey` through `app/host/page.tsx` → `HostHomeClient` → `HostDashboard` (~6 lines). Real fix: add `default_theme_key` on `hosts` so it sticks across nights (~30 lines + migration).
+- "Picker is hidden/painful" — `/host/themes` is a "Coming Soon" stub (`app/host/themes/page.tsx`). The real picker is a tiny dark chip bottom-right of setup. Convert the stub into a full theme grid that reuses `components/shared/PalettePeek.tsx` (~80 lines).
+- "Default is dark dark dark" — current default is `house` (warm-dark). 2-line swap to `daylight` (`lib/theme/tokens.ts:39-54`) in `app/layout.tsx` + DB default if Brandon wants it permanent.
+
+Brandon also floated **auto-by-date theming** (e.g. November theme in November). Cute feature. Park past Wednesday.
+
+### 5. P2: Anthropic gen monitoring
+
+If gen failures resurface:
+```bash
+vercel logs --environment production --since 1d --query "generateQuestions" --json --no-branch
 ```
-
-Result (all 3 rows belong to `brandon@vyntechs.com`):
-
-| id | topic | state | created_at (UTC) | age_sec | q_count | flavor | night |
-|---|---|---|---|---|---|---|---|
-| `8e0fbffd-8bf6-4545-91fc-95b3da339581` | Beatles | **draft** | 2026-05-24 23:30:38 | 674 (~11min) | **0** | `{"difficulty":"normal"}` | Soul Fire Pizza · V79NYP · g1 |
-| `ba3d2500-e244-4a14-865f-ec226fcec127` | Space | **draft** | 2026-05-24 22:13:03 | 5328 (~89min) | **0** | `{"difficulty":"normal"}` | Soul Fire Pizza · ZYS7WT · g1 |
-| `7103dbe2-6914-4058-a0de-ddb05970dbbe` | Greek Mythology | **draft** | 2026-05-24 18:51:49 | 17403 (~4.8h) | **0** | `{"difficulty":"normal"}` | Soul Fire Pizza · 7QAZC6 · g1 |
-
-The most recent one (Beatles, ~11 min old at the time of query) is almost certainly what Brandon was sitting on. Note: the table schema for `categories` has NO `updated_at` column, only `created_at` — so there's no DB-level record of when state was changed.
-
-### What this evidence rules out + rules in
-
-**Ruled out:**
-- ❌ "Generation job died mid-flight after inserting some questions" — would leave `q_count > 0`. All three have zero.
-- ❌ "Category state stuck in `'generating'`" — DB says `'draft'`.
-- ❌ "Browser tab throttling caused missed broadcasts" — wouldn't explain the DB state.
-
-**Ruled in (hypotheses to test in Phase 1.C):**
-
-1. **`generateQuestions` (Claude call) returned zero valid questions or threw.** The route's catch block at `app/api/categories/[id]/generate/route.ts:94` rolls state back to `'draft'` and broadcasts `error`. If this is what happened, the host's open tab should have received the `error` broadcast → `setGenerationFailureMessage` → show the failure UI with retry / manual entry buttons. But the host sees the loading screen, not the failure UI. So either:
-   - the `error` broadcast didn't land at the client (Realtime hiccup, channel not subscribed in time), AND
-   - the polling fallback in `useGenerationStatus` didn't catch it.
-   - The polling fallback DOES detect `dbState === 'draft'` → returns `{ kind: 'rolled-back' }`. The parent's useEffect at `HostSetupPickClient.tsx:188` reacts to `rolled-back` by setting `generationFailureMessage` and `state='draft'`. So if polling ran, the failure UI WOULD appear. So either polling didn't run yet, or there's a state-update bug.
-
-2. **The after() job crashed before the synchronous portion finished setting `state='generating'`.** In that case state would never leave its initial value (which is whatever it was — likely `'draft'` post-creation). ⚠️ The route sets `state='generating'` synchronously BEFORE returning the 202, so if this were the cause, the category would still be in `'draft'` from creation, but the host's pick page wouldn't have routed there at all (the topic-page POST wouldn't have completed). Doesn't fully fit. Worth verifying by checking whether the synchronous update actually committed.
-
-3. **Some other path resets state to `'draft'`.** Worth grepping the codebase for every place that writes `state: 'draft'` to the categories table. Currently 2 known places: the catch block and inside `runGenerationJob`'s helper. Could be a third somewhere.
-
-4. **The Anthropic call OR Pexels call hung past the function's `maxDuration: 120s`.** Vercel would kill the function. If the kill happened AFTER the catch block had already set state='draft' but BEFORE the broadcast landed, you'd see exactly this state (draft in DB, no client broadcast). The catch is `await runGenerationJob(...).catch(async (err) => { ... await admin.update({state:'draft'}); await broadcastToCategory(..., 'error', ...); })` — those two awaits are sequential. The update could finish, then the broadcast call gets killed mid-flight when the function is shut down. ⚠️ **This is the most plausible hypothesis given the evidence.**
-
-**The next concrete action (Phase 1.C):** Pull Vercel function logs filtered to the Beatles category's creation window (≈ `2026-05-24 23:30:38 UTC`) and look for the `[generate]` log lines. Use:
-
-```
-mcp__claude_ai_Vercel__get_runtime_logs   (project: tr1via)
-   - filter by time window: 2026-05-24 23:30:00 to 23:33:00 UTC
-   - look for: POST /api/categories/8e0fbffd-8bf6-4545-91fc-95b3da339581/generate
-   - look for: "[generate] job failed:" log line from the route's catch
-   - look for: function timeout / cold-stop messages
-   - look for: any error from the generateQuestions or autoAttachPhoto modules
-```
-
-Then do the same for the Space and Greek Mythology categories. If all 3 share the same failure mode, that's the root cause. If they differ, it's environment-dependent.
-
-### Tools available next session
-
-- **Supabase MCP** (already loaded):
-  - `mcp__plugin_supabase_supabase__execute_sql` — project id `citweuctcnuxmqjxcbiz`
-  - `mcp__plugin_supabase_supabase__get_logs` — service options: api, postgres, edge-function, realtime, etc.
-- **Vercel MCP** (already loaded):
-  - `mcp__claude_ai_Vercel__get_runtime_logs`
-  - `mcp__claude_ai_Vercel__list_deployments`
-- **Code paths already mapped:**
-  - `app/api/categories/[id]/generate/route.ts` (catch block at line ~94 rolls back to draft; `maxDuration: 120` at line 40).
-  - `lib/ai/generate-questions.ts` (Claude wrapper).
-  - `lib/ai/auto-attach-photo.ts` (Pexels wrapper).
-  - `lib/hooks/useGenerationStatus.ts` (client-side polling fallback — only fires timeout if `loadedCount === 0`).
-  - `app/host/setup/[nightId]/pick/[categoryId]/HostSetupPickClient.tsx` (renders loading vs error vs pick).
-
-### What NOT to do next session
-
-- ❌ Don't patch around the symptom. Brandon was explicit: he wants the bug investigated, not unblocked.
-- ❌ Don't ship `useVisibilityResume` / "drop the `loadedCount === 0` guard" fixes until root cause is confirmed. Those WERE the fixes I was about to propose; Brandon redirected to "run it through the toolkit." Phase 1 isn't done yet.
-- ❌ Don't recreate Phase 1.A or 1.B. The Supabase query above already gave the answer. Save tokens, build from it.
-- ❌ Don't query for the user-specific stuck categories with `WHERE h.email='...'` directly on the `hosts` table — the email lives on `auth.users`, joined via `h.user_id`. The working query is above.
+Tonight's logs showed normal calls completing in 18-21s under the 60s timeout.
 
 ---
 
-## Resilience audit Brandon asked for
+## Workflow rules (non-negotiable on this project)
 
-Brandon's question: "What other cases can we just have issues?" The audit was started but is gated on completing the systematic-debugging investigation above. Surfacing the list so it's not lost; prioritization will firm up once root cause is named.
-
-| # | Failure | Likelihood Wed | What happens today |
-|---|---------|----|----|
-| **A** | **Gen flow leaves category in unrecoverable state** | ⚠️ HIGH (Brandon hit it 3x today) | TBD — see investigation above. |
-| **B** | **Host tab backgrounded during gen** | ⚠️ HIGH | Realtime broadcasts missed; client polling fallback only catches `loadedCount === 0` case. |
-| **C** | **Live-game tab backgrounded** | ⚠️ HIGH | `useRoom` has no visibility-resume re-fetch; state can desync from prod. TV (`useTVRoom`) has 4s self-heal — laptop doesn't. |
-| **D** | **Pexels rate-limited mid-batch** | MED | Handled (loop breaks, generation still completes); host sees some questions without images. Acceptable. |
-| **E** | **Host network drops during /reveal or /end** | MED | Toast error. Idempotency check exists for /start; needs verification for /reveal. |
-| **F** | **Realtime WebSocket dies + reconnects** | MED | Supabase SDK auto-reconnects, but broadcasts sent during the gap are lost. Self-heal exists for TV, not host. |
-| **G** | **Laptop sleeps mid-game** | LOW | Like (C) but more severe. |
-| **H** | **the first host opens two host tabs** | LOW | Both subscribe; actions from one don't refresh the other. |
+- **PR-first always.** Never push to `main`. Even docs.
+- **Validate on PROD or the Vercel PREVIEW, never local.**
+- **One step at a time.** Tight single-action instructions. No 4-option questions on obvious calls.
+- **Drive the actual flow before claiming "fixed."** Use the `verify` skill or `scripts/full-flow-prod.mjs`.
+- **Build without asking when spec + design exist.** Ask only on product/intent ambiguities (e.g. the picker click behavior above).
+- **Cross-check log inference.** Don't infer cause from Supabase timing alone; pull Vercel function logs.
 
 ---
 
-## State of the working tree (before /Volumes/Creativity unmounted)
+## Recurring pattern worth remembering: load + subscribe
 
-- Branch: `p0-32-33-tv-fullscreen-end-game` — clean, all commits pushed to PR #3 on GitHub.
-- This handoff file is on Brandon's home directory only; he should commit + push it to the branch after re-mounting the drive or re-cloning the repo.
-- Untracked files (session-6 leftovers, NOT for any PR): `.playwright-mcp/`, `.tmp-smoke-shots/`, `VERIFY-2026-05-24.md`, three `verify-*.png` files. Safe to delete.
+PRs #10 and #11 both surfaced the same SHAPE of bug — a `useEffect` subscription gated on a state field (`finalGame`, `room.currentQuestion`) that becomes stale during a state transition. Fix in both cases: widen the target with a fallback (tri-state `scores` for "not loaded yet"; `room.currentQuestion ?? room.lastResolvedQuestion` for the sticky-reveal window).
 
----
-
-## Anthropic stop-hook problem (Brandon's recurring infrastructure issue)
-
-Brandon hits a "stop hook problem" every session, forcing restarts. Symptoms observed this session:
-- Bash mid-command suddenly reports working directory deleted, cwd "recovered" to /Users/bnipps.
-- Write tool returns `EACCES: permission denied, mkdir '/Volumes/Creativity'` — the path can't be created because it's a mount that disappeared.
-- The TaskCreate/TaskUpdate tools start failing with `ENOENT: no such file or directory, lstat '/Users/bnipps/.claude/tasks/<uuid>/.lock'`.
-
-This is consistent with a network or external volume `/Volumes/Creativity` losing its mount partway through a session. The most reliable workaround: **clone the repo to a local SSD path (e.g., `~/dev/tr1via`)** so it doesn't depend on `/Volumes/Creativity` staying mounted. The PR state lives on GitHub; re-clone loses nothing local except the untracked session-6 leftovers (already noted as safe to delete).
-
-The real fix lives on Anthropic's side. If you want to report it: file with the specific error text + that it's recurring on a project that lives on an external/network mount.
+The in-game `#0` rank (open item 3) is the SAME pattern — the player room page never wired up `game_scores` at all. When you fix it, also grep the codebase for other surfaces that display `rank` and audit whether they have the same gap.
 
 ---
 
-## Resumption prompt to paste into the next session
+## Tools confirmed working on this project
 
-```
-Read HANDOFF.md and /Users/bnipps/.claude/projects/-Volumes-Creativity-dev-projects-tr1via/memory/MEMORY.md.
+- **`vercel logs`** (CLI) with `--no-branch --since 1d --query "<text>" --json` — Vercel MCP returns 403, the CLI is the workaround.
+- **Supabase MCP** — `mcp__plugin_supabase_supabase__execute_sql` + `get_logs`. Project id: `citweuctcnuxmqjxcbiz`.
+- **Playwright MCP** — works against `tr1via.com` and preview deploys. Vercel SSO disabled.
+- **Founder bypass login** — `/login` → `brandon@vyntechs.com` → Send → immediate redirect to `/host`. No email needed.
+- **`scripts/full-flow-prod.mjs`** — drives a full 2-game lifecycle in ~80s against tr1via.com.
+- **`gh pr create`** / **`gh pr view`** — used for every PR this session.
 
-the first host (host@example.com) goes live on tr1via.com Wednesday 2026-05-27.
+---
 
-Two threads in flight:
+## Working-dir cruft Brandon may want to clean up
 
-1. PR #3 (TV-fullscreen layout + End Game CTA, P0.32 + P0.33) is shipped + awaiting Brandon's eyeball check. Don't touch unless he reports a problem on the preview deploy.
+These accumulated across sessions but aren't tracked:
 
-2. NEW gen-stuck bug: pick page hangs on "pulling questions" spinner. Brandon walked away briefly; refresh didn't fix it. Investigation was started under superpowers:systematic-debugging, reached the end of Phase 1.B with a SURPRISE finding (3 stuck categories in DB are in state 'draft' with q_count=0, NOT 'generating' as theorized). Resume at Phase 1.C: pull Vercel function logs for /api/categories/[id]/generate around 2026-05-24 23:30:38 UTC (the most-recent stuck category "Beatles", id 8e0fbffd-8bf6-4545-91fc-95b3da339581) and identify what wrote state='draft' on these rows after they presumably went through 'generating'.
+- `.playwright-mcp/`, `.tmp-smoke-shots/` — Playwright/scratch dirs (probably `.gitignore` candidates)
+- `VERIFY-2026-05-24.md` — earlier session-8 verification notes
+- 11x `verify-*.png` — screenshot captures from PR verification runs
 
-Iron Law (don't violate): NO FIXES UNTIL ROOT CAUSE IS NAMED. Brandon was explicit — symptom patches are unacceptable. Run through superpowers:systematic-debugging phases 1 → 2 → 3 → 4 in order.
+None blocking; trim or `.gitignore` next session if it bothers you.
 
-Workflow:
-- PR-first; never push to main directly ([[feedback-pr-workflow]]).
-- Plain-English PR descriptions for Brandon (non-technical).
-- Use scripts/full-flow-prod.mjs ([[project-full-flow-driver]]) for repeat validation.
-- Driver hits the SAME /api/categories/[id]/generate endpoint and completes in ~24s/category — so the endpoint isn't universally broken. Brandon's failure must be conditional on something specific (topic? difficulty? a race?).
+---
 
-Start by reading the HANDOFF "Thread 2" + "Evidence collected" sections in full, then continue at Phase 1.C using the Vercel MCP. Don't redo Phase 1.A or 1.B.
-```
+## Resumption prompt
+
+Just say "**read HANDOFF.md and continue**" — this file plus auto-loaded memory will have everything needed. If you have a specific bug, lead with the observable symptom (URL + what you see) and let the next session pull logs/code.
