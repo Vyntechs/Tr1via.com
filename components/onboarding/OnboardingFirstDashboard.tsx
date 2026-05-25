@@ -99,38 +99,6 @@ function OnboardingFirstDashboardInner({
             {venueLabel}
           </div>
 
-          <div style={{ marginTop: 36 }}>
-            <Eyebrow color={t.inkMute} size={10}>
-              SHORTCUTS
-            </Eyebrow>
-            <div
-              style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 4 }}
-            >
-              {["Tonight", "All nights", "Question library", "Themes", "Venues", "Settings"].map(
-                (s, i) => (
-                  <div
-                    key={s}
-                    style={{
-                      padding: "10px 12px",
-                      borderRadius: 8,
-                      background:
-                        i === 0
-                          ? t.dark
-                            ? "rgba(244,230,196,.06)"
-                            : "rgba(27,19,12,.04)"
-                          : "transparent",
-                      color: i === 0 ? t.ink : t.inkMid,
-                      fontSize: 14,
-                      fontWeight: i === 0 ? 700 : 500,
-                    }}
-                  >
-                    {s}
-                  </div>
-                ),
-              )}
-            </div>
-          </div>
-
           <div
             style={{
               marginTop: "auto",
