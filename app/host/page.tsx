@@ -3,13 +3,16 @@
 // Server Component. We:
 //   1. Resolve the signed-in user's `hosts` row (middleware has already
 //      enforced auth).
-//   2. If `is_first_night_complete` is false → render the onboarding
-//      "first dashboard" with a single "Set up Wednesday" CTA.
+//   2. If the host has zero nights → render the onboarding "first
+//      dashboard" with a single "Set up Wednesday" CTA. `is_first_night_
+//      complete` is informational only here — a host who has even one
+//      draft sitting in flight gets the regular dashboard so they can
+//      reach it.
 //   3. Otherwise → render the normal HostDashboard with the host's past
-//      nights + an optional "tonight" headliner (the most-recent non-done
-//      night, if any).
+//      nights + the most-recent non-closed night as the "tonight"
+//      headliner + any other non-closed nights as drafts.
 //
-// Both branches need to POST /api/nights when the host taps the CTA; that
+// Both branches need to POST /api/nights when the host taps a CTA; that
 // happens client-side via the HostHomeClient wrapper below.
 
 import { redirect } from "next/navigation";
@@ -61,15 +64,16 @@ export default async function HostHomePage() {
   const nights = (nightRows ?? []) as NightRow[];
 
   // Find a "tonight" headliner — the most-recent night that isn't closed.
-  const tonightRow = nights.find((n) => !n.closed_at) ?? null;
+  const inFlightNights = nights.filter((n) => !n.closed_at);
+  const tonightRow = inFlightNights[0] ?? null;
+  const draftRows = inFlightNights.slice(1);
 
   // For the past-nights list we count distinct players + grab category
   // names. Both come from the games + categories + players join. We bound
   // the lookups to the most recent 8 nights so the dashboard query stays
   // cheap.
   const recentNights = nights
-    .filter((n) => !!n.closed_at || n.id === tonightRow?.id)
-    .filter((n) => n.id !== tonightRow?.id)
+    .filter((n) => !!n.closed_at)
     .slice(0, 8);
   const recentNightIds = recentNights.map((n) => n.id);
   const categoriesByNight = await fetchCategoriesByNight(recentNightIds);
@@ -85,6 +89,11 @@ export default async function HostHomePage() {
 
   // Lifetime totals for the eyebrow on the right of the past-nights list.
   const lifetime = await fetchLifetimeTotals(host.id);
+
+  // Pull pick counts for the in-flight nights (tonight + drafts) so the
+  // dashboard can show "0/12 picked" style progress per draft.
+  const inFlightIds = inFlightNights.map((n) => n.id);
+  const picksByNight = await fetchPickCountByNight(inFlightIds);
 
   const tonight = tonightRow
     ? {
@@ -114,16 +123,24 @@ export default async function HostHomePage() {
       }
     : null;
 
+  const drafts = draftRows.map((n) => ({
+    nightId: n.id,
+    venue: n.venue_name,
+    date: formatNightDate(n),
+    picksCount: picksByNight[n.id] ?? 0,
+  }));
+
   return (
     <HostHomeClient
       hostName={host.display_name}
       hostSubtitle={host.default_venue ?? "Independent"}
       defaultVenue={host.default_venue ?? "Soul Fire Pizza"}
-      isFirstNightComplete={host.is_first_night_complete}
+      hasAnyNight={nights.length > 0}
       isFounder={host.role === "founder"}
       weeks={weeks}
       lifetime={lifetime}
       tonight={tonight}
+      drafts={drafts}
     />
   );
 }
