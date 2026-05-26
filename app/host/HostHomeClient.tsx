@@ -78,6 +78,7 @@ export function HostHomeClient({
     if (!tonight) return;
     setResetting(true);
     setError(null);
+    setSuccessMessage(null);
     try {
       const res = await fetch(
         `/api/nights/${tonight.nightId}/reset-to-setup`,
@@ -231,7 +232,7 @@ function SuccessToast({ message, onDismiss }: { message: string; onDismiss: () =
       style={{
         position: "fixed",
         right: 20,
-        top: 20,
+        top: 64,
         zIndex: 50,
         padding: "12px 16px",
         borderRadius: 10,
