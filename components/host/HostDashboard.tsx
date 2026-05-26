@@ -12,6 +12,7 @@ import { LaptopShell } from "@/components/shells";
 import { Eyebrow, Numeric, Rule, ThemeProvider, useTheme } from "@/components/system";
 import { formatRoomCode } from "@/lib/game/room-code";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import type { ResetPreview } from "@/lib/api/resetNightCounts";
 
 export interface HostDashboardPastNight {
   /** Formatted display label (e.g. "Wed May 21"). */
@@ -40,6 +41,9 @@ export interface HostDashboardTonight {
   themeKey: ThemeKey;
   /** "setup" or "live" — drives the headline CTA. */
   status: "setup" | "live" | "done";
+  /** Counts surfaced into ResetGameConfirmModal. Populated server-side
+   *  only when the night is in 'live' status; null otherwise. */
+  resetPreview?: ResetPreview | null;
 }
 
 export interface HostDashboardProps {
