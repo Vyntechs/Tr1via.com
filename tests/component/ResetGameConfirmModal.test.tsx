@@ -57,7 +57,7 @@ describe("ResetGameConfirmModal", () => {
     expect(screen.getByText(/25 answers/i)).toBeInTheDocument();
     expect(screen.getByText(/18 reveal events/i)).toBeInTheDocument();
     expect(screen.getByText(/9 played-question markers/i)).toBeInTheDocument();
-    expect(screen.getByText(/4 people in the room/i)).toBeInTheDocument();
+    expect(screen.getByText(/people in the room sent in/i)).toBeInTheDocument();
   });
 
   it("shows the keep counts plainly", () => {

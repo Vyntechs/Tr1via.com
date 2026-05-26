@@ -70,7 +70,7 @@ export function ResetGameConfirmModal({
 
         <Section title="This will throw away — permanently:">
           <BulletLine>
-            <strong>{preview.answersToWipe} answers</strong> submitted by tonight's players
+            <strong>{preview.answersToWipe} answers</strong> the {preview.playersInRoom} people in the room sent in
           </BulletLine>
           <BulletLine>
             <strong>{preview.finishedQuestionsToWipe} played-question markers</strong> — questions you already played will count as "not played yet"
