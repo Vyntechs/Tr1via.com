@@ -23,6 +23,7 @@
 import { useEffect, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
+import { useRevalidateOnFocus } from "@/lib/hooks/useRevalidateOnFocus";
 import type {
   AnswerRow,
   CategoryRow,
@@ -109,6 +110,12 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   // the bootstrap fetch can attach `x-tr1via-device` and pass `nights_player_read`.
   // `undefined` means "caller didn't opt in" (host surface) — fire immediately.
   const waitingForDevice = deviceId === null || deviceId === "";
+
+  // Bumps when the tab returns from background OR the network comes back.
+  // Wired into the main effect's deps below to force a full re-bootstrap
+  // — heals the iOS Safari background-suspend pattern where the WebSocket
+  // dies and the UI keeps showing stale state until manual refresh.
+  const revalidateTick = useRevalidateOnFocus();
 
   useEffect(() => {
     if (!roomCode || waitingForDevice) {
@@ -505,7 +512,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       for (const teardown of channelHandles) teardown();
       channelHandles = [];
     };
-  }, [roomCode, waitingForDevice]);
+  }, [roomCode, waitingForDevice, revalidateTick]);
 
   return snapshot;
 }
