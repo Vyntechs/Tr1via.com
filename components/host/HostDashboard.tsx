@@ -208,34 +208,72 @@ function HostDashboardInner({
                 </div>
               )}
             </div>
-            <button
-              onClick={handleCta}
-              data-testid={tonight ? `host-open-room-${tonight.nightId}` : "host-new-night-btn"}
+            <div
               style={{
-                background: t.accent,
-                color: t.dark ? "#0E0E0C" : "#FFF",
-                border: "none",
-                borderRadius: 12,
-                padding: "14px 22px",
-                fontSize: 15,
-                fontWeight: 600,
-                fontFamily: "var(--font-sans)",
-                cursor: "pointer",
                 display: "flex",
-                alignItems: "center",
+                flexDirection: "column",
+                alignItems: "flex-end",
                 gap: 10,
-                boxShadow: `0 10px 22px -10px ${t.accent}55`,
               }}
             >
-              {ctaLabel}
-              {!tonight && (
-                <span
-                  style={{ opacity: 0.65, fontFamily: "var(--font-mono)", fontSize: 12 }}
+              <button
+                onClick={handleCta}
+                data-testid={tonight ? `host-open-room-${tonight.nightId}` : "host-new-night-btn"}
+                style={{
+                  background: t.accent,
+                  color: t.dark ? "#0E0E0C" : "#FFF",
+                  border: "none",
+                  borderRadius: 12,
+                  padding: "14px 22px",
+                  fontSize: 15,
+                  fontWeight: 600,
+                  fontFamily: "var(--font-sans)",
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  boxShadow: `0 10px 22px -10px ${t.accent}55`,
+                }}
+              >
+                {ctaLabel}
+                {!tonight && (
+                  <span
+                    style={{ opacity: 0.65, fontFamily: "var(--font-mono)", fontSize: 12 }}
+                  >
+                    ~60s
+                  </span>
+                )}
+              </button>
+              {/* Secondary: always-available "+ Plan a new night" so the
+                  host isn't stranded behind a single Resume CTA when a
+                  test or stale live night is sitting in the slot.
+                  Shipped after Heather's session-15 block on a live
+                  test night with no escape hatch to set up Wednesday. */}
+              {tonight && (
+                <button
+                  type="button"
+                  onClick={() => onSetupTonight?.()}
+                  data-testid="host-plan-new-night-btn"
+                  style={{
+                    background: "transparent",
+                    color: t.ink,
+                    border: `1px solid ${t.line}`,
+                    borderRadius: 10,
+                    padding: "9px 16px",
+                    fontSize: 13,
+                    fontWeight: 500,
+                    fontFamily: "var(--font-sans)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
                 >
-                  ~60s
-                </span>
+                  <span style={{ fontSize: 14, lineHeight: 1, opacity: 0.7 }}>+</span>
+                  Plan a new night
+                </button>
               )}
-            </button>
+            </div>
           </div>
 
           <div
