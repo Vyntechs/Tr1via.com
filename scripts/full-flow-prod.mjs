@@ -2,6 +2,18 @@
 // tr1via.com, HTTP-only, no browser, no MCP. The point of this script is
 // to find the next gameplay bug before Heather does — 2026-05-27 go-live.
 //
+// Two modes:
+//
+//   - DEFAULT (SMOKE_PHONES <= 3): full 2-game arc with strict
+//     leaderboard assertion. Alice always correct, Bob wrong in G1 then
+//     alternates, Carol alternates. ~165s total. Catches gameplay bugs.
+//
+//   - LOAD MODE (SMOKE_PHONES > 3): single game, single category,
+//     N phones answer in parallel per question. Optional Realtime
+//     subscribe (SMOKE_REALTIME=1) so each phone holds a WebSocket like
+//     a real browser. Captures peak intra-game concurrency, which is
+//     the relevant metric for Heather's 30-phone venue night.
+//
 // Flow:
 //   1.  Founder bypass login.
 //   2.  Create a night (auto-creates 2 game shells).
@@ -10,25 +22,26 @@
 //       "locks" the category by flipping state to 'ready'; there is NO
 //       separate lock endpoint).
 //   5.  Open the room.
-//   6.  Spawn 3 simulated phones (own cookie jars), each calls
+//   6.  Spawn SMOKE_PHONES simulated phones (own cookie jars), each calls
 //       /api/session/init then /api/players to join the night
-//       (auto-opts into game 1).
-//   7.  Play game 1 (start → 7 cells of reveal/answer/end-early/assert).
+//       (auto-opts into game 1). Optional realtime subscribe per phone.
+//   7.  Play game 1 (start → 7 cells of reveal/parallel-answer/end-early).
 //   8.  End game 1.
-//   9.  Phones explicitly join game 2 (the real "Join Game 2" button).
-//   10. Set up game 2 category and play it.
-//   11. End game 2.
-//   12. Assert cumulative leaderboard across both games.
+//   9.  [3-phone mode only] Phones explicitly join game 2.
+//   10. [3-phone mode only] Set up game 2 category and play it.
+//   11. [3-phone mode only] End game 2.
+//   12. [3-phone mode only] Assert cumulative leaderboard across both games.
 //   13. Cleanup: delete the night (cascade).
 //
-// Answer strategy:
-//   Alice — always correct.       Game 1 + Game 2: full slate.
-//   Bob   — wrong in game 1, alternates correct/wrong in game 2 (proves
-//           game-2 scoring is independent and accumulates).
-//   Carol — alternates correct/wrong in both.
-//
 // Usage:
+//   # Default 3-phone smoke (game logic test):
 //   node --env-file=.env.local scripts/full-flow-prod.mjs [topic1] [topic2]
+//
+//   # 30-phone load mode with WebSocket subscribes:
+//   SMOKE_PHONES=30 SMOKE_REALTIME=1 node --env-file=.env.local scripts/full-flow-prod.mjs
+//
+//   # Realistic-stagger 30-phone simulation:
+//   SMOKE_PHONES=30 SMOKE_REALTIME=1 SMOKE_JOIN_STAGGER_MS=1500 node --env-file=.env.local scripts/full-flow-prod.mjs
 //
 // Exit 0 = green. Exit 1 = the bug Heather would have hit; the printout
 // names the step, the game, the question, and DB state at the failure.
@@ -37,11 +50,21 @@ import { createClient } from "@supabase/supabase-js";
 
 const BASE = process.env.SMOKE_BASE_URL ?? "https://tr1via.com";
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
+const SMOKE_PHONES = Math.max(1, Math.min(100, Number(process.env.SMOKE_PHONES ?? 3)));
+const LOAD_MODE = SMOKE_PHONES > 3;
+const SMOKE_REALTIME = process.env.SMOKE_REALTIME === "1";
+// Default 0 = burst (all phones hit /api/players within ~50ms). Set higher
+// to simulate real-world trickle joins (e.g. 1500 = roughly one new phone
+// every 1.5s).
+const SMOKE_JOIN_STAGGER_MS = Math.max(0, Number(process.env.SMOKE_JOIN_STAGGER_MS ?? 0));
 // 2-category games exercise the section-complete celebration (predicate
-// fires after the first category clears but before the game ends). Drop
-// to 1 (env override) for a faster smoke that still covers end-game +
-// intermission + finale but skips the section-complete window.
-const CATEGORIES_PER_GAME = Math.max(1, Number(process.env.CATEGORIES_PER_GAME ?? 2));
+// fires after the first category clears but before the game ends). Load
+// mode auto-drops to 1 cat (peak concurrency matters more than narrative).
+// Explicit env override always wins.
+const CATEGORIES_PER_GAME = Math.max(
+  1,
+  Number(process.env.CATEGORIES_PER_GAME ?? (LOAD_MODE ? 1 : 2)),
+);
 const TOPIC_BANK_G1 = [
   process.argv[2] ?? "classic movie quotes",
   "pixar films",
@@ -54,7 +77,14 @@ const TOPIC_BANK_G2 = [
 ];
 const GEN_TIMEOUT_MS = 90_000;
 const POLL_MS = 2000;
-const PHONE_NAMES = ["Alice", "Bob", "Carol"];
+// Alice/Bob/Carol drive the strict assertions in 3-phone mode. Player04+
+// are pure load phones with a simple alternate-correct-wrong strategy.
+const PHONE_NAMES = Array.from({ length: SMOKE_PHONES }, (_, i) => {
+  if (i === 0) return "Alice";
+  if (i === 1) return "Bob";
+  if (i === 2) return "Carol";
+  return `Player${String(i + 1).padStart(2, "0")}`;
+});
 
 function colorize(s, c) {
   const codes = { red: 31, green: 32, yellow: 33, cyan: 36, gray: 90 };
@@ -137,6 +167,12 @@ class Phone {
     this.jar = new Jar();
     this.deviceId = null;
     this.playerId = null;
+    // Per-phone Supabase client used only for the room broadcast channel
+    // when SMOKE_REALTIME is set. We create one client per phone so each
+    // opens its own WebSocket, matching what 30 real browsers would do.
+    this.rtClient = null;
+    this.rtChannel = null;
+    this.rtBroadcastsReceived = 0;
   }
   async init() {
     const res = await call(this.jar, "/api/session/init", {
@@ -179,24 +215,78 @@ class Phone {
       );
     }
   }
+  // Opens a per-phone WebSocket to the broadcast channel — mirrors what
+  // the player-facing room page does. Counts inbound broadcasts so the
+  // load run can prove the WebSocket actually delivered events.
+  async openRealtime(roomCode, supaUrl, anonKey) {
+    this.rtClient = createClient(supaUrl, anonKey, {
+      realtime: { params: { eventsPerSecond: 10 } },
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const channel = this.rtClient.channel(`room:${roomCode}`);
+    const eventNames = ["reveal", "undo", "resolve", "end-early", "game-ended"];
+    for (const event of eventNames) {
+      channel.on("broadcast", { event }, () => {
+        this.rtBroadcastsReceived += 1;
+      });
+    }
+    // Wait for SUBSCRIBED (or fail-fast on a bad status) so the run
+    // actually proves connectivity before we play questions.
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(
+        () => reject(new Error(`${this.name} realtime subscribe timeout`)),
+        10_000,
+      );
+      channel.subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          clearTimeout(timeout);
+          resolve();
+        } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          clearTimeout(timeout);
+          reject(new Error(`${this.name} realtime status=${status}`));
+        }
+      });
+    });
+    this.rtChannel = channel;
+  }
+  async closeRealtime() {
+    if (this.rtChannel && this.rtClient) {
+      await this.rtClient.removeChannel(this.rtChannel);
+      this.rtChannel = null;
+    }
+    this.rtClient = null;
+  }
 }
 
 const supaUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supaKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supaAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 if (!supaUrl || !supaKey) {
   console.error("Missing NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY");
+  process.exit(1);
+}
+if (SMOKE_REALTIME && !supaAnonKey) {
+  console.error("SMOKE_REALTIME=1 requires NEXT_PUBLIC_SUPABASE_ANON_KEY");
   process.exit(1);
 }
 const admin = createClient(supaUrl, supaKey, {
   auth: { autoRefreshToken: false, persistSession: false },
 });
 
-console.log(`\n${colorize("═══ TR1VIA full-flow prod driver (2 games) ═══", "cyan")}`);
-console.log(`  base    : ${BASE}`);
-console.log(`  email   : ${FOUNDER_EMAIL}`);
-console.log(`  cats/g  : ${CATEGORIES_PER_GAME}`);
-console.log(`  g1 topics : ${TOPIC_BANK_G1.slice(0, CATEGORIES_PER_GAME).join(", ")}`);
-console.log(`  g2 topics : ${TOPIC_BANK_G2.slice(0, CATEGORIES_PER_GAME).join(", ")}`);
+const modeLabel = LOAD_MODE
+  ? `LOAD MODE — ${SMOKE_PHONES} phones, 1 game`
+  : `${SMOKE_PHONES} phones, 2 games`;
+console.log(`\n${colorize(`═══ TR1VIA full-flow prod driver (${modeLabel}) ═══`, "cyan")}`);
+console.log(`  base       : ${BASE}`);
+console.log(`  email      : ${FOUNDER_EMAIL}`);
+console.log(`  phones     : ${SMOKE_PHONES}${LOAD_MODE ? " (load mode)" : ""}`);
+console.log(`  realtime   : ${SMOKE_REALTIME ? "on (per-phone WebSocket subscribe)" : "off (HTTP only)"}`);
+console.log(`  join stagger: ${SMOKE_JOIN_STAGGER_MS}ms${SMOKE_JOIN_STAGGER_MS === 0 ? " (burst)" : ""}`);
+console.log(`  cats/g     : ${CATEGORIES_PER_GAME}`);
+console.log(`  g1 topics  : ${TOPIC_BANK_G1.slice(0, CATEGORIES_PER_GAME).join(", ")}`);
+if (!LOAD_MODE) {
+  console.log(`  g2 topics  : ${TOPIC_BANK_G2.slice(0, CATEGORIES_PER_GAME).join(", ")}`);
+}
 
 const founderJar = new Jar();
 const phones = PHONE_NAMES.map((n) => new Phone(n));
@@ -289,12 +379,17 @@ async function setupCategory(gameId, topic, position) {
 //   Alice (0): always correct.
 //   Bob   (1): wrong in g1, alternates in g2.
 //   Carol (2): alternates in both games.
+//   Player04+ (load mode): alternate based on (phoneIndex + cellIndex)
+//     parity so different phones land different mixes per question.
 function decide(phoneIndex, cellIndex, gameNo) {
   if (phoneIndex === 0) return "correct";
   if (phoneIndex === 1) {
     return gameNo === 1 ? "wrong" : cellIndex % 2 === 0 ? "correct" : "wrong";
   }
-  return cellIndex % 2 === 0 ? "correct" : "wrong";
+  if (phoneIndex === 2) {
+    return cellIndex % 2 === 0 ? "correct" : "wrong";
+  }
+  return (phoneIndex + cellIndex) % 2 === 0 ? "correct" : "wrong";
 }
 
 // Mirrors useSectionCompleteCelebration's pickCelebration predicate.
@@ -367,10 +462,14 @@ async function assertSectionCompletePredicate(gameId, expected, ctx) {
   }
 }
 
+// Per-question timing summary for load-mode runs.
+const perQuestionTimings = [];
+
 async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
   const tag = `G${gameNo} Q${cellGlobalIndex + 1} (${q.point_value}pt)`;
 
   // Reveal
+  const revealStart = Date.now();
   {
     const res = await call(founderJar, `/api/games/${gameId}/reveal`, {
       method: "POST",
@@ -378,20 +477,28 @@ async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
     });
     if (!res.ok) throw new Error(`reveal ${tag}: ${res.status} ${await res.text()}`);
   }
+  const revealMs = Date.now() - revealStart;
 
-  // 3 phones answer per strategy.
-  for (let pi = 0; pi < phones.length; pi++) {
-    const phone = phones[pi];
-    const scramble = scrambleFor(q.id, phone.playerId);
-    const correct1 = correctSlot(scramble, q.correct_index);
-    const slot =
-      decide(pi, cellGlobalIndex, gameNo) === "correct"
-        ? correct1
-        : (correct1 % 4) + 1;
-    await phone.submitAnswer(q.id, slot);
-  }
+  // All phones answer in PARALLEL — this is what 30 real phones look like
+  // from the API's perspective (one /api/answers POST per phone, all in
+  // flight simultaneously). The sequential loop in the original 3-phone
+  // mode masked any contention; this exposes it.
+  const answerStart = Date.now();
+  await Promise.all(
+    phones.map((phone, pi) => {
+      const scramble = scrambleFor(q.id, phone.playerId);
+      const correct1 = correctSlot(scramble, q.correct_index);
+      const slot =
+        decide(pi, cellGlobalIndex, gameNo) === "correct"
+          ? correct1
+          : (correct1 % 4) + 1;
+      return phone.submitAnswer(q.id, slot);
+    }),
+  );
+  const answerMs = Date.now() - answerStart;
 
   // Host ends early → resolve_question RPC + broadcast.
+  const endEarlyStart = Date.now();
   {
     const res = await call(founderJar, `/api/games/${gameId}/end-early`, {
       method: "POST",
@@ -399,6 +506,7 @@ async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
     });
     if (!res.ok) throw new Error(`end-early ${tag}: ${res.status} ${await res.text()}`);
   }
+  const endEarlyMs = Date.now() - endEarlyStart;
 
   // Assert: finished_at set + every answer has is_correct + awarded_points.
   const { data: qRow } = await admin
@@ -412,8 +520,8 @@ async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
     .from("answers")
     .select("player_id, is_correct, awarded_points")
     .eq("question_id", q.id);
-  if ((answers?.length ?? 0) !== 3) {
-    throw new Error(`${tag}: expected 3 answers, got ${answers?.length ?? 0}`);
+  if ((answers?.length ?? 0) !== phones.length) {
+    throw new Error(`${tag}: expected ${phones.length} answers, got ${answers?.length ?? 0}`);
   }
   const ungraded = answers.filter(
     (a) => a.is_correct === null || a.awarded_points === null,
@@ -421,7 +529,12 @@ async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
   if (ungraded.length) {
     throw new Error(`${tag}: ${ungraded.length} answers left ungraded by resolve_question`);
   }
-  pass(`${tag} revealed → 3 answered → resolved → graded`);
+  perQuestionTimings.push({ tag, revealMs, answerMs, endEarlyMs });
+  if (LOAD_MODE) {
+    pass(`${tag} reveal=${revealMs}ms · ${phones.length}× answer (parallel)=${answerMs}ms · resolve=${endEarlyMs}ms`);
+  } else {
+    pass(`${tag} revealed → ${phones.length} answered → resolved → graded`);
+  }
 }
 
 async function playGame(gameId, gameNo, categories) {
@@ -534,11 +647,40 @@ try {
   }
 
   // 6. Phones join the night (auto-opts into game 1)
-  step("6. spawn 3 phones and join night");
-  for (const p of phones) {
-    await p.init();
-    await p.joinNight(nightId);
-    pass(`${p.name} joined (player=${p.playerId.slice(0, 8)}…)`);
+  step(`6. spawn ${SMOKE_PHONES} phones and join night${SMOKE_JOIN_STAGGER_MS > 0 ? ` (stagger ${SMOKE_JOIN_STAGGER_MS}ms)` : " (burst)"}`);
+  const joinStart = Date.now();
+  if (SMOKE_JOIN_STAGGER_MS === 0) {
+    // Burst: all phones init + join in parallel (worst-case stress).
+    await Promise.all(
+      phones.map(async (p) => {
+        await p.init();
+        await p.joinNight(nightId);
+      }),
+    );
+  } else {
+    // Trickle: phones join with a fixed inter-join delay.
+    for (const p of phones) {
+      await p.init();
+      await p.joinNight(nightId);
+      if (p !== phones[phones.length - 1]) {
+        await new Promise((r) => setTimeout(r, SMOKE_JOIN_STAGGER_MS));
+      }
+    }
+  }
+  const joinElapsedMs = Date.now() - joinStart;
+  if (LOAD_MODE) {
+    pass(`all ${SMOKE_PHONES} phones joined in ${joinElapsedMs}ms (${Math.round(joinElapsedMs / SMOKE_PHONES)}ms/phone avg)`);
+  } else {
+    for (const p of phones) {
+      pass(`${p.name} joined (player=${p.playerId.slice(0, 8)}…)`);
+    }
+  }
+  if (SMOKE_REALTIME) {
+    const rtStart = Date.now();
+    await Promise.all(
+      phones.map((p) => p.openRealtime(roomCode, supaUrl, supaAnonKey)),
+    );
+    pass(`${SMOKE_PHONES}× realtime subscribed in ${Date.now() - rtStart}ms`);
   }
   {
     const { data: parts } = await admin
@@ -550,7 +692,7 @@ try {
     if (missing.length) {
       throw new Error(`missing g1 participations: ${missing.map((m) => m.name).join(",")}`);
     }
-    pass("all 3 have game_participations rows for game 1");
+    pass(`all ${SMOKE_PHONES} have game_participations rows for game 1`);
   }
 
   // 7. Play game 1
@@ -574,61 +716,122 @@ try {
     pass(`intermission state: g1=done, g2=${g2?.state}`);
   }
 
-  // 9. Phones explicitly join game 2 (the "Join Game 2" button path)
-  step("9. phones join game 2");
-  for (const p of phones) {
-    await p.joinGame(2);
-    pass(`${p.name} joined game 2`);
-  }
-  {
-    const { data: parts } = await admin
-      .from("game_participations")
-      .select("player_id")
-      .eq("game_id", game2Id);
-    const ids = new Set((parts ?? []).map((x) => x.player_id));
-    const missing = phones.filter((p) => !ids.has(p.playerId));
-    if (missing.length) {
-      throw new Error(`missing g2 participations: ${missing.map((m) => m.name).join(",")}`);
+  // Steps 9-12 only run in the default (3-phone) game-logic mode. LOAD MODE
+  // stops after game 1 because the relevant signal is intra-game peak
+  // concurrency, not narrative span.
+  if (!LOAD_MODE) {
+    // 9. Phones explicitly join game 2 (the "Join Game 2" button path)
+    step("9. phones join game 2");
+    for (const p of phones) {
+      await p.joinGame(2);
+      pass(`${p.name} joined game 2`);
     }
-    pass("all 3 have game_participations rows for game 2");
-  }
+    {
+      const { data: parts } = await admin
+        .from("game_participations")
+        .select("player_id")
+        .eq("game_id", game2Id);
+      const ids = new Set((parts ?? []).map((x) => x.player_id));
+      const missing = phones.filter((p) => !ids.has(p.playerId));
+      if (missing.length) {
+        throw new Error(`missing g2 participations: ${missing.map((m) => m.name).join(",")}`);
+      }
+      pass("all 3 have game_participations rows for game 2");
+    }
 
-  // 10. Set up game 2 categories
-  step(`10. set up game 2 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
-  {
-    for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
-      const t0 = Date.now();
-      const topic = TOPIC_BANK_G2[i] ?? `${TOPIC_BANK_G2[0]} ${i + 1}`;
-      const r = await setupCategory(game2Id, topic, i + 1);
-      gameCategories[1].push(r);
-      pass(`g2 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
+    // 10. Set up game 2 categories
+    step(`10. set up game 2 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
+    {
+      for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
+        const t0 = Date.now();
+        const topic = TOPIC_BANK_G2[i] ?? `${TOPIC_BANK_G2[0]} ${i + 1}`;
+        const r = await setupCategory(game2Id, topic, i + 1);
+        gameCategories[1].push(r);
+        pass(`g2 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
+      }
+    }
+
+    step(`11. play game 2 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
+    await playGame(game2Id, 2, gameCategories[1]);
+
+    // 12. End game 2 + assert finale
+    step("12. end game 2 + assert finale");
+    await endGame(game2Id, 2);
+    pass("game 2 state=done");
+    {
+      const { data: gs } = await admin
+        .from("games")
+        .select("game_no, state")
+        .eq("night_id", nightId)
+        .order("game_no");
+      const g1 = gs.find((g) => g.game_no === 1);
+      const g2 = gs.find((g) => g.game_no === 2);
+      if (g1?.state !== "done" || g2?.state !== "done") {
+        throw new Error(`finale predicate fails: g1=${g1?.state} g2=${g2?.state}`);
+      }
+      pass(`finale state: g1=done, g2=done`);
     }
   }
 
-  step(`11. play game 2 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
-  await playGame(game2Id, 2, gameCategories[1]);
+  // 13. Strict leaderboard assertion (default mode) OR load summary.
+  step(LOAD_MODE ? `13. load summary (${SMOKE_PHONES} phones)` : "13. assert cumulative leaderboard (across both games)");
+  if (LOAD_MODE) {
+    // Load-mode summary: timings + answer integrity + broadcast deliveries.
+    const picked = gameCategories[0].flatMap((c) => c.picked);
+    const { data: rows } = await admin
+      .from("answers")
+      .select("player_id, question_id, awarded_points, is_correct")
+      .in("question_id", picked.map((q) => q.id));
 
-  // 12. End game 2 + assert finale
-  step("12. end game 2 + assert finale");
-  await endGame(game2Id, 2);
-  pass("game 2 state=done");
-  {
-    const { data: gs } = await admin
-      .from("games")
-      .select("game_no, state")
-      .eq("night_id", nightId)
-      .order("game_no");
-    const g1 = gs.find((g) => g.game_no === 1);
-    const g2 = gs.find((g) => g.game_no === 2);
-    if (g1?.state !== "done" || g2?.state !== "done") {
-      throw new Error(`finale predicate fails: g1=${g1?.state} g2=${g2?.state}`);
+    const totalAnswers = rows?.length ?? 0;
+    const expectedAnswers = SMOKE_PHONES * picked.length;
+    if (totalAnswers !== expectedAnswers) {
+      throw new Error(
+        `load integrity: expected ${expectedAnswers} answers (${SMOKE_PHONES} × ${picked.length}), got ${totalAnswers}`,
+      );
     }
-    pass(`finale state: g1=done, g2=done`);
-  }
+    pass(`integrity: all ${expectedAnswers} answers landed and were graded`);
 
-  // 13. Assert cumulative leaderboard across all played questions.
-  step("13. assert cumulative leaderboard (across both games)");
-  {
+    // Timing distribution
+    const answerMsValues = perQuestionTimings.map((t) => t.answerMs).sort((a, b) => a - b);
+    const p50 = answerMsValues[Math.floor(answerMsValues.length * 0.5)];
+    const p95 = answerMsValues[Math.floor(answerMsValues.length * 0.95)] ?? answerMsValues[answerMsValues.length - 1];
+    const max = answerMsValues[answerMsValues.length - 1];
+    note(`${SMOKE_PHONES}-phone parallel POST /api/answers per question:`);
+    note(`  p50 = ${p50}ms   p95 = ${p95}ms   max = ${max}ms`);
+
+    // Spot-check per-phone scores: every phone should have a non-null score.
+    const scoreByPlayer = new Map();
+    for (const r of rows ?? []) {
+      scoreByPlayer.set(r.player_id, (scoreByPlayer.get(r.player_id) ?? 0) + (r.awarded_points ?? 0));
+    }
+    const phonesWithZeroScore = phones.filter((p) => (scoreByPlayer.get(p.playerId) ?? 0) === 0);
+    if (phonesWithZeroScore.length > 0) {
+      // Some phones may legitimately get all-wrong; flag but don't fail.
+      note(`${phonesWithZeroScore.length} phone(s) ended with 0 points (acceptable: deterministic decide() may give all-wrong)`);
+    }
+    const scores = phones.map((p) => scoreByPlayer.get(p.playerId) ?? 0);
+    const min = Math.min(...scores);
+    const maxScore = Math.max(...scores);
+    note(`scores: min=${min}  max=${maxScore}  avg=${Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)}`);
+
+    // Realtime broadcast delivery (if enabled)
+    if (SMOKE_REALTIME) {
+      const broadcastsByPhone = phones.map((p) => p.rtBroadcastsReceived);
+      const totalBroadcasts = broadcastsByPhone.reduce((a, b) => a + b, 0);
+      const expectedPerPhone = picked.length * 2; // reveal + end-early per question
+      const minPerPhone = Math.min(...broadcastsByPhone);
+      const maxPerPhone = Math.max(...broadcastsByPhone);
+      note(`realtime: ${totalBroadcasts} broadcasts received across ${SMOKE_PHONES} phones (expected ~${expectedPerPhone}/phone)`);
+      note(`  min/phone=${minPerPhone}  max/phone=${maxPerPhone}`);
+      if (minPerPhone < Math.floor(expectedPerPhone * 0.5)) {
+        throw new Error(
+          `realtime delivery: a phone received only ${minPerPhone} broadcasts (expected ~${expectedPerPhone}); WebSocket layer likely struggling at ${SMOKE_PHONES} clients`,
+        );
+      }
+      pass(`realtime delivery: all phones received at least 50% of expected broadcasts`);
+    }
+  } else {
     const picked1 = gameCategories[0].flatMap((c) => c.picked);
     const picked2 = gameCategories[1].flatMap((c) => c.picked);
     const allQuestionIds = [...picked1, ...picked2].map((q) => q.id);
@@ -675,8 +878,15 @@ try {
     pass(`leaderboard correct: ${ranked.map((r) => `${r.name}(${r.total})`).join(" > ")}`);
   }
 
-  console.log(`\n${colorize("═══ FULL FLOW GREEN (2 games) ═══", "green")} (total ${Math.round((Date.now() - startedAt) / 1000)}s)`);
-  console.log("Login ✓  Night ✓  G1 setup/play/end ✓  Phones joined g2 ✓  G2 setup/play/end ✓  Cumulative leaderboard ✓\n");
+  const finishedBanner = LOAD_MODE
+    ? `═══ LOAD FLOW GREEN (${SMOKE_PHONES} phones) ═══`
+    : `═══ FULL FLOW GREEN (2 games) ═══`;
+  console.log(`\n${colorize(finishedBanner, "green")} (total ${Math.round((Date.now() - startedAt) / 1000)}s)`);
+  if (!LOAD_MODE) {
+    console.log("Login ✓  Night ✓  G1 setup/play/end ✓  Phones joined g2 ✓  G2 setup/play/end ✓  Cumulative leaderboard ✓\n");
+  } else {
+    console.log(`Login ✓  Night ✓  ${SMOKE_PHONES} phones joined ✓  G1 played (parallel answers) ✓  Integrity + timings reported ✓\n`);
+  }
 } catch (e) {
   console.log(`\n${colorize("═══ FULL FLOW RED ═══", "red")}`);
   console.log(`  ${e?.message ?? e}`);
@@ -712,6 +922,10 @@ try {
   console.log("");
   process.exitCode = 1;
 } finally {
+  // Close any per-phone WebSocket subscriptions before exiting the process.
+  if (SMOKE_REALTIME) {
+    await Promise.all(phones.map((p) => p.closeRealtime().catch(() => undefined)));
+  }
   if (nightId) {
     step("cleanup");
     const { error } = await admin.from("nights").delete().eq("id", nightId);

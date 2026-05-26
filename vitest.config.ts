@@ -15,6 +15,11 @@ export default defineConfig({
   },
   test: {
     environment: "jsdom",
+    environmentOptions: {
+      // Give jsdom a real-looking origin so window.localStorage works.
+      // (Without this, jsdom uses about:blank → opaque origin → SecurityError.)
+      jsdom: { url: "http://localhost/" },
+    },
     globals: false,
     setupFiles: ["./tests/setup.ts"],
     include: ["tests/unit/**/*.test.ts", "tests/unit/**/*.test.tsx", "tests/component/**/*.test.tsx"],
