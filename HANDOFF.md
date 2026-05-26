@@ -43,15 +43,39 @@ CATEGORIES_PER_GAME=1 node --env-file=.env.local scripts/full-flow-prod.mjs   # 
 
 ---
 
-## 🚨 P0 carry-over for next session
+## 🚨 P0 for session 15 — Brandon's call: **build the full browser-driven validation pipeline first**
 
-### 1. Merge PR #33 if not already merged
+Brandon's framing: "I don't want to be validating this where I'm shooting myself in the foot because it's set up not to work end-to-end. As a host, as player, players — there's got to be a way you can efficiently do this for accuracy to know it's going to work 100%."
 
-https://github.com/Vyntechs/Tr1via.com/pull/33. After merge, prod gets the cinematic + restored Jeopardy grid behavior. The next section Heather (or test friends) clear will show the new flow. The script-extension commit (`d76f5b5`) rides along on the same PR so the regression-lock ships at the same time as the feature.
+The session-14 validator (`scripts/full-flow-prod.mjs`) is **API-level** — it drives the host via HTTP and asserts DB state. It catches a class of regressions but **doesn't render any UI** and doesn't drive players through a real Supabase Realtime WebSocket. Heather's actual experience is browser-rendered, which is where the bugs Brandon has been hitting all session live.
 
-### 2. Player-side persistence gaps (the 15 from session 14 research)
+### P0.1 — Browser-driven end-to-end validator
 
-During the test game Brandon also reported **player phones sometimes lock up** and a hard refresh fixes them, missing 1–2 questions during the refresh. A parallel research agent enumerated 15 concrete gaps in three clusters:
+**Build a Playwright-driven harness that runs against prod with isolation:**
+
+- 1 host browser (founder login → mid-game host laptop UI driving real `/api/games/...` calls via the actual buttons).
+- 3 player browsers (real device cookies, real WebSocket subscriptions, real `useRoom` snapshot, real answer submissions through the UI).
+- Plays a full 2-category × 2-game night.
+- Asserts on each surface at every transition: TV shows the right view (lobby/grid/question/reveal/section-complete/intermission/finale), player phones show the right view (lobby/question/lock-in/reveal/standings), scores match the leaderboard.
+- Asserts the **section-complete overlay actually renders** on both host laptop and standalone TV after a category clears (the API-level validator only checks the predicate, not the DOM).
+- Creates a "Full Flow Driver" night and cleans up via cascade delete on exit.
+- Targets: under 10 minutes runtime, exit 0 = green / exit 1 = print the surface + selector + screenshot of the failure.
+
+**Pair with the existing API validator** so Brandon has fast (3 min, no UI) + thorough (~10 min, full browser) modes. Run the browser one before every prod merge, the API one on every commit.
+
+**Implementation notes for whoever builds it:**
+- Playwright is already a devDep (`@playwright/test ^1.49.0`) — see `tests/e2e/` if there's anything existing.
+- The current `scripts/full-flow-prod.mjs` has the full API protocol mapped out (founder bypass login, session init, players join, reveal, end-early, end-game, game 2, etc.) — port the action sequence, replace API calls with UI clicks.
+- Players need separate browser contexts (own cookies) — Playwright `browser.newContext()` per phone.
+- Realtime assertions: wait for the TV's `data-testid` to match the expected view after each host action; on a player phone, wait for the question to appear after host reveals.
+- Add to `package.json`: `test:e2e:full-flow` script that runs it.
+- Add to PR template / pre-merge checklist: "ran `npm run test:e2e:full-flow` against preview/prod, green."
+
+**This unblocks Brandon shipping anything else with confidence.** He stops being the QA.
+
+### P0.2 — Player-side persistence gaps (the 15 from session 14 research)
+
+During session 14 Brandon reported **player phones sometimes lock up** and a hard refresh fixes them, missing 1–2 questions during the refresh. A parallel research agent enumerated 15 concrete gaps in three clusters:
 
 - **A — No refetch on tab focus or network reconnect** (iOS Safari lock-up pattern). Highest-impact. Fix: add `visibilitychange` + `online` listeners that call the existing `bootstrap()` + `refreshLiveState()` in `app/(player)/room/[code]/page.tsx`.
 - **B — `postgres_changes` silently dropped for device-cookie players** (the PR #31 family). `answers.is_correct` flips, `game_scores`, `games.state → game-ended`, and `players` kicks all rely on it. Mitigation: hook `.subscribe()` status callbacks in `useRoom.ts` so a dead channel triggers a re-bootstrap, OR route these fields through `/api/nights/by-code`-style server endpoints.
@@ -59,11 +83,11 @@ During the test game Brandon also reported **player phones sometimes lock up** a
 
 **Plus a missed `hosts!inner` from PR #31:** `lib/hooks/useRoom.ts:188-190` still has it in the initial `nights` bootstrap. One-line follow-up.
 
-**Recommended order:** A first (single biggest win), then the `hosts!inner` cleanup, then B's high-traffic events, then C as polish. None blocks Wed go-live as long as players know to hard-refresh; all worth shipping before then if time permits.
+**Recommended order once P0.1 is in:** A first (single biggest win), then the `hosts!inner` cleanup, then B's high-traffic events, then C as polish. The browser-driven validator from P0.1 will catch any regression in these fixes.
 
-### 3. Finish Brandon's test game
+### P0.3 — Finish Brandon's test game
 
-Mid-flow at session close. After PR #33 merges and prod deploys, friends hard-refresh their phones, Brandon picks the next cell from the restored Jeopardy grid, the cinematic plays when the next section clears.
+Mid-flow at session-14 close. After PR #33 merged and prod deployed, friends hard-refresh their phones, Brandon picks the next cell from the restored Jeopardy grid, the cinematic plays when the next section clears.
 
 ---
 
@@ -141,8 +165,8 @@ No schema changes in session 14.
 
 After `/clear`, type:
 
-> **read HANDOFF.md and continue — PR #33 status first; then I want player-phone persistence fixes before Heather's Wednesday go-live.**
+> **read HANDOFF.md and build the full browser-driven end-to-end validation pipeline. 1 host browser + 3 player browsers, real Supabase Realtime, asserts the UI on every surface at every transition. Pair it with `scripts/full-flow-prod.mjs`. Runs against prod with isolation, under 10 minutes, exit 0 / exit 1 with failure screenshot. Goal: zero manual QA before Heather's Wednesday go-live.**
 
 That plus auto-loaded memory will reorient.
 
-The first move on a clean start is: confirm PR #33 merge status; if merged → start the persistence fix sequence (A → `hosts!inner` cleanup → B → C); if not merged → flag and stand down on persistence work until it's in.
+The first move on a clean start: skim `scripts/full-flow-prod.mjs` (the API protocol is mapped out there), check `tests/e2e/` for any existing Playwright scaffold, then plan the browser harness via the brainstorming skill BEFORE writing code. Don't commit anything until the plan is approved.
