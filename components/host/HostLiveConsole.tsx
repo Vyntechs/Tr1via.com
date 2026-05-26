@@ -21,9 +21,10 @@ import {
   ThemeProvider,
   useTheme,
 } from "@/components/system";
-import { TVStateMachine } from "@/components/tv";
+import { TVSectionComplete, TVStateMachine } from "@/components/tv";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { deriveHostMode } from "@/lib/host/deriveHostMode";
+import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { RemovePlayerButton } from "./RemovePlayerButton";
 
@@ -160,7 +161,9 @@ function HostLiveConsoleInner({
     () => deriveHostMode(tvSnapshot ?? null, hostAdvanced),
     [tvSnapshot, hostAdvanced],
   );
-  const { mode, canEndGame, inSectionPicker } = modeCtx;
+  const { mode, canEndGame } = modeCtx;
+
+  const celebration = useSectionCompleteCelebration(tvSnapshot, hostAdvanced);
 
   function handleRevealCell(questionId: string) {
     setHostAdvanced(false);
@@ -195,18 +198,27 @@ function HostLiveConsoleInner({
               lastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
               lastBroadcastServerNow={tvLastBroadcastServerNow}
               onGridCellClick={handleRevealCell}
-              onSectionPickerTopicClick={handleRevealCell}
               hostAdvanced={hostAdvanced}
             />
           ) : (
             <DevPlaceholder />
+          )}
+          {celebration && (
+            <TVSectionComplete
+              topicName={celebration.topicName}
+              color={celebration.color}
+            />
           )}
         </div>
 
         <HostControlStrip
           mode={mode}
           canEndGame={canEndGame}
-          inSectionPicker={inSectionPicker}
+          celebrationCaption={
+            celebration
+              ? `Section complete — ${celebration.topicName} cleared.`
+              : null
+          }
           canUndo={canUndo && (mode === "question-live" || mode === "picking" || mode === "reveal-sticky")}
           lockedCount={locks}
           totalPlayers={totalPlayers}
@@ -250,10 +262,11 @@ interface HostControlStripProps {
     | "intermission"
     | "finale";
   canEndGame: boolean;
-  /** True when picking mode + section just ended; swaps the strip's
-   *  default "Tap a cell to reveal" caption for "Pick the next topic on
-   *  the TV" so the host knows where their action lives. */
-  inSectionPicker: boolean;
+  /** When non-null, the bottom strip shows this caption instead of the
+   *  default "Tap a cell to reveal" copy — used while the section-complete
+   *  overlay is playing so the host gets matching language on their
+   *  controls. */
+  celebrationCaption: string | null;
   canUndo: boolean;
   lockedCount: number;
   totalPlayers: number;
@@ -271,7 +284,7 @@ interface HostControlStripProps {
 function HostControlStrip({
   mode,
   canEndGame,
-  inSectionPicker,
+  celebrationCaption,
   canUndo,
   lockedCount,
   totalPlayers,
@@ -343,9 +356,7 @@ function HostControlStrip({
               letterSpacing: "0.02em",
             }}
           >
-            {inSectionPicker
-              ? "Pick the next topic on the TV"
-              : "Tap a cell to reveal the next question"}
+            {celebrationCaption ?? "Tap a cell to reveal the next question"}
           </span>
         )}
         {mode === "finale" && onCloseNight && (

@@ -25,12 +25,13 @@
 "use client";
 
 import { use } from "react";
-import { TVStateMachine } from "@/components/tv";
+import { TVSectionComplete, TVStateMachine } from "@/components/tv";
 import { ThemeProvider } from "@/components/system";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { formatRoomCode } from "@/lib/game/room-code";
 import { useTVRoom } from "@/lib/hooks/useTVRoom";
+import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
 
 export default function TVPage({
   params,
@@ -78,8 +79,26 @@ export default function TVPage({
           lastBroadcastRevealedAt={broadcastRevealedAt}
           lastBroadcastServerNow={broadcastServerNow}
         />
+        <SectionCompleteOverlay snapshot={snapshot} />
       </TVStageFrame>
     </ThemeProvider>
+  );
+}
+
+function SectionCompleteOverlay({
+  snapshot,
+}: {
+  snapshot: ReturnType<typeof useTVRoom>["snapshot"];
+}) {
+  // Audience-only callsite — no host-advanced flag; the hook waits for the
+  // sticky reveal to clear naturally before celebrating.
+  const celebration = useSectionCompleteCelebration(snapshot);
+  if (!celebration) return null;
+  return (
+    <TVSectionComplete
+      topicName={celebration.topicName}
+      color={celebration.color}
+    />
   );
 }
 

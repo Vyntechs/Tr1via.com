@@ -350,106 +350,43 @@ describe("deriveHostMode", () => {
     expect(ctx.mode).toBe("finale");
   });
 
-  // PR C — section-ended picker. The flag flips ON only when at least one
-  // category in the current game is exhausted AND others still have unplayed
-  // questions. The host's "Pick the next topic" panel surfaces on this flag.
-  describe("inSectionPicker", () => {
-    it("is false when nothing has been played yet (start of game)", () => {
-      const ctx = deriveHostMode(
-        snapshot({
-          games: [game({ id: "g1", gameNo: 1, state: "live" })],
-          currentGameId: "g1",
-          categories: [
-            category({ id: "c1", gameId: "g1" }),
-            category({ id: "c2", gameId: "g1" }),
-          ],
-          questions: [
-            question({ id: "q1", categoryId: "c1", finishedAt: null }),
-            question({ id: "q2", categoryId: "c2", finishedAt: null }),
-          ],
-        }),
-      );
-      expect(ctx.mode).toBe("picking");
-      expect(ctx.inSectionPicker).toBe(false);
-    });
-
-    it("is false when at least one question played but every category still has unplayed", () => {
-      const ctx = deriveHostMode(
-        snapshot({
-          games: [game({ id: "g1", gameNo: 1, state: "live" })],
-          currentGameId: "g1",
-          categories: [
-            category({ id: "c1", gameId: "g1" }),
-            category({ id: "c2", gameId: "g1" }),
-          ],
-          questions: [
-            question({
-              id: "q1",
-              categoryId: "c1",
-              finishedAt: "2026-05-24T00:00:30Z",
-            }),
-            question({ id: "q1b", categoryId: "c1", finishedAt: null }),
-            question({ id: "q2", categoryId: "c2", finishedAt: null }),
-          ],
-        }),
-        true, // hostAdvanced — skip reveal-sticky so we land in picking
-      );
-      expect(ctx.mode).toBe("picking");
-      expect(ctx.inSectionPicker).toBe(false);
-    });
-
-    it("flips ON when one category is exhausted and another still has unplayed", () => {
-      const ctx = deriveHostMode(
-        snapshot({
-          games: [game({ id: "g1", gameNo: 1, state: "live" })],
-          currentGameId: "g1",
-          categories: [
-            category({ id: "c1", gameId: "g1" }),
-            category({ id: "c2", gameId: "g1" }),
-          ],
-          questions: [
-            // c1 fully done
-            question({
-              id: "q1",
-              categoryId: "c1",
-              finishedAt: "2026-05-24T00:00:30Z",
-            }),
-            // c2 still has unplayed
-            question({ id: "q2", categoryId: "c2", finishedAt: null }),
-          ],
-        }),
-        true,
-      );
-      expect(ctx.mode).toBe("picking");
-      expect(ctx.inSectionPicker).toBe(true);
-    });
-
-    it("is false when every picked question is done (End Game CTA wins)", () => {
-      const ctx = deriveHostMode(
-        snapshot({
-          games: [game({ id: "g1", gameNo: 1, state: "live" })],
-          currentGameId: "g1",
-          categories: [category({ id: "c1", gameId: "g1" })],
-          questions: [
-            question({
-              id: "q1",
-              categoryId: "c1",
-              finishedAt: "2026-05-24T00:00:30Z",
-            }),
-          ],
-        }),
-        true,
-      );
-      expect(ctx.mode).toBe("picking");
-      expect(ctx.canEndGame).toBe(true);
-      expect(ctx.inSectionPicker).toBe(false);
-    });
+  // After PR-section-end-cinematic: the section-end "Pick the next topic"
+  // surface is gone. The grid is the canonical picker for the entire game,
+  // and the cinematic moment lives in a separate overlay driven by
+  // useSectionCompleteCelebration. deriveHostMode only needs to confirm
+  // we're in `picking` mode (and that canEndGame still flips correctly
+  // when every category is exhausted — covered above).
+  it("stays in plain picking mode when one category is exhausted but others remain", () => {
+    const ctx = deriveHostMode(
+      snapshot({
+        games: [game({ id: "g1", gameNo: 1, state: "live" })],
+        currentGameId: "g1",
+        categories: [
+          category({ id: "c1", gameId: "g1" }),
+          category({ id: "c2", gameId: "g1" }),
+        ],
+        questions: [
+          // c1 fully done
+          question({
+            id: "q1",
+            categoryId: "c1",
+            finishedAt: "2026-05-24T00:00:30Z",
+          }),
+          // c2 still has unplayed
+          question({ id: "q2", categoryId: "c2", finishedAt: null }),
+        ],
+      }),
+      true, // hostAdvanced — skip reveal-sticky so we land in picking
+    );
+    expect(ctx.mode).toBe("picking");
+    expect(ctx.canEndGame).toBe(false);
   });
 });
 
 // ─────────────────────────────────────────────────────────────────────────
-// getRemainingTopics — pure helper. The TV picker uses this to render its
-// clickable rows; deriveHostMode uses it to compute inSectionPicker.
+// getRemainingTopics — pure helper. Still exported because
+// useSectionCompleteCelebration uses similar per-category logic and other
+// future surfaces may want a "what's left in each topic" list.
 // ─────────────────────────────────────────────────────────────────────────
 
 describe("getRemainingTopics", () => {
