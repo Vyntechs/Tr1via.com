@@ -172,19 +172,32 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
     }
 
     async function bootstrap() {
-      // Look up the night by room code first (server route bypasses RLS
-      // since we don't yet have a player session here).
+      // Look up the night by room code first via our admin-backed route —
+      // bypasses RLS so we get the night id, host default theme, etc. in one
+      // shot before the player has any session context. We pull the host's
+      // default theme key from THIS response rather than re-joining `hosts`
+      // in the player's anon fetch below — `hosts_self_read` requires
+      // `auth.uid()` to match, which players don't have (they auth by device
+      // cookie). A `hosts!inner` join on the player client returns 406 from
+      // PostgREST and the whole night row drops, which renders the lobby as
+      // "That room isn't open."
       const nightRes = await fetch(`/api/nights/by-code/${code}`);
       if (!nightRes.ok) {
         if (!cancelled) setSnapshot({ ...EMPTY, isLoading: false });
         return;
       }
-      const lookup = (await nightRes.json()) as { nightId: string };
+      const lookup = (await nightRes.json()) as {
+        nightId: string;
+        hostDefaultThemeKey: string | null;
+      };
       const nightId = lookup.nightId;
+      const lookupHostDefaultThemeKey = lookup.hostDefaultThemeKey ?? null;
       if (cancelled) return;
 
       // Fetch full row + games + categories + players + open questions +
-      // reveals concurrently.
+      // reveals concurrently. The `nights` query is a flat select so we
+      // don't have to satisfy any FK-table RLS in the same request — the
+      // host default theme already came back from the admin route above.
       const [
         nightRow,
         gameRows,
@@ -196,7 +209,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       ] = await Promise.all([
         supa
           .from("nights")
-          .select("*, hosts!inner(default_theme_key)")
+          .select("*")
           .eq("id", nightId)
           .single(),
         supa
@@ -257,23 +270,13 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       const currentReveal = reveals[0]
         ? (stripJoin(reveals[0], "games") as RevealRow)
         : null;
-      // The join on hosts returns `{ ..., hosts: { default_theme_key } }`
-      // (object) or `{ ..., hosts: [{...}] }` (array) depending on relation
-      // inference. Normalize then strip so RoomSnapshot.night stays a plain
-      // NightRow.
-      const nightWithHost = nightRow.data as
-        | (NightRow & { hosts?: { default_theme_key?: string } | Array<{ default_theme_key?: string }> })
-        | null;
-      const hostJoin = nightWithHost
-        ? Array.isArray(nightWithHost.hosts)
-          ? nightWithHost.hosts[0]
-          : nightWithHost.hosts
-        : null;
-      const hostDefaultThemeKey: string | null =
-        hostJoin?.default_theme_key ?? null;
-      const cleanNight: NightRow | null = nightWithHost
-        ? (({ hosts: _hosts, ...rest }) => rest as NightRow)(nightWithHost)
-        : null;
+      // No more hosts join — the night row is now a plain NightRow and the
+      // host's default theme rides in from the /api/nights/by-code lookup
+      // above. That keeps the player's anon fetch on a single RLS surface
+      // (`nights_player_read`), avoiding the cross-table denial that was
+      // returning 406 from PostgREST on iPhones.
+      const cleanNight = (nightRow.data ?? null) as NightRow | null;
+      const hostDefaultThemeKey = lookupHostDefaultThemeKey;
       setSnapshot({
         night: cleanNight,
         hostDefaultThemeKey,
