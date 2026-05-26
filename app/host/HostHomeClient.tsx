@@ -246,6 +246,10 @@ function SuccessToast({ message, onDismiss }: { message: string; onDismiss: () =
         gap: 14,
         alignItems: "center",
         maxWidth: 480,
+        // Toast is informational — let clicks pass through to the dashboard
+        // underneath (e.g. the new "Continue setup" CTA right after a reset).
+        // Dismiss button re-enables pointer events for itself.
+        pointerEvents: "none",
       }}
     >
       <span>{message}</span>
@@ -257,6 +261,7 @@ function SuccessToast({ message, onDismiss }: { message: string; onDismiss: () =
           color: "#FFF",
           border: "1px solid rgba(255,255,255,.4)",
           padding: "4px 10px",
+          pointerEvents: "auto",
           borderRadius: 6,
           fontSize: 11,
           fontWeight: 600,
