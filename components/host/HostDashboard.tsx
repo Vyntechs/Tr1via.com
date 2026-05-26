@@ -62,6 +62,9 @@ export interface HostDashboardProps {
   onSetupTonight?: () => void;
   /** Called when the host taps Resume on a live/setup night. */
   onResume?: (nightId: string) => void;
+  /** Called when the host taps "Reset and edit game". Only meaningful
+   *  when tonight.status === 'live' and tonight.resetPreview is set. */
+  onResetGame?: () => void;
 }
 
 export function HostDashboard(props: HostDashboardProps) {
@@ -115,6 +118,7 @@ function HostDashboardInner({
   tonight = null,
   onSetupTonight,
   onResume,
+  onResetGame,
 }: Omit<HostDashboardProps, "themeKey">) {
   const { t } = useTheme();
   const tonightLabel = tonight
@@ -275,6 +279,30 @@ function HostDashboardInner({
                 >
                   <span style={{ fontSize: 14, lineHeight: 1, opacity: 0.7 }}>+</span>
                   Plan a new night
+                </button>
+              )}
+              {tonight && tonight.status === "live" && tonight.resetPreview && (
+                <button
+                  type="button"
+                  onClick={() => onResetGame?.()}
+                  data-testid="host-reset-game-btn"
+                  style={{
+                    background: "transparent",
+                    color: t.inkMid,
+                    border: `1px solid ${t.line}`,
+                    borderRadius: 10,
+                    padding: "7px 14px",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    fontFamily: "var(--font-sans)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    opacity: 0.85,
+                  }}
+                >
+                  Reset and edit game
                 </button>
               )}
             </div>
