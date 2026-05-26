@@ -58,7 +58,7 @@ type ModalState =
 export function HostSetupPickClient({
   nightId,
   categoryId,
-  categoryName,
+  categoryName: initialCategoryName,
   categoryTopic,
   initialState,
   initialQuestions,
@@ -67,6 +67,11 @@ export function HostSetupPickClient({
   const router = useRouter();
   const [questions, setQuestions] = useState<QuestionRow[]>(initialQuestions);
   const [state, setState] = useState<CategoryRow["state"]>(initialState);
+  // Local mirror of the category's display label so the inline rename
+  // can update the header + modal eyebrows without a hard reload. The
+  // server is the source of truth on refresh.
+  const [categoryName, setCategoryName] = useState(initialCategoryName);
+  const [renaming, setRenaming] = useState(false);
   const [pickedIds, setPickedIds] = useState<Set<string>>(
     () => new Set(initialQuestions.filter((q) => q.is_picked).map((q) => q.id)),
   );
@@ -510,6 +515,41 @@ export function HostSetupPickClient({
     );
   }
 
+  // ── rename (PATCH /api/categories/[id]) ─────────────────────────────
+  // Renaming is allowed in any state — draft, generating, review, ready.
+  // The mutation only touches `categories.name`; `categories.topic` (the
+  // original Claude prompt) is preserved server-side.
+  const handleRename = useCallback(
+    async (next: string): Promise<void> => {
+      setRenaming(true);
+      setError(null);
+      try {
+        const res = await fetch(`/api/categories/${categoryId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: next }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "could not rename category");
+        }
+        const { category } = (await res.json()) as {
+          category: { id: string; name: string };
+        };
+        setCategoryName(category.name);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Could not rename.";
+        setError(msg);
+        // Re-throw so the inline editor knows the commit failed and can
+        // keep the input open + restore focus with the unsaved value.
+        throw err;
+      } finally {
+        setRenaming(false);
+      }
+    },
+    [categoryId],
+  );
+
   const showGenerationFailure =
     generationFailureMessage !== null && state !== "review" && state !== "ready";
 
@@ -586,6 +626,8 @@ export function HostSetupPickClient({
           onSwapImage={(id) => void openSwap(id)}
           onLock={handleLock}
           onRegenerate={handleRegenerate}
+          onRename={handleRename}
+          isRenaming={renaming}
           isLocking={locking}
         />
       )}
