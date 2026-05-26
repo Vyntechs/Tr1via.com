@@ -11,7 +11,14 @@
 
 "use client";
 
-import { useMemo } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+} from "react";
 import {
   Eyebrow,
   Numeric,
@@ -65,6 +72,14 @@ export interface HostGenPickProps {
   onEdit?: (questionId: string) => void;
   /** Open the image swap UI for a specific question. */
   onSwapImage?: (questionId: string) => void;
+  /** Called when the host saves a renamed category label. Returns a
+   *  promise so the inline editor can keep the input open + restore
+   *  focus on failure. When omitted the pencil affordance is hidden
+   *  (so the design gallery keeps rendering as a static preview). */
+  onRename?: (next: string) => Promise<void>;
+  /** True while the rename PATCH is in flight. Disables the input and
+   *  shows a "Saving…" microcopy. */
+  isRenaming?: boolean;
   /** Called when the host taps "Lock the category" with 7 picked. */
   onLock?: () => void;
   /** Called when the host taps "Another 20" / a flavor button. */
@@ -119,6 +134,8 @@ function HostGenPickInner({
   onTogglePick,
   onEdit,
   onSwapImage,
+  onRename,
+  isRenaming = false,
   onLock,
   onRegenerate,
   isLocking = false,
@@ -161,9 +178,12 @@ function HostGenPickInner({
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           <span style={{ width: 12, height: 12, borderRadius: 99, background: cc }} />
           <div>
-            <Eyebrow color={t.accent} size={11}>
-              {topic.toUpperCase()} · {questions.length} PULLED · PHOTOS MATCHED
-            </Eyebrow>
+            <EditableTopicEyebrow
+              value={topic}
+              suffix={`· ${questions.length} PULLED · PHOTOS MATCHED`}
+              onSave={onRename}
+              isSaving={isRenaming}
+            />
             <div style={{ marginTop: 4, fontSize: 28, fontWeight: 700, color: t.ink, letterSpacing: "-0.02em" }}>Pick your seven.</div>
           </div>
         </div>
@@ -487,5 +507,270 @@ function PickSidebar({
         <Eyebrow color={t.inkMute} size={9} style={{ textAlign: "center" }}>YOU CAN STILL EDIT AFTER LOCKING</Eyebrow>
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// EditableTopicEyebrow — pencil-inline rename for the Pick header.
+//
+// Read state: eyebrow text + suffix + small pencil. Click pencil → text
+// input + ✓ / ✕. Enter saves, Escape discards, blur saves if changed.
+// Empty/whitespace → inline error, keep input open. Max 80 chars (mirrors
+// PatchCategoryBodySchema). While saving the input is disabled and a
+// micro "Saving…" label renders to the right.
+//
+// When `onSave` is omitted, renders the static eyebrow with no pencil —
+// keeps the /dev/host/gen gallery preview clean.
+// ─────────────────────────────────────────────────────────────────────────
+
+const RENAME_MAX_LENGTH = 80;
+
+interface EditableTopicEyebrowProps {
+  value: string;
+  suffix: string;
+  onSave?: (next: string) => Promise<void>;
+  isSaving: boolean;
+}
+
+function EditableTopicEyebrow({
+  value,
+  suffix,
+  onSave,
+  isSaving,
+}: EditableTopicEyebrowProps) {
+  const { t } = useTheme();
+  const cc = categoryColor(value, t.accent);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // When entering edit mode, sync draft + focus the input.
+  useEffect(() => {
+    if (!editing) return;
+    setDraft(value);
+    setLocalError(null);
+    const id = setTimeout(() => inputRef.current?.focus(), 0);
+    return () => clearTimeout(id);
+  }, [editing, value]);
+
+  // Gallery mode (no save handler) — render the static eyebrow.
+  if (!onSave) {
+    return (
+      <Eyebrow color={cc} size={12}>
+        {value.toUpperCase()} {suffix}
+      </Eyebrow>
+    );
+  }
+
+  async function commit(): Promise<void> {
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      setLocalError("Name can't be blank.");
+      inputRef.current?.focus();
+      return;
+    }
+    if (trimmed.length > RENAME_MAX_LENGTH) {
+      setLocalError(`Keep it under ${RENAME_MAX_LENGTH} characters.`);
+      inputRef.current?.focus();
+      return;
+    }
+    if (trimmed === value) {
+      // No change — just close.
+      setEditing(false);
+      return;
+    }
+    try {
+      await onSave!(trimmed);
+      setEditing(false);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : "Couldn't save.");
+      inputRef.current?.focus();
+    }
+  }
+
+  function cancel(): void {
+    setDraft(value);
+    setLocalError(null);
+    setEditing(false);
+  }
+
+  function onKeyDown(e: KeyboardEvent<HTMLInputElement>): void {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancel();
+    }
+  }
+
+  function onBlur(e: FocusEvent<HTMLInputElement>): void {
+    // Don't react to blur if focus is moving to one of our own controls;
+    // those buttons handle their own click → commit / cancel.
+    const next = e.relatedTarget as HTMLElement | null;
+    if (next?.dataset.editControl === "true") return;
+    // Save on blur only if the value actually changed; otherwise discard.
+    if (draft.trim() !== value && draft.trim().length > 0) {
+      void commit();
+    } else {
+      cancel();
+    }
+  }
+
+  if (!editing) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 16 }}>
+        <Eyebrow color={cc} size={12}>
+          {value.toUpperCase()} {suffix}
+        </Eyebrow>
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          aria-label="Rename category"
+          data-testid="host-category-rename-btn"
+          style={{
+            background: "transparent",
+            border: "none",
+            padding: 2,
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            color: t.inkMid,
+            lineHeight: 0,
+          }}
+        >
+          <PencilGlyph />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <input
+          ref={inputRef}
+          type="text"
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (localError) setLocalError(null);
+          }}
+          onKeyDown={onKeyDown}
+          onBlur={onBlur}
+          disabled={isSaving}
+          maxLength={RENAME_MAX_LENGTH}
+          data-testid="host-category-rename-input"
+          aria-label="Category name"
+          style={{
+            background: t.surface,
+            border: `1px solid ${localError ? "#9c2f2f" : t.line}`,
+            borderRadius: 6,
+            padding: "4px 8px",
+            fontFamily: "var(--font-mono)",
+            fontSize: 12,
+            fontWeight: 600,
+            letterSpacing: "0.12em",
+            textTransform: "uppercase",
+            color: cc,
+            minWidth: 220,
+            outline: "none",
+          }}
+        />
+        <button
+          type="button"
+          data-edit-control="true"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => void commit()}
+          disabled={isSaving}
+          aria-label="Save name"
+          data-testid="host-category-rename-save"
+          style={renameControlStyle(t.ink, t.paper)}
+        >
+          ✓
+        </button>
+        <button
+          type="button"
+          data-edit-control="true"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={cancel}
+          disabled={isSaving}
+          aria-label="Discard rename"
+          data-testid="host-category-rename-cancel"
+          style={renameControlStyle(t.line, t.ink)}
+        >
+          ✕
+        </button>
+        {isSaving && (
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: 10,
+              color: t.inkMute,
+              marginLeft: 4,
+              letterSpacing: "0.1em",
+            }}
+          >
+            SAVING…
+          </span>
+        )}
+      </div>
+      {localError && (
+        <div
+          style={{
+            fontFamily: "var(--font-sans)",
+            fontSize: 11,
+            color: "#9c2f2f",
+            fontWeight: 500,
+          }}
+          role="alert"
+        >
+          {localError}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function renameControlStyle(
+  bg: string,
+  fg: string,
+): React.CSSProperties {
+  return {
+    background: bg,
+    color: fg,
+    border: "none",
+    borderRadius: 4,
+    width: 22,
+    height: 22,
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+    lineHeight: 1,
+  };
+}
+
+function PencilGlyph() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M11.5 1.5l3 3-9 9H2.5v-3l9-9z" />
+      <path d="M9.5 3.5l3 3" />
+    </svg>
   );
 }
