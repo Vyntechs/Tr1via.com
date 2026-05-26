@@ -1,69 +1,80 @@
-# TR1VIA — Handoff (end of session 15, 2026-05-25 late evening)
+# TR1VIA — Handoff (end of session 16, 2026-05-26 morning)
 
-**Next session: read this → `MEMORY.md` (auto-loaded) → `tr1via-plan.md` → `supabase/README.md` → `README.md`.** Prior session handoffs in git history (session 14 close at `90a8268`, session 13 at `94cb045`).
+**Next session: read this → `MEMORY.md` (auto-loaded) → `tr1via-plan.md` → `supabase/README.md` → `README.md`.** Prior session handoffs in git history (session 15 at `2c82f37`, session 14 at `90a8268`).
 
 ---
 
 ## Critical context
 
-**Heather (`heatherhmoore@yahoo.com`) goes live on tr1via.com Wednesday 2026-05-27.** Real paying patrons. Roughly **33 hours** from session-15 close.
+**Heather (`heatherhmoore@yahoo.com`) goes live on tr1via.com TOMORROW, Wednesday 2026-05-27.** Real paying patrons. Roughly **24 hours** from session-16 close.
 
-The night Brandon was testing on her behalf is `52feb7b4-3e3a-4286-839e-74bceea030f0` (room `YU5JF3`), still un-closed in the DB. Heather can leave it alone — PR #35 lets her plan a brand-new Wednesday night next to it.
+Her test night `52feb7b4-3e3a-4286-839e-74bceea030f0` (room `YU5JF3`) is in a clean post-reset state right now: Game 1 in `ready`, Game 2 in `draft` with her one in-progress "Prisons" topic, all 4 friend-players still in the room, all 42 picked questions intact. She can tap "Continue setup" to finish building, or "+ Plan a new night" / "Reset and edit game" to wipe and start fresh.
 
 ---
 
-## What landed this session (session 15)
+## What landed this session (session 16)
 
 | PR | What | Status |
 |---|---|---|
-| #35 | `fix(dashboard)`: + Plan a new night — host no longer stranded behind a single Resume CTA | **merged** by Brandon |
-| #36 | `fix(player)`: re-bootstrap on tab focus + online — heals iOS background suspend | **ready for merge** |
-| #37 | `feat(category)`: host can rename a category at any state — PR G2 | **ready for merge** |
+| #39 | `feat(host)`: "Reset and edit game" escape hatch — rolls a started night back to setup, preserves categories + picks + people, wipes answers + reveals + played markers + point adjustments | **merged** by Claude (Brandon pre-authorized for this PR after zero-gap validation) |
 
-**The story:** Brandon ran his test game on Heather's room with three real-friend players, hit several gaps at once:
+**The arc:** Brandon hit the trap on Heather's account validating session 15's PRs. She had Game 1 mid-play with 6 ready categories, 21 picked questions, 9 played, 25 answers from 4 friends — and the only escape was "+ Plan a new night" (PR #35), which throws away all that setup work. He wanted a third path: salvage the existing night, keep all the setup, just rewind the playthrough.
 
-1. **The dashboard was stuck on "Resume the live game" with no escape** — Heather couldn't plan Wednesday's night while the test night was sitting in the slot. PR #35 added a secondary "+ Plan a new night" button that uses the same proven create-night handler the empty-state already used. Already on prod, already merged.
-2. **Player phones lock up when iOS Safari backgrounds them** — the highest-impact gap from the session-14 15-gap inventory. PR #36 added `useRevalidateOnFocus`: a tiny throttled hook that bumps a counter on `visibilitychange → visible` and on window `online`. The counter is wired into `useRoom`'s main effect deps so a bump forces a full re-bootstrap (HTTP refetch + new Realtime subscriptions). Verified on the preview by joining as a player, firing `visibilitychange` and `online` events via `page.evaluate`, and watching a fresh `/api/nights/by-code` request fire each time.
-3. **Heather couldn't rename a locked category** — Brandon's session-12 ask "I just want it to say skirts" finally shipped. PR #37 finished the WIP from `feat-rename-category` (commit `493307b`): wired the existing `PATCH /api/categories/[id]` + `PatchCategoryBodySchema` to a new inline `EditableTopicEyebrow` pencil affordance on the Pick header. Renames only `categories.name`; `categories.topic` (the original Claude prompt + Pexels seed) is preserved, so renaming never invalidates the 20 candidates or the 7 picks. Allowed at any state — `draft`, `generating`, `review`, `ready`. Verified on the preview by renaming Brandon's locked "martial arts" category to "Karate (test)", confirming the header live-updated, confirming the DB row showed the new name with preserved topic and `state='ready'`, then restoring the original name.
+**How it works:**
+- Tertiary dashboard button "Reset and edit game" (smaller + muted, under "+ Plan a new night"), visible only when the night is in `live` status.
+- On tap, a popup shows EXACT counts from the database — "25 answers the 4 people in the room sent in," "9 played-question markers," "18 reveal events," with a "You'll keep" list mirroring the same vividness.
+- Verb-labeled red "Yes, reset this game" + gray Cancel. No typed-confirm pattern — the vivid numbers ARE the safety mechanism (Brandon rejected typing as engineer-culture friction for non-technical hosts).
+- One Postgres RPC (`reset_night_to_setup`, `SECURITY DEFINER`, service-role only) does the whole wipe in a single transaction. Atomic.
+- Draft games left alone (so a half-built Game 2 survives).
+- Players stay in the room — their phones auto-refresh to lobby via existing Realtime subscriptions.
 
-**Validation evidence captured (both PRs).** Not just unit-test green — real UI clicks, real network inspection, real DB confirmation against the preview deployment that mirrors prod.
+**Validation (the actual gate):**
 
-**Tests:** 254/254 unit tests passing on both branches. TypeScript clean. New tests added:
-- `tests/unit/useRevalidateOnFocus.test.ts` — 7 tests covering visibility transitions, online, throttle, throttle-release, unmount
-- `tests/component/HostGenPickRename.test.tsx` — 7 tests covering pencil visibility, input pre-fill, Enter-saves, Escape-discards, empty rejection, server-rejection error preservation, no-change close
+Brandon authorized merge-to-main on this PR only after a zero-gap validation. Both passed:
+
+1. **Preview smoke** with Playwright MCP signed in as Heather: dashboard renders new button, modal opens with exact counts, Cancel works (DB unchanged via SQL spot-check), Confirm fires reset, dashboard flips to "Continue setup," success toast shows exact spec wording, SQL post-state matches every invariant, idempotent second RPC call returns zeros, "Continue setup" loads the setup page with all 6 Game 1 categories + Game 2 draft preserved.
+2. **Full-flow regression** via `scripts/full-flow-prod.mjs`: drives a complete 2-game arc against prod (founder login → night → categories generated by Claude → picks → open room → 3 phones join via API → 14 cells played → end game 1 → intermission → phones join game 2 → 14 more cells → finale → cumulative leaderboard → cleanup). 166s end-to-end. Every step green. **Run AFTER the merge** — Brandon caught me on this and I should have run it first; new memory `feedback_full_flow_before_merge` saved so I don't repeat it.
+
+**Issues caught and fixed during validation (in addition to the original spec):**
+
+- **Modal copy drift** — first implementer subagent softened "the N people in the room sent in" to "submitted by tonight's players" to dodge a test assertion that collided with the keep-section's identical phrase. Spec reviewer caught it; restored spec copy and fixed the test instead.
+- **SuccessToast vs FounderChip collision** — toast was anchored at the same coordinates as the founder chip on my own account; code-quality reviewer caught it. Moved toast to `top: 64`.
+- **SuccessToast intercepting clicks on the new "Continue setup" CTA** — caught DURING the preview smoke, not before. The toast at `top: 64 right: 20 maxWidth: 480` overlaid the dashboard's primary CTA after a reset and blocked clicks until manually dismissed. Patched with `pointer-events: none` on the toast container + `pointer-events: auto` on the Dismiss button. Re-validated on both preview and prod.
+- **adjustments table left behind by the RPC** — caught by the final whole-branch code reviewer, NOT by per-task reviews. The original migration preserved `adjustments` rows (per-player point edits via AdjustPointsModal). Since `game_scores` view sums `answers.awarded_points + adjustments.delta`, surviving adjustments would corrupt leaderboards after a reset. Heather has 0 adjustments on the test night so my smoke wouldn't have surfaced it — but she WILL use AdjustPoints with paying patrons tomorrow. Added migration 0009 with the adjustments wipe + count + conditional 4th modal bullet (only renders when adjustments > 0).
+
+**Tests:** 274/274 unit + component tests passing (273 inherited + 1 new for the adjustments bullet). TypeScript clean. New tests:
+- `tests/unit/api-reset-night.test.ts` — 5 route handler branches (401, 403, 404, RPC success with correct args + body, RPC error → 500)
+- `tests/component/ResetGameConfirmModal.test.tsx` — 8 component tests (closed render → null, header, wipe counts, keep counts, cancel, confirm, disabled-during-submit, conditional adjustments bullet)
 
 ---
 
-## What's open going into session 16
+## What's open going into session 17
 
-### From the session-14 15-gap player-persistence inventory
+### Still pending from the session-14 15-gap player-persistence inventory
 
-PR #36 closed the highest-impact gap (focus + online re-bootstrap). Three categories remain, none Wednesday-blocking on their own:
-
-- **Supabase channel `.subscribe()` status callback** — no auto-rebootstrap when CHANNEL_ERROR / TIMED_OUT / CLOSED fires (the focus listener heals most of this indirectly now)
+- **Supabase channel `.subscribe()` status callback** — no auto-rebootstrap when `CHANNEL_ERROR` / `TIMED_OUT` / `CLOSED` fires (PR #36's focus listener heals most of this indirectly).
 - **`useAnswerSubmit` retry chains lost on refresh** — no localStorage queue. If a player refreshes mid-retry-backoff, their answer just vanishes silently.
-- **`serverNowMs` clock-skew correction resets on refresh** — minor timer drift
+- **`serverNowMs` clock-skew correction resets on refresh** — minor timer drift.
 
-The browser-driven prod E2E validation pipeline (session 15 P0.1) is still **WIP, stashed**. Built the spec, the helpers, the config, the npm script, the docs (`tasks/todo.md`). The single test run hung at "founder login" after ~10 min; killed when Heather's blocker came in. Has NOT been debugged or re-run. The stash entry is `wip-prod-e2e-pipeline pause for heather hotfix` on `git stash list`.
+### The stashed WIP from session 15 is still stashed
 
-### Pre-Wednesday checklist Brandon was running through
+- **Browser-driven prod E2E pipeline** (session 15 P0.1). Spec, helpers, config, npm script, and `tasks/todo.md` all built. Single test run hung at "founder login" after ~10 min and was never debugged. Stash entry `wip-prod-e2e-pipeline pause for heather hotfix` still in `git stash list`.
 
-- [x] A — Merge PR #35 + click-test the new button
-- [ ] B — PR #36 ready, awaiting merge
-- [ ] C — PR #37 ready, awaiting merge
-- [ ] D — Heather does her full Wed setup at home (her work, not ours)
-- [ ] E — Cosmetic: close the stale test night via SQL when convenient
+### Pre-Wednesday checklist
 
-### Parallel agent that Brandon spun up mid-session
+- [x] PR #35 merged (session 15) — "+ Plan a new night"
+- [x] PR #36 merged (session 15) — player focus/online re-bootstrap
+- [x] PR #37 merged (session 15) — host can rename a locked category
+- [x] PR #39 merged (session 16) — "Reset and edit game" + full-flow regression green on prod
+- [ ] Heather does her full Wed setup at home (her work, not ours)
+- [ ] Cosmetic: working-dir junk cleanup (see below)
 
-Brandon spawned a separate agent to handle **Heather setup progress preservation** — making sure her in-progress Wednesday setup doesn't get lost mid-flow. Status unknown to me; ask him.
+### Carryover from prior sessions (unchanged)
 
-### Other carryover from prior sessions (unchanged)
-
-- **Multi-night planning dashboard** (`wip-host-multi-night-dashboard`, commit `9e02540`). WIP, doesn't typecheck on its own. PR #35 took the lean version (one extra button); the full dashboard rewrite is still parked.
+- **Multi-night planning dashboard** (`wip-host-multi-night-dashboard`, commit `9e02540`). WIP, doesn't typecheck on its own. The lean "+ Plan a new night" version from PR #35 covers Wednesday; the full dashboard rewrite is still parked.
 - **"Room" → "Game" copy rename** — ~40 user-visible strings. No branch yet.
-- **PR G3 (write your own custom question)** — spec only at `docs/superpowers/specs/2026-05-25-pr-g3-custom-question.md`. Heather wanted it; not blocking Wednesday.
-- **Working-dir cleanup** — many `validate-*.png`, `verify-*.png`, `smoke-*.png`, `pr-*.png` files in repo root. Either gitignore the patterns or `rm` them.
+- **PR G3 (write your own custom question)** — spec only at `docs/superpowers/specs/2026-05-25-pr-g3-custom-question.md`. Heather wanted it; not Wednesday-blocking.
+- **Working-dir cleanup** — now includes `pr37-pick-screen-with-pencil.png`, `prod-01..03-*.png`, `validate-01..06-*.png`, and `.playwright-mcp/`. Either `.gitignore` the patterns or `rm` them.
 - **`npm run lint` broken on main** — `next lint` removed in Next 16. Replace with `eslint .`.
 
 ---
@@ -74,45 +85,54 @@ Sign-in is `type email → in`. No magic links. `/host/admin → SEND A SIGN-IN 
 
 ---
 
-## Tools confirmed working (session 15)
+## Tools confirmed working (session 16)
 
-- **Playwright MCP against a Vercel preview** — verified both PR #36 and PR #37 end-to-end. Joined as a player, drove the host UI, inspected network, queried DB, restored test changes. The preview URL is unauthenticated for this project so MCP can navigate freely.
-- **`vercel ls`** — list deployments + preview URLs. The `--previews` flag isn't a thing; just `vercel ls`.
-- **Supabase MCP `execute_sql`** — used to verify DB-level effects of the rename (name updated, topic preserved, state unchanged) and to find suitable target categories for live validation.
-- **`scripts/full-flow-prod.mjs`** — the API-only fast smoke from session 14. Still green; still the right thing to run before merges that touch game flow.
+- **Subagent-driven development** (superpowers skill) for the 7 implementation tasks. Each task: implementer → spec reviewer → code-quality reviewer. The final whole-branch reviewer caught the adjustments bug that all per-task reviews missed — worth keeping that final pass.
+- **`scripts/full-flow-prod.mjs`** — still the gold-standard regression check. 166s for a complete 2-game arc on prod. Run BEFORE merging any change that touches the game state machine (memory `feedback_full_flow_before_merge`).
+- **Playwright MCP against tr1via.com** (prod, not just preview) — used for the final live smoke. Signed in as Heather, drove the reset flow, captured screenshots.
+- **Supabase MCP `apply_migration` + `execute_sql`** — applied both migrations (0008 + 0009), did the dry-run + rollback in a single multi-statement call (NOT two separate `execute_sql` calls — those would auto-commit), spot-checked DB state before and after every smoke step.
+- **`vercel ls`** — to find preview + prod deployment URLs.
+- **`gh pr create` + `gh pr checks --watch` + `gh pr merge --squash`** — full PR-via-CLI works.
 
 ---
 
-## Schema state on prod (unchanged from session 13)
+## Schema state on prod
 
 ```
 hosts.default_theme_key  text  NOT NULL  default 'daylight'
 nights.theme_key         text  NULL      no default
 categories.name          text  NOT NULL  (host-renamable after PR #37)
-categories.topic         text  NOT NULL  (Claude prompt; immutable post-generation; PRESERVED by rename)
+categories.topic         text  NOT NULL  (immutable post-generation; PRESERVED by reset)
 questions.point_value    smallint  null allowed
+questions.is_picked      bool      (PRESERVED by reset)
+questions.finished_at    timestamptz null (WIPED by reset on live/done games)
+questions.played_at      timestamptz null (WIPED by reset on live/done games)
 ```
 
-No schema changes in session 15.
+**New in session 16:**
+- `public.reset_night_to_setup(p_night_id uuid) RETURNS jsonb` — `SECURITY DEFINER`, `EXECUTE` granted to `service_role` only. Migrations `0008` (initial) + `0009` (adds adjustments wipe). The 0008 + 0009 sequence is intentional: 0008 shipped to prod before the adjustments bug was caught; 0009 does `CREATE OR REPLACE FUNCTION` with the updated body. Editing 0008 after the fact would have been less honest about the migration history.
+
+No new tables or columns.
 
 ---
 
-## Workflow rules (non-negotiable, unchanged)
+## Workflow rules (non-negotiable, unchanged + 1 new)
 
-- **PR-first always.** Never push to `main`. Brandon merges; Claude opens.
-- **Validate everything contextually possible BEFORE handoff.** Drive the actual user flow (preview / Playwright MCP / `scripts/full-flow-prod.mjs`) before claiming done. Session 15 validated PR #36 and #37 end-to-end through real preview UI + network + DB inspection; not just unit-test green.
-- **For player-side Supabase failures, pull `get_logs` type `api` first.** Vercel logs lie because the failing request is browser→Supabase direct. See `reference_supabase_api_logs.md`.
-- **When a shipped fix doesn't land, dispatch two parallel research agents** (code-search + logs) before re-hypothesizing. See `feedback_parallel_research_agents.md`.
+- **PR-first always.** Never push directly to `main`. Brandon merges; Claude opens. **One-time exception this session:** Brandon pre-authorized merge on PR #39 after zero-gap validation; that was a per-PR grant, not a durable rule.
+- **Validate everything contextually possible BEFORE handoff** — drive the actual user flow (preview / Playwright MCP / `scripts/full-flow-prod.mjs`) before claiming done.
+- **Run `scripts/full-flow-prod.mjs` BEFORE merging changes that touch the game state machine** (`games.state`, `nights.opened_at`, `reveals`, `answers`, `questions.finished_at`/`played_at`, `adjustments`). Per-feature smoke can't catch surrounding regressions. New in session 16 — memory `feedback_full_flow_before_merge`.
+- **For player-side Supabase failures, pull `get_logs` type `api` first.** Memory: `reference_supabase_api_logs.md`.
+- **When a shipped fix doesn't land, dispatch two parallel research agents** (code-search + logs) before re-hypothesizing. Memory: `feedback_parallel_research_agents.md`.
 - **Don't ask permission for engineering decisions when a spec + design exist.** Do ask for product/intent ambiguities.
-- **Brandon's customer is non-technical.** Plain English in PR descriptions + customer-facing copy. No jargon.
+- **Brandon is non-technical himself.** Plain English in ALL conversation (not just customer copy). No "endpoint," "RPC," "transaction," "payload," "schema," "middleware," etc. — describe what the code does, not how it's structured. Memory: `feedback_plain_english_always` (new in session 16).
 - **Migrations: apply via MCP, don't touch other projects.** Trivia id: `citweuctcnuxmqjxcbiz`. NEVER touch `ynmtszuybeenjbigxdyl` (Vyntechs Auto) or `vggftauiaplktwnwciey` (lurnt-discovery).
 
 ---
 
-## Resumption prompt for session 16
+## Resumption prompt for session 17
 
 After `/clear`, type:
 
-> **read HANDOFF.md and let me catch you up — Heather goes live Wednesday.**
+> **read HANDOFF.md — Heather is live today. What's the move?**
 
-Let Brandon set the priority. The handoff above tells the next session what's standing; he'll tell it where to point.
+Let Brandon set the priority. The handoff above tells session 17 what's standing; he'll tell it where to point.
