@@ -273,12 +273,20 @@ export function HostSetupPickClient({
   }
 
   // ── edit (PATCH /api/questions/[id]) ─────────────────────────────────
-  async function handleSaveEdit(values: HostGenEditValues) {
-    if (modal.kind !== "edit") return;
+  // `persistEdit` is the raw save call — shared by the "Save · this
+  // question" button AND by the Swap-image hand-off. The latter MUST save
+  // first; without it, `HostGenEdit`'s local form state evaporates when
+  // the swap modal mounts and the host's text/options/correct-mark/point
+  // edits never reach the DB. Returns the updated row on success, null
+  // on failure (error already surfaced to the modal).
+  async function persistEdit(
+    values: HostGenEditValues,
+    questionId: string,
+  ): Promise<QuestionRow | null> {
     setSavingEdit(true);
     setError(null);
     try {
-      const res = await fetch(`/api/questions/${modal.questionId}`, {
+      const res = await fetch(`/api/questions/${questionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -294,12 +302,26 @@ export function HostSetupPickClient({
       }
       const { question } = (await res.json()) as { question: QuestionRow };
       setQuestions((prev) => prev.map((q) => (q.id === question.id ? question : q)));
-      setModal({ kind: "none" });
+      return question;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save.");
+      return null;
     } finally {
       setSavingEdit(false);
     }
+  }
+
+  async function handleSaveEdit(values: HostGenEditValues) {
+    if (modal.kind !== "edit") return;
+    const saved = await persistEdit(values, modal.questionId);
+    if (saved) setModal({ kind: "none" });
+  }
+
+  async function handleSaveEditAndOpenSwap(values: HostGenEditValues) {
+    if (modal.kind !== "edit") return;
+    const questionId = modal.questionId;
+    const saved = await persistEdit(values, questionId);
+    if (saved) setModal({ kind: "swap", questionId });
   }
 
   // ── photo swap (GET /api/questions/[id]/photos + PATCH photo) ───────
@@ -647,7 +669,7 @@ export function HostSetupPickClient({
             imageSeed={editingQuestion.image_url ?? categoryTopic}
             onSave={handleSaveEdit}
             onClose={() => setModal({ kind: "none" })}
-            onSwapImage={() => setModal({ kind: "swap", questionId: editingQuestion.id })}
+            onSwapImage={handleSaveEditAndOpenSwap}
             isSaving={savingEdit}
           />
         </ModalOverlay>
