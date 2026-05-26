@@ -31,8 +31,8 @@ export default function PlayerRecapPage() {
 }
 
 function PlayerRecapInner({ roomCode }: { roomCode: string }) {
-  const snapshot = useRoom({ roomCode });
   const { deviceId, isLoading: deviceLoading } = useDeviceSession();
+  const snapshot = useRoom({ roomCode, deviceId });
 
   const themeKey: ThemeKey = resolveTheme(
     snapshot.night,
