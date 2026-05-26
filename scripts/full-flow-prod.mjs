@@ -37,8 +37,21 @@ import { createClient } from "@supabase/supabase-js";
 
 const BASE = process.env.SMOKE_BASE_URL ?? "https://tr1via.com";
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
-const TOPIC_GAME1 = process.argv[2] ?? "classic movie quotes";
-const TOPIC_GAME2 = process.argv[3] ?? "world geography";
+// 2-category games exercise the section-complete celebration (predicate
+// fires after the first category clears but before the game ends). Drop
+// to 1 (env override) for a faster smoke that still covers end-game +
+// intermission + finale but skips the section-complete window.
+const CATEGORIES_PER_GAME = Math.max(1, Number(process.env.CATEGORIES_PER_GAME ?? 2));
+const TOPIC_BANK_G1 = [
+  process.argv[2] ?? "classic movie quotes",
+  "pixar films",
+  "broadway musicals",
+];
+const TOPIC_BANK_G2 = [
+  process.argv[3] ?? "world geography",
+  "famous bridges",
+  "national parks",
+];
 const GEN_TIMEOUT_MS = 90_000;
 const POLL_MS = 2000;
 const PHONE_NAMES = ["Alice", "Bob", "Carol"];
@@ -181,7 +194,9 @@ const admin = createClient(supaUrl, supaKey, {
 console.log(`\n${colorize("═══ TR1VIA full-flow prod driver (2 games) ═══", "cyan")}`);
 console.log(`  base    : ${BASE}`);
 console.log(`  email   : ${FOUNDER_EMAIL}`);
-console.log(`  topics  : 1=${TOPIC_GAME1}  2=${TOPIC_GAME2}`);
+console.log(`  cats/g  : ${CATEGORIES_PER_GAME}`);
+console.log(`  g1 topics : ${TOPIC_BANK_G1.slice(0, CATEGORIES_PER_GAME).join(", ")}`);
+console.log(`  g2 topics : ${TOPIC_BANK_G2.slice(0, CATEGORIES_PER_GAME).join(", ")}`);
 
 const founderJar = new Jar();
 const phones = PHONE_NAMES.map((n) => new Phone(n));
@@ -189,8 +204,8 @@ let nightId = null;
 let roomCode = null;
 let game1Id = null;
 let game2Id = null;
-// Per-game category IDs and picked-question rows for later assertions.
-const categoryIds = [null, null]; // [game1, game2]
+// Per-game arrays of {categoryId, picked} for assertions + cleanup.
+const gameCategories = [[], []];
 const startedAt = Date.now();
 
 // ── Helpers used by both games ────────────────────────────────────────
@@ -282,67 +297,160 @@ function decide(phoneIndex, cellIndex, gameNo) {
   return cellIndex % 2 === 0 ? "correct" : "wrong";
 }
 
-async function playCategory(gameId, gameNo, picked) {
+// Mirrors useSectionCompleteCelebration's pickCelebration predicate.
+// Returns one of:
+//   { fire: true,  topicName, categoryId }      — celebration would fire
+//   { fire: false, reason }                     — celebration would NOT fire
+// The script asserts this at category boundaries so a refactor that breaks
+// the trigger surfaces as a red here even though the hook lives in React.
+async function evaluateSectionCompletePredicate(gameId) {
+  const { data: cats } = await admin
+    .from("categories")
+    .select("id, name, color")
+    .eq("game_id", gameId);
+  const catIds = (cats ?? []).map((c) => c.id);
+  if (catIds.length === 0) return { fire: false, reason: "no categories" };
+
+  const { data: qs } = await admin
+    .from("questions")
+    .select("id, category_id, is_picked, finished_at")
+    .in("category_id", catIds);
+
+  const finished = (qs ?? [])
+    .filter((q) => q.is_picked && q.finished_at !== null)
+    .sort((a, b) => (b.finished_at ?? "").localeCompare(a.finished_at ?? ""));
+  const last = finished[0];
+  if (!last) return { fire: false, reason: "no finished picked questions yet" };
+
+  const sameCatUnplayed = (qs ?? []).filter(
+    (q) =>
+      q.category_id === last.category_id &&
+      q.is_picked &&
+      q.finished_at === null,
+  );
+  if (sameCatUnplayed.length > 0) {
+    return { fire: false, reason: `same category has ${sameCatUnplayed.length} unplayed` };
+  }
+  const otherCatUnplayed = (qs ?? []).filter(
+    (q) =>
+      q.category_id !== last.category_id &&
+      q.is_picked &&
+      q.finished_at === null,
+  );
+  if (otherCatUnplayed.length === 0) {
+    return { fire: false, reason: "every category exhausted (End Game)" };
+  }
+  const category = (cats ?? []).find((c) => c.id === last.category_id);
+  return {
+    fire: true,
+    topicName: category?.name ?? null,
+    categoryId: last.category_id,
+  };
+}
+
+async function assertSectionCompletePredicate(gameId, expected, ctx) {
+  const verdict = await evaluateSectionCompletePredicate(gameId);
+  if (expected && !verdict.fire) {
+    throw new Error(
+      `${ctx}: expected section-complete to FIRE — reason="${verdict.reason}"`,
+    );
+  }
+  if (!expected && verdict.fire) {
+    throw new Error(
+      `${ctx}: section-complete WOULD fire but should NOT — topic="${verdict.topicName}"`,
+    );
+  }
+  if (verdict.fire) {
+    pass(`${ctx} — section-complete would fire (topic="${verdict.topicName}")`);
+  } else {
+    pass(`${ctx} — section-complete would NOT fire (${verdict.reason})`);
+  }
+}
+
+async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
+  const tag = `G${gameNo} Q${cellGlobalIndex + 1} (${q.point_value}pt)`;
+
+  // Reveal
+  {
+    const res = await call(founderJar, `/api/games/${gameId}/reveal`, {
+      method: "POST",
+      body: JSON.stringify({ questionId: q.id }),
+    });
+    if (!res.ok) throw new Error(`reveal ${tag}: ${res.status} ${await res.text()}`);
+  }
+
+  // 3 phones answer per strategy.
+  for (let pi = 0; pi < phones.length; pi++) {
+    const phone = phones[pi];
+    const scramble = scrambleFor(q.id, phone.playerId);
+    const correct1 = correctSlot(scramble, q.correct_index);
+    const slot =
+      decide(pi, cellGlobalIndex, gameNo) === "correct"
+        ? correct1
+        : (correct1 % 4) + 1;
+    await phone.submitAnswer(q.id, slot);
+  }
+
+  // Host ends early → resolve_question RPC + broadcast.
+  {
+    const res = await call(founderJar, `/api/games/${gameId}/end-early`, {
+      method: "POST",
+      body: JSON.stringify({ questionId: q.id }),
+    });
+    if (!res.ok) throw new Error(`end-early ${tag}: ${res.status} ${await res.text()}`);
+  }
+
+  // Assert: finished_at set + every answer has is_correct + awarded_points.
+  const { data: qRow } = await admin
+    .from("questions")
+    .select("finished_at")
+    .eq("id", q.id)
+    .maybeSingle();
+  if (!qRow?.finished_at) throw new Error(`${tag}: finished_at not set after end-early`);
+
+  const { data: answers } = await admin
+    .from("answers")
+    .select("player_id, is_correct, awarded_points")
+    .eq("question_id", q.id);
+  if ((answers?.length ?? 0) !== 3) {
+    throw new Error(`${tag}: expected 3 answers, got ${answers?.length ?? 0}`);
+  }
+  const ungraded = answers.filter(
+    (a) => a.is_correct === null || a.awarded_points === null,
+  );
+  if (ungraded.length) {
+    throw new Error(`${tag}: ${ungraded.length} answers left ungraded by resolve_question`);
+  }
+  pass(`${tag} revealed → 3 answered → resolved → graded`);
+}
+
+async function playGame(gameId, gameNo, categories) {
   // Start (idempotent).
   const startRes = await call(founderJar, `/api/games/${gameId}/start`, {
     method: "POST",
   });
   if (!startRes.ok) throw new Error(`start game ${gameNo}: ${startRes.status} ${await startRes.text()}`);
 
-  for (let i = 0; i < picked.length; i++) {
-    const q = picked[i];
-    const tag = `G${gameNo} Q${i + 1} (${q.point_value}pt)`;
+  let cellGlobalIndex = 0;
+  for (let catIdx = 0; catIdx < categories.length; catIdx++) {
+    const { picked } = categories[catIdx];
+    const isLastCategory = catIdx === categories.length - 1;
+    for (let qIdx = 0; qIdx < picked.length; qIdx++) {
+      await playOneQuestion(gameId, gameNo, picked[qIdx], cellGlobalIndex);
+      cellGlobalIndex += 1;
+      const isLastQuestionInCat = qIdx === picked.length - 1;
 
-    // Reveal
-    {
-      const res = await call(founderJar, `/api/games/${gameId}/reveal`, {
-        method: "POST",
-        body: JSON.stringify({ questionId: q.id }),
-      });
-      if (!res.ok) throw new Error(`reveal ${tag}: ${res.status} ${await res.text()}`);
+      if (isLastQuestionInCat) {
+        // Category just cleared. If it's the LAST category in the game, the
+        // predicate must NOT fire (End Game territory). Otherwise it must fire.
+        const ctx = `G${gameNo} after cat ${catIdx + 1}/${categories.length} cleared`;
+        await assertSectionCompletePredicate(
+          gameId,
+          /* expected fire */ !isLastCategory,
+          ctx,
+        );
+      }
     }
-
-    // 3 phones answer per strategy.
-    for (let pi = 0; pi < phones.length; pi++) {
-      const phone = phones[pi];
-      const scramble = scrambleFor(q.id, phone.playerId);
-      const correct1 = correctSlot(scramble, q.correct_index);
-      const slot =
-        decide(pi, i, gameNo) === "correct" ? correct1 : (correct1 % 4) + 1;
-      await phone.submitAnswer(q.id, slot);
-    }
-
-    // Host ends early → resolve_question RPC + broadcast.
-    {
-      const res = await call(founderJar, `/api/games/${gameId}/end-early`, {
-        method: "POST",
-        body: JSON.stringify({ questionId: q.id }),
-      });
-      if (!res.ok) throw new Error(`end-early ${tag}: ${res.status} ${await res.text()}`);
-    }
-
-    // Assert: finished_at set + every answer has is_correct + awarded_points.
-    const { data: qRow } = await admin
-      .from("questions")
-      .select("finished_at")
-      .eq("id", q.id)
-      .maybeSingle();
-    if (!qRow?.finished_at) throw new Error(`${tag}: finished_at not set after end-early`);
-
-    const { data: answers } = await admin
-      .from("answers")
-      .select("player_id, is_correct, awarded_points")
-      .eq("question_id", q.id);
-    if ((answers?.length ?? 0) !== 3) {
-      throw new Error(`${tag}: expected 3 answers, got ${answers?.length ?? 0}`);
-    }
-    const ungraded = answers.filter(
-      (a) => a.is_correct === null || a.awarded_points === null,
-    );
-    if (ungraded.length) {
-      throw new Error(`${tag}: ${ungraded.length} answers left ungraded by resolve_question`);
-    }
-    pass(`${tag} revealed → 3 answered → resolved → graded`);
   }
 }
 
@@ -403,15 +511,16 @@ try {
     pass(`g1=${game1Id.slice(0, 8)}… (${g1.state})  g2=${game2Id.slice(0, 8)}… (${g2.state})`);
   }
 
-  // 4. Set up game 1 category
-  step("4. set up game 1 category (create → generate → pick 7)");
-  let picked1;
+  // 4. Set up game 1 categories
+  step(`4. set up game 1 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
   {
-    const t0 = Date.now();
-    const r = await setupCategory(game1Id, TOPIC_GAME1, 1);
-    categoryIds[0] = r.categoryId;
-    picked1 = r.picked;
-    pass(`game 1 category ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${picked1.map((q) => q.point_value).join(",")}`);
+    for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
+      const t0 = Date.now();
+      const topic = TOPIC_BANK_G1[i] ?? `${TOPIC_BANK_G1[0]} ${i + 1}`;
+      const r = await setupCategory(game1Id, topic, i + 1);
+      gameCategories[0].push(r);
+      pass(`g1 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
+    }
   }
 
   // 5. Open room
@@ -445,13 +554,25 @@ try {
   }
 
   // 7. Play game 1
-  step("7. play game 1 (7 cells)");
-  await playCategory(game1Id, 1, picked1);
+  step(`7. play game 1 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
+  await playGame(game1Id, 1, gameCategories[0]);
 
   // 8. End game 1
-  step("8. end game 1");
+  step("8. end game 1 + assert intermission");
   await endGame(game1Id, 1);
   pass("game 1 state=done");
+  {
+    const { data: gs } = await admin
+      .from("games")
+      .select("id, game_no, state")
+      .eq("night_id", nightId)
+      .order("game_no");
+    const g1 = gs.find((g) => g.game_no === 1);
+    const g2 = gs.find((g) => g.game_no === 2);
+    if (g1?.state !== "done") throw new Error(`expected g1.state=done, got ${g1?.state}`);
+    if (g2?.state === "done") throw new Error(`unexpected g2.state=done before play`);
+    pass(`intermission state: g1=done, g2=${g2?.state}`);
+  }
 
   // 9. Phones explicitly join game 2 (the "Join Game 2" button path)
   step("9. phones join game 2");
@@ -472,28 +593,44 @@ try {
     pass("all 3 have game_participations rows for game 2");
   }
 
-  // 10. Set up game 2 category and play
-  step("10. set up game 2 category (create → generate → pick 7)");
-  let picked2;
+  // 10. Set up game 2 categories
+  step(`10. set up game 2 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
   {
-    const t0 = Date.now();
-    const r = await setupCategory(game2Id, TOPIC_GAME2, 1);
-    categoryIds[1] = r.categoryId;
-    picked2 = r.picked;
-    pass(`game 2 category ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${picked2.map((q) => q.point_value).join(",")}`);
+    for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
+      const t0 = Date.now();
+      const topic = TOPIC_BANK_G2[i] ?? `${TOPIC_BANK_G2[0]} ${i + 1}`;
+      const r = await setupCategory(game2Id, topic, i + 1);
+      gameCategories[1].push(r);
+      pass(`g2 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
+    }
   }
 
-  step("11. play game 2 (7 cells)");
-  await playCategory(game2Id, 2, picked2);
+  step(`11. play game 2 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
+  await playGame(game2Id, 2, gameCategories[1]);
 
-  // 12. End game 2
-  step("12. end game 2");
+  // 12. End game 2 + assert finale
+  step("12. end game 2 + assert finale");
   await endGame(game2Id, 2);
   pass("game 2 state=done");
+  {
+    const { data: gs } = await admin
+      .from("games")
+      .select("game_no, state")
+      .eq("night_id", nightId)
+      .order("game_no");
+    const g1 = gs.find((g) => g.game_no === 1);
+    const g2 = gs.find((g) => g.game_no === 2);
+    if (g1?.state !== "done" || g2?.state !== "done") {
+      throw new Error(`finale predicate fails: g1=${g1?.state} g2=${g2?.state}`);
+    }
+    pass(`finale state: g1=done, g2=done`);
+  }
 
-  // 13. Assert cumulative leaderboard across both categories.
+  // 13. Assert cumulative leaderboard across all played questions.
   step("13. assert cumulative leaderboard (across both games)");
   {
+    const picked1 = gameCategories[0].flatMap((c) => c.picked);
+    const picked2 = gameCategories[1].flatMap((c) => c.picked);
     const allQuestionIds = [...picked1, ...picked2].map((q) => q.id);
     const { data: rows } = await admin
       .from("answers")
@@ -547,7 +684,6 @@ try {
   // Best-effort state dump for actionable failures
   for (let i = 0; i < 2; i++) {
     const gid = i === 0 ? game1Id : game2Id;
-    const cid = categoryIds[i];
     if (!gid) continue;
     const { data: g } = await admin
       .from("games")
@@ -555,17 +691,18 @@ try {
       .eq("id", gid)
       .maybeSingle();
     note(`g${i + 1} state=${g?.state ?? "?"} started=${!!g?.started_at} ended=${!!g?.ended_at}`);
-    if (cid) {
+    for (const { categoryId } of gameCategories[i]) {
+      if (!categoryId) continue;
       const { data: cat } = await admin
         .from("categories")
-        .select("state")
-        .eq("id", cid)
+        .select("state, name")
+        .eq("id", categoryId)
         .maybeSingle();
-      note(`g${i + 1} category state=${cat?.state ?? "?"}`);
+      note(`g${i + 1} category "${cat?.name}" state=${cat?.state ?? "?"}`);
       const { data: qs } = await admin
         .from("questions")
         .select("point_value, played_at, finished_at")
-        .eq("category_id", cid)
+        .eq("category_id", categoryId)
         .order("point_value");
       for (const q of qs ?? []) {
         note(`  Q ${q.point_value}pt played=${!!q.played_at} finished=${!!q.finished_at}`);
