@@ -145,6 +145,20 @@ export const CreateCategoryBodySchema = z
   })
   .strict();
 
+/**
+ * PATCH /api/categories/[id] body — rename the display label.
+ *
+ * Mutates `categories.name` only. `categories.topic` (the original
+ * Claude-generation prompt) is preserved — renaming is purely a host UI
+ * affordance, not a regeneration trigger. `.strict()` ensures a stale
+ * client trying to send a `topic` payload here gets a clear 400.
+ */
+export const PatchCategoryBodySchema = z
+  .object({
+    name: z.string().trim().min(1).max(80),
+  })
+  .strict();
+
 /** POST /api/categories/[id]/generate body. */
 export const GenerateCategoryBodySchema = z
   .object({
@@ -271,6 +285,7 @@ export type SubmitAnswerInput = z.infer<typeof SubmitAnswerSchema>;
 export type AdjustmentInput = z.infer<typeof AdjustmentSchema>;
 export type TopicSuggestionInput = z.infer<typeof TopicSuggestionSchema>;
 export type CreateCategoryInput = z.infer<typeof CreateCategoryBodySchema>;
+export type PatchCategoryInput = z.infer<typeof PatchCategoryBodySchema>;
 export type GenerateCategoryInput = z.infer<typeof GenerateCategoryBodySchema>;
 export type PickCategoryInput = z.infer<typeof PickCategoryBodySchema>;
 export type ManualCategoryInput = z.infer<typeof ManualCategoryBodySchema>;
