@@ -12,6 +12,7 @@ import { LaptopShell } from "@/components/shells";
 import { Eyebrow, Numeric, Rule, ThemeProvider, useTheme } from "@/components/system";
 import { formatRoomCode } from "@/lib/game/room-code";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import type { ResetPreview } from "@/lib/api/resetNightCounts";
 
 export interface HostDashboardPastNight {
   /** Formatted display label (e.g. "Wed May 21"). */
@@ -40,6 +41,9 @@ export interface HostDashboardTonight {
   themeKey: ThemeKey;
   /** "setup" or "live" — drives the headline CTA. */
   status: "setup" | "live" | "done";
+  /** Counts surfaced into ResetGameConfirmModal. Populated server-side
+   *  only when the night is in 'live' status; null otherwise. */
+  resetPreview?: ResetPreview | null;
 }
 
 export interface HostDashboardProps {
@@ -58,6 +62,9 @@ export interface HostDashboardProps {
   onSetupTonight?: () => void;
   /** Called when the host taps Resume on a live/setup night. */
   onResume?: (nightId: string) => void;
+  /** Called when the host taps "Reset and edit game". Only meaningful
+   *  when tonight.status === 'live' and tonight.resetPreview is set. */
+  onResetGame?: () => void;
 }
 
 export function HostDashboard(props: HostDashboardProps) {
@@ -111,6 +118,7 @@ function HostDashboardInner({
   tonight = null,
   onSetupTonight,
   onResume,
+  onResetGame,
 }: Omit<HostDashboardProps, "themeKey">) {
   const { t } = useTheme();
   const tonightLabel = tonight
@@ -271,6 +279,30 @@ function HostDashboardInner({
                 >
                   <span style={{ fontSize: 14, lineHeight: 1, opacity: 0.7 }}>+</span>
                   Plan a new night
+                </button>
+              )}
+              {tonight && tonight.status === "live" && tonight.resetPreview && (
+                <button
+                  type="button"
+                  onClick={() => onResetGame?.()}
+                  data-testid="host-reset-game-btn"
+                  style={{
+                    background: "transparent",
+                    color: t.inkMid,
+                    border: `1px solid ${t.line}`,
+                    borderRadius: 10,
+                    padding: "7px 14px",
+                    fontSize: 12,
+                    fontWeight: 500,
+                    fontFamily: "var(--font-sans)",
+                    cursor: "pointer",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    opacity: 0.85,
+                  }}
+                >
+                  Reset and edit game
                 </button>
               )}
             </div>

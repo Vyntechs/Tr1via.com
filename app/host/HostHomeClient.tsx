@@ -7,7 +7,12 @@
 import Link from "next/link";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { HostDashboard, type HostDashboardPastNight, type HostDashboardTonight } from "@/components/host";
+import {
+  HostDashboard,
+  ResetGameConfirmModal,
+  type HostDashboardPastNight,
+  type HostDashboardTonight,
+} from "@/components/host";
 import { OnboardingFirstDashboard } from "@/components/onboarding";
 
 export interface HostHomeClientProps {
@@ -65,6 +70,43 @@ export function HostHomeClient({
     }
   }
 
+  const [resetOpen, setResetOpen] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  async function resetTonight() {
+    if (!tonight) return;
+    setResetting(true);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      const res = await fetch(
+        `/api/nights/${tonight.nightId}/reset-to-setup`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `reset failed (${res.status})`);
+      }
+      const data = (await res.json()) as {
+        wiped?: { reveals?: number; answers?: number; finishedQuestions?: number; adjustments?: number };
+        kept?: { categories?: number; players?: number };
+      };
+      const wipedAnswers = data.wiped?.answers ?? 0;
+      const keptCategories = data.kept?.categories ?? 0;
+      const keptPlayers = data.kept?.players ?? 0;
+      setSuccessMessage(
+        `Game rolled back. Wiped ${wipedAnswers} answers, kept ${keptCategories} categories. The ${keptPlayers} people in the room will see the waiting screen.`,
+      );
+      setResetOpen(false);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset the game.");
+    } finally {
+      setResetting(false);
+    }
+  }
+
   if (!isFirstNightComplete) {
     return (
       <>
@@ -89,9 +131,26 @@ export function HostHomeClient({
         tonight={tonight}
         onSetupTonight={createNightAndGo}
         onResume={goToTonight}
+        onResetGame={() => setResetOpen(true)}
       />
+      {tonight && tonight.resetPreview && (
+        <ResetGameConfirmModal
+          open={resetOpen}
+          venueName={tonight.venue}
+          preview={tonight.resetPreview}
+          isSubmitting={resetting}
+          onConfirm={resetTonight}
+          onCancel={() => setResetOpen(false)}
+        />
+      )}
       {isFounder && <FounderChip />}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
+      {successMessage && (
+        <SuccessToast
+          message={successMessage}
+          onDismiss={() => setSuccessMessage(null)}
+        />
+      )}
     </>
   );
 }
@@ -154,6 +213,55 @@ function ErrorToast({ message, onDismiss }: { message: string; onDismiss: () => 
           color: "#FFF",
           border: "1px solid rgba(255,255,255,.4)",
           padding: "4px 10px",
+          borderRadius: 6,
+          fontSize: 11,
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
+function SuccessToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {
+  return (
+    <div
+      role="status"
+      style={{
+        position: "fixed",
+        right: 20,
+        top: 64,
+        zIndex: 50,
+        padding: "12px 16px",
+        borderRadius: 10,
+        background: "rgba(60,128,60,.95)",
+        color: "#FFF",
+        fontFamily: "var(--font-sans)",
+        fontSize: 13,
+        fontWeight: 500,
+        boxShadow: "0 12px 32px -8px rgba(0,0,0,.5)",
+        display: "flex",
+        gap: 14,
+        alignItems: "center",
+        maxWidth: 480,
+        // Toast is informational — let clicks pass through to the dashboard
+        // underneath (e.g. the new "Continue setup" CTA right after a reset).
+        // Dismiss button re-enables pointer events for itself.
+        pointerEvents: "none",
+      }}
+    >
+      <span>{message}</span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        style={{
+          background: "transparent",
+          color: "#FFF",
+          border: "1px solid rgba(255,255,255,.4)",
+          padding: "4px 10px",
+          pointerEvents: "auto",
           borderRadius: 6,
           fontSize: 11,
           fontWeight: 600,
