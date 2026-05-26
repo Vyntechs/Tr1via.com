@@ -74,7 +74,7 @@ describe("POST /api/nights/[id]/reset-to-setup", () => {
     });
     const rpcMock = vi.fn().mockResolvedValueOnce({
       data: {
-        wiped: { reveals: 18, answers: 25, finishedQuestions: 9 },
+        wiped: { reveals: 18, answers: 25, finishedQuestions: 9, adjustments: 0 },
         kept: { categories: 6, pickedQuestions: 21, players: 4 },
       },
       error: null,
@@ -91,7 +91,7 @@ describe("POST /api/nights/[id]/reset-to-setup", () => {
 
     const body = await res.json();
     expect(body).toEqual({
-      wiped: { reveals: 18, answers: 25, finishedQuestions: 9 },
+      wiped: { reveals: 18, answers: 25, finishedQuestions: 9, adjustments: 0 },
       kept: { categories: 6, pickedQuestions: 21, players: 4 },
     });
   });

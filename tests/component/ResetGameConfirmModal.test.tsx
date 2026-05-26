@@ -10,6 +10,7 @@ import { ResetGameConfirmModal } from "@/components/host/ResetGameConfirmModal";
 
 const PREVIEW = {
   revealsToWipe: 18,
+  adjustmentsToWipe: 0,
   answersToWipe: 25,
   finishedQuestionsToWipe: 9,
   categoriesKept: 6,
@@ -58,6 +59,13 @@ describe("ResetGameConfirmModal", () => {
     expect(screen.getByText(/18 reveal events/i)).toBeInTheDocument();
     expect(screen.getByText(/9 played-question markers/i)).toBeInTheDocument();
     expect(screen.getByText(/people in the room sent in/i)).toBeInTheDocument();
+  });
+
+  it("shows the adjustments bullet when > 0", () => {
+    renderModal({
+      preview: { ...PREVIEW, adjustmentsToWipe: 3 },
+    });
+    expect(screen.getByText(/3 point adjustments/i)).toBeInTheDocument();
   });
 
   it("shows the keep counts plainly", () => {

@@ -78,6 +78,11 @@ export function ResetGameConfirmModal({
           <BulletLine>
             <strong>{preview.revealsToWipe} reveal events</strong> — the TV will forget what's been shown
           </BulletLine>
+          {preview.adjustmentsToWipe > 0 && (
+            <BulletLine>
+              <strong>{preview.adjustmentsToWipe} point adjustments</strong> you made
+            </BulletLine>
+          )}
         </Section>
 
         <Section title="You'll keep:">

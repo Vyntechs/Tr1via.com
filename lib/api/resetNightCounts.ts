@@ -11,6 +11,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export interface ResetPreview {
   revealsToWipe: number;
+  adjustmentsToWipe: number;
   answersToWipe: number;
   finishedQuestionsToWipe: number;
   categoriesKept: number;
@@ -54,6 +55,15 @@ export async function fetchResetPreview(nightId: string): Promise<ResetPreview> 
     ? (
         await admin
           .from("reveals")
+          .select("id", { count: "exact", head: true })
+          .in("game_id", liveOrDoneGameIds)
+      ).count ?? 0
+    : 0;
+
+  const adjustmentsToWipe = liveOrDoneGameIds.length
+    ? (
+        await admin
+          .from("adjustments")
           .select("id", { count: "exact", head: true })
           .in("game_id", liveOrDoneGameIds)
       ).count ?? 0
@@ -107,6 +117,7 @@ export async function fetchResetPreview(nightId: string): Promise<ResetPreview> 
 
   return {
     revealsToWipe,
+    adjustmentsToWipe,
     answersToWipe,
     finishedQuestionsToWipe,
     categoriesKept: categories.length,

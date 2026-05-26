@@ -89,7 +89,7 @@ export function HostHomeClient({
         throw new Error(body.error ?? `reset failed (${res.status})`);
       }
       const data = (await res.json()) as {
-        wiped?: { reveals?: number; answers?: number; finishedQuestions?: number };
+        wiped?: { reveals?: number; answers?: number; finishedQuestions?: number; adjustments?: number };
         kept?: { categories?: number; players?: number };
       };
       const wipedAnswers = data.wiped?.answers ?? 0;
