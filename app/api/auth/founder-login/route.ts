@@ -1,22 +1,24 @@
-// POST /api/auth/founder-login — passwordless login for the founder.
+// POST /api/auth/founder-login — passwordless login for any registered host.
 //
-// Body: { email }. If the email matches a row in public.hosts with
-// role='founder', we mint a session server-side and return 200 with the
-// auth cookies set on the response. Anything else → 404 (deliberately
-// indistinguishable from a missing route so we don't leak "this email is
-// the founder").
+// (Name is historical — the endpoint was originally founder-only, hence
+// the path. It now mints a session for any row in public.hosts. Kept
+// the path to avoid breaking the /login client and the smoke test that
+// references it.)
 //
-// Why this exists: relying on Supabase email delivery for the single
-// founder account is fragile — corporate domains (vyntechs.com) drop
-// Supabase's default SMTP, and configuring custom SMTP is a bigger
-// project. The founder is a privileged-but-known entity; checking the
-// hosts table for role='founder' is the same trust boundary the admin
-// dashboard already uses.
+// Body: { email }. If the email matches a registered host, we mint a
+// session server-side and return 200 with auth cookies on the response.
+// Unknown email → 404.
 //
-// Risk surface: someone who knows the founder's exact email could
-// impersonate the founder. Mitigated by (a) the email being hard to
-// guess and (b) the singleton-founder constraint — there's exactly one.
-// Add a shared secret header later if we ever onboard more founders.
+// Why no magic-link round-trip: Brandon's product is two known
+// participants (himself + the first host) and any other hosts he comps in via
+// /host/admin. Their emails are entered manually by the founder. There's
+// no open signup, so requiring an email-verify hop to "prove" each
+// sign-in adds friction for zero security gain — anyone who could
+// intercept the magic-link email could just type the address here.
+//
+// Trust model: this is the same boundary "Comp a host" already uses —
+// only emails Brandon has put into the hosts table can sign in. New
+// accounts come in through /host/admin, not through this endpoint.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
@@ -50,12 +52,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
+  // Confirm a hosts row exists for this user. We don't gate on role —
+  // any host (founder or otherwise) gets a session. The hosts row also
+  // means Brandon has explicitly onboarded this email via "Comp a host."
   const { data: hostRow } = await admin
     .from("hosts")
-    .select("id, role")
+    .select("id")
     .eq("user_id", user.id)
     .maybeSingle();
-  if (!hostRow || hostRow.role !== "founder") {
+  if (!hostRow) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
 
