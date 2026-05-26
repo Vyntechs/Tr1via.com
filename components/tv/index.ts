@@ -18,11 +18,8 @@ export type {
 } from "./TVIntermission";
 export { TVRevealStumper } from "./TVRevealStumper";
 export type { TVRevealStumperProps, TVStumperFastest } from "./TVRevealStumper";
-export { TVSectionEndedPicker } from "./TVSectionEndedPicker";
-export type {
-  TVSectionEndedPickerProps,
-  TVSectionEndedTopic,
-} from "./TVSectionEndedPicker";
+export { TVSectionComplete } from "./TVSectionComplete";
+export type { TVSectionCompleteProps } from "./TVSectionComplete";
 export { TVFinaleWinner } from "./TVFinaleWinner";
 export type {
   TVFinaleWinnerProps,

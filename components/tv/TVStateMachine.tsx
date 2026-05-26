@@ -36,20 +36,17 @@ import {
   TVQuestion,
   TVReveal,
   TVRevealStumper,
-  TVSectionEndedPicker,
   type TVGridCell,
   type TVIntermissionPodiumRow,
   type TVIntermissionStat,
   type TVLeaderboardRow,
   type TVQuestionTile,
   type TVRevealFastest,
-  type TVSectionEndedTopic,
   type TVStumperFastest,
 } from "@/components/tv";
 import { formatRoomCode } from "@/lib/game/room-code";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
-import { getRemainingTopics } from "@/lib/host/deriveHostMode";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
 
@@ -66,12 +63,6 @@ export interface TVStateMachineProps {
    *  and fire this handler with the picked question id. The standalone
    *  `/tv/[code]` route omits it so the audience surface stays inert. */
   onGridCellClick?: (questionId: string) => void;
-  /** Host-only: when provided AND a section just ended (one category
-   *  exhausted, others still have unplayed questions), the picker rows
-   *  become clickable buttons and fire this handler with the chosen
-   *  topic's lowest-points unplayed question id. The standalone
-   *  `/tv/[code]` route omits it so the audience picker stays inert. */
-  onSectionPickerTopicClick?: (questionId: string) => void;
   /** Host-only: when true, the sticky-reveal branch is skipped and the
    *  grid renders instead — used after the host taps "Pick next →" during
    *  a stuck reveal frame so they can choose the next cell. The audience
@@ -85,7 +76,6 @@ export function TVStateMachine({
   lastBroadcastRevealedAt = null,
   lastBroadcastServerNow = null,
   onGridCellClick,
-  onSectionPickerTopicClick,
   hostAdvanced = false,
 }: TVStateMachineProps) {
   const games = snapshot.games;
@@ -170,42 +160,12 @@ export function TVStateMachine({
       return <TVRevealView snapshot={snapshot} question={targetQuestion} />;
     }
 
-    // No live question, no recent resolve. Two surfaces from here:
-    //   • Section just ended (one category exhausted, others remain) →
-    //     section-ended picker. Replaces the dead-state grid (Brandon's
-    //     "why does it just sit there" complaint).
-    //   • Otherwise (start of game, or every category still has unplayed) →
-    //     the grid as before. The grid stays as the canonical first-pick
-    //     surface; the picker only kicks in mid-game when a section ends.
-    const remainingTopics = getRemainingTopics(snapshot, currentGame.id);
-    const totalCatsInGame = snapshot.categories.filter(
-      (c) => c.gameId === currentGame.id,
-    ).length;
-    const someCategoryDone =
-      totalCatsInGame > 0 && remainingTopics.length < totalCatsInGame;
-    const playedInGame = snapshot.questions.some(
-      (q) =>
-        q.isPicked &&
-        q.finishedAt !== null &&
-        snapshot.categories.some(
-          (c) => c.id === q.categoryId && c.gameId === currentGame.id,
-        ),
-    );
-    if (
-      remainingTopics.length > 0 &&
-      someCategoryDone &&
-      playedInGame
-    ) {
-      return (
-        <TVSectionEndedPickerView
-          snapshot={snapshot}
-          game={currentGame}
-          remainingTopics={remainingTopics}
-          onTopicClick={onSectionPickerTopicClick}
-        />
-      );
-    }
-
+    // No live question, no recent resolve → the Jeopardy grid is the
+    // canonical picking surface for the entire game. The "Section
+    // Complete" cinematic that fires when a category just cleared is
+    // layered as an overlay by the parent (HostLiveConsole or
+    // /tv/[code]) — see useSectionCompleteCelebration. The state machine
+    // stays pure and doesn't manage that overlay.
     return (
       <TVGridView
         snapshot={snapshot}
@@ -461,51 +421,6 @@ function TVRevealView({
         return `+${bonus}`;
       })()}
       fastestFive={fastest}
-    />
-  );
-}
-
-function TVSectionEndedPickerView({
-  snapshot,
-  game,
-  remainingTopics,
-  onTopicClick,
-}: {
-  snapshot: TVSnapshot;
-  game: { id: string };
-  remainingTopics: ReturnType<typeof getRemainingTopics>;
-  onTopicClick?: (questionId: string) => void;
-}) {
-  const gameNo = snapshot.games.find((g) => g.id === game.id)?.gameNo ?? 1;
-  const catIdsInGame = new Set(
-    snapshot.categories.filter((c) => c.gameId === game.id).map((c) => c.id),
-  );
-  const pickedInGame = snapshot.questions.filter(
-    (q) => q.isPicked && catIdsInGame.has(q.categoryId),
-  );
-  const answered = pickedInGame.filter((q) => q.finishedAt !== null).length;
-  const total = pickedInGame.length;
-
-  const topics: TVSectionEndedTopic[] = remainingTopics.map((r) => ({
-    name: r.name,
-    color: r.color,
-    remainingCount: r.remainingCount,
-    totalCount: r.totalCount,
-    questionId: r.lowestQuestionId,
-  }));
-
-  return (
-    <TVSectionEndedPicker
-      headerLeft={`GAME ${gameNo} · SECTION COMPLETE`}
-      headerRight={`${answered} OF ${total} ANSWERED`}
-      footerLeft={`TR1VIA.COM · ${formatRoomCode(snapshot.night.roomCode)}`}
-      footerRight={
-        onTopicClick
-          ? "HOST PICKS · ONE TAP REVEALS"
-          : "HOST IS PICKING THE NEXT TOPIC"
-      }
-      topics={topics}
-      onTopicClick={onTopicClick}
     />
   );
 }
