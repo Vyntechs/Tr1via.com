@@ -29,8 +29,8 @@ export default function PlayerWonPage() {
 }
 
 function PlayerWonInner({ roomCode }: { roomCode: string }) {
-  const snapshot = useRoom({ roomCode });
   const { deviceId, isLoading: deviceLoading } = useDeviceSession();
+  const snapshot = useRoom({ roomCode, deviceId });
 
   const themeKey: ThemeKey = resolveTheme(
     snapshot.night,
