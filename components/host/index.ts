@@ -23,3 +23,5 @@ export { AddLatecomerModal } from "./AddLatecomerModal";
 export type { AddLatecomerModalProps } from "./AddLatecomerModal";
 export { RemovePlayerButton } from "./RemovePlayerButton";
 export type { RemovePlayerButtonProps } from "./RemovePlayerButton";
+export { ResetGameConfirmModal } from "./ResetGameConfirmModal";
+export type { ResetGameConfirmModalProps } from "./ResetGameConfirmModal";
