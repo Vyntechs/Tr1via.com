@@ -22,6 +22,7 @@ import type {
   CategoryRow,
 } from "@/lib/supabase/types";
 import { HostHomeClient } from "./HostHomeClient";
+import { fetchResetPreview } from "@/lib/api/resetNightCounts";
 
 export const dynamic = "force-dynamic";
 
@@ -86,6 +87,11 @@ export default async function HostHomePage() {
   // Lifetime totals for the eyebrow on the right of the past-nights list.
   const lifetime = await fetchLifetimeTotals(host.id);
 
+  const resetPreview =
+    tonightRow && tonightRow.opened_at
+      ? await fetchResetPreview(tonightRow.id)
+      : null;
+
   const tonight = tonightRow
     ? {
         nightId: tonightRow.id,
@@ -111,6 +117,7 @@ export default async function HostHomePage() {
         status: tonightRow.opened_at
           ? ("live" as const)
           : ("setup" as const),
+        resetPreview,
       }
     : null;
 

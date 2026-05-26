@@ -641,6 +641,7 @@ export type Database = {
       current_device_id: { Args: never; Returns: string }
       current_player_id: { Args: { p_night_id: string }; Returns: string }
       is_night_host: { Args: { p_night_id: string }; Returns: boolean }
+      reset_night_to_setup: { Args: { p_night_id: string }; Returns: Json }
       resolve_question: { Args: { p_question_id: string }; Returns: undefined }
     }
     Enums: {
