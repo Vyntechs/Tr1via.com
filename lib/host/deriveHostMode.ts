@@ -37,14 +37,6 @@ export interface HostModeContext {
   /** Whether the current live game's picked questions are all finished —
    *  triggers the "End Game →" CTA in picking mode (P0.33). */
   canEndGame: boolean;
-  /** True only when in `picking` mode AND at least one category has had
-   *  every question played AND at least one OTHER category still has
-   *  unplayed questions. Lets the TV surface a "Pick the next topic"
-   *  panel (and the host strip its matching caption) so the host isn't
-   *  staring at the grid wondering what to click next. False during the
-   *  pre-first-question state (where the picker would feel premature)
-   *  and false once every category is exhausted (where End Game CTA wins). */
-  inSectionPicker: boolean;
 }
 
 /** Per-category row used by the section-ended picker. */
@@ -113,7 +105,6 @@ export function deriveHostMode(
     game1State: null,
     game2State: null,
     canEndGame: false,
-    inSectionPicker: false,
   };
 
   if (!snapshot) return base;
@@ -182,20 +173,5 @@ export function deriveHostMode(
   const canEndGame =
     pickedInGame.length > 0 && pickedInGame.every((q) => q.finishedAt !== null);
 
-  // Surface the section-ended picker only when a section JUST ended and
-  // others remain. At the very start of a game (nothing played yet) the
-  // picker would feel premature — the grid is the better first-pick
-  // surface. After every category is exhausted, canEndGame takes over.
-  const playedCount = pickedInGame.filter((q) => q.finishedAt !== null).length;
-  const remainingTopics = getRemainingTopics(snapshot, currentGame.id);
-  const totalCatsInGame = catIdsInGame.size;
-  const someCategoryDone =
-    totalCatsInGame > 0 && remainingTopics.length < totalCatsInGame;
-  const inSectionPicker =
-    !canEndGame &&
-    playedCount > 0 &&
-    someCategoryDone &&
-    remainingTopics.length > 0;
-
-  return { ...ctx, mode: "picking", canEndGame, inSectionPicker };
+  return { ...ctx, mode: "picking", canEndGame };
 }

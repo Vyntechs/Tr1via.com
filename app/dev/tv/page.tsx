@@ -14,7 +14,7 @@ import {
   TVLeaderboard,
   TVIntermission,
   TVRevealStumper,
-  TVSectionEndedPicker,
+  TVSectionComplete,
   TVFinaleWinner,
 } from "@/components/tv";
 import { useTheme, Wordmark, Eyebrow } from "@/components/system";
@@ -89,8 +89,22 @@ export default function TVGallery() {
           <Frame label="06 · Leaderboard">
             <TVLeaderboard />
           </Frame>
-          <Frame label="07 · Section ended · pick next topic">
-            <TVSectionEndedPicker />
+          <Frame label="07 · Section complete · cinematic over the grid">
+            <div
+              style={{
+                position: "relative",
+                width: "100%",
+                height: "100%",
+                background: "#0E0805",
+              }}
+            >
+              <TVGrid />
+              <TVSectionComplete
+                topicName="Martial Arts"
+                color="#FF6A3D"
+                staticHold
+              />
+            </div>
           </Frame>
           <Frame label="08 · Intermission">
             <TVIntermission />
