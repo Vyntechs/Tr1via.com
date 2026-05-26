@@ -95,14 +95,24 @@ const EMPTY: RoomSnapshot = {
 export interface UseRoomArgs {
   /** Display-formatted or stored room code. Normalized internally. */
   roomCode: string | null;
+  /** Player's device id. When the caller passes this prop, bootstrap waits
+   *  until it resolves to a non-empty value so the very first anon Supabase
+   *  fetch carries the `x-tr1via-device` header that RLS uses to find the
+   *  player. Omit on host surfaces — hosts authenticate via session JWT,
+   *  not the device cookie, so they don't need to wait. */
+  deviceId?: string | null;
 }
 
-export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
+export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(EMPTY);
+  // Player call sites pass `deviceId`. Until it's a real value we hold off so
+  // the bootstrap fetch can attach `x-tr1via-device` and pass `nights_player_read`.
+  // `undefined` means "caller didn't opt in" (host surface) — fire immediately.
+  const waitingForDevice = deviceId === null || deviceId === "";
 
   useEffect(() => {
-    if (!roomCode) {
-      setSnapshot(EMPTY);
+    if (!roomCode || waitingForDevice) {
+      if (!roomCode) setSnapshot(EMPTY);
       return;
     }
     const code = parseRoomCode(roomCode);
@@ -492,7 +502,7 @@ export function useRoom({ roomCode }: UseRoomArgs): RoomSnapshot {
       for (const teardown of channelHandles) teardown();
       channelHandles = [];
     };
-  }, [roomCode]);
+  }, [roomCode, waitingForDevice]);
 
   return snapshot;
 }
