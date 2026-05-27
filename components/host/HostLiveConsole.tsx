@@ -76,6 +76,12 @@ export interface HostLiveConsoleProps {
   onStartGame1?: () => void;
   /** Promote game 2 to live from intermission. Surfaces "Start Game 2". */
   onStartGame2?: () => void;
+  /** When true, the Start Game 2 button is rendered greyed-out with a
+   *  tooltip explaining why. Used when game 2 has no ready categories yet
+   *  so the host doesn't accidentally start an empty game. */
+  startGame2Disabled?: boolean;
+  /** Tooltip shown when Start Game 2 is disabled. */
+  startGame2DisabledReason?: string;
   /** End the current live game (game→done). Surfaces "End Game →" when
    *  every picked question is finished (P0.33). */
   onEndGame?: () => void;
@@ -134,6 +140,8 @@ function HostLiveConsoleInner({
   onAddPlayer,
   onStartGame1,
   onStartGame2,
+  startGame2Disabled = false,
+  startGame2DisabledReason,
   onEndGame,
   onCloseNight,
   tvSnapshot,
@@ -244,6 +252,8 @@ function HostLiveConsoleInner({
           totalPlayers={totalPlayers}
           onStartGame1={onStartGame1}
           onStartGame2={onStartGame2}
+          startGame2Disabled={startGame2Disabled}
+          startGame2DisabledReason={startGame2DisabledReason}
           onEndEarly={onEndEarly}
           onUndo={onUndo}
           onAdjustPoints={onAdjustPoints}
@@ -292,6 +302,8 @@ interface HostControlStripProps {
   totalPlayers: number;
   onStartGame1?: () => void;
   onStartGame2?: () => void;
+  startGame2Disabled?: boolean;
+  startGame2DisabledReason?: string;
   onEndEarly?: () => void;
   onUndo?: () => void;
   onAdjustPoints?: () => void;
@@ -310,6 +322,8 @@ function HostControlStrip({
   totalPlayers,
   onStartGame1,
   onStartGame2,
+  startGame2Disabled = false,
+  startGame2DisabledReason,
   onEndEarly,
   onUndo,
   onAdjustPoints,
@@ -347,7 +361,12 @@ function HostControlStrip({
           </PrimaryButton>
         )}
         {mode === "intermission" && onStartGame2 && (
-          <PrimaryButton onClick={onStartGame2} testId="host-start-game-2-btn">
+          <PrimaryButton
+            onClick={onStartGame2}
+            testId="host-start-game-2-btn"
+            disabled={startGame2Disabled}
+            disabledTitle={startGame2DisabledReason}
+          >
             Start Game 2
           </PrimaryButton>
         )}
@@ -430,17 +449,23 @@ function PrimaryButton({
   children,
   onClick,
   testId,
+  disabled = false,
+  disabledTitle,
 }: {
   children: React.ReactNode;
   onClick: () => void;
   testId: string;
+  disabled?: boolean;
+  disabledTitle?: string;
 }) {
   const { t } = useTheme();
   return (
     <button
       type="button"
-      onClick={onClick}
+      onClick={disabled ? undefined : onClick}
       data-testid={testId}
+      disabled={disabled}
+      title={disabled ? disabledTitle : undefined}
       style={{
         padding: "8px 18px",
         borderRadius: 8,
@@ -450,8 +475,9 @@ function PrimaryButton({
         fontSize: 13,
         fontWeight: 700,
         fontFamily: "var(--font-sans)",
-        cursor: "pointer",
+        cursor: disabled ? "not-allowed" : "pointer",
         letterSpacing: "-0.005em",
+        opacity: disabled ? 0.4 : 1,
       }}
     >
       {children}
