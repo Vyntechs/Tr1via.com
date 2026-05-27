@@ -22,6 +22,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { TVSectionComplete, TVStateMachine } from "@/components/tv";
+import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { deriveHostMode } from "@/lib/host/deriveHostMode";
 import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
@@ -88,6 +89,11 @@ export interface HostLiveConsoleProps {
   tvLastBroadcastRevealedAt?: string | null;
   /** Server "now" at the broadcast moment, for client-clock skew. */
   tvLastBroadcastServerNow?: string | null;
+  /** Magic-Welcome: a fresh `player-joined` event, held by the parent
+   *  for ~3s before being unset to null. Threaded into the embedded TV
+   *  state machine so the host's laptop drives the same overlay the
+   *  HDMI'd venue TV shows. */
+  welcomeEvent?: TVLobbyWelcomeEvent | null;
 }
 
 export function HostLiveConsole(props: HostLiveConsoleProps) {
@@ -132,6 +138,7 @@ function HostLiveConsoleInner({
   tvSnapshot,
   tvLastBroadcastRevealedAt = null,
   tvLastBroadcastServerNow = null,
+  welcomeEvent = null,
 }: Omit<HostLiveConsoleProps, "themeKey">) {
   const { t } = useTheme();
   const totalPlayers = playersTotal ?? players.length;
@@ -199,6 +206,7 @@ function HostLiveConsoleInner({
               lastBroadcastServerNow={tvLastBroadcastServerNow}
               onGridCellClick={handleRevealCell}
               hostAdvanced={hostAdvanced}
+              welcomeEvent={welcomeEvent}
             />
           ) : (
             <DevPlaceholder />

@@ -40,6 +40,7 @@ import {
   type TVIntermissionPodiumRow,
   type TVIntermissionStat,
   type TVLeaderboardRow,
+  type TVLobbyWelcomeEvent,
   type TVQuestionTile,
   type TVRevealFastest,
   type TVStumperFastest,
@@ -69,6 +70,11 @@ export interface TVStateMachineProps {
    *  sees the same flip, which is intended ("the host is choosing the
    *  next one"). */
   hostAdvanced?: boolean;
+  /** Magic-Welcome — when a new player just joined, the parent passes
+   *  the event down so TVLobby can fire the slide-in overlay. The parent
+   *  owns the timer (mounts the event for ~3s after a player-joined
+   *  broadcast, then unmounts by passing null). */
+  welcomeEvent?: TVLobbyWelcomeEvent | null;
 }
 
 export function TVStateMachine({
@@ -77,6 +83,7 @@ export function TVStateMachine({
   lastBroadcastServerNow = null,
   onGridCellClick,
   hostAdvanced = false,
+  welcomeEvent = null,
 }: TVStateMachineProps) {
   const games = snapshot.games;
   const game1 = games.find((g) => g.gameNo === 1) ?? null;
@@ -122,7 +129,7 @@ export function TVStateMachine({
     if (intermission) {
       return <TVIntermissionView snapshot={snapshot} game1={game1} />;
     }
-    return <TVLobbyView snapshot={snapshot} />;
+    return <TVLobbyView snapshot={snapshot} welcomeEvent={welcomeEvent} />;
   }
 
   // ── Done game branches ──
@@ -176,21 +183,29 @@ export function TVStateMachine({
   }
 
   // Default: lobby.
-  return <TVLobbyView snapshot={snapshot} />;
+  return <TVLobbyView snapshot={snapshot} welcomeEvent={welcomeEvent} />;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers — view per state.
 // ─────────────────────────────────────────────────────────────────────────
 
-function TVLobbyView({ snapshot }: { snapshot: TVSnapshot }) {
+function TVLobbyView({
+  snapshot,
+  welcomeEvent = null,
+}: {
+  snapshot: TVSnapshot;
+  welcomeEvent?: TVLobbyWelcomeEvent | null;
+}) {
   const formattedCode = formatRoomCode(snapshot.night.roomCode);
   const venue = snapshot.night.venueName.toUpperCase();
   const scheduled = formatScheduledDate(snapshot.night.scheduledAt);
   // Most recent joins first — that's the order Lobby's "tickers" expect.
-  const roster = [...snapshot.players]
-    .sort((a, b) => b.joinedAt.localeCompare(a.joinedAt))
-    .map((p) => p.displayName);
+  const sortedPlayers = [...snapshot.players].sort((a, b) =>
+    b.joinedAt.localeCompare(a.joinedAt),
+  );
+  const roster = sortedPlayers.map((p) => p.displayName);
+  const rosterPlayerIds = sortedPlayers.map((p) => p.id);
 
   const game1 = snapshot.games.find((g) => g.gameNo === 1) ?? null;
   const gameStatus =
@@ -207,9 +222,11 @@ function TVLobbyView({ snapshot }: { snapshot: TVSnapshot }) {
       roomCode={formattedCode}
       inRoomCount={snapshot.players.length}
       roster={roster}
+      rosterPlayerIds={rosterPlayerIds}
       joinUrl={joinUrl(snapshot.night.roomCode)}
       hostStatusLine="ROOM OPEN · STARTS WHEN HOST IS READY"
       gameStatusLine={gameStatus}
+      welcomeEvent={welcomeEvent}
     />
   );
 }
