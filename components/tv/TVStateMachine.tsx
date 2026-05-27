@@ -50,6 +50,7 @@ import type { MarqueeChip } from "@/components/tv/TVScoreboardMarquee";
 import { formatRoomCode } from "@/lib/game/room-code";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
+import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { hasCeremony, hasMarquee } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -400,6 +401,27 @@ function TVQuestionView({
       ]);
     }
   }, [lockedAnswers, themeKey]);
+
+  // Polling fallback — catches any lock-ins the realtime channel dropped.
+  // Fires onMissed for locks the snapshot hasn't delivered yet; the callback
+  // here mirrors what the useEffect above does for realtime arrivals.
+  useLockInSync({
+    gameId: snapshot.currentGameId ?? "",
+    active: hasCeremony(themeKey) && !!snapshot.currentGameId,
+    acknowledged: seenLocksRef.current,
+    onMissed: (lock) => {
+      setCeremonyQueue((q) => [
+        ...q,
+        {
+          playerId: lock.playerId,
+          tint: playerColorHex(lock.playerId),
+          msToLock: lock.msToLock,
+          receivedAtMs: Date.now(),
+        },
+      ]);
+      seenLocksRef.current.add(lock.playerId);
+    },
+  });
 
   const handleSpotlight = useCallback((playerId: string | null) => {
     setSpotlightedPlayerId(playerId);
