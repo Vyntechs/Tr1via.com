@@ -20,4 +20,5 @@ export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps } from "./EmptyState";
 export { Spinner } from "./Spinner";
 export type { SpinnerProps, SpinnerSize } from "./Spinner";
+export { WelcomeOverlay, WELCOME_OVERLAY_DURATION_MS } from "./WelcomeOverlay";
 export * as Motifs from "./motifs";

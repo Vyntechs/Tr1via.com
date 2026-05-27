@@ -1,7 +1,7 @@
 // Barrel export for venue-TV screens. Import from "@/components/tv".
 
 export { TVLobby } from "./TVLobby";
-export type { TVLobbyProps } from "./TVLobby";
+export type { TVLobbyProps, TVLobbyWelcomeEvent } from "./TVLobby";
 export { TVGrid } from "./TVGrid";
 export type { TVGridProps, TVGridCell, TVGridLeader } from "./TVGrid";
 export { TVQuestion } from "./TVQuestion";
