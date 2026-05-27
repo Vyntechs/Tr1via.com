@@ -8,6 +8,7 @@
 
 "use client";
 
+import { useEffect, useState } from "react";
 import {
   Display,
   Eyebrow,
@@ -101,6 +102,24 @@ function TVFinaleWinnerInner({
 }: Omit<TVFinaleWinnerProps, "themeKey">) {
   const { t, themeKey } = useTheme();
 
+  // Finale lightning: for the May "storm" theme, fire 2-3 close strikes in
+  // quick succession on mount. This is the "WHOA" moment — the close of
+  // the night. Other themes ignore the prop. We stage three bumps spaced
+  // ~700ms apart so the room sees a flurry, not a single flash.
+  const [lightningTriggerCount, setLightningTriggerCount] = useState(0);
+  useEffect(() => {
+    if (themeKey !== "may") return;
+    // First strike: ~250ms in so it lands once the name has rendered.
+    const t1 = window.setTimeout(() => setLightningTriggerCount((n) => n + 1), 250);
+    const t2 = window.setTimeout(() => setLightningTriggerCount((n) => n + 1), 950);
+    const t3 = window.setTimeout(() => setLightningTriggerCount((n) => n + 1), 1700);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
+  }, [themeKey]);
+
   return (
     <div
       data-testid="tv-finale-winner"
@@ -117,7 +136,11 @@ function TVFinaleWinnerInner({
       }}
     >
       {/* Heightened weather — the theme's signature motion turned up for the finale */}
-      <Weather themeKey={themeKey} intensity={2.2} />
+      <Weather
+        themeKey={themeKey}
+        intensity={2.2}
+        lightningTriggerCount={lightningTriggerCount}
+      />
       {/* Soft radial glow center-stage */}
       <div
         style={{
