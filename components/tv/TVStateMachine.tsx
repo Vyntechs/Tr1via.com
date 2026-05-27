@@ -26,7 +26,7 @@
 // full viewport, the inline host embed sizes via its parent's grid.
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import {
   TVFinaleWinner,
   TVGrid,
@@ -45,9 +45,13 @@ import {
   type TVRevealFastest,
   type TVStumperFastest,
 } from "@/components/tv";
+import { TVLockInCeremony, type CeremonyEvent } from "@/components/tv/TVLockInCeremony";
+import type { MarqueeChip } from "@/components/tv/TVScoreboardMarquee";
 import { formatRoomCode } from "@/lib/game/room-code";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
+import { playerColorHex } from "@/lib/player/playerColor";
+import { hasCeremony, hasMarquee } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
@@ -351,22 +355,105 @@ function TVQuestionView({
       }));
   }, [snapshot.liveAnswers]);
 
+  // Build marquee chips from the full player roster — scores come from
+  // snapshot.scores (keyed by player_id, updated at reveal, static mid-question).
+  const marqueeChips: MarqueeChip[] = useMemo(() => {
+    if (!hasMarquee(themeKey)) return [];
+    return snapshot.players.map((p, i) => {
+      const scoreRow = snapshot.scores.find((s) => s.player_id === p.id);
+      return {
+        playerId: p.id,
+        name: p.displayName.toUpperCase(),
+        color: playerColorHex(p.id),
+        score: scoreRow?.score ?? 0,
+        joinIndex: i,
+      };
+    });
+  }, [snapshot.players, snapshot.scores, themeKey]);
+
+  // Track which players have locked in (any answer in liveAnswers) so we can
+  // diff against previously-seen locks and enqueue ceremony events.
+  const lockedAnswers = snapshot.liveAnswers;
+
+  const [ceremonyQueue, setCeremonyQueue] = useState<CeremonyEvent[]>([]);
+  const [spotlightedPlayerId, setSpotlightedPlayerId] = useState<string | null>(null);
+  const [speedBonusPlayerId, setSpeedBonusPlayerId] = useState<string | null>(null);
+  // seenLocksRef tracks player ids we've already queued so snapshot re-fetches
+  // (which repeat the full liveAnswers list) don't double-fire ceremonies.
+  const seenLocksRef = useRef<Set<string>>(new Set());
+
+  // Enqueue a ceremony event for each newly-seen lock-in.
+  useEffect(() => {
+    if (!hasCeremony(themeKey)) return;
+    const newlyLocked = lockedAnswers.filter((a) => !seenLocksRef.current.has(a.player_id));
+    for (const a of newlyLocked) seenLocksRef.current.add(a.player_id);
+    if (newlyLocked.length > 0) {
+      setCeremonyQueue((q) => [
+        ...q,
+        ...newlyLocked.map((a) => ({
+          playerId: a.player_id,
+          tint: playerColorHex(a.player_id),
+          msToLock: a.ms_to_lock,
+          receivedAtMs: Date.now(),
+        })),
+      ]);
+    }
+  }, [lockedAnswers, themeKey]);
+
+  const handleSpotlight = useCallback((playerId: string | null) => {
+    setSpotlightedPlayerId(playerId);
+    if (playerId === null) {
+      setSpeedBonusPlayerId(null);
+      return;
+    }
+    // Grant speed bonus only when the lock came in under 5 seconds.
+    const ev = ceremonyQueue.find((e) => e.playerId === playerId);
+    setSpeedBonusPlayerId(ev && ev.msToLock < 5000 ? playerId : null);
+  }, [ceremonyQueue]);
+
+  const handleEventComplete = useCallback((playerId: string) => {
+    setCeremonyQueue((q) => q.filter((e) => e.playerId !== playerId));
+  }, []);
+
+  // Decorate chips with speedBonus so the +SPD badge fires when spotlighted.
+  const decoratedChips: MarqueeChip[] = marqueeChips.map((c) => ({
+    ...c,
+    speedBonus: c.playerId === speedBonusPlayerId,
+  }));
+
   // Options layout: TVQuestion shows numbered 1..4 in *canonical* order on
   // the TV (the scramble is per-phone). So we render the question's options
   // straight from the row.
   const options = question.options.map((text, i) => ({ n: i + 1, text }));
 
   return (
-    <TVQuestion
-      category={category}
-      value={question.pointValue ?? 100}
-      question={question.prompt}
-      options={options}
-      seconds={Math.max(0, displaySeconds)}
-      tiles={tiles}
-      totalPlayers={snapshot.players.length}
-      imageUrl={question.imageUrl}
-    />
+    <>
+      {hasCeremony(themeKey) && (
+        <TVLockInCeremony
+          events={ceremonyQueue}
+          onEventComplete={handleEventComplete}
+          onSpotlight={handleSpotlight}
+        />
+      )}
+      <TVQuestion
+        category={category}
+        value={question.pointValue ?? 100}
+        question={question.prompt}
+        options={options}
+        seconds={Math.max(0, displaySeconds)}
+        tiles={tiles}
+        totalPlayers={snapshot.players.length}
+        imageUrl={question.imageUrl}
+        themeKey={themeKey}
+        marqueeChips={decoratedChips}
+        spotlightedPlayerId={spotlightedPlayerId}
+        lockInAnnouncement={
+          spotlightedPlayerId
+            ? `${snapshot.players.find((p) => p.id === spotlightedPlayerId)?.displayName ?? ""} locked in`
+            : undefined
+        }
+      />
+    </>
   );
 }
 
