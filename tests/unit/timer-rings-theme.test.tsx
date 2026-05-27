@@ -40,14 +40,25 @@ describe("TimerRing themeKey", () => {
   });
 });
 
+// Grabs the progress arc circle from TVTimerArc — it renders exactly one
+// circle with stroke-dashoffset (the background ring has no dashoffset).
+function getTVProgressCircle(container: HTMLElement) {
+  const all = container.querySelectorAll("circle[stroke-dashoffset]");
+  return all[all.length - 1];
+}
+
 describe("TVTimerArc themeKey", () => {
   it("uses max=25 when themeKey='may' and max prop is omitted", () => {
+    // seconds=25 fills the arc completely only when resolvedMax=25
     const { container } = render(wrap(<TVTimerArc seconds={25} themeKey="may" accent="#fff" />));
-    expect(container.querySelector("svg")).toBeTruthy();
+    const circle = getTVProgressCircle(container);
+    expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
 
   it("uses max=20 when themeKey is omitted", () => {
+    // seconds=20 fills the arc completely only when resolvedMax=20
     const { container } = render(wrap(<TVTimerArc seconds={20} accent="#fff" />));
-    expect(container.querySelector("svg")).toBeTruthy();
+    const circle = getTVProgressCircle(container);
+    expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
 });
