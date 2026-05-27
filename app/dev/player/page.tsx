@@ -48,11 +48,25 @@ function PlayerQuestionWithImage() {
   );
 }
 
+// Long-prompt variant — exercises the auto-fit text path. 163 chars matches
+// the longest prompt currently in the prod DB (Chippewa Falls boot company)
+// so we can preview the worst-case font-size on every theme + every phone
+// width. If the prompt ever pushes the answer cards off-screen here, the
+// real player phone is also broken.
+function PlayerQuestionLong() {
+  return (
+    <PlayerQuestion
+      prompt="Which work boot company, still operating in Chippewa Falls, Wisconsin, is known for making custom boots to order for specific trades like firefighting and logging?"
+    />
+  );
+}
+
 const SCREENS: ScreenEntry[] = [
   { key: "join",                title: "01 · Join",                       Component: PlayerJoin },
   { key: "lobby",               title: "02 · Lobby",                      Component: PlayerLobby },
   { key: "question-text-only",  title: "03 · Question · live (text)",     Component: PlayerQuestion },
   { key: "question-with-image", title: "03b · Question · live (w/ image)", Component: PlayerQuestionWithImage },
+  { key: "question-long",       title: "03c · Question · live (long, 163ch)", Component: PlayerQuestionLong },
   { key: "locked",              title: "04 · Locked",                     Component: PlayerLocked },
   { key: "reveal-correct",      title: "05 · Reveal · correct",           Component: PlayerRevealCorrect },
   { key: "reveal-wrong",        title: "06 · Reveal · wrong",             Component: PlayerRevealWrong },
