@@ -399,10 +399,25 @@ function TVQuestionView({
       ? new Date(question.playedAt).getTime()
       : null;
   const serverNowMs = serverNow ? new Date(serverNow).getTime() : null;
+  // TV/host-laptop is the documented fallback for resolving a live question
+  // when the player's phone dies (force-closed Safari, lost network, iOS
+  // backgrounding the tab, etc.). The /api/questions/[id]/resolve endpoint
+  // is idempotent — its RPC does a "select … for update" so a second caller
+  // is a no-op. Without this onZero, a force-closed phone means the timer
+  // hits 0 and the game stalls — host has to manually click "End early".
   const { displaySeconds } = useTimer({
     revealedAtMs: revealedMs,
     serverNowMs,
     themeKey,
+    onZero: () => {
+      void fetch(`/api/questions/${question.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }).catch(() => {
+        // Network/transient failure: phones or host's manual End-early
+        // button remain as fallbacks. Logging would be noise.
+      });
+    },
   });
 
   const tiles: TVQuestionTile[] = useMemo(() => {
