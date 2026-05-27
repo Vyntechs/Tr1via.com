@@ -53,6 +53,7 @@ import { useTimer } from "@/lib/hooks/useTimer";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { hasCeremony, hasMarquee } from "@/lib/theme/lockInCeremony";
+import { shouldHoldReveal } from "@/lib/tv/revealPause";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
@@ -135,6 +136,32 @@ export function TVStateMachine({
   // catches via `liveQuestion && !finishedAt`) OR the game ends.
   const stickyReveal = !!lastResolve && !hostAdvanced;
 
+  // Ceremony-queue pending count — TVQuestionView reports this up via a
+  // ref callback so the reveal branch can hold the transition for up to
+  // 3 s while ceremonies drain (May/Storm only).
+  const pendingCeremonyCountRef = useRef(0);
+  const onPendingCountChange = useCallback((count: number) => {
+    pendingCeremonyCountRef.current = count;
+  }, []);
+
+  // Track when the question first resolves (finishedAt becomes non-null)
+  // so shouldHoldReveal can enforce the 3-second hard cap.
+  const resolvedAtRef = useRef<number | null>(null);
+  const lastTargetIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const resolvedId = targetQuestion?.id ?? null;
+    const resolvedAt = targetQuestion?.finishedAt ?? null;
+    // Reset when a new question becomes the target.
+    if (resolvedId !== lastTargetIdRef.current) {
+      lastTargetIdRef.current = resolvedId;
+      resolvedAtRef.current = null;
+    }
+    // Stamp the moment we first observe finishedAt being set.
+    if (resolvedAt !== null && resolvedAtRef.current === null) {
+      resolvedAtRef.current = Date.now();
+    }
+  });
+
   // ── Lobby branch ──
   if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
     if (intermission) {
@@ -157,7 +184,7 @@ export function TVStateMachine({
 
   // ── Live game branches ──
   if (currentGame.state === "live") {
-    // Live question?
+    // Live question (still open — finishedAt not yet set)?
     if (liveQuestion && !liveQuestion.finishedAt) {
       return (
         <TVQuestionView
@@ -167,6 +194,7 @@ export function TVStateMachine({
           revealedAt={lastBroadcastRevealedAt ?? liveQuestion.playedAt}
           serverNow={lastBroadcastServerNow}
           themeKey={themeKey}
+          onPendingCountChange={onPendingCountChange}
         />
       );
     }
@@ -176,7 +204,36 @@ export function TVStateMachine({
     // `liveQuestion` and trip the branch above). No auto-transition to a
     // leaderboard interstitial — the customer host explicitly wanted the
     // answer to stay readable until they move on.
+    //
+    // Ceremony-queue pause (May/Storm only): if lock-in ceremonies are still
+    // pending when the question resolves, hold reveal for up to 3 s so every
+    // player gets their ceremony before the answer flips into view.
     if (stickyReveal && targetQuestion && targetQuestion.finishedAt) {
+      const hold = shouldHoldReveal({
+        timerExpired: true, // finishedAt being set means the timer has expired
+        pendingCount: pendingCeremonyCountRef.current,
+        expiredAtMs: resolvedAtRef.current,
+        nowMs: Date.now(),
+        ceremonyEnabled: hasCeremony(themeKey),
+      });
+      if (hold) {
+        // Keep TVQuestionView alive during the ceremony drain window. We
+        // pass finishedAt=null-equivalent by keeping liveQuestion in scope,
+        // but since liveQuestion.finishedAt IS set here, we render with the
+        // live question data. The question still displays; ceremonies overlay.
+        // Use targetQuestion as the question since liveQuestion may be null.
+        return (
+          <TVQuestionView
+            key={`${targetQuestion.id}-hold`}
+            snapshot={snapshot}
+            question={targetQuestion}
+            revealedAt={lastBroadcastRevealedAt ?? targetQuestion.playedAt}
+            serverNow={lastBroadcastServerNow}
+            themeKey={themeKey}
+            onPendingCountChange={onPendingCountChange}
+          />
+        );
+      }
       return <TVRevealView snapshot={snapshot} question={targetQuestion} />;
     }
 
@@ -320,12 +377,16 @@ function TVQuestionView({
   revealedAt,
   serverNow,
   themeKey,
+  onPendingCountChange,
 }: {
   snapshot: TVSnapshot;
   question: TVSnapshot["questions"][number];
   revealedAt: string | null;
   serverNow: string | null;
   themeKey?: ThemeKey;
+  /** Fires whenever the ceremony queue length changes — lets the parent
+   *  state machine gate the reveal transition during the drain window. */
+  onPendingCountChange?: (count: number) => void;
 }) {
   const cat = snapshot.categories.find((c) => c.id === question.categoryId);
   const category = cat?.name ?? "Trivia";
@@ -437,6 +498,12 @@ function TVQuestionView({
   const handleEventComplete = useCallback((playerId: string) => {
     setCeremonyQueue((q) => q.filter((e) => e.playerId !== playerId));
   }, []);
+
+  // Report pending ceremony count to the parent state machine so it can
+  // gate the reveal transition during the drain window.
+  useEffect(() => {
+    onPendingCountChange?.(ceremonyQueue.length);
+  }, [ceremonyQueue.length, onPendingCountChange]);
 
   // Decorate chips with speedBonus so the +SPD badge fires when spotlighted.
   const decoratedChips: MarqueeChip[] = useMemo(
