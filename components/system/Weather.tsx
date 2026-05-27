@@ -8,6 +8,7 @@
 // Pointer-events: none — never competes with foreground interaction.
 
 import { ParticleField } from "./ParticleField";
+import { Lightning } from "./Lightning";
 import { Snowflake, Heart, Clover, Leaf, Pumpkin, Firework, Pine, Rain } from "./motifs";
 import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 
@@ -16,9 +17,18 @@ export interface WeatherProps {
   /** 0 = off, 1 = default, >1 = heightened (used for the finale). */
   intensity?: number;
   seed?: number;
+  /** Bump this counter to fire a beat-triggered lightning strike (May
+   *  storm theme only — ignored by other themes). Used by section-complete
+   *  + finale to fire a dramatic close strike. */
+  lightningTriggerCount?: number;
 }
 
-export function Weather({ themeKey = "house", intensity = 1, seed = 1 }: WeatherProps) {
+export function Weather({
+  themeKey = "house",
+  intensity = 1,
+  seed = 1,
+  lightningTriggerCount = 0,
+}: WeatherProps) {
   if (!intensity) return null;
   const t = TR1VIA_THEMES[themeKey];
   if (!t) return null;
@@ -75,7 +85,12 @@ export function Weather({ themeKey = "house", intensity = 1, seed = 1 }: Weather
         />
       );
     case "may":
-      return <LightningFlicker color="#E8C46A" />;
+      return (
+        <Lightning
+          color="#E8C46A"
+          triggerCount={lightningTriggerCount}
+        />
+      );
     case "june":
       return <SunShimmer color={t.accent} />;
     case "july":
@@ -142,31 +157,10 @@ export function Weather({ themeKey = "house", intensity = 1, seed = 1 }: Weather
 }
 
 // ─── Ambient effects (not particle-based) ────────────────────────────────
-
-function LightningFlicker({ color = "#E8C46A" }: { color?: string }) {
-  return (
-    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: `radial-gradient(60% 40% at 70% 0%, ${color}, transparent 60%)`,
-          mixBlendMode: "screen",
-          animation: "tr1via-lightning 11s infinite",
-        }}
-      />
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          background: `radial-gradient(40% 30% at 20% 10%, ${color}99, transparent 70%)`,
-          mixBlendMode: "screen",
-          animation: "tr1via-lightning 13.7s infinite 3.4s",
-        }}
-      />
-    </div>
-  );
-}
+// `LightningFlicker` (the old radial-gradient glow) used to live here. The
+// May case now delegates to `Lightning` which renders procedural strikes
+// and falls back to the same legacy glow internally for prefers-reduced-
+// motion users.
 
 function FireworkBursts({ colors = ["#E63946", "#FFD93D"] }: { colors?: string[] }) {
   const bursts = [
