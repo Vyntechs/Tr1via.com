@@ -89,6 +89,21 @@ describe("TVScoreboardMarquee — auto-scroll", () => {
     expect(track?.getAttribute("style") ?? "").not.toMatch(/animation/i);
   });
 
+  it("duplicate chip set is aria-hidden from screen readers", () => {
+    const many: MarqueeChip[] = Array.from({ length: 25 }, (_, i) => ({
+      playerId: `p${i}`,
+      name: `P${i.toString().padStart(2, "0")}`,
+      color: "#fff",
+      score: 1000 - i,
+      joinIndex: i,
+    }));
+    const { container } = render(<TVScoreboardMarquee chips={many} />);
+    const hiddenWrapper = container.querySelector("[aria-hidden='true']");
+    // The duplicate chip set must be inside an aria-hidden wrapper
+    expect(hiddenWrapper).not.toBeNull();
+    expect(hiddenWrapper?.children.length).toBe(25); // 25 duplicate chips
+  });
+
   it("disables scroll animation when prefers-reduced-motion is set", () => {
     const originalMatchMedia = window.matchMedia;
     try {

@@ -95,13 +95,17 @@ export function TVScoreboardMarquee({
           />
         ))}
         {/* Duplicate set for seamless loop — aria-hidden so readers skip the repeat. */}
-        {shouldScroll && sorted.map((chip) => (
-          <Chip
-            key={`dup-${chip.playerId}`}
-            chip={chip}
-            spotlight={false}
-          />
-        ))}
+        {shouldScroll && (
+          <div aria-hidden="true" style={{ display: "contents" }}>
+            {sorted.map((chip) => (
+              <Chip
+                key={`dup-${chip.playerId}`}
+                chip={chip}
+                spotlight={false}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       <style>{`
