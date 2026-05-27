@@ -168,6 +168,14 @@ function TVQuestionInner({
           padding: "28px 56px 0",
           display: "grid",
           gridTemplateColumns: imageUrl ? "260px 1fr 180px" : "1fr 180px",
+          // Lock the one grid row to the container's height. Without this,
+          // the image's intrinsic 260px (with alignSelf: flex-start) bullies
+          // the row taller than the container in short viewports — the frame
+          // then reports a clientHeight larger than what's visible, and the
+          // auto-fit hook picks a font size that overflows into the answer
+          // cards below. minmax(0, 1fr) forces the row to exactly the flex
+          // share, clipping any oversized children via overflow: hidden.
+          gridTemplateRows: "minmax(0, 1fr)",
           gap: 32,
           alignItems: "stretch",
           position: "relative",
@@ -180,6 +188,10 @@ function TVQuestionInner({
             style={{
               width: 260,
               height: 260,
+              // Cap height to the grid row so the image doesn't get cropped
+              // when the viewport is tight. The image still tries for its
+              // design 260px but shrinks to whatever the row actually has.
+              maxHeight: "100%",
               borderRadius: 16,
               overflow: "hidden",
               background: t.surface,
