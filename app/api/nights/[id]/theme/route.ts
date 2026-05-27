@@ -10,7 +10,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
-import { forbidden, ok, serverError, unauthorized, notFound, badRequest } from "@/lib/api/responses";
+import { forbidden, ok, serverError, unauthorized, notFound, badRequest, conflict } from "@/lib/api/responses";
 import { requireOwnedNight } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isThemeKey } from "@/lib/theme/tokens";
@@ -42,6 +42,22 @@ export async function PATCH(
   }
 
   const admin = getSupabaseAdmin();
+
+  // Block theme changes while any game in this night is live. A mid-game
+  // flip would break in-flight ceremonies (May → June switch mid-question).
+  const { data: liveGame } = await admin
+    .from("games")
+    .select("id")
+    .eq("night_id", id)
+    .eq("state", "live")
+    .maybeSingle();
+
+  if (liveGame) {
+    return conflict(
+      "Can't change theme while a game is live. End the current game first.",
+    );
+  }
+
   const { data, error } = await admin
     .from("nights")
     .update({ theme_key: parsed.themeKey })
