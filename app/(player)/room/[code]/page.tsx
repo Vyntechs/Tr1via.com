@@ -1032,11 +1032,45 @@ function PlayerJoinGame2Wired({
   onJoinSuccess?: () => void;
 }) {
   const [submitting, setSubmitting] = useState(false);
-  const stats = useMemo(() => summarizeGame(myAnswers, categories, game1Id), [
-    myAnswers,
-    categories,
-    game1Id,
-  ]);
+
+  // RoomSnapshot doesn't carry every question for the night (only the live
+  // and most-recently-resolved one), but the wrap screen needs to know which
+  // category each answered question belongs to so the "best category" stat
+  // can pick from the actually-played categories instead of a placeholder.
+  // One-shot fetch on mount — game 1 is done at this point so the data is
+  // settled (no realtime subscription needed).
+  const [questionCategoryMap, setQuestionCategoryMap] = useState<
+    Map<string, string>
+  >(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    const supa = getSupabaseBrowser();
+    const game1CategoryIds = categories
+      .filter((c) => c.game_id === game1Id)
+      .map((c) => c.id);
+    if (game1CategoryIds.length === 0) return;
+    async function load() {
+      const { data } = await supa
+        .from("questions")
+        .select("id, category_id")
+        .in("category_id", game1CategoryIds);
+      if (cancelled || !data) return;
+      const map = new Map<string, string>();
+      for (const row of data as Array<{ id: string; category_id: string }>) {
+        map.set(row.id, row.category_id);
+      }
+      setQuestionCategoryMap(map);
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [categories, game1Id]);
+
+  const stats = useMemo(
+    () => summarizeGame(myAnswers, categories, questionCategoryMap),
+    [myAnswers, categories, questionCategoryMap],
+  );
 
   // The parent RoomStateMachine's scores subscription is scoped to
   // `currentGame` which here is game 2 (game 1 is done) — wrong game for this
@@ -1478,27 +1512,83 @@ function sumAwarded(answers: AnswerRow[], _game: GameRow | null): number {
 
 function summarizeGame(
   answers: AnswerRow[],
-  _categories: CategoryRow[],
-  _gameId: string,
+  categories: CategoryRow[],
+  questionCategoryMap: Map<string, string>,
 ): {
   score: number;
   bestCategory: string;
   bestCategoryRatio: string;
   fastestSeconds: number;
 } {
-  // Aggregate across the answers we have. We don't have a category->name map
-  // joined here (it would need a questions lookup); the designer's defaults
-  // are reasonable for the brief "Wrapped" panel.
   const score = sumAwarded(answers, null);
   const correct = answers.filter((a) => a.is_correct === true);
   const fastestMs = correct.length
     ? Math.min(...correct.map((a) => a.ms_to_lock))
     : 0;
+
+  // Best category: group the player's answers by category, pick the bucket
+  // with the most correct answers (primary), most points (tiebreak 1), most
+  // attempts (tiebreak 2), alphabetical name (tiebreak 3 for determinism).
+  // If the question→category map hasn't loaded yet or the player has no
+  // answers at all, show "—" / "0/0" rather than a placeholder name that
+  // could mislead the player about what they played.
+  const perCategory = new Map<
+    string,
+    { correct: number; attempts: number; points: number }
+  >();
+  for (const a of answers) {
+    const categoryId = questionCategoryMap.get(a.question_id);
+    if (!categoryId) continue;
+    const bucket = perCategory.get(categoryId) ?? {
+      correct: 0,
+      attempts: 0,
+      points: 0,
+    };
+    bucket.attempts += 1;
+    if (a.is_correct === true) bucket.correct += 1;
+    bucket.points += a.awarded_points ?? 0;
+    perCategory.set(categoryId, bucket);
+  }
+
+  let bestCategoryId: string | null = null;
+  let bestBucket: { correct: number; attempts: number; points: number } | null =
+    null;
+  for (const [categoryId, bucket] of perCategory) {
+    if (!bestBucket) {
+      bestCategoryId = categoryId;
+      bestBucket = bucket;
+      continue;
+    }
+    const better =
+      bucket.correct > bestBucket.correct ||
+      (bucket.correct === bestBucket.correct &&
+        bucket.points > bestBucket.points) ||
+      (bucket.correct === bestBucket.correct &&
+        bucket.points === bestBucket.points &&
+        bucket.attempts > bestBucket.attempts) ||
+      (bucket.correct === bestBucket.correct &&
+        bucket.points === bestBucket.points &&
+        bucket.attempts === bestBucket.attempts &&
+        (categories.find((c) => c.id === categoryId)?.name ?? "") <
+          (categories.find((c) => c.id === bestCategoryId)?.name ?? ""));
+    if (better) {
+      bestCategoryId = categoryId;
+      bestBucket = bucket;
+    }
+  }
+
+  const bestCategoryName = bestCategoryId
+    ? (categories.find((c) => c.id === bestCategoryId)?.name ?? "—")
+    : "—";
+  const bestCategoryRatio = bestBucket
+    ? `${bestBucket.correct}/${bestBucket.attempts}`
+    : "0/0";
+
   return {
     score,
-    bestCategory: "Music",
-    bestCategoryRatio: `${correct.length}/${answers.length || 7}`,
-    fastestSeconds: fastestMs > 0 ? Number((fastestMs / 1000).toFixed(1)) : 1.4,
+    bestCategory: bestCategoryName,
+    bestCategoryRatio,
+    fastestSeconds: fastestMs > 0 ? Number((fastestMs / 1000).toFixed(1)) : 0,
   };
 }
 
