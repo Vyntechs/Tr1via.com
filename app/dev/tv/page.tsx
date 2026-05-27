@@ -157,6 +157,24 @@ export default function TVGallery() {
               totalPlayers={2}
             />
           </Frame>
+          <Frame label="03c · Question · May/Storm + long prompt (combined regression case)">
+            <TVQuestion
+              themeKey="may"
+              seconds={18}
+              category="Local Madison"
+              value={500}
+              question="Which Wisconsin-born architect, famous for organic architecture, designed his only Wisconsin home in Madison?"
+              options={[
+                { n: 1, text: "Frank Lloyd Wright" },
+                { n: 2, text: "Louis Sullivan" },
+                { n: 3, text: "Eero Saarinen" },
+                { n: 4, text: "Daniel Burnham" },
+              ]}
+              marqueeChips={DEMO_MARQUEE_CHIPS}
+              spotlightedPlayerId="p2"
+              lockInAnnouncement="Priya locked in"
+            />
+          </Frame>
           <Frame label="04 · Reveal · correct">
             <TVReveal
               headerEyebrow="GAME 1 · GEOGRAPHY · 100 PTS"
