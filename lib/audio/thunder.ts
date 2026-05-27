@@ -87,14 +87,21 @@ export async function unlockThunder(): Promise<void> {
   }
 }
 
+// Kill switch: when true, playThunder is a no-op. Brandon's call
+// (2026-05-27) — no sound from any surface. May/Storm Lightning still
+// fires visually (it calls playThunder for the audio half of the
+// strike); the audio half is silenced here. Set to false to revive.
+// Typed as `boolean` (not literal `true`) so TypeScript still flow-
+// analyzes the implementation below as reachable.
+const SOUNDS_DISABLED: boolean = true;
+
 /**
- * Fire one thunder clap. Fully composes the sound graph and schedules it
- * relative to AudioContext.currentTime; the function returns immediately.
- *
- * Returns the absolute audio time the clap will START (after the delay),
- * useful for tests. Returns null if audio is unavailable.
+ * Fire one thunder clap — gated by SOUNDS_DISABLED. When the kill
+ * switch is true the function returns null immediately; when false it
+ * schedules the original sound graph (preserved for future revert).
  */
 export function playThunder(options: ThunderOptions): number | null {
+  if (SOUNDS_DISABLED) return null;
   const c = getThunderContext();
   if (!c || !masterGain) return null;
 

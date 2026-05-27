@@ -60,16 +60,20 @@ function getAudioContext(): AudioContext | null {
   }
 }
 
+// Kill switch: when true, every audio function in this module is a no-op.
+// Brandon's call (2026-05-27) — no sound effects play from any surface
+// (host laptop, venue TV, player phone). Set to false to revive sounds.
+// Typed as `boolean` (not literal `true`) so TypeScript still flow-analyzes
+// the implementation below as reachable.
+const SOUNDS_DISABLED: boolean = true;
+
 /**
- * Play the welcome chime: a 380ms two-note rising major third with a
- * warm sine+triangle blend. Fire-and-forget — resolves immediately,
- * audio plays asynchronously.
- *
- * Safe to call on every surface (host laptop, venue TV, player phone)
- * — each independent AudioContext means each surface plays its own
- * chime locally (no network round-trip).
+ * Play the welcome chime — gated by SOUNDS_DISABLED. When the kill
+ * switch is true the function returns immediately; when false it plays
+ * a 380ms two-note rising major third (preserved for future revert).
  */
 export function playWelcomeChime(): void {
+  if (SOUNDS_DISABLED) return;
   const ctx = getAudioContext();
   if (!ctx) return;
 
