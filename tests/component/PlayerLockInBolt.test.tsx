@@ -1,8 +1,12 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { PlayerLockInBolt } from "@/components/player/PlayerLockInBolt";
 
 describe("PlayerLockInBolt", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("renders nothing when `active` is false", () => {
     const { container } = render(<PlayerLockInBolt active={false} tint="#E64A8C" />);
     expect(container.querySelector("[data-testid='phone-bolt']")).toBeNull();
@@ -27,10 +31,10 @@ describe("PlayerLockInBolt", () => {
     );
     vi.advanceTimersByTime(750);
     expect(onComplete).toHaveBeenCalledOnce();
-    vi.useRealTimers();
   });
 
   it("respects prefers-reduced-motion (no flash overlay)", () => {
+    const originalMatchMedia = window.matchMedia;
     Object.defineProperty(window, "matchMedia", {
       writable: true,
       value: (q: string) => ({
@@ -40,7 +44,14 @@ describe("PlayerLockInBolt", () => {
         removeEventListener: () => {},
       }),
     });
-    const { container } = render(<PlayerLockInBolt active={true} tint="#E64A8C" />);
-    expect(container.querySelector("[data-testid='phone-bolt-flash']")).toBeNull();
+    try {
+      const { container } = render(<PlayerLockInBolt active={true} tint="#E64A8C" />);
+      expect(container.querySelector("[data-testid='phone-bolt-flash']")).toBeNull();
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        value: originalMatchMedia,
+      });
+    }
   });
 });

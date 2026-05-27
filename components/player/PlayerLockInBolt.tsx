@@ -12,7 +12,7 @@
 
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { generateBolt, type BoltSegment } from "@/components/system/lightning-bolt";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 
@@ -30,11 +30,16 @@ const BOLT_WIDTH = 80;
 export function PlayerLockInBolt({ active, tint, onComplete }: PlayerLockInBoltProps) {
   const reducedMotion = usePrefersReducedMotion();
 
+  const onCompleteRef = useRef(onComplete);
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+  });
+
   useEffect(() => {
     if (!active) return;
-    const handle = setTimeout(() => onComplete?.(), DURATION_MS);
+    const handle = setTimeout(() => onCompleteRef.current?.(), DURATION_MS);
     return () => clearTimeout(handle);
-  }, [active, onComplete]);
+  }, [active]);
 
   if (!active) return null;
 
@@ -87,7 +92,7 @@ export function PlayerLockInBolt({ active, tint, onComplete }: PlayerLockInBoltP
         <div
           data-testid="phone-bolt-flash"
           style={{
-            position: "fixed",
+            position: "absolute",
             inset: 0,
             background: `radial-gradient(circle at center, ${tint}55, transparent 70%)`,
             mixBlendMode: "screen",
@@ -116,9 +121,9 @@ export function PlayerLockInBolt({ active, tint, onComplete }: PlayerLockInBoltP
 
 function segmentsToSvgPath(segments: BoltSegment[]): string {
   if (segments.length === 0) return "";
-  const [first, ...rest] = segments;
+  const first = segments[0]!;
   return [
-    `M${first!.x1},${first!.y1}`,
+    `M${first.x1},${first.y1}`,
     ...segments.map((s) => `L${s.x2},${s.y2}`),
   ].join(" ");
 }
