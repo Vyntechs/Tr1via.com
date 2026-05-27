@@ -170,9 +170,6 @@ const MAX_STRIKES_PER_MINUTE = 30;
 const CORE_COLOR = "rgba(255, 255, 255, 1)";
 const INNER_GLOW_COLOR = "rgba(208, 232, 255, 0.9)";
 const OUTER_HALO_COLOR = "rgba(156, 123, 200, 0.4)";
-// Afterglow is composited in screen-blend with the theme accent.
-const AFTERGLOW_DEFAULT = "rgba(232, 196, 106, 0.18)";
-
 // Scene illumination — kept under 30% relative luminance shift.
 const SCENE_FLASH_PEAK_ALPHA = 0.28; // ~28% over the existing scene
 const SCENE_FLASH_FADE_IN_MS = 30;
