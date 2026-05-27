@@ -1,124 +1,115 @@
-# TR1VIA — Handoff (end of session 19, 2026-05-26 night, Heather-eve)
+# TR1VIA — Handoff (end of session 20, 2026-05-27 day-of, Heather goes live tonight)
 
-**Next session: read this → `MEMORY.md` (auto-loaded) → `CLAUDE.md` → `tasks/lessons.md` (grep for keywords matching task) → `tr1via-plan.md`.** Prior session handoffs in git history (session 18 at `ed0ae8c`, session 17 at `b5e8edf`, session 16 at `b5e8edf`).
+**Next session: read this → `MEMORY.md` (auto-loaded) → `CLAUDE.md` → `docs/superpowers/specs/2026-05-27-may-storm-lock-in-magic.md` → `docs/superpowers/plans/2026-05-27-may-storm-lock-in-magic.md` → `tasks/lessons.md` (grep keywords).** Prior session handoffs in git history (session 19 at `6179b0b`).
 
 ---
 
 ## Critical context
 
-**Heather goes live on tr1via.com TODAY, Wednesday 2026-05-27** at Soul Fire Pizza. Brandon spent session 19 sitting NEXT TO HER doing live E2E on the preview/prod site, surfacing bugs in real time. Real paying patrons within ~12 hours of this handoff.
+**Heather goes live on tr1via.com TONIGHT, Wednesday 2026-05-27** at Soul Fire Pizza. Real paying patrons. May/Storm theme is active.
 
-Total shipped tonight (session 19): **9 PRs**. All merged.
-
----
-
-## What landed this session (session 19) — all 9 PRs merged
-
-| PR | What |
-|---|---|
-| #41 | swap-image edit values persist (orphaned commit from earlier; Brandon merged) |
-| #42 | swap-image library renders real Pexels photos, not striped placeholders |
-| #43 | in-flight answer survival (localStorage) + WebSocket channel reconnect + 30-phone load scaffold |
-| #44 | Magic Welcome moment (3-surface sync, name slide + chime + sparkle + haptic, per-player color) |
-| #45 | Real procedural lightning for May storm (jagged bolts, multi-stage flash, scene illumination, thunder) |
-| #46 | Remove demo placeholder leak ("Devon"/"Iris"/"Priya" leaking into prod) + useRoom 15s heartbeat |
-| #47 | Host setup batch: regenerate-keeps-picks v1, click-to-edit category name, back button on pick page, delete-category trash icon + confirm modal |
-| #48 | Player phone question text auto-fit: no more `...` truncation, 18-28px scaling per device |
-| #49 | Theme month fallback: brand-new hosts auto-pick current month's theme (May→storm, etc.) |
-
-Also: SQL backfill on prod to set existing hosts + recent nights to `theme_key='may'` so Heather sees lightning immediately, without waiting for #49 to deploy. Non-destructive UPDATE, reversible.
+Session 20 was a **design session** for the next major feature — the "May/Storm Lock-In Magic." No implementation yet. The next session is **subagent-driven execution** of the implementation plan that was authored this session.
 
 ---
 
-## OPEN BUGS — pickup for session 20
+## What landed this session (session 20)
 
-These came in DURING Brandon's live E2E after #47 merged. Both still need fixing.
+| Artifact | Path | Branch | State |
+|---|---|---|---|
+| **Design spec** | `docs/superpowers/specs/2026-05-27-may-storm-lock-in-magic.md` | `spec/may-storm-lock-in-magic` | Committed, **local only** (not pushed) |
+| **Implementation plan** | `docs/superpowers/plans/2026-05-27-may-storm-lock-in-magic.md` | `spec/may-storm-lock-in-magic` | Committed, **local only** |
+| `.gitignore` update | `.gitignore` | `spec/may-storm-lock-in-magic` | `.superpowers/` ignored |
 
-### 1. Regenerate STILL wipes selected picks (REGRESSION/INCOMPLETE in #47)
+The brainstorm artifacts (HTML mockups Brandon clicked through) live at `.superpowers/brainstorm/3614-1779891112/` — gitignored, kept locally for reference.
 
-PR #47 added `lib/host/mergePickedAfterRefetch.ts` + a "your picks stay safe" banner. Brandon reports the bug is **still happening**: host picks 3 of the initial 20, clicks "Regenerate 20 more", picks vanish, count resets to 0.
+---
 
-Possible causes to investigate first session 20:
-- Brandon's browser may have been cached — verify the deployed code at tr1via.com actually includes the merge logic
-- The merge helper covers REFETCH cases, but maybe a different code path during regenerate still calls `setPickedIds(new Set())` directly
+## Feature summary — what the next session is building
+
+When the active theme is **May/Storm**, three coordinated changes ship:
+
+1. **Question timer 20s → 25s** (May only — AI prompt also updates to 25s for May generation)
+2. **Auto-scrolling scoreboard marquee** at the bottom of the TV (replaces today's lock-in pile) — sorted by score descending, join-order tiebreak
+3. **Per-player lightning ceremony on lock-in** — phone-side mini-bolt + strobe (~700ms), TV-side bolt strikes the player's chip in the marquee (calm/storm mode auto-switches by lock-in rate). Reuses existing `Lightning.tsx` with a new `tint` prop. Every lock-in is guaranteed a full ceremony (no exceptions).
+
+**Locked product decisions** (during brainstorm):
+- Speed bonus stays 5s window (easier to earn on 25s clock)
+- Theme changes blocked mid-game (server + UI)
+- Phone ceremony fires only after server confirm (DB is source of truth)
+- Pinned May theme triggers ceremony year-round (theme is trigger, not calendar)
+- +SPD badge appears on TV chip during strike (public bragging rights)
+- Phones have no audio (haptic + visual only — 30 phones × thunder = noise pollution)
+
+Full decision table is in the spec. Edge cases (stampede, network drops, missed broadcasts, etc.) are fully spec'd.
+
+---
+
+## Next session: execute the plan via subagent-driven development
+
+Brandon's explicit ask: **full agent-driven execution with TDD.** 21 tasks across 8 phases, each task is bite-sized TDD (write failing test → minimal implementation → commit). Plan at `docs/superpowers/plans/2026-05-27-may-storm-lock-in-magic.md`.
+
+**How to start:**
+1. `git checkout spec/may-storm-lock-in-magic`
+2. Branch off it for implementation: `git checkout -b feat/may-storm-lock-in-magic`
+3. Invoke the `superpowers:subagent-driven-development` skill
+4. Dispatch one subagent per task. Review the diff between each task before dispatching the next.
+
+**Realistic effort:** 2-4 focused days. NOT a one-session thing.
+
+**Rollout safety:** the entire feature is theme-gated. Non-May themes are unchanged. Heather can stay on May/Storm to get the magic, or any other theme to fall back to current behavior. Emergency override: `?theme=house` URL flag.
+
+---
+
+## OPEN BUGS — still un-fixed from session 19
+
+These were on `fix-regenerate-picks-and-dups` at session 19 end and remain there (WIP stashed and restored multiple times during session 20 but not addressed):
+
+### 1. Regenerate STILL wipes selected picks (REGRESSION/INCOMPLETE in PR #47)
+
+PR #47 added `lib/host/mergePickedAfterRefetch.ts`. Brandon reports the bug is **still happening**: host picks 3 of the initial 20, clicks "Regenerate 20 more", picks vanish, count resets to 0.
+
+Possible causes to investigate first:
+- Browser cache — verify the deployed code at tr1via.com actually includes the merge logic
+- A different code path during regenerate still calls `setPickedIds(new Set())` directly
 - The `regenerating` flag may not be wired through every state transition
-- Picks may live in TWO places — client `pickedIds` Set AND server `is_picked` rows — and the merge might restore one but not the other
+- Picks may live in TWO places (client `pickedIds` Set + server `is_picked` rows) — merge might restore one but not the other
 
-Files to look at:
-- `lib/host/mergePickedAfterRefetch.ts` (the new helper)
-- `app/host/setup/[nightId]/pick/[categoryId]/HostSetupPickClient.tsx` (the callers, especially `handleRegenerate` and `refetchQuestions`)
-- The `regenerating` flag wire-up — search for it
+Files: `lib/host/mergePickedAfterRefetch.ts`, `app/host/setup/[nightId]/pick/[categoryId]/HostSetupPickClient.tsx`.
 
 ### 2. Duplicate questions across regenerate (NEW)
 
-When host clicks "Regenerate 20 more", **some of the new 20 are duplicates of the original 20** — exact same prompt + options + correct answer. This is a server-side issue: `runGenerationJob` in `app/api/categories/[id]/generate/route.ts` calls `generateQuestions({ topic, flavor, difficulty, count: 20 })` without telling the AI what's already been generated for this category.
+When host clicks "Regenerate 20 more", **some of the new 20 are duplicates** of the original 20 — exact same prompt + options + correct answer. Server-side issue: `runGenerationJob` in `app/api/categories/[id]/generate/route.ts` calls `generateQuestions({ topic, flavor, difficulty, count: 20 })` without an "already-generated" exclude list.
 
-Fix path:
-- Before calling the AI, fetch existing question prompts for this category from the DB
-- Pass them in as an "exclude" list in the prompt: "Do NOT repeat any of these {N} questions: ..."
-- Verify with a few regenerates that the new 20 are actually novel
+Fix path: fetch existing question prompts for the category, pass as exclude list to the AI prompt.
 
-File: `app/api/categories/[id]/generate/route.ts` (the `runGenerationJob` function around line 136-234).
+**Both bugs are unrelated to the May/Storm work** — they can be fixed on `fix-regenerate-picks-and-dups` in parallel or after.
 
 ---
 
-## Current state on prod (verified at session-19 close)
+## Working tree state (end of session 20)
 
-- tr1via.com aliased to deploy `l7u26gvqu` (Ready, 34s build) — contains PRs #47 + #48
-- Latest deploy `g3i9u4cpq` (PR #49 theme fallback) was building at session close, should be live shortly
-- Soul Fire Pizza nights (`HB85QY`, `DKYCSG`) cleaned up where created; the original test night may still exist
-- All hosts: `default_theme_key='may'`
-- All recent nights: `theme_key='may'`
-
----
-
-## Architecture additions worth knowing
-
-- **`lib/realtime/channelHealth.ts`** (PR #43) — module-level pub/sub for Realtime channel state. `useChannelHealth()` hook + `setChannelHealth(state)` setter. Bridges useRoom (route-level) to ConnectionRibbonProvider (layout-level).
-- **`lib/audio/welcomeChime.ts`** (PR #44) + **`lib/audio/thunder.ts`** (PR #45) — first Web Audio in the codebase. Procedural synthesis (no audio files shipped). Lazy AudioContext, gated on user gesture for iOS.
-- **`lib/player/playerColor.ts`** (PR #44) — deterministic FNV-1a hash → 10-color palette. Same algorithm server + client so welcome event color matches roster color.
-- **`components/system/Lightning.tsx`** + **`components/system/lightning-bolt.ts`** (PR #45) — procedural bolt geometry (midpoint displacement + branching). Module-level `fireLightningBeat()` event emitter so callsites (TVFinaleWinner, HostLiveConsole, section-complete) can trigger close strikes without prop-drilling. Dev verification at `/dev/system` section 11a.
-- **`lib/hooks/useAutoFitText.ts`** (PR #48) — probes candidate font sizes from largest down, picks first that fits. ResizeObserver re-fits on orientation change.
+- **Active branch:** `fix-regenerate-picks-and-dups` (the regenerate-picks WIP, unfixed)
+- **Modified files:** `app/host/setup/[nightId]/pick/[categoryId]/HostSetupPickClient.tsx`, `lib/ai/generate-questions.ts`
+- **Untracked files:** screenshots, validation scripts, `.superpowers/` (gitignored), `tasks/`, `.claude/`, etc.
+- **Local-only branches:** `spec/may-storm-lock-in-magic` (with the spec + plan + .gitignore update)
+- **Nothing pushed yet** for session 20 work — the spec/plan PR is queued for review
 
 ---
 
-## Workflow notes carried forward
+## Push checklist (when ready)
 
-- **PR-first always.** Brandon merges. Never push to main directly.
-- **Plain English everywhere.** Brandon is non-technical himself.
-- **Validate, don't just claim** — drive the user-visible flow, not just unit tests.
-- **Build without asking** for engineering decisions when spec exists. Ask only on product/intent ambiguity.
-- **Watch deploy state after merge** — session 19 hit a stuck Vercel "Initializing" for 15+ minutes after PR #46 merged. CLI redeploy from main fixed it. Pattern: check `vercel ls --prod` after a merge; if a deploy is stuck, run `vercel --prod --yes` from a clean main checkout.
-- **No destructive ops on prod DB without explicit ask.** UPDATE backfills like the May theme one are OK; DELETE/DROP are not.
-- **For repeat bug investigation, dispatch parallel research agents** (per memory `feedback_parallel_research_agents`) — don't sit and guess.
+1. `git push -u origin spec/may-storm-lock-in-magic`
+2. Open PR: spec + plan + .gitignore. Title: "docs: May/Storm lock-in magic — design + plan." Description should reference the spec doc + note the implementation branch will be `feat/may-storm-lock-in-magic`.
+3. After spec PR merges, base `feat/may-storm-lock-in-magic` off `main`, execute the plan.
 
 ---
 
-## Session 19 build agents (background, all completed clean)
+## Key files / pointers
 
-Three agents ran in parallel worktrees, each opened its own PR. All merged.
-- Magic Welcome agent → #44
-- Lightning agent → #45
-- Host setup batch agent → #47
-- Player phone responsive agent → #48
-
-If session 20 needs to dispatch more agents, use `isolation: "worktree"` to avoid stepping on each other.
-
----
-
-## Resumption prompt for session 20
-
-After `/clear`, type:
-
-> **read HANDOFF.md — Heather went live last night. Two regenerate bugs need fixing.**
-
-Expected next-session action: investigate why PR #47's regenerate-keeps-picks didn't fully land for Brandon, then ship a follow-up. Then add the AI exclude-list for duplicate prevention. Then capture how the actual go-live went from Brandon's report.
-
----
-
-## Skipped/Failed (per workflow §7, even when "None")
-
-- **2 regenerate bugs above.** Out of session 19 scope (Brandon called timeout for handoff). Next session.
-- **PR #47's incomplete fix.** Already documented above as bug #1.
-- **`prod-ui-smoke.spec.ts` still failing** with stale button text from PR #28 (`/send sign-in link/i` vs actual `Sign in →`). Pre-existing, blocks the smoke CI but not deploys. Tiny one-line fix when convenient.
-- **Working-tree cleanup** — `.claude/worktrees/agent-*` directories exist from background agents. Not committed (in `.gitignore`-equivalent state). Can be removed via `rm -rf .claude/worktrees/agent-*` whenever.
+- Spec: `docs/superpowers/specs/2026-05-27-may-storm-lock-in-magic.md`
+- Plan: `docs/superpowers/plans/2026-05-27-may-storm-lock-in-magic.md`
+- Existing theme registry to mirror: `components/system/Weather.tsx`
+- Existing Lightning component (extend with `tint`): `components/system/Lightning.tsx`
+- Existing player color palette: `lib/player/playerColor.ts`
+- Full-flow prod validator (must pass post-implementation): `scripts/full-flow-prod.mjs`
+- Lessons file (grep at session start): `tasks/lessons.md`
