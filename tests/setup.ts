@@ -37,3 +37,17 @@ afterEach(() => {
     window.localStorage.clear();
   }
 });
+
+// jsdom doesn't ship ResizeObserver. useAutoFitText (player question
+// auto-fit) uses it to re-measure on orientation change; tests just need
+// the constructor + observe/disconnect surface to exist so the hook can
+// install/cleanup its observer without throwing.
+if (typeof globalThis.ResizeObserver === "undefined") {
+  class ResizeObserverStub {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as unknown as { ResizeObserver: typeof ResizeObserverStub }).ResizeObserver =
+    ResizeObserverStub;
+}
