@@ -26,12 +26,16 @@
 
 import { use } from "react";
 import { TVSectionComplete, TVStateMachine } from "@/components/tv";
-import { ThemeProvider } from "@/components/system";
+import { ThemeProvider, WELCOME_OVERLAY_DURATION_MS } from "@/components/system";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { formatRoomCode } from "@/lib/game/room-code";
-import { useTVRoom } from "@/lib/hooks/useTVRoom";
+import { useTVRoom, type TVBroadcast, type TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
+import { useEffect, useState } from "react";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { playWelcomeChime } from "@/lib/audio/welcomeChime";
+import type { TVLobbyWelcomeEvent } from "@/components/tv";
 
 export default function TVPage({
   params,
@@ -71,6 +75,11 @@ export default function TVPage({
   const broadcastServerNow =
     lastBroadcast?.event === "reveal" ? lastBroadcast.serverNow ?? null : null;
 
+  // Magic-Welcome: lift the `player-joined` broadcast into a short-lived
+  // overlay event the lobby renders. Owns the mount/unmount lifecycle so
+  // the lobby component stays pure.
+  const welcomeEvent = useTVWelcomeEvent(lastBroadcast, snapshot.players);
+
   return (
     <ThemeProvider themeKey={themeKey}>
       <TVStageFrame>
@@ -78,11 +87,66 @@ export default function TVPage({
           snapshot={snapshot}
           lastBroadcastRevealedAt={broadcastRevealedAt}
           lastBroadcastServerNow={broadcastServerNow}
+          welcomeEvent={welcomeEvent}
         />
         <SectionCompleteOverlay snapshot={snapshot} />
       </TVStageFrame>
     </ThemeProvider>
   );
+}
+
+/**
+ * Lifts `useTVRoom`'s `lastBroadcast` (which carries the `player-joined`
+ * event) into a UI-shaped welcome event, holds it for ~3 seconds, then
+ * unmounts. Also plays the chime locally on the TV the moment a join
+ * lands.
+ */
+function useTVWelcomeEvent(
+  lastBroadcast: TVBroadcast | null,
+  players: TVSnapshot["players"],
+): TVLobbyWelcomeEvent | null {
+  const [event, setEvent] = useState<TVLobbyWelcomeEvent | null>(null);
+  const reduced = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (!lastBroadcast || lastBroadcast.event !== "player-joined") return;
+    if (!lastBroadcast.playerId || !lastBroadcast.displayName) return;
+    // joinIndex = 1-based position in the join queue. We approximate by
+    // counting how many roster entries already exist when this broadcast
+    // arrives — players is updated by useTVRoom's snapshot refetch but
+    // may lag the broadcast by one render tick, so worst case we
+    // off-by-one (sparkle on player 6 instead of 5). Acceptable.
+    const idx = Math.max(1, (players?.length ?? 0));
+    setEvent({
+      playerId: lastBroadcast.playerId,
+      name: lastBroadcast.displayName,
+      colorKey: lastBroadcast.colorKey,
+      joinIndex: idx,
+      prefersReducedMotion: reduced,
+    });
+    // Local chime on the TV — the host's HDMI'd laptop will play this
+    // through the venue speakers. Best-effort.
+    try {
+      playWelcomeChime();
+    } catch {
+      /* silent */
+    }
+    const handle = window.setTimeout(() => setEvent(null), WELCOME_OVERLAY_DURATION_MS);
+    return () => window.clearTimeout(handle);
+    // Trigger off the broadcast's identity. `serverNow` changes per emit;
+    // playerId changes per joiner — either is sufficient to detect a new
+    // welcome.
+  }, [
+    lastBroadcast?.event,
+    lastBroadcast?.playerId,
+    lastBroadcast?.serverNow,
+    // Intentionally omit `players` and `reduced` from the deps — they're
+    // read at trigger time, and we don't want a roster mutation to
+    // remount the welcome.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ]);
+
+  return event;
 }
 
 function SectionCompleteOverlay({

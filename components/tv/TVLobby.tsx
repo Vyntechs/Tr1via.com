@@ -15,8 +15,29 @@ import {
   QRBlock,
   ThemeProvider,
   useTheme,
+  WelcomeOverlay,
 } from "@/components/system";
+import { colorHexFromKey, playerColorHex } from "@/lib/player/playerColor";
 import type { ThemeKey } from "@/lib/theme/tokens";
+
+export interface TVLobbyWelcomeEvent {
+  /** Stable id of the joining player — also the React key for the overlay. */
+  playerId: string;
+  /** Display name to render on the slide-in tile. */
+  name: string;
+  /** Hex color for the tile + dot. Either passed in directly OR derived
+   *  from `colorKey` if absent. */
+  color?: string;
+  /** Optional palette index; preferred when `color` is omitted so all
+   *  surfaces agree without re-hashing. */
+  colorKey?: number;
+  /** 1-based index of where this player landed in the night's join order.
+   *  Joins 1..5 get the sparkle trail ("Pixar hero entrance"); 6+ get
+   *  just the slide so the lobby breathes as it fills. */
+  joinIndex: number;
+  /** Honor reduced-motion (the parent already feature-detects). */
+  prefersReducedMotion?: boolean;
+}
 
 export interface TVLobbyProps {
   themeKey?: ThemeKey;
@@ -30,12 +51,21 @@ export interface TVLobbyProps {
   inRoomCount?: number;
   /** Player names ordered most-recent first (the front of the roster glows). */
   roster?: string[];
+  /** Optional player ids matched 1:1 with `roster` — when provided, the
+   *  most-recent entry can be tinted with the player's color (the rest
+   *  fall back to theme colors). */
+  rosterPlayerIds?: string[];
   /** Full URL the QR encodes — usually `${SITE_URL}/join?code=K9PR4M`. */
   joinUrl?: string;
   /** Footer copy: who's running this and what game is next. */
   hostStatusLine?: string;
   /** Game N of M, header right side. */
   gameStatusLine?: string;
+  /** Optional "someone just joined" event. When set, the slide-in welcome
+   *  overlay renders on top of the lobby. The parent owns the lifecycle
+   *  — pass a new object (new key) to trigger a new welcome moment;
+   *  pass `null` to hide it. */
+  welcomeEvent?: TVLobbyWelcomeEvent | null;
 }
 
 export function TVLobby({ themeKey, ...rest }: TVLobbyProps) {
@@ -61,11 +91,19 @@ function TVLobbyInner({
   roomCode = "K9·PR4M",
   inRoomCount = 27,
   roster = DEMO_ROSTER,
+  rosterPlayerIds,
   joinUrl = "https://tr1via.com/join/K9PR4M",
   hostStatusLine = "ROOM OPEN · LINDA WILL START WHEN READY",
   gameStatusLine = "GAME 1 OF 2 · WAITING",
+  welcomeEvent = null,
 }: Omit<TVLobbyProps, "themeKey">) {
   const { t } = useTheme();
+
+  // Per-player color for the front-most roster entry — the just-joined name
+  // glows in the player's hex instead of the theme accent so the welcome
+  // tile and the roster row read as the same person.
+  const headlinePlayerId = rosterPlayerIds?.[0] ?? null;
+  const headlineColor = headlinePlayerId ? playerColorHex(headlinePlayerId) : t.accent;
 
   return (
     <TVStage data-testid="tv-lobby">
@@ -210,7 +248,12 @@ function TVLobbyInner({
                   style={{
                     fontSize: 15,
                     fontWeight: i < 3 ? 700 : 500,
-                    color: i < 3 ? (i === 0 ? t.accent : t.ink) : t.inkMid,
+                    color:
+                      i === 0
+                        ? headlineColor
+                        : i < 3
+                          ? t.ink
+                          : t.inkMid,
                     opacity: i < 8 ? 1 : 0.7 - (i / roster.length) * 0.4,
                     animation: i < 3
                       ? `tr1via-tick .6s cubic-bezier(.2,.7,.3,1) ${i * 0.08}s both`
@@ -226,6 +269,25 @@ function TVLobbyInner({
       </div>
 
       <TVFooter left={hostStatusLine} right={`TR1VIA.COM · ${roomCode}`} />
+
+      {welcomeEvent ? (
+        <WelcomeOverlay
+          /* The key forces a fresh mount each time a new player joins so
+             the entrance animation replays from frame 0 — without it,
+             back-to-back joins would skip the slide and just flash. */
+          key={welcomeEvent.playerId}
+          name={welcomeEvent.name}
+          color={
+            welcomeEvent.color ??
+            (welcomeEvent.colorKey !== undefined
+              ? colorHexFromKey(welcomeEvent.colorKey)
+              : playerColorHex(welcomeEvent.playerId))
+          }
+          isHeroEntrance={welcomeEvent.joinIndex <= 5}
+          prefersReducedMotion={welcomeEvent.prefersReducedMotion}
+          joinToken={welcomeEvent.playerId}
+        />
+      ) : null}
     </TVStage>
   );
 }

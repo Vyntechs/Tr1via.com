@@ -47,9 +47,12 @@ import { useRoom } from "@/lib/hooks/useRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
+import { playerColorHex } from "@/lib/player/playerColor";
+import { playWelcomeChime, triggerWelcomeHaptic } from "@/lib/audio/welcomeChime";
 import {
   formatRoomCode,
   isValidRoomCode,
@@ -465,14 +468,141 @@ function LobbyView({
   // surface "the host" generically until we wire host pull-through.
   const hostName = "the host";
 
+  // Magic-Welcome moment for THIS player on THEIR phone — color flash
+  // + chime + (Android) haptic, fired exactly once per join.
+  const showOwnWelcome = useOwnWelcomeMoment(me, snapshot.night?.id ?? null);
+
   return (
-    <PlayerLobby
-      playerName={me.display_name}
-      inRoomCount={snapshot.players.length}
-      newestNames={newest}
-      hostName={hostName}
-      venueName={snapshot.night?.venue_name ?? ""}
-    />
+    <>
+      <PlayerLobby
+        playerName={me.display_name}
+        inRoomCount={snapshot.players.length}
+        newestNames={newest}
+        hostName={hostName}
+        venueName={snapshot.night?.venue_name ?? ""}
+      />
+      {showOwnWelcome ? <OwnWelcomeFlash playerId={me.id} /> : null}
+    </>
+  );
+}
+
+/**
+ * Fires the joining player's OWN welcome moment exactly once per night
+ * per player. The first time `me` resolves on the room route, we play
+ * the chime + haptic and mount a brief color flash overlay.
+ *
+ * Gated by sessionStorage so reloading the room page doesn't refire
+ * the welcome. Cleared on session end (closing the browser tab) so a
+ * different player on the same device after the night ends still gets
+ * their own welcome the next time.
+ *
+ * Returns true while the color-flash overlay should render (~700ms).
+ */
+function useOwnWelcomeMoment(me: PlayerRow, nightId: string | null): boolean {
+  const [active, setActive] = useState(false);
+  const reduced = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (!nightId) return;
+    if (typeof window === "undefined") return;
+    const key = `tr1via:welcome:${nightId}:${me.id}`;
+    try {
+      if (window.sessionStorage.getItem(key) === "1") return;
+      window.sessionStorage.setItem(key, "1");
+    } catch {
+      // sessionStorage can throw in privacy modes — still play the
+      // welcome, just don't suppress duplicate fires.
+    }
+
+    // Color flash + chime + haptic. Chime runs through the lazy
+    // Web Audio context — iOS needs a recent user gesture, and the
+    // /join → POST → /room redirect chain preserves that gesture
+    // attribution within the same tab session.
+    try {
+      playWelcomeChime();
+    } catch {
+      /* silent */
+    }
+    triggerWelcomeHaptic();
+    setActive(true);
+    const dur = reduced ? 400 : 700;
+    const handle = window.setTimeout(() => setActive(false), dur);
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me.id, nightId]);
+
+  return active;
+}
+
+/**
+ * A 700ms full-screen color wash with the player's color, captioned
+ * "You're in. The room sees you." Fades in over 80ms and out over
+ * 280ms. On iOS where the haptic is absent, this carries more visual
+ * weight (per the brief).
+ */
+function OwnWelcomeFlash({ playerId }: { playerId: string }) {
+  const color = playerColorHex(playerId);
+  return (
+    <div
+      data-testid="own-welcome-flash"
+      aria-hidden="true"
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 90,
+        background: color,
+        color: "#0E0805",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        pointerEvents: "none",
+        animation: "tr1via-own-welcome 700ms ease-out forwards",
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-sans)",
+          fontWeight: 700,
+          fontSize: 28,
+          letterSpacing: "-0.02em",
+          textAlign: "center",
+          padding: "0 28px",
+          opacity: 0,
+          animation: "tr1via-own-welcome-text 700ms ease-out forwards",
+          animationDelay: "60ms",
+        }}
+      >
+        You&rsquo;re in.
+        <br />
+        <span style={{ fontWeight: 500, color: "rgba(14,8,5,.78)" }}>
+          The room sees you.
+        </span>
+      </div>
+      <style>{`
+        @keyframes tr1via-own-welcome {
+          0%   { opacity: 0; }
+          12%  { opacity: 1; }
+          60%  { opacity: 1; }
+          100% { opacity: 0; }
+        }
+        @keyframes tr1via-own-welcome-text {
+          0%   { opacity: 0; transform: translateY(6px); }
+          30%  { opacity: 1; transform: translateY(0); }
+          80%  { opacity: 1; transform: translateY(0); }
+          100% { opacity: 0; transform: translateY(-4px); }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          [data-testid="own-welcome-flash"] {
+            animation: tr1via-own-welcome-instant 700ms linear forwards !important;
+          }
+          @keyframes tr1via-own-welcome-instant {
+            0%, 90% { opacity: 1; }
+            100%    { opacity: 0; }
+          }
+        }
+      `}</style>
+    </div>
   );
 }
 
