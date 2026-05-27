@@ -182,7 +182,7 @@ function HostGenPickInner({
     return map;
   }, [pickedQs]);
   return (
-    <LaptopShell title={shellTitle}>
+    <LaptopShell>
       <div style={{ padding: "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
           {onBack && (

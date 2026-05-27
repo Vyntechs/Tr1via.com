@@ -34,7 +34,7 @@ function HostGenImageUploadReadyInner() {
   const { t } = useTheme();
   const cc = categoryColor("Movies", t.accent);
   return (
-    <LaptopShell title="upload · pixar movies · q6">
+    <LaptopShell>
       <div style={{ padding: "24px 56px 0", flex: 1, overflow: "hidden", display: "grid", gridTemplateColumns: "1fr 380px", gap: 36 }}>
         <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <Eyebrow color={t.correct} size={11}>UPLOADED · PARIS-EIFFEL-2024.JPG</Eyebrow>

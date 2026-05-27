@@ -145,7 +145,7 @@ function HostDashboardInner({
   }
 
   return (
-    <LaptopShell title="tr1via.com / host">
+    <LaptopShell>
       <div
         data-testid="host-dashboard"
         style={{

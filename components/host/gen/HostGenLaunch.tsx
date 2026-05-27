@@ -35,7 +35,7 @@ function HostGenLaunchInner() {
   const g1 = ["Geography", "Music", "Animals", "Pixar Movies", "Food", "Local Madison"];
   const g2 = ["History", "Sports", "Movies", "90s Songs", "Science", "Cocktails"];
   return (
-    <LaptopShell title="both boards ready · soul fire pizza">
+    <LaptopShell>
       <div style={{ padding: "32px 56px 0", flex: 1, display: "grid", gridTemplateColumns: "1fr 320px", gap: 40, overflow: "hidden" }}>
         <div style={{ display: "flex", flexDirection: "column" }}>
           <Eyebrow color={t.accent} size={11}>READY · 00:54 ELAPSED</Eyebrow>

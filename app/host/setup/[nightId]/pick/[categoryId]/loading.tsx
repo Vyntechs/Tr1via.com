@@ -9,7 +9,7 @@ import { Eyebrow } from "@/components/system/Eyebrow";
 
 export default function HostSetupPickLoading() {
   return (
-    <LaptopShell title="tr1via.com / host / setup / pick">
+    <LaptopShell>
       <div
         style={{
           flex: 1,

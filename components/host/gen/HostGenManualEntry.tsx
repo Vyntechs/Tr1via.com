@@ -176,7 +176,7 @@ function HostGenManualEntryInner({
   }
 
   return (
-    <LaptopShell title={shellTitle}>
+    <LaptopShell>
       <div
         style={{
           padding: "20px 56px 14px",

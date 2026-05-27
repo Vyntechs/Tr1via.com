@@ -8,7 +8,7 @@ import { EmptyState } from "@/components/system/EmptyState";
 
 export default function HostNotFound() {
   return (
-    <LaptopShell title="tr1via.com / host">
+    <LaptopShell>
       <div
         style={{
           flex: 1,
