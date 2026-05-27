@@ -77,7 +77,7 @@ Shapes that DO NOT work:
   - Trick questions with technically-true gotchas — frustrating, not fun
   - Questions whose answer is obvious from the question's wording
   - Two-part questions ("which of these did X and also Y") — too long to
-    read on TV in 20 seconds
+    read on TV under time pressure
 
 ## Every option must be the same kind of thing the prompt asks for
 
