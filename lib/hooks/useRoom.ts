@@ -68,7 +68,10 @@ export interface RoomSnapshot {
 }
 
 export interface BroadcastTag {
-  event: "reveal" | "undo" | "resolve" | "end-early";
+  event: "reveal" | "undo" | "resolve" | "end-early" | "player-joined";
+  /** Question id for reveal/undo/resolve/end-early; empty string for
+   *  player-joined (which is keyed on a playerId instead). Kept on the
+   *  union so existing consumers don't have to narrow before reading. */
   questionId: string;
   /** Server's "now" at broadcast time. ISO string. */
   serverNow: string;
@@ -78,6 +81,14 @@ export interface BroadcastTag {
   correctIndex?: number;
   /** Resolve-specific: per-player award rows. */
   awards?: Array<{ playerId: string; awarded: number; isCorrect: boolean }>;
+  /** player-joined specific: the new player's id. */
+  playerId?: string;
+  /** player-joined specific: the joined display name. */
+  displayName?: string;
+  /** player-joined specific: deterministic palette index (see lib/player/playerColor.ts). */
+  colorKey?: number;
+  /** player-joined specific: ISO timestamp the row was inserted. */
+  joinedAt?: string;
 }
 
 const EMPTY: RoomSnapshot = {
@@ -405,6 +416,23 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           // into PlayerJoinGame2 for game 1, or the post-night flow for
           // game 2). Doesn't need a questionId — game-level wake-up.
           void refreshLiveState(nightId);
+        })
+        .on("broadcast", { event: "player-joined" }, (msg) => {
+          // Magic-Welcome wake-up. Tags the lastBroadcast so the host live
+          // console can fire the slide-in tile + chime within ~300ms of
+          // the join — postgres_changes for the players row will land
+          // shortly after and refresh the durable roster.
+          const p = msg.payload as Record<string, unknown>;
+          mergeBroadcast({
+            event: "player-joined",
+            questionId: "",
+            serverNow: String(p.serverNow ?? ""),
+            playerId: typeof p.playerId === "string" ? p.playerId : undefined,
+            displayName:
+              typeof p.displayName === "string" ? p.displayName : undefined,
+            colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
+            joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
+          });
         })
         .subscribe((status) => {
           broadcastChannelState = status;

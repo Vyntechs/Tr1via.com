@@ -124,11 +124,18 @@ export interface TVSnapshot {
 }
 
 export interface TVBroadcast {
-  event: "reveal" | "undo" | "resolve" | "end-early";
+  event: "reveal" | "undo" | "resolve" | "end-early" | "player-joined";
+  /** Question id for reveal/undo/resolve/end-early; empty string for
+   *  player-joined. */
   questionId: string;
   serverNow: string;
   revealedAt?: string;
   correctIndex?: number;
+  /** player-joined-specific. */
+  playerId?: string;
+  displayName?: string;
+  colorKey?: number;
+  joinedAt?: string;
 }
 
 export type TVRoomStatus = "loading" | "ready" | "not-found" | "error";
@@ -230,6 +237,24 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         // No questionId — this is a game-level state flip. Refresh the
         // snapshot so the TV moves to intermission (game 1) or finale
         // (game 2) immediately instead of waiting on the 4s safety poll.
+        void fetchSnapshot();
+      })
+      .on("broadcast", { event: "player-joined" }, (msg) => {
+        // Magic-Welcome wake-up for the TV — fires within ~300ms of the
+        // join (4s ahead of the safety poll). We refresh the snapshot
+        // immediately so the JUST-JOINED roster includes the new
+        // player by the time the welcome tile lands.
+        const p = msg.payload as Record<string, unknown>;
+        setLastBroadcast({
+          event: "player-joined",
+          questionId: "",
+          serverNow: String(p.serverNow ?? ""),
+          playerId: typeof p.playerId === "string" ? p.playerId : undefined,
+          displayName:
+            typeof p.displayName === "string" ? p.displayName : undefined,
+          colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
+          joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
+        });
         void fetchSnapshot();
       })
       .subscribe();

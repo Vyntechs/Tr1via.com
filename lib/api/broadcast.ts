@@ -24,7 +24,13 @@
 
 import "server-only";
 
-export type RoomEventName = "reveal" | "undo" | "resolve" | "end-early" | "game-ended";
+export type RoomEventName =
+  | "reveal"
+  | "undo"
+  | "resolve"
+  | "end-early"
+  | "game-ended"
+  | "player-joined";
 export type CategoryEventName =
   | "question_added"
   | "photo_attached"
@@ -95,6 +101,40 @@ export async function broadcastToRoom(
       topic: `room:${roomCode}`,
       event,
       payload: payload as unknown as Record<string, unknown>,
+    },
+  ]);
+}
+
+/**
+ * Broadcast that a new player just joined the night. Carries the new player's
+ * id, display name, joined-at, and a stable color key so every surface
+ * (TV, host live console, the joining player's own phone) lights up the
+ * "magic welcome" moment within ~300ms — without waiting on the 4-second
+ * snapshot poll that useTVRoom uses as a fallback.
+ *
+ * Best-effort. If the broadcast fails, the persistent state (the inserted
+ * players row) will still propagate via postgres_changes / the safety poll.
+ */
+export async function broadcastPlayerJoined(
+  roomCode: string,
+  player: {
+    id: string;
+    displayName: string;
+    joinedAt: string;
+    colorKey: number;
+  },
+): Promise<void> {
+  await postBroadcasts([
+    {
+      topic: `room:${roomCode}`,
+      event: "player-joined",
+      payload: {
+        playerId: player.id,
+        displayName: player.displayName,
+        joinedAt: player.joinedAt,
+        colorKey: player.colorKey,
+        serverNow: new Date().toISOString(),
+      },
     },
   ]);
 }

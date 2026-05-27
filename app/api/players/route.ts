@@ -16,6 +16,8 @@ import { CreatePlayerSchema } from "@/lib/api/schemas";
 import { badRequest, ok, serverError, unauthorized, notFound, forbidden } from "@/lib/api/responses";
 import { getDeviceId } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { broadcastPlayerJoined } from "@/lib/api/broadcast";
+import { playerColorKey } from "@/lib/player/playerColor";
 
 export async function POST(req: NextRequest) {
   const deviceId = await getDeviceId();
@@ -34,14 +36,28 @@ export async function POST(req: NextRequest) {
 
   // Pre-flight: the night must exist, not be closed, and not be locked.
   // (Lock = host's "private game" toggle; closed = night is over.)
+  // We also pull `room_code` so the player-joined broadcast below can
+  // address the right channel without a second lookup.
   const { data: night } = await admin
     .from("nights")
-    .select("id, is_locked, closed_at")
+    .select("id, room_code, is_locked, closed_at")
     .eq("id", parsed.data.nightId)
     .maybeSingle();
   if (!night) return notFound("night not found");
   if (night.closed_at) return forbidden("night is over");
   if (night.is_locked) return forbidden("room is locked");
+
+  // Detect first-time joins vs rejoins. Hitting the table BEFORE the upsert
+  // lets the welcome broadcast fire ONLY when the player is genuinely new
+  // — a returning player on the same device shouldn't trigger a second
+  // welcome moment on the TV when they reload the page.
+  const { data: existing } = await admin
+    .from("players")
+    .select("id")
+    .eq("night_id", parsed.data.nightId)
+    .eq("device_id", deviceId)
+    .maybeSingle();
+  const isFirstJoin = !existing;
 
   // Upsert keyed on the unique (night_id, device_id). On conflict, refresh
   // display_name + last_seen_at so the player object is current.
@@ -64,6 +80,31 @@ export async function POST(req: NextRequest) {
     .single();
   if (error || !player) {
     return serverError(error?.message ?? "could not join");
+  }
+
+  // Magic-Welcome broadcast — fire-and-forget. The TV's safety poll and
+  // the player-row postgres_changes are still the source of truth; this
+  // is purely the "wake up everyone NOW" signal so the slide-in tile,
+  // gold-glow stinger, and chime can fire within ~300ms of the scan.
+  //
+  // We only emit on the first join for this (night, device) so that a
+  // page reload from a returning player doesn't trigger a duplicate
+  // welcome moment on the TV.
+  if (isFirstJoin && night.room_code) {
+    const colorKey = playerColorKey(player.id);
+    try {
+      await broadcastPlayerJoined(night.room_code, {
+        id: player.id,
+        displayName: player.display_name,
+        joinedAt: player.joined_at,
+        colorKey,
+      });
+    } catch (e) {
+      // Best-effort: the durable players row already landed; the welcome
+      // overlay will just lag by up to the TV safety-poll interval. Don't
+      // fail the join.
+      console.warn("broadcast player-joined failed", e);
+    }
   }
 
   // Auto-opt into game 1 if it exists and isn't done. The player tapping

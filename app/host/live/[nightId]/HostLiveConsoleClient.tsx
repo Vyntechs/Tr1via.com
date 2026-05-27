@@ -23,7 +23,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useRoom } from "@/lib/hooks/useRoom";
+import { useRoom, type BroadcastTag } from "@/lib/hooks/useRoom";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
   AddLatecomerModal,
@@ -36,9 +36,14 @@ import type {
   QuestionRow,
   GameRow,
   GameScoreRow,
+  PlayerRow,
 } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
+import { WELCOME_OVERLAY_DURATION_MS } from "@/components/system";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { playWelcomeChime } from "@/lib/audio/welcomeChime";
+import type { TVLobbyWelcomeEvent } from "@/components/tv";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -248,6 +253,13 @@ export function HostLiveConsoleClient({
       ? room.lastBroadcast.serverNow
       : null;
 
+  // Magic-Welcome event for the embedded TV panel. Lifts the
+  // `player-joined` broadcast into a UI-shaped event, holds for ~3s,
+  // then unmounts. The host's HDMI'd laptop shows BOTH this overlay AND
+  // the venue TV's overlay — they fire from the same broadcast so they
+  // stay in sync.
+  const welcomeEvent = useHostWelcomeEvent(room.lastBroadcast, room.players);
+
   // ── action handlers ──────────────────────────────────────────────────
   async function handleReveal(questionId: string) {
     if (!currentGame) return;
@@ -432,6 +444,7 @@ export function HostLiveConsoleClient({
         tvSnapshot={tvSnapshot}
         tvLastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
         tvLastBroadcastServerNow={tvLastBroadcastServerNow}
+        welcomeEvent={welcomeEvent}
       />
       {adjusting && (
         <AdjustPointsModal
@@ -498,4 +511,49 @@ function formatAppOff(seconds: number): string {
   const m = Math.floor(seconds / 60);
   const s = Math.floor(seconds % 60);
   return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
+
+/**
+ * Same shape as the standalone /tv/[code] route's welcome hook, but reads
+ * from `useRoom` (host surface) instead of `useTVRoom`. Holds the welcome
+ * event for ~3s after a `player-joined` broadcast, then unmounts. Also
+ * plays the chime locally so the host's HDMI'd laptop drives the venue
+ * audio.
+ */
+function useHostWelcomeEvent(
+  lastBroadcast: BroadcastTag | null,
+  players: PlayerRow[],
+): TVLobbyWelcomeEvent | null {
+  const [event, setEvent] = useState<TVLobbyWelcomeEvent | null>(null);
+  const reduced = usePrefersReducedMotion();
+
+  useEffect(() => {
+    if (!lastBroadcast || lastBroadcast.event !== "player-joined") return;
+    if (!lastBroadcast.playerId || !lastBroadcast.displayName) return;
+    const idx = Math.max(1, players.length);
+    setEvent({
+      playerId: lastBroadcast.playerId,
+      name: lastBroadcast.displayName,
+      colorKey: lastBroadcast.colorKey,
+      joinIndex: idx,
+      prefersReducedMotion: reduced,
+    });
+    try {
+      playWelcomeChime();
+    } catch {
+      /* silent */
+    }
+    const handle = window.setTimeout(
+      () => setEvent(null),
+      WELCOME_OVERLAY_DURATION_MS,
+    );
+    return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    lastBroadcast?.event,
+    lastBroadcast?.playerId,
+    lastBroadcast?.serverNow,
+  ]);
+
+  return event;
 }
