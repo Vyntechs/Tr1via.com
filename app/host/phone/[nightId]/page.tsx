@@ -12,6 +12,7 @@
 
 import { notFound, redirect } from "next/navigation";
 import { requireOwnedNight } from "@/lib/api/auth";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { HostPhoneClient } from "./HostPhoneClient";
 
 export const dynamic = "force-dynamic";
@@ -32,6 +33,7 @@ export default async function HostPhonePage({
       nightId={owned.night.id}
       roomCode={owned.night.room_code}
       hostName={owned.host.display_name}
+      themeKey={resolveTheme(owned.night, owned.host)}
     />
   );
 }

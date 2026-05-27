@@ -27,6 +27,19 @@ import {
   DEMO_PODIUM,
   DEMO_STATS,
 } from "@/components/tv";
+import type { MarqueeChip } from "@/components/tv/TVScoreboardMarquee";
+
+// Demo marquee chips for the May/Storm TVQuestion preview.
+const DEMO_MARQUEE_CHIPS: MarqueeChip[] = [
+  { playerId: "p1", name: "Devon",   color: "#E63946", score: 2140, joinIndex: 0 },
+  { playerId: "p2", name: "Priya",   color: "#457B9D", score: 1980, joinIndex: 1, speedBonus: true },
+  { playerId: "p3", name: "Marcus",  color: "#2A9D8F", score: 1760, joinIndex: 2 },
+  { playerId: "p4", name: "Sara",    color: "#E9C46A", score: 1640, joinIndex: 3 },
+  { playerId: "p5", name: "Eli",     color: "#F4A261", score: 1500, joinIndex: 4 },
+  { playerId: "p6", name: "Ana",     color: "#A8DADC", score: 1320, joinIndex: 5 },
+  { playerId: "p7", name: "June",    color: "#6A4C93", score: 1100, joinIndex: 6 },
+  { playerId: "p8", name: "Lex",     color: "#C77DFF", score:  980, joinIndex: 7 },
+];
 import { resolveTheme } from "@/lib/theme/resolve";
 import { useTheme, Wordmark, Eyebrow } from "@/components/system";
 import { TR1VIA_THEMES, THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
@@ -110,6 +123,24 @@ export default function TVGallery() {
           <Frame label="03 · Question">
             <TVQuestion />
           </Frame>
+          <Frame label="03a · Question · May/Storm — marquee + 25s timer">
+            <TVQuestion
+              themeKey="may"
+              seconds={18}
+              category="History"
+              value={300}
+              question="Which empire built Machu Picchu?"
+              options={[
+                { n: 1, text: "Aztec" },
+                { n: 2, text: "Inca" },
+                { n: 3, text: "Maya" },
+                { n: 4, text: "Olmec" },
+              ]}
+              marqueeChips={DEMO_MARQUEE_CHIPS}
+              spotlightedPlayerId="p2"
+              lockInAnnouncement="Priya locked in"
+            />
+          </Frame>
           <Frame label="03b · Question · long prompt with image (regression case)">
             <TVQuestion
               category="Local Madison"
@@ -124,6 +155,24 @@ export default function TVGallery() {
               ]}
               imageUrl="https://images.pexels.com/photos/2030697/pexels-photo-2030697.jpeg?auto=compress&cs=tinysrgb&w=520"
               totalPlayers={2}
+            />
+          </Frame>
+          <Frame label="03c · Question · May/Storm + long prompt (combined regression case)">
+            <TVQuestion
+              themeKey="may"
+              seconds={18}
+              category="Local Madison"
+              value={500}
+              question="Which Wisconsin-born architect, famous for organic architecture, designed his only Wisconsin home in Madison?"
+              options={[
+                { n: 1, text: "Frank Lloyd Wright" },
+                { n: 2, text: "Louis Sullivan" },
+                { n: 3, text: "Eero Saarinen" },
+                { n: 4, text: "Daniel Burnham" },
+              ]}
+              marqueeChips={DEMO_MARQUEE_CHIPS}
+              spotlightedPlayerId="p2"
+              lockInAnnouncement="Priya locked in"
             />
           </Frame>
           <Frame label="04 · Reveal · correct">

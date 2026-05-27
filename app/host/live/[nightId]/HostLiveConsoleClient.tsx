@@ -417,6 +417,15 @@ export function HostLiveConsoleClient({
   // Identify game 1 / game 2 ids so the control strip can route Start CTAs.
   const game1Id = room.games.find((g) => g.game_no === 1)?.id ?? null;
   const game2Id = room.games.find((g) => g.game_no === 2)?.id ?? null;
+  // Game 2 is "startable" once it has at least one category with ready
+  // questions — otherwise pressing Start would land the TV on an empty
+  // board ("0 of 0 ANSWERED"). The server enforces this too; this signal
+  // just keeps the button from inviting the click in the first place.
+  const isGame2Ready =
+    !!game2Id &&
+    room.categories.some(
+      (c) => c.game_id === game2Id && c.state === "ready",
+    );
 
   return (
     <>
@@ -439,6 +448,8 @@ export function HostLiveConsoleClient({
         onAddPlayer={() => setAddingLatecomer(true)}
         onStartGame1={game1Id ? () => void handleStartGame(game1Id) : undefined}
         onStartGame2={game2Id ? () => void handleStartGame(game2Id) : undefined}
+        startGame2Disabled={!!game2Id && !isGame2Ready}
+        startGame2DisabledReason="Game 2 has no questions yet — set up its categories first"
         onEndGame={() => void handleEndGame()}
         onCloseNight={() => void handleCloseNight()}
         tvSnapshot={tvSnapshot}

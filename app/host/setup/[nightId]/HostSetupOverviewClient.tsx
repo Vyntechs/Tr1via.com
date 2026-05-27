@@ -93,6 +93,11 @@ export function HostSetupOverviewClient({
     return [buildGameData(g1, categories, "GAME 1"), buildGameData(g2, categories, "GAME 2")];
   }, [games, categories]);
 
+  // Disable the theme picker while any game is live — a mid-game flip
+  // would break in-flight ceremonies. The server enforces this too (409),
+  // but blocking it in the UI avoids a confusing error toast.
+  const liveGameExists = games.some((g) => g.state === "live");
+
   const lockedCount = categories.filter((c) => c.state === "ready").length;
   // Host can open the room as soon as a single topic is locked anywhere.
   // The full 12-slot setup is still the canonical UX (visible in HostGenOverview),
@@ -204,34 +209,63 @@ export function HostSetupOverviewClient({
         isReadyToOpen={isReadyToOpen}
         isOpening={opening}
       />
-      <button
-        type="button"
-        onClick={() => setThemePickerOpen(true)}
-        aria-label="Pick the room's theme"
+      <div
         style={{
           position: "fixed",
           right: 24,
           bottom: 24,
           zIndex: 30,
-          padding: "10px 16px",
-          borderRadius: 99,
-          border: "1px solid rgba(255,255,255,.12)",
-          background: "rgba(20,19,15,.92)",
-          color: "#F4E6C4",
-          fontSize: 12,
-          fontWeight: 600,
-          fontFamily: "var(--font-sans)",
-          letterSpacing: "0.04em",
-          cursor: "pointer",
-          boxShadow: "0 12px 28px rgba(0,0,0,.45)",
-          display: "inline-flex",
-          alignItems: "center",
-          gap: 8,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "flex-end",
+          gap: 6,
         }}
       >
-        <span aria-hidden="true">◐</span>
-        Theme · {themeKey}
-      </button>
+        {liveGameExists && (
+          <div
+            style={{
+              fontSize: 11,
+              color: "rgba(244,230,196,.55)",
+              fontFamily: "var(--font-sans)",
+              fontWeight: 500,
+              textAlign: "right",
+            }}
+          >
+            Themes lock during a live game. End the game first.
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => !liveGameExists && setThemePickerOpen(true)}
+          aria-label={
+            liveGameExists
+              ? "Theme locked while a game is live"
+              : "Pick the room's theme"
+          }
+          disabled={liveGameExists}
+          style={{
+            padding: "10px 16px",
+            borderRadius: 99,
+            border: "1px solid rgba(255,255,255,.12)",
+            background: liveGameExists
+              ? "rgba(20,19,15,.55)"
+              : "rgba(20,19,15,.92)",
+            color: liveGameExists ? "rgba(244,230,196,.35)" : "#F4E6C4",
+            fontSize: 12,
+            fontWeight: 600,
+            fontFamily: "var(--font-sans)",
+            letterSpacing: "0.04em",
+            cursor: liveGameExists ? "not-allowed" : "pointer",
+            boxShadow: liveGameExists ? "none" : "0 12px 28px rgba(0,0,0,.45)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <span aria-hidden="true">◐</span>
+          Theme · {themeKey}
+        </button>
+      </div>
       <PalettePeek
         open={themePickerOpen}
         onClose={() => setThemePickerOpen(false)}

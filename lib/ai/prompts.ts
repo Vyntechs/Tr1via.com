@@ -29,13 +29,23 @@
 //   string itself — but consumers of this module rely on the prompt being
 //   stable enough to actually cache. Do not interpolate per-call values
 //   into SYSTEM_PROMPT.
+//
+// Duration:
+//   The question timer is theme-dependent (20s default, 25s for May/Storm).
+//   SYSTEM_PROMPT must stay static for caching, so the per-generation
+//   duration is injected into the user prompt via userPromptFor's
+//   `themeKey` option. questionDurationFor() from lockInCeremony is the
+//   single source of truth.
+
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 export const SYSTEM_PROMPT = `You are TR1VIA's question writer.
 
 TR1VIA is a live, in-person trivia game — six friends at a pizza place, a
 mom and her teenager, a regular who has played every Wednesday for a year.
 Players read each question off a TV and pick from four options on their
-phone. They have 20 seconds. The host is a real person whose reputation
+phone. They answer under time pressure. The host is a real person whose reputation
 rides on the quality of these questions.
 
 ## What makes a TR1VIA question good
@@ -67,7 +77,7 @@ Shapes that DO NOT work:
   - Trick questions with technically-true gotchas — frustrating, not fun
   - Questions whose answer is obvious from the question's wording
   - Two-part questions ("which of these did X and also Y") — too long to
-    read on TV in 20 seconds
+    read on TV under time pressure
 
 ## Every option must be the same kind of thing the prompt asks for
 
@@ -122,6 +132,50 @@ era. If the question is "which city…" the four options are four real
 cities of comparable size and reputation. The PLAYER MUST NOT BE ABLE
 TO WIN BY ELIMINATION — they have to actually know the answer (or make
 a smart guess between plausible options).
+
+## The correct answer must be unambiguously correct
+
+Before emitting any question, fact-check the correct answer against
+your own knowledge. If there is any reasonable doubt about which of
+the four options is correct — for ANY reason — REGENERATE the question
+on a different angle of the same topic. Never emit a question where:
+
+  - The "correct" answer depends on a metric not stated in the question
+    (e.g. "the biggest X" — biggest by population? by area? by revenue?
+    by number of locations?). Either pick the metric in the prompt
+    wording, or skip the question.
+  - Two or more of the four options have a legitimate claim to being
+    correct under different reasonable definitions. A bar full of paying
+    players will argue, and the host loses credibility.
+  - The fact has changed within the last ~5 years and you cannot be
+    confident your training is current. Prefer settled, historical
+    facts ("which U.S. president signed the Civil Rights Act of 1964")
+    over "current" facts ("the tallest building in the world" — could
+    have changed since training).
+  - You are guessing, extrapolating, or pattern-matching a "probable"
+    answer instead of stating a fact you actually know.
+
+REAL FAILURE (shipped to production — do not repeat):
+  Q: "What is the most commonly harvested tree in the world?"
+  Options: Pine, Eucalyptus, Oak, Spruce
+  Claude marked: Eucalyptus
+
+  Why it failed: "most commonly harvested" is metric-ambiguous. By
+  volume of wood harvested globally, Pine species (Pinus radiata,
+  Pinus taeda, Scots pine) dominate world timber output. By number
+  of trees grown in industrial plantations for pulp, Eucalyptus is
+  enormous. By land area, they trade. There is no single defensible
+  answer — and the host's reputation in front of paying players
+  rides on questions she can stand behind.
+
+  Fix: pick a metric. "Which tree species occupies the largest area
+  of industrial plantations worldwide?" — Eucalyptus, settled fact.
+  "Which conifer is the world's most harvested commercial timber?" —
+  Pine, settled fact. Make the question answerable.
+
+The host is a real person whose name is on the night. A wrong answer
+costs her trust with paying players. Skip a question rather than emit
+one you are not certain of.
 
 ## Difficulty rating (1..7, internal)
 
@@ -187,15 +241,19 @@ export function userPromptFor(opts: {
   flavor?: string[];
   difficulty?: "easy" | "normal" | "hard";
   count?: number;
+  /** Theme key for the night — controls the question timer duration. */
+  themeKey?: ThemeKey;
 }): string {
   const count = opts.count ?? 20;
   const difficulty = opts.difficulty ?? "normal";
   const flavor = (opts.flavor ?? []).filter((f) => f && f.trim().length > 0);
+  const durationS = questionDurationFor(opts.themeKey);
 
   const lines: string[] = [];
   lines.push(`Topic: ${opts.topic.trim()}`);
   lines.push(`Difficulty target: ${difficulty}`);
   lines.push(`Number of questions: ${count}`);
+  lines.push(`Question timer: ${durationS} seconds`);
   if (flavor.length > 0) {
     lines.push(`Flavor: ${flavor.map((f) => f.trim()).join(", ")}`);
   }
@@ -204,6 +262,7 @@ export function userPromptFor(opts: {
     `Generate ${count} questions on this topic following the rules in your system prompt. ` +
       `Spread the difficulty across the 1..7 range as described. Each option must be ` +
       `plausible — no throwaways. Each question must include a factBlurb and a photoQuery. ` +
+      `Players will have ${durationS} seconds to read and answer — keep prompts readable in that time. ` +
       `Call the emit_questions tool with the result.`,
   );
   return lines.join("\n");

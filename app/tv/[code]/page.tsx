@@ -88,6 +88,7 @@ export default function TVPage({
           lastBroadcastRevealedAt={broadcastRevealedAt}
           lastBroadcastServerNow={broadcastServerNow}
           welcomeEvent={welcomeEvent}
+          themeKey={themeKey}
         />
         <SectionCompleteOverlay snapshot={snapshot} />
       </TVStageFrame>

@@ -13,6 +13,7 @@ export type { PlayerRevealCorrectProps } from "./PlayerRevealCorrect";
 export { PlayerRevealWrong } from "./PlayerRevealWrong";
 export type { PlayerRevealWrongProps } from "./PlayerRevealWrong";
 export { PlayerJoinGame2 } from "./PlayerJoinGame2";
+export { PlayerLockInBolt } from "./PlayerLockInBolt";
 export type { PlayerJoinGame2Props } from "./PlayerJoinGame2";
 export { PlayerWinnerCard } from "./PlayerWinnerCard";
 export type { PlayerWinnerCardProps, PlayerWinnerCardStat } from "./PlayerWinnerCard";

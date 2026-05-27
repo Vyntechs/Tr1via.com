@@ -30,6 +30,7 @@ import type { Json } from "@/lib/supabase/types";
 import { autoAttachPhoto } from "@/lib/ai/auto-attach-photo";
 import { generateQuestions } from "@/lib/ai/generate-questions";
 import { PexelsRateLimitError } from "@/lib/pexels/search";
+import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -85,12 +86,14 @@ export async function POST(
   // Fire-and-forget the background job. `after` runs once the response has
   // been flushed — the host UI sees the 202 immediately and then subscribes
   // to the category channel for progress events.
+  const nightThemeKey = owned.night.theme_key;
   after(async () => {
     await runGenerationJob({
       categoryId,
       topic: category.topic,
       flavor: parsed.data.flavor,
       difficulty: parsed.data.difficulty,
+      themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,
     }).catch(async (err) => {
       // Rollback + broadcast on any unexpected failure inside the job.
       // (Per-question failures are handled inside runGenerationJob.)
@@ -138,6 +141,7 @@ async function runGenerationJob(opts: {
   topic: string;
   flavor?: string[];
   difficulty?: "easy" | "normal" | "hard";
+  themeKey?: ThemeKey;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
 
@@ -147,6 +151,7 @@ async function runGenerationJob(opts: {
     flavor: opts.flavor,
     difficulty: opts.difficulty,
     count: 20,
+    themeKey: opts.themeKey,
   });
   if (generated.length === 0) {
     throw new Error("Claude returned zero valid questions");

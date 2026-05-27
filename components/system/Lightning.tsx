@@ -49,7 +49,7 @@ import { playThunder, unlockThunder } from "@/lib/audio/thunder";
 // the same beat — same in-page event, same room reaction. Last-write-wins
 // across simultaneous broadcasts isn't a concern.
 
-type BeatListener = (distance: "distant" | "close") => void;
+type BeatListener = (distance: "distant" | "close", opts?: { tint?: string }) => void;
 const beatListeners = new Set<BeatListener>();
 
 /** Subscribe to lightning-beat events. Returns an unsubscribe function. */
@@ -66,15 +66,33 @@ function subscribeBeat(fn: BeatListener): () => void {
  *
  * Safe to call from any callsite — handles SSR (no-ops if window is
  * undefined since listeners can only register on mount).
+ *
+ * @param opts.tint  Per-strike color hex (e.g. a player's brand color).
+ *   When provided, the halo + afterglow blend toward this color while the
+ *   hot white core stays white. Ignored for ambient background strikes.
  */
-export function fireLightningBeat(distance: "distant" | "close" = "close"): void {
-  for (const fn of beatListeners) fn(distance);
+export function fireLightningBeat(
+  distance: "distant" | "close" = "close",
+  opts?: { tint?: string },
+): void {
+  for (const fn of beatListeners) fn(distance, opts);
 }
 
 export interface LightningProps {
   /** Accent color used for the residual afterglow. Defaults to May's
    *  amber so the brand tint reads on the lingering flash. */
   color?: string;
+  /**
+   * Per-strike color tint. When provided, the halo + afterglow blend toward
+   * this color while the hot core stays white. Used by lock-in ceremonies
+   * to make each player's strike feel like THEIRS.
+   *
+   * Applied as the default for ALL beat-triggered strikes on this instance.
+   * Can be overridden per-call via `fireLightningBeat("close", { tint })`.
+   * Ambient background strikes are never tinted — they're the storm, not a
+   * player moment.
+   */
+  tint?: string;
   /** Bump this counter to fire a beat-triggered close strike. */
   triggerCount?: number;
   /** Disable ambient strikes entirely (still fires beat strikes). Used
@@ -105,6 +123,13 @@ interface Strike {
   targetY: number;
   /** Strike seed. Subsequent strokes derive from this. */
   seed: number;
+  /**
+   * Optional color tint for this specific strike. Set only on beat-triggered
+   * strikes when a tint was passed via fireLightningBeat or the component's
+   * tint prop. Ambient strikes always leave this undefined so the background
+   * storm stays neutral.
+   */
+  tint?: string;
 }
 
 interface Stroke {
@@ -145,9 +170,6 @@ const MAX_STRIKES_PER_MINUTE = 30;
 const CORE_COLOR = "rgba(255, 255, 255, 1)";
 const INNER_GLOW_COLOR = "rgba(208, 232, 255, 0.9)";
 const OUTER_HALO_COLOR = "rgba(156, 123, 200, 0.4)";
-// Afterglow is composited in screen-blend with the theme accent.
-const AFTERGLOW_DEFAULT = "rgba(232, 196, 106, 0.18)";
-
 // Scene illumination — kept under 30% relative luminance shift.
 const SCENE_FLASH_PEAK_ALPHA = 0.28; // ~28% over the existing scene
 const SCENE_FLASH_FADE_IN_MS = 30;
@@ -156,6 +178,7 @@ const SCENE_FLASH_FADE_OUT_MS = 60;
 
 export function Lightning({
   color = "#E8C46A",
+  tint,
   triggerCount = 0,
   disableAmbient = false,
   muteThunder = false,
@@ -177,23 +200,25 @@ export function Lightning({
     lastTriggerRef.current = triggerCount;
     if (triggerCount > 0) {
       // Tiny delay so we're past React commit before generating geometry.
-      const id = window.setTimeout(() => fireStrike("close", muteThunder), 16);
+      const id = window.setTimeout(() => fireStrike("close", muteThunder, tint), 16);
       return () => clearTimeout(id);
     }
-  }, [triggerCount, reduced, muteThunder]);
+  }, [triggerCount, reduced, muteThunder, tint]);
 
   // ── Module-level beat subscription ──
   // Game-state callsites (section-complete celebration) call
   // `fireLightningBeat()` to trigger strikes without prop-threading.
   useEffect(() => {
     if (reduced) return;
-    const unsubscribe = subscribeBeat((distance) => {
+    const unsubscribe = subscribeBeat((distance, opts) => {
       // Tiny delay so any state-change React commit settles before geometry
       // generation reads canvas dimensions.
-      window.setTimeout(() => fireStrike(distance, muteThunder), 16);
+      // The effective tint is: caller-supplied opts.tint → prop tint → none.
+      const effectiveTint = opts?.tint ?? tint;
+      window.setTimeout(() => fireStrike(distance, muteThunder, effectiveTint), 16);
     });
     return unsubscribe;
-  }, [reduced, muteThunder]);
+  }, [reduced, muteThunder, tint]);
 
   // ── Ambient Poisson timer ──
   useEffect(() => {
@@ -334,7 +359,7 @@ export function Lightning({
             alpha = stroke.peakAlpha * 0.08 * Math.max(0, 1 - lingerT);
           }
           if (alpha <= 0) continue;
-          drawStroke(cx, stroke, alpha, color, strike.distance);
+          drawStroke(cx, stroke, alpha, color, strike.distance, strike.tint);
         }
 
         liveStrikes.push(strike);
@@ -404,7 +429,7 @@ export function Lightning({
     return <LegacyFlicker color={color} />;
   }
 
-  function fireStrike(distance: "distant" | "close", mute: boolean) {
+  function fireStrike(distance: "distant" | "close", mute: boolean, strikeTint?: string) {
     // Rate limit.
     const now = performance.now();
     const recent = strikeHistoryRef.current.filter((t) => now - t < 60_000);
@@ -497,6 +522,7 @@ export function Lightning({
       thunderFired: false,
       originX, originY, targetX, targetY,
       seed,
+      tint: strikeTint,
     };
     strikesRef.current.push(strike);
 
@@ -554,26 +580,35 @@ function drawStroke(
   alpha: number,
   themeAccent: string,
   distance: "distant" | "close",
+  strikeTint?: string,
 ): void {
   if (alpha <= 0) return;
 
   // Bolt width scales with distance — close strikes are thicker.
   const baseWidth = distance === "close" ? 3.0 : 1.8;
 
+  // When a per-strike tint is set (lock-in ceremony for a specific player),
+  // the halo and afterglow shift to that player's color so the strike reads
+  // as THEIRS. The hot white core stays white — real lightning plasma is
+  // white regardless of the surrounding storm color.
+  const haloColor = strikeTint ? hexToRgba(strikeTint, 0.4) : OUTER_HALO_COLOR;
+  const afterglowColor = strikeTint ?? themeAccent;
+
   // Three passes per stroke for the color layering:
-  //   1. Outer halo  — wide, purple, low alpha
-  //   2. Inner glow  — mid, blue-white, med alpha
-  //   3. Core        — thin, pure white, high alpha
+  //   1. Outer halo  — wide, tinted or default purple, low alpha
+  //   2. Inner glow  — mid, blue-white, med alpha (unchanged — keeps the
+  //                    plasma feel even when the halo is a custom color)
+  //   3. Core        — thin, pure white, high alpha (never tinted)
   // Composited via screen blend (set on the canvas style), each layer
   // adding to the others.
 
   // Halo.
   ctx.save();
-  ctx.strokeStyle = OUTER_HALO_COLOR;
+  ctx.strokeStyle = haloColor;
   ctx.globalAlpha = alpha * 0.6;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.shadowColor = OUTER_HALO_COLOR;
+  ctx.shadowColor = haloColor;
   ctx.shadowBlur = baseWidth * 8;
   drawSegments(ctx, stroke.segments, baseWidth * 3.5);
   ctx.restore();
@@ -589,7 +624,7 @@ function drawStroke(
   drawSegments(ctx, stroke.segments, baseWidth * 1.7);
   ctx.restore();
 
-  // Core.
+  // Core — always white, never tinted.
   ctx.save();
   ctx.strokeStyle = CORE_COLOR;
   ctx.globalAlpha = alpha;
@@ -598,14 +633,15 @@ function drawStroke(
   drawSegments(ctx, stroke.segments, baseWidth);
   ctx.restore();
 
-  // Tail amber afterglow — kept very subtle.
+  // Tail afterglow — kept very subtle. Uses the tint color when set so the
+  // player's color lingers as the strike fades out.
   if (alpha < 0.18) {
     ctx.save();
-    ctx.strokeStyle = hexToRgba(themeAccent, alpha * 0.5);
+    ctx.strokeStyle = hexToRgba(afterglowColor, alpha * 0.5);
     ctx.globalAlpha = 1;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
-    ctx.shadowColor = hexToRgba(themeAccent, 0.4);
+    ctx.shadowColor = hexToRgba(afterglowColor, 0.4);
     ctx.shadowBlur = baseWidth * 5;
     drawSegments(ctx, stroke.segments, baseWidth * 1.2);
     ctx.restore();

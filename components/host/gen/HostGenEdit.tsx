@@ -164,17 +164,30 @@ function HostGenEditInner({
           </div>
 
           <div>
-            <Eyebrow color={t.inkMute} size={9}>FOUR ANSWERS · TAP TO MARK CORRECT</Eyebrow>
+            <Eyebrow color={t.inkMid} size={11}>FOUR ANSWERS · CLICK ANY ROW TO MARK IT CORRECT</Eyebrow>
             <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 8 }}>
               {options.map((o, i) => {
                 const isCorrect = i === correctIndex;
                 return (
-                  <div key={i} style={{
-                    display: "flex", alignItems: "center", gap: 12,
-                    padding: "12px 14px", borderRadius: 10,
-                    background: isCorrect ? (t.dark ? `${t.correct}12` : `${t.correct}10`) : t.surface,
-                    border: `1.5px solid ${isCorrect ? t.correct : t.line}`,
-                  }}>
+                  <div
+                    key={i}
+                    role="radio"
+                    aria-checked={isCorrect}
+                    onClick={(e) => {
+                      // Click anywhere on the row (except the text input itself)
+                      // marks this option as the correct one. Editing option
+                      // text still works via the input.
+                      if ((e.target as HTMLElement).tagName === "INPUT") return;
+                      setCorrectIndex(i as 0 | 1 | 2 | 3);
+                    }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 12,
+                      padding: "12px 14px", borderRadius: 10,
+                      background: isCorrect ? (t.dark ? `${t.correct}12` : `${t.correct}10`) : t.surface,
+                      border: `1.5px solid ${isCorrect ? t.correct : t.line}`,
+                      cursor: isCorrect ? "default" : "pointer",
+                    }}
+                  >
                     <Numeric size={14} weight={700} color={isCorrect ? t.correct : t.inkMid} style={{ minWidth: 14 }}>{i + 1}</Numeric>
                     <input
                       type="text"
@@ -187,14 +200,17 @@ function HostGenEditInner({
                       }}
                     />
                     {isCorrect ? (
-                      <span style={{ padding: "3px 9px", borderRadius: 99, background: t.correct, color: "#0E0805", fontFamily: "var(--font-mono)", fontSize: 9, fontWeight: 700, letterSpacing: "0.08em" }}>CORRECT</span>
+                      <span style={{ padding: "5px 12px", borderRadius: 99, background: t.correct, color: "#0E0805", fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 700, letterSpacing: "0.04em" }}>✓ CORRECT</span>
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setCorrectIndex(i as 0 | 1 | 2 | 3)}
-                        style={{ padding: "3px 9px", borderRadius: 99, border: `1px solid ${t.line}`, color: t.inkMute, fontFamily: "var(--font-mono)", fontSize: 9, fontWeight: 600, letterSpacing: "0.08em", cursor: "pointer", background: "transparent" }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCorrectIndex(i as 0 | 1 | 2 | 3);
+                        }}
+                        style={{ padding: "5px 12px", borderRadius: 99, border: `1.5px solid ${t.correct}`, color: t.correct, fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer", background: "transparent" }}
                       >
-                        mark
+                        Make correct
                       </button>
                     )}
                   </div>

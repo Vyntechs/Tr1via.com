@@ -4,20 +4,24 @@
 "use client";
 
 import { useTheme } from "./ThemeProvider";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface TVTimerArcProps {
   seconds: number;
   max?: number;
   size?: number;
   accent?: string;
+  themeKey?: ThemeKey;
 }
 
-export function TVTimerArc({ seconds, max = 20, size = 160, accent }: TVTimerArcProps) {
+export function TVTimerArc({ seconds, max, size = 160, accent, themeKey }: TVTimerArcProps) {
+  const resolvedMax = max ?? questionDurationFor(themeKey);
   const { t } = useTheme();
   const stroke = 10;
   const r = (size - stroke) / 2;
   const C = 2 * Math.PI * r;
-  const frac = Math.max(0, Math.min(1, seconds / max));
+  const frac = Math.max(0, Math.min(1, seconds / resolvedMax));
   const danger = seconds <= 5;
   const color = danger ? t.wrong : accent ?? t.accent;
 

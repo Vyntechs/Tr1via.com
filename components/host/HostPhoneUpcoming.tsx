@@ -11,6 +11,7 @@
 
 import { PhoneScreen } from "@/components/shells";
 import { Eyebrow, Numeric, ThemeProvider, useTheme } from "@/components/system";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostPhoneUpcomingProps {
@@ -48,7 +49,7 @@ export function HostPhoneUpcoming(props: HostPhoneUpcomingProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <HostPhoneUpcomingInner {...rest} />
+        <HostPhoneUpcomingInner themeKey={themeKey} {...rest} />
       </ThemeProvider>
     );
   }
@@ -56,6 +57,7 @@ export function HostPhoneUpcoming(props: HostPhoneUpcomingProps) {
 }
 
 function HostPhoneUpcomingInner({
+  themeKey,
   hostName = "Linda",
   roomLive = true,
   playerCount = 32,
@@ -69,8 +71,9 @@ function HostPhoneUpcomingInner({
   onReveal,
   onPickDifferent,
   isRevealing = false,
-}: Omit<HostPhoneUpcomingProps, "themeKey">) {
+}: HostPhoneUpcomingProps) {
   const { t } = useTheme();
+  const questionDuration = questionDurationFor(themeKey);
   return (
     <PhoneScreen>
       <div
@@ -233,7 +236,7 @@ function HostPhoneUpcomingInner({
               fontWeight: 400,
             }}
           >
-            20s
+            {questionDuration}s
           </span>
         </button>
         <button
