@@ -8,7 +8,12 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
+import {
+  useAnswerSubmit,
+  PENDING_ANSWER_KEY,
+  loadPendingAnswer,
+  clearPendingAnswer,
+} from "@/lib/hooks/useAnswerSubmit";
 
 function jsonResponse(status: number, body: unknown = {}) {
   return {
@@ -24,6 +29,7 @@ const FAST_BACKOFF = [0, 0, 0];
 describe("useAnswerSubmit", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
+    window.localStorage.clear();
   });
 
   it("starts idle", () => {
@@ -117,5 +123,109 @@ describe("useAnswerSubmit", () => {
       result.current.retry();
     });
     await waitFor(() => expect(result.current.status).toBe("sent"));
+  });
+
+  // ─── Refresh-survives-the-answer (localStorage persistence) ───────────────
+
+  it("persists pending submit to localStorage on tap, clears on sent", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementationOnce(async () => {
+      // Right BEFORE the fetch resolves, the persisted entry should exist.
+      expect(loadPendingAnswer()).toEqual({ questionId: "q1", slotChosen: 3 });
+      return jsonResponse(200);
+    });
+    const { result } = renderHook(() =>
+      useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3] }),
+    );
+    act(() => {
+      result.current.submit(3);
+    });
+    await waitFor(() => expect(result.current.status).toBe("sent"));
+    expect(loadPendingAnswer()).toBeNull();
+  });
+
+  it("auto-resumes a persisted submit on mount when questionId matches", async () => {
+    window.localStorage.setItem(
+      PENDING_ANSWER_KEY,
+      JSON.stringify({ questionId: "q1", slotChosen: 4 }),
+    );
+    let capturedBody: unknown = null;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementationOnce(async (_input, init) => {
+      capturedBody = JSON.parse((init?.body as string) ?? "{}");
+      return jsonResponse(409); // Server already had it — still treated as sent.
+    });
+    const { result } = renderHook(() =>
+      useAnswerSubmit({ questionId: "q1", scramble: [2, 0, 3, 1] }),
+    );
+    await waitFor(() => expect(result.current.status).toBe("sent"));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(capturedBody).toEqual({
+      questionId: "q1",
+      slotChosen: 4,
+      scramble: [2, 0, 3, 1],
+    });
+    expect(loadPendingAnswer()).toBeNull();
+  });
+
+  it("clears stale localStorage entry when mounted on a different questionId", () => {
+    window.localStorage.setItem(
+      PENDING_ANSWER_KEY,
+      JSON.stringify({ questionId: "q-old", slotChosen: 2 }),
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    renderHook(() =>
+      useAnswerSubmit({ questionId: "q-new", scramble: [0, 1, 2, 3] }),
+    );
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(loadPendingAnswer()).toBeNull();
+  });
+
+  it("clears persisted entry on terminal 4xx so it doesn't fire on next mount", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonResponse(400));
+    const { result } = renderHook(() =>
+      useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3], backoffMs: FAST_BACKOFF }),
+    );
+    act(() => {
+      result.current.submit(2);
+    });
+    await waitFor(() => expect(result.current.status).toBe("failed"));
+    expect(loadPendingAnswer()).toBeNull();
+  });
+
+  it("keeps persisted entry after retry exhaustion so a refresh can re-fire", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Network down"));
+    const { result } = renderHook(() =>
+      useAnswerSubmit({
+        questionId: "q1",
+        scramble: [0, 1, 2, 3],
+        maxAttempts: 2,
+        backoffMs: FAST_BACKOFF,
+      }),
+    );
+    act(() => {
+      result.current.submit(1);
+    });
+    await waitFor(() => expect(result.current.status).toBe("failed"));
+    // Network never came back; user can refresh and the next mount will retry.
+    expect(loadPendingAnswer()).toEqual({ questionId: "q1", slotChosen: 1 });
+  });
+
+  it("loadPendingAnswer returns null for malformed entries", () => {
+    window.localStorage.setItem(PENDING_ANSWER_KEY, "not-json");
+    expect(loadPendingAnswer()).toBeNull();
+
+    window.localStorage.setItem(
+      PENDING_ANSWER_KEY,
+      JSON.stringify({ questionId: "q1", slotChosen: 7 }), // out of 1..4 range
+    );
+    expect(loadPendingAnswer()).toBeNull();
+
+    window.localStorage.setItem(
+      PENDING_ANSWER_KEY,
+      JSON.stringify({ slotChosen: 1 }), // missing questionId
+    );
+    expect(loadPendingAnswer()).toBeNull();
+
+    clearPendingAnswer();
+    expect(loadPendingAnswer()).toBeNull();
   });
 });
