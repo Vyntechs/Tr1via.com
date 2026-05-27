@@ -29,6 +29,16 @@
 //   string itself — but consumers of this module rely on the prompt being
 //   stable enough to actually cache. Do not interpolate per-call values
 //   into SYSTEM_PROMPT.
+//
+// Duration:
+//   The question timer is theme-dependent (20s default, 25s for May/Storm).
+//   SYSTEM_PROMPT must stay static for caching, so the per-generation
+//   duration is injected into the user prompt via userPromptFor's
+//   `themeKey` option. questionDurationFor() from lockInCeremony is the
+//   single source of truth.
+
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 export const SYSTEM_PROMPT = `You are TR1VIA's question writer.
 
@@ -187,15 +197,19 @@ export function userPromptFor(opts: {
   flavor?: string[];
   difficulty?: "easy" | "normal" | "hard";
   count?: number;
+  /** Theme key for the night — controls the question timer duration. */
+  themeKey?: ThemeKey;
 }): string {
   const count = opts.count ?? 20;
   const difficulty = opts.difficulty ?? "normal";
   const flavor = (opts.flavor ?? []).filter((f) => f && f.trim().length > 0);
+  const durationS = questionDurationFor(opts.themeKey);
 
   const lines: string[] = [];
   lines.push(`Topic: ${opts.topic.trim()}`);
   lines.push(`Difficulty target: ${difficulty}`);
   lines.push(`Number of questions: ${count}`);
+  lines.push(`Question timer: ${durationS} seconds`);
   if (flavor.length > 0) {
     lines.push(`Flavor: ${flavor.map((f) => f.trim()).join(", ")}`);
   }
@@ -204,6 +218,7 @@ export function userPromptFor(opts: {
     `Generate ${count} questions on this topic following the rules in your system prompt. ` +
       `Spread the difficulty across the 1..7 range as described. Each option must be ` +
       `plausible — no throwaways. Each question must include a factBlurb and a photoQuery. ` +
+      `Players will have ${durationS} seconds to read and answer — keep prompts readable in that time. ` +
       `Call the emit_questions tool with the result.`,
   );
   return lines.join("\n");

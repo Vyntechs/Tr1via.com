@@ -44,6 +44,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { SYSTEM_PROMPT, userPromptFor } from "./prompts";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 // ─── Public types ─────────────────────────────────────────────────────
 
@@ -103,6 +104,8 @@ export interface GenerateQuestionsOptions {
   difficulty?: "easy" | "normal" | "hard";
   /** How many candidate questions to ask Claude for. Default 20. */
   count?: number;
+  /** Theme key for the night — sets the question timer duration in the prompt. */
+  themeKey?: ThemeKey;
   /** Optional: inject a client for testing. */
   client?: Pick<Anthropic, "beta">;
   /** Optional override of the model id. */
@@ -221,6 +224,7 @@ export async function generateQuestions(
     flavor: opts.flavor,
     difficulty: opts.difficulty,
     count,
+    themeKey: opts.themeKey,
   });
 
   // Time the Anthropic call so prod logs surface actual duration on
