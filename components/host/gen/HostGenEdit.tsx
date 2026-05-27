@@ -48,8 +48,13 @@ export interface HostGenEditProps {
   onSave?: (values: HostGenEditValues) => void;
   /** Called when the host closes / discards. */
   onClose?: () => void;
-  /** Called when the host taps "Swap image →". */
-  onSwapImage?: () => void;
+  /**
+   * Called when the host taps "Swap image →". Receives the current in-progress
+   * edit values so the parent can persist them BEFORE this modal unmounts —
+   * otherwise the local form state is destroyed and the host's text/options/
+   * correct-mark/point edits silently vanish when the swap modal takes over.
+   */
+  onSwapImage?: (values: HostGenEditValues) => void;
   /** True while the PATCH is in flight. */
   isSaving?: boolean;
 }
@@ -103,6 +108,10 @@ function HostGenEditInner({
 
   function handleSave() {
     onSave?.({ prompt, options, correctIndex, pointValue });
+  }
+
+  function handleSwapImage() {
+    onSwapImage?.({ prompt, options, correctIndex, pointValue });
   }
 
   return (
@@ -205,8 +214,9 @@ function HostGenEditInner({
               </div>
               <button
                 type="button"
-                onClick={onSwapImage}
-                style={{ marginTop: 8, width: "100%", padding: "8px 0", borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.ink, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}
+                onClick={handleSwapImage}
+                disabled={isSaving}
+                style={{ marginTop: 8, width: "100%", padding: "8px 0", borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.ink, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: isSaving ? "default" : "pointer", opacity: isSaving ? 0.6 : 1 }}
               >
                 Swap image  →
               </button>
