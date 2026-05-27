@@ -31,7 +31,7 @@ export function HostSetupOverviewClient({
   nightId,
   venueName,
   games,
-  categories,
+  categories: initialCategories,
   isOpen,
   initialThemeKey,
   hostDefaultThemeKey,
@@ -39,6 +39,11 @@ export function HostSetupOverviewClient({
   const router = useRouter();
   const [opening, setOpening] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Local mirror of the categories so inline rename + delete can render
+  // without a hard reload. Server-rendered initialCategories is the
+  // first paint; every subsequent refresh re-fetches in the page server
+  // component anyway.
+  const [categories, setCategories] = useState(initialCategories);
   // Theme state starts at the resolved theme so first paint already matches
   // what the host expects. The picker pill writes to night.theme_key (the
   // per-night override) which then takes priority over host preference.
@@ -125,6 +130,54 @@ export function HostSetupOverviewClient({
     router.push(`/host/setup/${nightId}/pick/${categoryId}`);
   }
 
+  // Inline rename: optimistic — patch the local state immediately, roll
+  // back on failure. The `CategorySlot` component bubbles up the saved
+  // name promise; on rejection it surfaces the error in the inline input.
+  async function handleRenameCategory(categoryId: string, next: string) {
+    const previous = categories;
+    setError(null);
+    setCategories((prev) =>
+      prev.map((c) => (c.id === categoryId ? { ...c, name: next } : c)),
+    );
+    try {
+      const res = await fetch(`/api/categories/${categoryId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: next }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setCategories(previous);
+        throw new Error(body.error ?? "could not rename category");
+      }
+    } catch (err) {
+      setCategories(previous);
+      throw err;
+    }
+  }
+
+  // Delete: optimistic — drop the row from local state immediately,
+  // restore on failure. Cascade on the server takes care of any
+  // generated questions + their plays/answers.
+  async function handleDeleteCategory(categoryId: string) {
+    const previous = categories;
+    setError(null);
+    setCategories((prev) => prev.filter((c) => c.id !== categoryId));
+    try {
+      const res = await fetch(`/api/categories/${categoryId}`, {
+        method: "DELETE",
+      });
+      if (!res.ok && res.status !== 204) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setCategories(previous);
+        throw new Error(body.error ?? "could not delete category");
+      }
+    } catch (err) {
+      setCategories(previous);
+      throw err;
+    }
+  }
+
   if (!overview) {
     return (
       <div style={{ padding: 60, color: "#666", fontFamily: "var(--font-sans)" }}>
@@ -145,6 +198,8 @@ export function HostSetupOverviewClient({
         readyLabel={`${lockedCount} of 12 categories locked.`}
         onAddTopic={handleAddTopic}
         onOpenSlot={handleOpenSlot}
+        onRenameCategory={handleRenameCategory}
+        onDeleteCategory={handleDeleteCategory}
         onOpenRoom={handleOpenRoom}
         isReadyToOpen={isReadyToOpen}
         isOpening={opening}

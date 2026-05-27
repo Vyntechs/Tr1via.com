@@ -87,8 +87,15 @@ export interface HostGenPickProps {
     difficulty: DifficultyTarget;
     flavor: string[];
   }) => void;
+  /** Called when the host taps "← back" to return to the setup overview.
+   *  Optional so the /dev/host/gen gallery keeps rendering. */
+  onBack?: () => void;
   /** True while the lock-the-category POST is in flight. */
   isLocking?: boolean;
+  /** True while a regenerate ("↻ Another 20") is in flight. Disables
+   *  Lock + the flavor buttons and shows a small "generating 20 more…"
+   *  banner so the host knows new candidates are inbound. */
+  isRegenerating?: boolean;
 }
 
 const FLAVOR_OPTIONS = [
@@ -138,7 +145,9 @@ function HostGenPickInner({
   isRenaming = false,
   onLock,
   onRegenerate,
+  onBack,
   isLocking = false,
+  isRegenerating = false,
 }: Omit<HostGenPickProps, "themeKey">) {
   const { t } = useTheme();
   const cc = categoryColor(topic, t.accent);
@@ -176,6 +185,30 @@ function HostGenPickInner({
     <LaptopShell title={shellTitle}>
       <div style={{ padding: "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Back to setup"
+              data-testid="host-pick-back-btn"
+              style={{
+                padding: "6px 12px",
+                borderRadius: 99,
+                border: `1px solid ${t.line}`,
+                background: "transparent",
+                color: t.inkMid,
+                fontSize: 12,
+                fontWeight: 600,
+                fontFamily: "var(--font-sans)",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span aria-hidden="true">←</span> Back
+            </button>
+          )}
           <span style={{ width: 12, height: 12, borderRadius: 99, background: cc }} />
           <div>
             <EditableTopicEyebrow
@@ -185,6 +218,34 @@ function HostGenPickInner({
               isSaving={isRenaming}
             />
             <div style={{ marginTop: 4, fontSize: 28, fontWeight: 700, color: t.ink, letterSpacing: "-0.02em" }}>Pick your seven.</div>
+            {isRegenerating && (
+              <div
+                role="status"
+                aria-live="polite"
+                data-testid="host-pick-regenerating-banner"
+                style={{
+                  marginTop: 6,
+                  fontSize: 12,
+                  color: t.accent,
+                  fontWeight: 600,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 8,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 8,
+                    height: 8,
+                    borderRadius: 99,
+                    background: t.accent,
+                    animation: "tr1via-pulse 1.2s ease-in-out infinite",
+                  }}
+                />
+                Generating 20 more — your picks stay safe.
+              </div>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -196,12 +257,15 @@ function HostGenPickInner({
                 key={d}
                 type="button"
                 onClick={() => onRegenerate?.({ difficulty: d, flavor })}
+                disabled={isRegenerating}
                 style={{
                   padding: "7px 14px", borderRadius: 99,
                   border: `1px solid ${active ? t.ink : t.line}`,
                   background: active ? t.ink : "transparent",
                   color: active ? t.paper : t.ink,
-                  fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer",
+                  fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)",
+                  cursor: isRegenerating ? "not-allowed" : "pointer",
+                  opacity: isRegenerating ? 0.55 : 1,
                   textTransform: "capitalize",
                 }}
               >
@@ -220,11 +284,14 @@ function HostGenPickInner({
                   const next = active ? flavor.filter((f) => f !== s) : [...flavor, s];
                   onRegenerate?.({ difficulty, flavor: next });
                 }}
+                disabled={isRegenerating}
                 style={{
                   padding: "7px 12px", borderRadius: 99, border: `1px solid ${active ? t.ink : t.line}`,
                   background: active ? t.ink : "transparent",
                   color: active ? t.paper : t.inkMid,
-                  fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer",
+                  fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)",
+                  cursor: isRegenerating ? "not-allowed" : "pointer",
+                  opacity: isRegenerating ? 0.55 : 1,
                 }}
               >
                 {s}
@@ -234,9 +301,21 @@ function HostGenPickInner({
           <button
             type="button"
             onClick={() => onRegenerate?.({ difficulty, flavor })}
-            style={{ padding: "7px 14px", borderRadius: 99, border: `1px solid ${t.line}`, background: "transparent", color: t.ink, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}
+            disabled={isRegenerating}
+            style={{
+              padding: "7px 14px",
+              borderRadius: 99,
+              border: `1px solid ${t.line}`,
+              background: "transparent",
+              color: t.ink,
+              fontSize: 12,
+              fontWeight: 600,
+              fontFamily: "var(--font-sans)",
+              cursor: isRegenerating ? "not-allowed" : "pointer",
+              opacity: isRegenerating ? 0.55 : 1,
+            }}
           >
-            ↻ Another 20
+            {isRegenerating ? "Generating…" : "↻ Another 20"}
           </button>
         </div>
       </div>

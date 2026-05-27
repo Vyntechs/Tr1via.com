@@ -1,6 +1,7 @@
 // PATCH /api/categories/:id — host renames the category's display label.
+// DELETE /api/categories/:id — host removes a category during setup.
 //
-// Body: { name: string (1..80, trimmed) }. The rename only touches
+// PATCH body: { name: string (1..80, trimmed) }. The rename only touches
 // `categories.name`. `categories.topic` (the original Claude prompt) is
 // preserved so we don't accidentally invalidate the 20 generated
 // candidates or shift the Pexels seed for the question images.
@@ -9,12 +10,25 @@
 // `ready`. Renaming a locked category is the entire point of the
 // feature (Heather: "I just want it to say skirts"); there's no
 // invariant a rename can break.
+//
+// DELETE removes the category row. The FK chain in 0001_init.sql
+// cascades through: questions → plays + answers all use
+// `on delete cascade`. So removing the category cleanly nukes any
+// generated questions and any (in-setup) artifacts hanging off them.
+//
+// DELETE is host-only and allowed in any setup state — we explicitly
+// want the host to be able to remove a 'generating' category if she
+// realises she typed the wrong topic; the background `after()` job
+// finishes harmlessly even if its target row is gone. Out of scope:
+// deleting categories from a live night — that's the existing
+// "Reset and edit game" path.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
   badRequest,
   forbidden,
+  noContent,
   notFound,
   ok,
   serverError,
@@ -59,4 +73,24 @@ export async function PATCH(
   }
 
   return ok({ category: { id: data.id, name: data.name } });
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<NextResponse> {
+  const { id } = await ctx.params;
+  const owned = await requireOwnedCategory(id);
+  if (!owned.ok) {
+    if (owned.status === 401) return unauthorized(owned.error);
+    if (owned.status === 403) return forbidden(owned.error);
+    return notFound(owned.error);
+  }
+
+  const admin = getSupabaseAdmin();
+  const { error } = await admin.from("categories").delete().eq("id", id);
+  if (error) {
+    return serverError(error.message ?? "could not delete category");
+  }
+  return noContent();
 }

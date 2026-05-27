@@ -10,6 +10,13 @@
 "use client";
 
 import {
+  useEffect,
+  useRef,
+  useState,
+  type FocusEvent,
+  type KeyboardEvent,
+} from "react";
+import {
   Display,
   Eyebrow,
   Numeric,
@@ -58,6 +65,13 @@ export interface HostGenOverviewProps {
   onAddTopic?: (gameId: string, position: number) => void;
   /** Called when the host taps a non-empty slot to continue working on it. */
   onOpenSlot?: (categoryId: string) => void;
+  /** Called when the host renames a category inline. Returns a promise so
+   *  the slot can keep the input open + show a save error on rejection.
+   *  When omitted the pencil affordance is hidden (gallery/preview mode). */
+  onRenameCategory?: (categoryId: string, next: string) => Promise<void>;
+  /** Called when the host confirms deleting a category. Returns a promise
+   *  so the slot can show an error if the DELETE fails. */
+  onDeleteCategory?: (categoryId: string) => Promise<void>;
   /** Called when the host taps "Open the room". Disabled until ready. */
   onOpenRoom?: () => void;
   /** True if Open the room is enabled (all 12 categories ready). */
@@ -122,6 +136,8 @@ function HostGenOverviewInner({
   readyLabel = "5 of 12 categories locked.",
   onAddTopic,
   onOpenSlot,
+  onRenameCategory,
+  onDeleteCategory,
   onOpenRoom,
   isReadyToOpen = false,
   isOpening = false,
@@ -151,11 +167,21 @@ function HostGenOverviewInner({
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
                   {g.rows.map((c, i) => (
                     <CategorySlot
-                      key={`${g.gameId}-${i}`}
+                      key={`${g.gameId}-${c.categoryId ?? `empty-${i}`}`}
                       c={c}
                       idx={i}
                       onAdd={() => onAddTopic?.(g.gameId, i + 1)}
                       onOpen={() => c.categoryId && onOpenSlot?.(c.categoryId)}
+                      onRename={
+                        c.categoryId && onRenameCategory
+                          ? (next) => onRenameCategory(c.categoryId!, next)
+                          : undefined
+                      }
+                      onDelete={
+                        c.categoryId && onDeleteCategory
+                          ? () => onDeleteCategory(c.categoryId!)
+                          : undefined
+                      }
                     />
                   ))}
                 </div>
@@ -233,14 +259,24 @@ function CategorySlot({
   idx,
   onAdd,
   onOpen,
+  onRename,
+  onDelete,
 }: {
   c: CategorySlotData;
   idx: number;
   onAdd: () => void;
   onOpen: () => void;
+  /** Save handler when the host edits the name inline. Returns a promise
+   *  so we can surface a save error in-place. Omitted in gallery mode. */
+  onRename?: (next: string) => Promise<void>;
+  /** Delete handler. Triggers the confirm modal first; only fires after
+   *  the host confirms. Omitted in gallery mode. */
+  onDelete?: () => Promise<void>;
 }) {
   const { t } = useTheme();
   const cc = c.name ? categoryColor(c.name, t.accent) : t.line;
+  const [editing, setEditing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   if (c.status === "empty") {
     return (
       <button
@@ -276,36 +312,458 @@ function CategorySlot({
           ? t.accent
           : t.inkMute;
   const isActive = c.status === "review" || c.status === "generating";
+  // While editing or showing the confirm modal, the card itself stops
+  // acting as the "open slot" button — clicks should target the input
+  // or the modal, not navigate away.
+  const cardClickable = !editing && !confirmDelete;
   return (
-    <button
-      type="button"
-      onClick={onOpen}
+    <>
+      <div
+        role={cardClickable ? "button" : undefined}
+        tabIndex={cardClickable ? 0 : -1}
+        onClick={(e) => {
+          // Don't navigate away if the click bubbled up from an inline
+          // control (the edit pencil, the delete ×, or the input).
+          const target = e.target as HTMLElement;
+          if (target.closest("[data-slot-control='true']")) return;
+          if (cardClickable) onOpen();
+        }}
+        onKeyDown={(e) => {
+          if (!cardClickable) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onOpen();
+          }
+        }}
+        style={{
+          padding: "14px 16px",
+          borderRadius: 12,
+          background: isActive ? (t.dark ? `${cc}14` : `${cc}11`) : "transparent",
+          border: `1.5px solid ${isActive ? cc : t.line}`,
+          minHeight: 96,
+          width: "100%",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          textAlign: "left",
+          color: t.ink,
+          font: "inherit",
+          cursor: cardClickable ? "pointer" : "default",
+          position: "relative",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 8, height: 8, borderRadius: 99, background: cc }} />
+            <Eyebrow color={t.inkMid} size={9}>SLOT {idx + 1}</Eyebrow>
+          </div>
+          {onDelete && !editing && (
+            <button
+              type="button"
+              data-slot-control="true"
+              onClick={(e) => {
+                e.stopPropagation();
+                setConfirmDelete(true);
+              }}
+              aria-label={`Delete the ${c.name || "category"} slot`}
+              data-testid={`host-category-delete-btn-${c.categoryId ?? idx}`}
+              title="Delete this category"
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: 4,
+                cursor: "pointer",
+                color: t.inkMute,
+                display: "flex",
+                alignItems: "center",
+                lineHeight: 0,
+              }}
+            >
+              <TrashGlyph />
+            </button>
+          )}
+        </div>
+        <div>
+          {editing && onRename ? (
+            <CategoryNameInput
+              initial={c.name}
+              onCommit={async (next) => {
+                await onRename(next);
+                setEditing(false);
+              }}
+              onCancel={() => setEditing(false)}
+            />
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div
+                style={{
+                  fontSize: 16,
+                  fontWeight: 700,
+                  color: t.ink,
+                  letterSpacing: "-0.005em",
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c.name}
+              </div>
+              {onRename && (
+                <button
+                  type="button"
+                  data-slot-control="true"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setEditing(true);
+                  }}
+                  aria-label={`Rename ${c.name}`}
+                  data-testid={`host-category-rename-btn-${c.categoryId ?? idx}`}
+                  title="Rename"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    padding: 2,
+                    cursor: "pointer",
+                    color: t.inkMid,
+                    display: "flex",
+                    alignItems: "center",
+                    lineHeight: 0,
+                  }}
+                >
+                  <PencilGlyph />
+                </button>
+              )}
+            </div>
+          )}
+          {c.warn && <div style={{ marginTop: 4, fontSize: 11, color: t.wrong }}>{c.warn}</div>}
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: statusColor, fontWeight: 600, letterSpacing: "0.06em" }}>{statusLabel.toUpperCase()}</span>
+          {c.status !== "locked" && (
+            <span style={{ fontSize: 11, color: t.inkMid, fontWeight: 600 }}>
+              {c.status === "review" ? "continue →" : c.status === "generating" ? "open →" : "generate →"}
+            </span>
+          )}
+        </div>
+      </div>
+      {confirmDelete && onDelete && (
+        <DeleteCategoryConfirm
+          name={c.name || "this category"}
+          onConfirm={async () => {
+            await onDelete();
+            setConfirmDelete(false);
+          }}
+          onCancel={() => setConfirmDelete(false)}
+        />
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Inline name editor for a CategorySlot. Mirrors the pick screen's
+// EditableTopicEyebrow but rendered as an input inside the slot rather
+// than under an eyebrow. Enter saves, Escape discards, blur saves if
+// changed. The handler returns a promise; we surface a tiny inline error
+// when it rejects and keep the input open so the host can retry.
+// ─────────────────────────────────────────────────────────────────────────
+
+const RENAME_MAX_LENGTH = 80;
+
+function CategoryNameInput({
+  initial,
+  onCommit,
+  onCancel,
+}: {
+  initial: string;
+  onCommit: (next: string) => Promise<void>;
+  onCancel: () => void;
+}) {
+  const { t } = useTheme();
+  const [draft, setDraft] = useState(initial);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, []);
+
+  async function commit(): Promise<void> {
+    const trimmed = draft.trim();
+    if (!trimmed) {
+      setError("Name can't be blank.");
+      inputRef.current?.focus();
+      return;
+    }
+    if (trimmed.length > RENAME_MAX_LENGTH) {
+      setError(`Keep it under ${RENAME_MAX_LENGTH} characters.`);
+      inputRef.current?.focus();
+      return;
+    }
+    if (trimmed === initial) {
+      onCancel();
+      return;
+    }
+    setSaving(true);
+    try {
+      await onCommit(trimmed);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Couldn't save.");
+      inputRef.current?.focus();
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function onKeyDown(e: KeyboardEvent<HTMLInputElement>): void {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      onCancel();
+    }
+  }
+
+  function onBlur(_e: FocusEvent<HTMLInputElement>): void {
+    if (saving) return;
+    if (draft.trim() !== initial && draft.trim().length > 0) {
+      void commit();
+    } else {
+      onCancel();
+    }
+  }
+
+  return (
+    <div data-slot-control="true" onClick={(e) => e.stopPropagation()}>
+      <input
+        ref={inputRef}
+        type="text"
+        value={draft}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          if (error) setError(null);
+        }}
+        onKeyDown={onKeyDown}
+        onBlur={onBlur}
+        disabled={saving}
+        maxLength={RENAME_MAX_LENGTH}
+        data-testid="host-category-overview-rename-input"
+        aria-label="Category name"
+        style={{
+          background: t.surface,
+          border: `1px solid ${error ? "#9c2f2f" : t.line}`,
+          borderRadius: 6,
+          padding: "4px 8px",
+          fontFamily: "var(--font-sans)",
+          fontSize: 14,
+          fontWeight: 700,
+          color: t.ink,
+          letterSpacing: "-0.005em",
+          width: "100%",
+          outline: "none",
+          boxSizing: "border-box",
+        }}
+      />
+      {error && (
+        <div
+          role="alert"
+          style={{ marginTop: 4, fontSize: 10, color: "#9c2f2f", fontWeight: 500 }}
+        >
+          {error}
+        </div>
+      )}
+      {saving && (
+        <div
+          style={{
+            marginTop: 4,
+            fontFamily: "var(--font-mono)",
+            fontSize: 9,
+            color: t.inkMute,
+            letterSpacing: "0.1em",
+          }}
+        >
+          SAVING…
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeleteCategoryConfirm({
+  name,
+  onConfirm,
+  onCancel,
+}: {
+  name: string;
+  onConfirm: () => Promise<void>;
+  onCancel: () => void;
+}) {
+  const { t } = useTheme();
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="host-delete-category-title"
+      data-testid="host-delete-category-confirm"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !deleting) onCancel();
+      }}
       style={{
-        padding: "14px 16px", borderRadius: 12,
-        background: isActive ? (t.dark ? `${cc}14` : `${cc}11`) : "transparent",
-        border: `1.5px solid ${isActive ? cc : t.line}`,
-        minHeight: 96, width: "100%",
-        display: "flex", flexDirection: "column", justifyContent: "space-between",
-        textAlign: "left", color: t.ink, font: "inherit",
-        cursor: "pointer",
+        position: "fixed",
+        inset: 0,
+        zIndex: 70,
+        background: "rgba(0,0,0,.55)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ width: 8, height: 8, borderRadius: 99, background: cc }} />
-        <Eyebrow color={t.inkMid} size={9}>SLOT {idx + 1}</Eyebrow>
-      </div>
-      <div>
-        <div style={{ fontSize: 16, fontWeight: 700, color: t.ink, letterSpacing: "-0.005em" }}>{c.name}</div>
-        {c.warn && <div style={{ marginTop: 4, fontSize: 11, color: t.wrong }}>{c.warn}</div>}
-      </div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: statusColor, fontWeight: 600, letterSpacing: "0.06em" }}>{statusLabel.toUpperCase()}</span>
-        {c.status !== "locked" && (
-          <span style={{ fontSize: 11, color: t.inkMid, fontWeight: 600 }}>
-            {c.status === "review" ? "continue →" : c.status === "generating" ? "open →" : "generate →"}
-          </span>
+      <div
+        style={{
+          width: "100%",
+          maxWidth: 420,
+          padding: "24px 26px 22px",
+          background: t.paper,
+          color: t.ink,
+          borderRadius: 16,
+          boxShadow: "0 40px 80px -20px rgba(0,0,0,.6)",
+        }}
+      >
+        <div
+          id="host-delete-category-title"
+          style={{
+            fontSize: 18,
+            fontWeight: 700,
+            color: t.ink,
+            letterSpacing: "-0.01em",
+          }}
+        >
+          Delete &lsquo;{name}&rsquo;?
+        </div>
+        <div
+          style={{
+            marginTop: 8,
+            fontSize: 14,
+            color: t.inkMid,
+            lineHeight: 1.45,
+          }}
+        >
+          You&apos;ll lose any picked questions in this category. The other slots stay put.
+        </div>
+        {error && (
+          <div
+            role="alert"
+            style={{
+              marginTop: 12,
+              fontSize: 12,
+              color: "#9c2f2f",
+              fontWeight: 500,
+            }}
+          >
+            {error}
+          </div>
         )}
+        <div style={{ marginTop: 18, display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button
+            type="button"
+            onClick={onCancel}
+            disabled={deleting}
+            data-testid="host-delete-category-cancel"
+            style={{
+              padding: "9px 16px",
+              borderRadius: 10,
+              border: `1px solid ${t.line}`,
+              background: "transparent",
+              color: t.inkMid,
+              fontSize: 13,
+              fontWeight: 600,
+              fontFamily: "var(--font-sans)",
+              cursor: deleting ? "not-allowed" : "pointer",
+            }}
+          >
+            Keep it
+          </button>
+          <button
+            type="button"
+            disabled={deleting}
+            data-testid="host-delete-category-confirm-btn"
+            onClick={async () => {
+              setDeleting(true);
+              setError(null);
+              try {
+                await onConfirm();
+              } catch (err) {
+                setError(err instanceof Error ? err.message : "Couldn't delete.");
+                setDeleting(false);
+              }
+            }}
+            style={{
+              padding: "9px 16px",
+              borderRadius: 10,
+              border: "none",
+              background: "#9c2f2f",
+              color: "#FFF",
+              fontSize: 13,
+              fontWeight: 700,
+              fontFamily: "var(--font-sans)",
+              cursor: deleting ? "not-allowed" : "pointer",
+              opacity: deleting ? 0.7 : 1,
+            }}
+          >
+            {deleting ? "Deleting…" : "Delete"}
+          </button>
+        </div>
       </div>
-    </button>
+    </div>
+  );
+}
+
+function PencilGlyph() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="12"
+      height="12"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M11.5 1.5l3 3-9 9H2.5v-3l9-9z" />
+      <path d="M9.5 3.5l3 3" />
+    </svg>
+  );
+}
+
+function TrashGlyph() {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="13"
+      height="13"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M2.5 4h11" />
+      <path d="M6 4V2.5h4V4" />
+      <path d="M4 4l.7 9.5a1 1 0 0 0 1 .9h4.6a1 1 0 0 0 1-.9L12 4" />
+      <path d="M6.5 7v5" />
+      <path d="M9.5 7v5" />
+    </svg>
   );
 }
