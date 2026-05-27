@@ -13,6 +13,13 @@
 // the text element, and keep the first one whose rendered size fits. We
 // debounce via rAF so a measurement loop never blocks paint.
 //
+// Webfont dependency: `next/font` ships Bricolage Grotesque with
+// `display: swap`, so first paint uses a fallback font (Geist). Fallback
+// metrics are *narrower and shorter* than Bricolage — measuring at first
+// paint can pick a size that fits the fallback but overflows once the
+// webfont swaps in. ResizeObserver doesn't reliably fire on font swap, so
+// we listen on `document.fonts` explicitly and re-measure when fonts arrive.
+//
 // Bounds discipline: bisect over a *fixed* set of candidates (not a 1px
 // search) — keeps perf predictable, avoids subpixel oscillation on devices
 // with sub-pixel font rendering, and makes test assertions deterministic.
@@ -73,12 +80,14 @@ export function useAutoFitText({
     if (!frame || !text) return;
 
     let raf = 0;
+    let cancelled = false;
 
     function measure() {
+      if (cancelled) return;
       // Cancel any in-flight measure — we only care about the latest layout.
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
-        if (!frame || !text) return;
+        if (cancelled || !frame || !text) return;
         const frameHeight = frame.clientHeight;
         // Edge case: container has 0 height (not yet laid out). Bail; the
         // ResizeObserver below will retry once the container has a size.
@@ -109,6 +118,21 @@ export function useAutoFitText({
 
     measure();
 
+    // Re-measure once webfonts finish loading. The initial `measure()` above
+    // may have run against fallback-font metrics; Bricolage Grotesque is
+    // wider/taller, so a size that "fit" the fallback can overflow once the
+    // real font swaps in. `document.fonts.ready` resolves immediately on
+    // cache-hit (no-op) and after the swap on cold loads (corrective).
+    const fonts =
+      typeof document !== "undefined"
+        ? (document as Document & { fonts?: FontFaceSet }).fonts ?? null
+        : null;
+    if (fonts) {
+      void fonts.ready.then(() => measure());
+      // Catch additional late-arriving fonts (e.g. extra opsz axes).
+      fonts.addEventListener?.("loadingdone", measure);
+    }
+
     // Watch both the frame (its size can change on orientation flip) and
     // the text node (its content can change between questions).
     const ro = new ResizeObserver(measure);
@@ -116,8 +140,10 @@ export function useAutoFitText({
     ro.observe(text);
 
     return () => {
+      cancelled = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      fonts?.removeEventListener?.("loadingdone", measure);
     };
     // We intentionally re-run when the *set* of candidate sizes changes.
     // sortedSizes is derived from `sizes` so we depend on the stringified key.
