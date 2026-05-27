@@ -5,6 +5,10 @@ describe("SYSTEM_PROMPT duration", () => {
   it("does not contain '25 seconds' (must stay static for caching)", () => {
     expect(SYSTEM_PROMPT).not.toContain("25 seconds");
   });
+
+  it("does not contain '20 seconds' (must stay static for caching)", () => {
+    expect(SYSTEM_PROMPT).not.toContain("20 seconds");
+  });
 });
 
 describe("userPromptFor duration", () => {
