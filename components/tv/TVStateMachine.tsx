@@ -160,6 +160,7 @@ export function TVStateMachine({
     if (liveQuestion && !liveQuestion.finishedAt) {
       return (
         <TVQuestionView
+          key={liveQuestion.id}
           snapshot={snapshot}
           question={liveQuestion}
           revealedAt={lastBroadcastRevealedAt ?? liveQuestion.playedAt}
@@ -416,10 +417,10 @@ function TVQuestionView({
   }, []);
 
   // Decorate chips with speedBonus so the +SPD badge fires when spotlighted.
-  const decoratedChips: MarqueeChip[] = marqueeChips.map((c) => ({
-    ...c,
-    speedBonus: c.playerId === speedBonusPlayerId,
-  }));
+  const decoratedChips: MarqueeChip[] = useMemo(
+    () => marqueeChips.map((c) => ({ ...c, speedBonus: c.playerId === speedBonusPlayerId })),
+    [marqueeChips, speedBonusPlayerId],
+  );
 
   // Options layout: TVQuestion shows numbered 1..4 in *canonical* order on
   // the TV (the scramble is per-phone). So we render the question's options
