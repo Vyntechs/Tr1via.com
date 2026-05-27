@@ -22,7 +22,7 @@ type FormState =
 
 export default function HostLoginPage() {
   return (
-    <LaptopShell title="tr1via.com / sign in">
+    <LaptopShell>
       <HostLoginInner />
     </LaptopShell>
   );

@@ -197,7 +197,7 @@ function HostLiveConsoleInner({
   }
 
   return (
-    <LaptopShell title={title}>
+    <LaptopShell>
       <div
         data-testid="host-live-console"
         style={{

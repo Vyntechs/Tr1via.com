@@ -41,7 +41,7 @@ export function HostAdminClient({
   initialHosts: AdminHostRow[];
 }) {
   return (
-    <LaptopShell title="tr1via.com / founder">
+    <LaptopShell>
       <Inner meDisplayName={meDisplayName} initialHosts={initialHosts} />
     </LaptopShell>
   );

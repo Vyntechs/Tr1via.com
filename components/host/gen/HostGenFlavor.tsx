@@ -56,7 +56,7 @@ function HostGenFlavorInner() {
     ...Array.from({ length: 16 }, (_, i): DissolvingCard => ({ kept: false, idx: i })),
   ];
   return (
-    <LaptopShell title="pixar movies · sharper">
+    <LaptopShell>
       <div style={{ padding: "20px 56px 16px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
           <span style={{ width: 12, height: 12, borderRadius: 99, background: cc }} />

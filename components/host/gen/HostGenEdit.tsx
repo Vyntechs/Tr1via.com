@@ -115,7 +115,7 @@ function HostGenEditInner({
   }
 
   return (
-    <LaptopShell title={shellTitle}>
+    <LaptopShell>
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 540px", overflow: "hidden" }}>
         {/* Dimmed background — the pick workspace fading */}
         <div style={{ background: t.paper, padding: "24px 56px", opacity: 0.35, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 12 }}>

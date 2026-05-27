@@ -13,7 +13,7 @@ import { Display, Eyebrow, useTheme } from "@/components/system";
 
 export default function OnboardingPage() {
   return (
-    <LaptopShell title="tr1via.com / welcome">
+    <LaptopShell>
       <OnboardingInner />
     </LaptopShell>
   );
