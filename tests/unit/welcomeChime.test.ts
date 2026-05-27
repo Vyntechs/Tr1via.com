@@ -27,7 +27,11 @@ afterEach(() => {
   }
 });
 
-describe("playWelcomeChime", () => {
+// Skipped 2026-05-27: Brandon disabled all sound effects across the app.
+// playWelcomeChime is now an early-return no-op (see lib/audio/welcomeChime.ts).
+// If sound ever comes back, change `describe.skip` → `describe` here AND
+// remove the `return;` at the top of playWelcomeChime to revive both.
+describe.skip("playWelcomeChime", () => {
   it("does not throw when AudioContext is missing", () => {
     // Ensure no AudioContext exists on the window.
     expect(() => playWelcomeChime()).not.toThrow();

@@ -57,3 +57,4 @@ supabase/.temp
 # session-scoped (not committed)
 .surgeon
 .playwright-mcp/
+.superpowers/

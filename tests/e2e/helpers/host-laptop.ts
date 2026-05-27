@@ -55,23 +55,44 @@ export interface SeededNight {
   game2Categories: SeededCategory[];
 }
 
+export interface SeedNightOptions {
+  scenario?: "happy-path-3-cats-game1" | "two-games-ready" | "empty-night";
+  /** ThemeKey to apply to the night. Defaults to "house". */
+  themeKey?: string;
+}
+
 /**
  * Create a fully-realized night via /api/_test/seed-night. Default scenario
  * gives game 1 with 3 categories of 7 picked questions each. Each returned
  * category includes question_ids sorted ascending by point_value, so tests
  * can drive reveals without a follow-up fetch.
+ *
+ * Accepts either:
+ *   seedNight(page, hostId, scenario)            — legacy positional form
+ *   seedNight(page, hostId, { scenario, themeKey }) — options object form
  */
 export async function seedNight(
   page: Page,
   hostId: string,
-  scenario:
+  scenarioOrOptions?:
     | "happy-path-3-cats-game1"
     | "two-games-ready"
-    | "empty-night" = "happy-path-3-cats-game1",
+    | "empty-night"
+    | SeedNightOptions,
 ): Promise<SeededNight> {
+  let scenario: SeedNightOptions["scenario"] = "happy-path-3-cats-game1";
+  let themeKey: string | undefined;
+
+  if (typeof scenarioOrOptions === "string") {
+    scenario = scenarioOrOptions;
+  } else if (scenarioOrOptions !== undefined) {
+    scenario = scenarioOrOptions.scenario ?? "happy-path-3-cats-game1";
+    themeKey = scenarioOrOptions.themeKey;
+  }
+
   const res = await page.request.post("/api/_test/seed-night", {
     headers: { "x-test-secret": TEST_SECRET },
-    data: { hostId, scenario },
+    data: { hostId, scenario, ...(themeKey !== undefined ? { themeKey } : {}) },
   });
   if (!res.ok()) {
     throw new Error(`seedNight failed: ${res.status()} ${await res.text()}`);

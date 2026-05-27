@@ -31,7 +31,7 @@ export type PlayerQuestionSlot = 1 | 2 | 3 | 4;
 
 export interface PlayerQuestionProps {
   themeKey?: ThemeKey;
-  /** Seconds remaining (already clamped to [0, 20]). */
+  /** Seconds remaining (already clamped to [0, max] where max is theme-derived: 20 default, 25 on May/Storm). */
   seconds?: number;
   category?: string;
   value?: number;

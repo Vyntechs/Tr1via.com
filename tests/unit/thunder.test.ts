@@ -126,7 +126,11 @@ afterEach(() => {
   global.__lastMockCtx = null;
 });
 
-describe("playThunder", () => {
+// Skipped 2026-05-27: Brandon disabled all sound effects across the app.
+// playThunder is now an early-return no-op (see lib/audio/thunder.ts).
+// If sound ever comes back, change `describe.skip` → `describe` here AND
+// remove the `return null;` at the top of playThunder to revive both.
+describe.skip("playThunder", () => {
   it("creates a noise source + lowpass + highpass + sub oscillator for a distant strike", async () => {
     const { playThunder } = await import("@/lib/audio/thunder");
     const result = playThunder({ distance: "distant", delayMs: 0 });

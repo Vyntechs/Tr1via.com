@@ -6,7 +6,8 @@
 //   - serverNowMs: the server's "now" at the moment the reveal broadcast
 //     was sent. We use this to compute a per-device clock offset so the
 //     countdown is precisely aligned across phones / TV.
-//   - durationS: seconds the question is live for (default 20 per spec).
+//   - durationS: seconds the question is live for. When omitted, defaults
+//     come from the theme registry (20 for most themes, 25 for "may").
 //   - onZero: called exactly once when the timer first crosses 0. Used by
 //     phones to fire `/api/questions/:id/resolve` for the T+20 path.
 //
@@ -17,6 +18,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { secondsRemaining } from "@/lib/game/timer";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 const TICK_MS = 100;
 
@@ -25,8 +28,13 @@ export interface UseTimerOpts {
   revealedAtMs: number | null;
   /** Server's "now" at broadcast time. If provided, used to derive skew. */
   serverNowMs?: number | null;
-  /** Total question duration in seconds. Defaults to 20 per spec. */
+  /**
+   * Total question duration in seconds. When omitted, the default comes
+   * from the theme registry — 20 for most themes, 25 for "may".
+   */
   durationS?: number;
+  /** When set, default duration is derived from this theme's registry entry. */
+  themeKey?: ThemeKey;
   /** Fires exactly once when secondsRemaining first reaches 0. */
   onZero?: () => void;
 }
@@ -43,7 +51,7 @@ export interface UseTimerResult {
 }
 
 export function useTimer(opts: UseTimerOpts): UseTimerResult {
-  const duration = opts.durationS ?? 20;
+  const duration = opts.durationS ?? questionDurationFor(opts.themeKey);
 
   // Clock-skew offset: serverNow - clientNow at the moment the broadcast
   // arrived. Subtracting it from Date.now() gives the device's best

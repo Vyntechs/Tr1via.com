@@ -26,7 +26,7 @@
 // full viewport, the inline host embed sizes via its parent's grid.
 "use client";
 
-import { useMemo } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect } from "react";
 import {
   TVFinaleWinner,
   TVGrid,
@@ -45,9 +45,16 @@ import {
   type TVRevealFastest,
   type TVStumperFastest,
 } from "@/components/tv";
+import { TVLockInCeremony, type CeremonyEvent } from "@/components/tv/TVLockInCeremony";
+import type { MarqueeChip } from "@/components/tv/TVScoreboardMarquee";
 import { formatRoomCode } from "@/lib/game/room-code";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
+import { useLockInSync } from "@/lib/hooks/useLockInSync";
+import { playerColorHex } from "@/lib/player/playerColor";
+import { hasCeremony, hasMarquee } from "@/lib/theme/lockInCeremony";
+import { shouldHoldReveal } from "@/lib/tv/revealPause";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
 
@@ -75,6 +82,10 @@ export interface TVStateMachineProps {
    *  owns the timer (mounts the event for ~3s after a player-joined
    *  broadcast, then unmounts by passing null). */
   welcomeEvent?: TVLobbyWelcomeEvent | null;
+  /** The resolved theme for this night — drives the question timer duration
+   *  (20s default, 25s for "may"). When omitted, useTimer falls back to the
+   *  registry default (20s). */
+  themeKey?: ThemeKey;
 }
 
 export function TVStateMachine({
@@ -84,6 +95,7 @@ export function TVStateMachine({
   onGridCellClick,
   hostAdvanced = false,
   welcomeEvent = null,
+  themeKey,
 }: TVStateMachineProps) {
   const games = snapshot.games;
   const game1 = games.find((g) => g.gameNo === 1) ?? null;
@@ -124,6 +136,32 @@ export function TVStateMachine({
   // catches via `liveQuestion && !finishedAt`) OR the game ends.
   const stickyReveal = !!lastResolve && !hostAdvanced;
 
+  // Ceremony-queue pending count — TVQuestionView reports this up via a
+  // ref callback so the reveal branch can hold the transition for up to
+  // 3 s while ceremonies drain (May/Storm only).
+  const pendingCeremonyCountRef = useRef(0);
+  const onPendingCountChange = useCallback((count: number) => {
+    pendingCeremonyCountRef.current = count;
+  }, []);
+
+  // Track when the question first resolves (finishedAt becomes non-null)
+  // so shouldHoldReveal can enforce the 3-second hard cap.
+  const resolvedAtRef = useRef<number | null>(null);
+  const lastTargetIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const resolvedId = targetQuestion?.id ?? null;
+    const resolvedAt = targetQuestion?.finishedAt ?? null;
+    // Reset when a new question becomes the target.
+    if (resolvedId !== lastTargetIdRef.current) {
+      lastTargetIdRef.current = resolvedId;
+      resolvedAtRef.current = null;
+    }
+    // Stamp the moment we first observe finishedAt being set.
+    if (resolvedAt !== null && resolvedAtRef.current === null) {
+      resolvedAtRef.current = Date.now();
+    }
+  });
+
   // ── Lobby branch ──
   if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
     if (intermission) {
@@ -146,14 +184,17 @@ export function TVStateMachine({
 
   // ── Live game branches ──
   if (currentGame.state === "live") {
-    // Live question?
+    // Live question (still open — finishedAt not yet set)?
     if (liveQuestion && !liveQuestion.finishedAt) {
       return (
         <TVQuestionView
+          key={liveQuestion.id}
           snapshot={snapshot}
           question={liveQuestion}
           revealedAt={lastBroadcastRevealedAt ?? liveQuestion.playedAt}
           serverNow={lastBroadcastServerNow}
+          themeKey={themeKey}
+          onPendingCountChange={onPendingCountChange}
         />
       );
     }
@@ -163,7 +204,36 @@ export function TVStateMachine({
     // `liveQuestion` and trip the branch above). No auto-transition to a
     // leaderboard interstitial — the customer host explicitly wanted the
     // answer to stay readable until they move on.
+    //
+    // Ceremony-queue pause (May/Storm only): if lock-in ceremonies are still
+    // pending when the question resolves, hold reveal for up to 3 s so every
+    // player gets their ceremony before the answer flips into view.
     if (stickyReveal && targetQuestion && targetQuestion.finishedAt) {
+      const hold = shouldHoldReveal({
+        timerExpired: true, // finishedAt being set means the timer has expired
+        pendingCount: pendingCeremonyCountRef.current,
+        expiredAtMs: resolvedAtRef.current,
+        nowMs: Date.now(),
+        ceremonyEnabled: hasCeremony(themeKey),
+      });
+      if (hold) {
+        // Keep TVQuestionView alive during the ceremony drain window. We
+        // pass finishedAt=null-equivalent by keeping liveQuestion in scope,
+        // but since liveQuestion.finishedAt IS set here, we render with the
+        // live question data. The question still displays; ceremonies overlay.
+        // Use targetQuestion as the question since liveQuestion may be null.
+        return (
+          <TVQuestionView
+            key={`${targetQuestion.id}-hold`}
+            snapshot={snapshot}
+            question={targetQuestion}
+            revealedAt={lastBroadcastRevealedAt ?? targetQuestion.playedAt}
+            serverNow={lastBroadcastServerNow}
+            themeKey={themeKey}
+            onPendingCountChange={onPendingCountChange}
+          />
+        );
+      }
       return <TVRevealView snapshot={snapshot} question={targetQuestion} />;
     }
 
@@ -306,11 +376,17 @@ function TVQuestionView({
   question,
   revealedAt,
   serverNow,
+  themeKey,
+  onPendingCountChange,
 }: {
   snapshot: TVSnapshot;
   question: TVSnapshot["questions"][number];
   revealedAt: string | null;
   serverNow: string | null;
+  themeKey?: ThemeKey;
+  /** Fires whenever the ceremony queue length changes — lets the parent
+   *  state machine gate the reveal transition during the drain window. */
+  onPendingCountChange?: (count: number) => void;
 }) {
   const cat = snapshot.categories.find((c) => c.id === question.categoryId);
   const category = cat?.name ?? "Trivia";
@@ -323,10 +399,25 @@ function TVQuestionView({
       ? new Date(question.playedAt).getTime()
       : null;
   const serverNowMs = serverNow ? new Date(serverNow).getTime() : null;
+  // TV/host-laptop is the documented fallback for resolving a live question
+  // when the player's phone dies (force-closed Safari, lost network, iOS
+  // backgrounding the tab, etc.). The /api/questions/[id]/resolve endpoint
+  // is idempotent — its RPC does a "select … for update" so a second caller
+  // is a no-op. Without this onZero, a force-closed phone means the timer
+  // hits 0 and the game stalls — host has to manually click "End early".
   const { displaySeconds } = useTimer({
     revealedAtMs: revealedMs,
     serverNowMs,
-    durationS: 20,
+    themeKey,
+    onZero: () => {
+      void fetch(`/api/questions/${question.id}/resolve`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      }).catch(() => {
+        // Network/transient failure: phones or host's manual End-early
+        // button remain as fallbacks. Logging would be noise.
+      });
+    },
   });
 
   const tiles: TVQuestionTile[] = useMemo(() => {
@@ -342,22 +433,132 @@ function TVQuestionView({
       }));
   }, [snapshot.liveAnswers]);
 
+  // Build marquee chips from the full player roster — scores come from
+  // snapshot.scores (keyed by player_id, updated at reveal, static mid-question).
+  const marqueeChips: MarqueeChip[] = useMemo(() => {
+    if (!hasMarquee(themeKey)) return [];
+    return snapshot.players.map((p, i) => {
+      const scoreRow = snapshot.scores.find((s) => s.player_id === p.id);
+      return {
+        playerId: p.id,
+        name: p.displayName.toUpperCase(),
+        color: playerColorHex(p.id),
+        score: scoreRow?.score ?? 0,
+        joinIndex: i,
+      };
+    });
+  }, [snapshot.players, snapshot.scores, themeKey]);
+
+  // Track which players have locked in (any answer in liveAnswers) so we can
+  // diff against previously-seen locks and enqueue ceremony events.
+  const lockedAnswers = snapshot.liveAnswers;
+
+  const [ceremonyQueue, setCeremonyQueue] = useState<CeremonyEvent[]>([]);
+  const [spotlightedPlayerId, setSpotlightedPlayerId] = useState<string | null>(null);
+  const [speedBonusPlayerId, setSpeedBonusPlayerId] = useState<string | null>(null);
+  // seenLocksRef tracks player ids we've already queued so snapshot re-fetches
+  // (which repeat the full liveAnswers list) don't double-fire ceremonies.
+  const seenLocksRef = useRef<Set<string>>(new Set());
+
+  // Enqueue a ceremony event for each newly-seen lock-in.
+  useEffect(() => {
+    if (!hasCeremony(themeKey)) return;
+    const newlyLocked = lockedAnswers.filter((a) => !seenLocksRef.current.has(a.player_id));
+    for (const a of newlyLocked) seenLocksRef.current.add(a.player_id);
+    if (newlyLocked.length > 0) {
+      setCeremonyQueue((q) => [
+        ...q,
+        ...newlyLocked.map((a) => ({
+          playerId: a.player_id,
+          tint: playerColorHex(a.player_id),
+          msToLock: a.ms_to_lock,
+          receivedAtMs: Date.now(),
+        })),
+      ]);
+    }
+  }, [lockedAnswers, themeKey]);
+
+  // Polling fallback — catches any lock-ins the realtime channel dropped.
+  // Fires onMissed for locks the snapshot hasn't delivered yet; the callback
+  // here mirrors what the useEffect above does for realtime arrivals.
+  useLockInSync({
+    gameId: snapshot.currentGameId ?? "",
+    active: hasCeremony(themeKey) && !!snapshot.currentGameId,
+    acknowledged: seenLocksRef.current,
+    onMissed: (lock) => {
+      setCeremonyQueue((q) => [
+        ...q,
+        {
+          playerId: lock.playerId,
+          tint: playerColorHex(lock.playerId),
+          msToLock: lock.msToLock,
+          receivedAtMs: Date.now(),
+        },
+      ]);
+      seenLocksRef.current.add(lock.playerId);
+    },
+  });
+
+  const handleSpotlight = useCallback((playerId: string | null) => {
+    setSpotlightedPlayerId(playerId);
+    if (playerId === null) {
+      setSpeedBonusPlayerId(null);
+      return;
+    }
+    // Grant speed bonus only when the lock came in under 5 seconds.
+    const ev = ceremonyQueue.find((e) => e.playerId === playerId);
+    setSpeedBonusPlayerId(ev && ev.msToLock < 5000 ? playerId : null);
+  }, [ceremonyQueue]);
+
+  const handleEventComplete = useCallback((playerId: string) => {
+    setCeremonyQueue((q) => q.filter((e) => e.playerId !== playerId));
+  }, []);
+
+  // Report pending ceremony count to the parent state machine so it can
+  // gate the reveal transition during the drain window.
+  useEffect(() => {
+    onPendingCountChange?.(ceremonyQueue.length);
+  }, [ceremonyQueue.length, onPendingCountChange]);
+
+  // Decorate chips with speedBonus so the +SPD badge fires when spotlighted.
+  const decoratedChips: MarqueeChip[] = useMemo(
+    () => marqueeChips.map((c) => ({ ...c, speedBonus: c.playerId === speedBonusPlayerId })),
+    [marqueeChips, speedBonusPlayerId],
+  );
+
   // Options layout: TVQuestion shows numbered 1..4 in *canonical* order on
   // the TV (the scramble is per-phone). So we render the question's options
   // straight from the row.
   const options = question.options.map((text, i) => ({ n: i + 1, text }));
 
   return (
-    <TVQuestion
-      category={category}
-      value={question.pointValue ?? 100}
-      question={question.prompt}
-      options={options}
-      seconds={Math.max(0, displaySeconds)}
-      tiles={tiles}
-      totalPlayers={snapshot.players.length}
-      imageUrl={question.imageUrl}
-    />
+    <>
+      {hasCeremony(themeKey) && (
+        <TVLockInCeremony
+          events={ceremonyQueue}
+          onEventComplete={handleEventComplete}
+          onSpotlight={handleSpotlight}
+        />
+      )}
+      <TVQuestion
+        category={category}
+        value={question.pointValue ?? 100}
+        question={question.prompt}
+        options={options}
+        seconds={Math.max(0, displaySeconds)}
+        tiles={tiles}
+        totalPlayers={snapshot.players.length}
+        imageUrl={question.imageUrl}
+        themeKey={themeKey}
+        marqueeChips={decoratedChips}
+        spotlightedPlayerId={spotlightedPlayerId}
+        lockInAnnouncement={
+          spotlightedPlayerId
+            ? `${snapshot.players.find((p) => p.id === spotlightedPlayerId)?.displayName ?? ""} locked in`
+            : undefined
+        }
+      />
+    </>
   );
 }
 

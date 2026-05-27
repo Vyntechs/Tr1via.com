@@ -7,29 +7,33 @@
 "use client";
 
 import { useTheme } from "./ThemeProvider";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface TimerRingProps {
   seconds: number;
   max?: number;
   size?: number;
   accent?: string;
+  themeKey?: ThemeKey;
 }
 
-export function TimerRing({ seconds, max = 20, size = 48, accent }: TimerRingProps) {
+export function TimerRing({ seconds, max, size = 48, accent, themeKey }: TimerRingProps) {
+  const resolvedMax = max ?? questionDurationFor(themeKey);
   const { t } = useTheme();
   const a = accent ?? t.accent;
   const stroke = 3.5;
   const r = (size - stroke) / 2;
   const C = 2 * Math.PI * r;
-  const frac = Math.max(0, Math.min(1, seconds / max));
+  const frac = Math.max(0, Math.min(1, seconds / resolvedMax));
   const danger = seconds <= 5;
   const color = danger ? t.wrong : a;
 
-  // The first 5 seconds of the 20s are the speed-bonus window — drawn as a
+  // The first 5 seconds of the timer are the speed-bonus window — drawn as a
   // brighter outer arc segment so the boundary is visible. Hides once we
   // pass that threshold.
-  const bonusFrac = 5 / max;
-  const arcStart = 1 - bonusFrac; // last 25% of the circle = first 5s
+  const bonusFrac = 5 / resolvedMax;
+  const arcStart = 1 - bonusFrac; // last segment of the circle = first 5s
 
   return (
     <div
@@ -39,7 +43,7 @@ export function TimerRing({ seconds, max = 20, size = 48, accent }: TimerRingPro
     >
       <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
         <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={t.line} strokeWidth={stroke} />
-        {!danger && seconds > 15 && (
+        {!danger && seconds > resolvedMax - 5 && (
           <circle
             cx={size / 2}
             cy={size / 2}

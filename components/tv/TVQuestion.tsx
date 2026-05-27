@@ -20,8 +20,13 @@ import {
   useTheme,
 } from "@/components/system";
 import type { LockInTile } from "@/components/tv/lockin/roster";
+import {
+  TVScoreboardMarquee,
+  type MarqueeChip,
+} from "@/components/tv/TVScoreboardMarquee";
 import { useAutoFitText } from "@/lib/hooks/useAutoFitText";
 import { categoryColor } from "@/lib/theme/categories";
+import { hasMarquee } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 // Candidate font sizes for the question prompt — picked so that the longest
@@ -60,6 +65,14 @@ export interface TVQuestionProps {
   /** Pexels photo attached during generation. Rendered below the category
    *  banner as a wide thumbnail when present. */
   imageUrl?: string | null;
+  // --- May/Storm marquee props ---
+  /** When supplied alongside a marquee-enabled theme, replaces the lock-in
+   *  pile with the auto-scrolling scoreboard strip. */
+  marqueeChips?: MarqueeChip[];
+  /** Player whose chip is spotlighted (just locked in). */
+  spotlightedPlayerId?: string | null;
+  /** Screen-reader announcement for the latest lock-in event. */
+  lockInAnnouncement?: string;
 }
 
 export function TVQuestion(props: TVQuestionProps) {
@@ -82,6 +95,10 @@ function TVQuestionInner({
   tiles,
   totalPlayers,
   imageUrl,
+  themeKey,
+  marqueeChips,
+  spotlightedPlayerId,
+  lockInAnnouncement,
 }: TVQuestionProps) {
   const { t } = useTheme();
   const cc = categoryColor(category, t.accent);
@@ -250,7 +267,25 @@ function TVQuestionInner({
         ))}
       </div>
 
-      {pileTiles && pileTiles.length > 0 ? (
+      {/* May/Storm: swap in the scrolling scoreboard strip when theme + chips are both present.
+          All other themes (and May without chips) fall through to the existing lock-in pile. */}
+      {themeKey && hasMarquee(themeKey) && marqueeChips ? (
+        <div
+          style={{
+            padding: "20px 56px 16px",
+            marginTop: "auto",
+            position: "relative",
+            zIndex: 1,
+            flexShrink: 0,
+          }}
+        >
+          <TVScoreboardMarquee
+            chips={marqueeChips}
+            spotlightedPlayerId={spotlightedPlayerId ?? null}
+            announcement={lockInAnnouncement}
+          />
+        </div>
+      ) : pileTiles && pileTiles.length > 0 ? (
         // Live pile-up of locked-in answer tiles. We render only the pile body
         // here (not the LockInBase scaffold) so it lives inside the existing
         // TVQuestion stage and shares its question/timer/answers.

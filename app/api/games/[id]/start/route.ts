@@ -5,7 +5,7 @@
 // The 'state' column has a CHECK constraint that rejects illegal moves
 // (e.g. you can't start a 'done' game).
 
-import { ok, forbidden, unauthorized, serverError, notFound, conflict } from "@/lib/api/responses";
+import { ok, forbidden, unauthorized, serverError, notFound, conflict, badRequest } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
@@ -37,6 +37,20 @@ export async function POST(
   }
   if (existing.state === "done") {
     return conflict("game is already done");
+  }
+
+  // Refuse to start an empty game. Without at least one ready category, the
+  // TV would render a blank "0 of 0 ANSWERED" board with no way to advance —
+  // the host needs to generate questions first.
+  const { count: readyCategoryCount } = await admin
+    .from("categories")
+    .select("id", { count: "exact", head: true })
+    .eq("game_id", id)
+    .eq("state", "ready");
+  if (!readyCategoryCount || readyCategoryCount === 0) {
+    return badRequest(
+      "this game has no questions yet — generate categories before starting",
+    );
   }
 
   const startedAt = new Date().toISOString();
