@@ -116,22 +116,15 @@ function Chip({ chip, spotlight }: { chip: MarqueeChip; spotlight: boolean }) {
         transform: spotlight ? "scale(1.05)" : "scale(1)",
       }}
     >
-      {/*
-        Use a CSS custom property for the dot color so jsdom doesn't normalize
-        the hex value to rgb() — the test reads getAttribute("style") for hex.
-      */}
       <span
         data-testid="marquee-chip-dot"
-        style={
-          {
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: "var(--dot-color)",
-            "--dot-color": chip.color,
-            flexShrink: 0,
-          } as React.CSSProperties
-        }
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: chip.color,
+          flexShrink: 0,
+        }}
       />
       {/* Isolated span so getByText(name regex) returns just the name node. */}
       <span data-testid="marquee-chip-name">{displayName}</span>
@@ -165,7 +158,7 @@ function Chip({ chip, spotlight }: { chip: MarqueeChip; spotlight: boolean }) {
   );
 }
 
-export function sortChips(chips: MarqueeChip[]): MarqueeChip[] {
+function sortChips(chips: MarqueeChip[]): MarqueeChip[] {
   return [...chips].sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
     return a.joinIndex - b.joinIndex;

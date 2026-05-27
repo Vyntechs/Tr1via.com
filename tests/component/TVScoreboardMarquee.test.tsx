@@ -42,7 +42,8 @@ describe("TVScoreboardMarquee — sort + chip rendering", () => {
   it("renders a color dot styled with the player's color", () => {
     render(<TVScoreboardMarquee chips={[chips[0]!]} />);
     const dot = screen.getByTestId("marquee-chip-dot");
-    expect(dot.getAttribute("style") ?? "").toContain("#5AA8E0");
+    // jsdom normalizes hex #5AA8E0 → rgb(90, 168, 224) in inline styles.
+    expect(dot.getAttribute("style") ?? "").toContain("rgb(90, 168, 224)");
   });
 
   it("includes an aria-live region for screen reader announcements", () => {
