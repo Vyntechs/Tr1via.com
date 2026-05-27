@@ -8,15 +8,26 @@
 
 import {
   TVLobby,
+  DEMO_ROSTER,
   TVGrid,
+  DEMO_CATEGORIES,
+  DEMO_VALUES,
   TVQuestion,
   TVReveal,
+  DEMO_FASTEST,
   TVLeaderboard,
+  DEMO_ROWS,
   TVIntermission,
+  demoPodium,
+  DEMO_INTERMISSION_STATS,
   TVRevealStumper,
   TVSectionComplete,
   TVFinaleWinner,
+  DEMO_WINNER,
+  DEMO_PODIUM,
+  DEMO_STATS,
 } from "@/components/tv";
+import { resolveTheme } from "@/lib/theme/resolve";
 import { useTheme, Wordmark, Eyebrow } from "@/components/system";
 import { TR1VIA_THEMES, THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
 import type { ReactNode } from "react";
@@ -72,22 +83,58 @@ export default function TVGallery() {
 
         <div style={{ display: "flex", flexDirection: "column", gap: 56 }}>
           <Frame label="01 · Lobby">
-            <TVLobby />
+            <TVLobby
+              venueName="SOUL FIRE PIZZA"
+              scheduledDate="WED MAY 27"
+              roomCode="K9·PR4M"
+              inRoomCount={27}
+              roster={DEMO_ROSTER}
+              joinUrl="https://tr1via.com/join/K9PR4M"
+              hostStatusLine="ROOM OPEN · LINDA WILL START WHEN READY"
+              gameStatusLine="GAME 1 OF 2 · WAITING"
+            />
           </Frame>
           <Frame label="02 · Grid">
-            <TVGrid />
+            <TVGrid
+              gameStatusLine="GAME 1 · ROUND 3 · 32 PLAYERS"
+              rightHeaderLine="10 OF 42 ANSWERED"
+              categories={DEMO_CATEGORIES}
+              values={DEMO_VALUES}
+              leader={{ name: "Devon", score: 2140 }}
+              boardLeft={32}
+              footerLeft="WAITING ON LINDA"
+              footerRight="TR1VIA.COM · K9·PR4M"
+              upNext={{ category: "Food", value: 300, sub: "standing by to reveal" }}
+            />
           </Frame>
           <Frame label="03 · Question">
             <TVQuestion />
           </Frame>
           <Frame label="04 · Reveal · correct">
-            <TVReveal />
+            <TVReveal
+              headerEyebrow="GAME 1 · GEOGRAPHY · 100 PTS"
+              question="Which U.S. state has the\nlongest coastline?"
+              correctNumber={2}
+              correctText="Alaska"
+              fact="33,904 miles of tidal coastline — more than all other states combined."
+              gotIt={23}
+              ofTotal={32}
+              fastest="1.2s"
+              speedBonus="+10"
+              fastestFive={DEMO_FASTEST}
+            />
           </Frame>
           <Frame label="05 · Reveal · stumper">
             <TVRevealStumper />
           </Frame>
           <Frame label="06 · Leaderboard">
-            <TVLeaderboard />
+            <TVLeaderboard
+              headerLeft="GAME 1 · END OF ROUND 3"
+              headerRight="32 PLAYERS · 8 OF 42 ANSWERED"
+              footerLeft="LINDA IS LOADING ROUND 4"
+              footerRight="34 QUESTIONS LEFT"
+              rows={DEMO_ROWS}
+            />
           </Frame>
           <Frame label="07 · Section complete · cinematic over the grid">
             <div
@@ -98,7 +145,13 @@ export default function TVGallery() {
                 background: "#0E0805",
               }}
             >
-              <TVGrid />
+              <TVGrid
+                gameStatusLine="GAME 1 · ROUND 3 · 32 PLAYERS"
+                rightHeaderLine="10 OF 42 ANSWERED"
+                categories={DEMO_CATEGORIES}
+                values={DEMO_VALUES}
+                leader={{ name: "Devon", score: 2140 }}
+              />
               <TVSectionComplete
                 topicName="Martial Arts"
                 color="#FF6A3D"
@@ -107,10 +160,23 @@ export default function TVGallery() {
             </div>
           </Frame>
           <Frame label="08 · Intermission">
-            <TVIntermission />
+            <TVIntermission
+              footerLeft="TR1VIA.COM · K9·PR4M · ROOM STILL OPEN"
+              roomCode="K9·PR4M"
+              joinUrl="https://tr1via.com/join/K9PR4M"
+              readyCount={24}
+              totalCount={32}
+              podium={demoPodium(resolveTheme(themeKey))}
+              nightStats={DEMO_INTERMISSION_STATS}
+            />
           </Frame>
           <Frame label="09 · Finale winner · heightened weather">
-            <TVFinaleWinner />
+            <TVFinaleWinner
+              headerEyebrow="SOUL FIRE PIZZA · WED MAY 27"
+              winner={DEMO_WINNER}
+              podium={DEMO_PODIUM}
+              nightStats={DEMO_STATS}
+            />
           </Frame>
         </div>
       </div>

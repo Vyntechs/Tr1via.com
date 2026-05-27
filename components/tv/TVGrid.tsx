@@ -69,8 +69,8 @@ export interface TVGridProps {
   onCellClick?: (questionId: string) => void;
 }
 
-const DEMO_CATEGORIES = ["Geography", "Animals", "Food", "Movies", "Music", "History"];
-const DEMO_VALUES = [100, 200, 300, 400, 500, 600, 700];
+export const DEMO_CATEGORIES = ["Geography", "Animals", "Food", "Movies", "Music", "History"];
+export const DEMO_VALUES = [100, 200, 300, 400, 500, 600, 700];
 const DEMO_PLAYED = new Set(["0-0", "0-1", "1-0", "2-0", "3-0", "4-0", "1-1", "3-1", "5-0", "5-1"]);
 const DEMO_SELECTED = "2-2";
 
@@ -96,20 +96,20 @@ export function TVGrid({ themeKey, ...rest }: TVGridProps) {
 }
 
 function TVGridInner({
-  gameStatusLine = "GAME 1 · ROUND 3 · 32 PLAYERS",
-  rightHeaderLine = "10 OF 42 ANSWERED",
-  categories = DEMO_CATEGORIES,
+  gameStatusLine = "",
+  rightHeaderLine = "",
+  categories = [],
   cells,
-  values = DEMO_VALUES,
-  leader = { name: "Devon", score: 2140 },
-  boardLeft = 32,
-  footerLeft = "WAITING ON LINDA",
-  footerRight = "TR1VIA.COM · K9·PR4M",
-  upNext = { category: "Food", value: 300, sub: "standing by to reveal" },
+  values = [],
+  leader,
+  boardLeft = 0,
+  footerLeft = "",
+  footerRight = "",
+  upNext,
   onCellClick,
 }: Omit<TVGridProps, "themeKey">) {
   const { t } = useTheme();
-  const board = cells ?? demoCells();
+  const board = cells ?? [];
 
   return (
     <TVStage data-testid="tv-grid">
@@ -274,15 +274,17 @@ function TVGridInner({
 
         {/* Sidebar */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          <div style={{ padding: "18px 22px", borderRadius: 14, background: t.surface }}>
-            <Eyebrow color={t.inkMute} size={10}>LEADER</Eyebrow>
-            <div style={{ marginTop: 8 }}>
-              <Display size={48} color={t.ink} weight={700}>{leader.name}</Display>
-              <Numeric size={26} weight={700} color={t.accent} style={{ display: "block", marginTop: 4 }}>
-                {leader.score.toLocaleString()}
-              </Numeric>
+          {leader && (
+            <div style={{ padding: "18px 22px", borderRadius: 14, background: t.surface }}>
+              <Eyebrow color={t.inkMute} size={10}>LEADER</Eyebrow>
+              <div style={{ marginTop: 8 }}>
+                <Display size={48} color={t.ink} weight={700}>{leader.name}</Display>
+                <Numeric size={26} weight={700} color={t.accent} style={{ display: "block", marginTop: 4 }}>
+                  {leader.score.toLocaleString()}
+                </Numeric>
+              </div>
             </div>
-          </div>
+          )}
 
           {upNext && (
             <div style={{ padding: "16px 22px", borderRadius: 14, background: t.accent, color: "#0E0805" }}>

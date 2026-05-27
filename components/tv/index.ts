@@ -1,16 +1,16 @@
 // Barrel export for venue-TV screens. Import from "@/components/tv".
 
-export { TVLobby } from "./TVLobby";
+export { TVLobby, DEMO_ROSTER } from "./TVLobby";
 export type { TVLobbyProps, TVLobbyWelcomeEvent } from "./TVLobby";
-export { TVGrid } from "./TVGrid";
+export { TVGrid, DEMO_CATEGORIES, DEMO_VALUES } from "./TVGrid";
 export type { TVGridProps, TVGridCell, TVGridLeader } from "./TVGrid";
 export { TVQuestion } from "./TVQuestion";
 export type { TVQuestionProps, TVQuestionOption, TVQuestionTile } from "./TVQuestion";
-export { TVReveal } from "./TVReveal";
+export { TVReveal, DEMO_FASTEST } from "./TVReveal";
 export type { TVRevealProps, TVRevealFastest } from "./TVReveal";
-export { TVLeaderboard } from "./TVLeaderboard";
+export { TVLeaderboard, DEMO_ROWS } from "./TVLeaderboard";
 export type { TVLeaderboardProps, TVLeaderboardRow } from "./TVLeaderboard";
-export { TVIntermission } from "./TVIntermission";
+export { TVIntermission, demoPodium, DEMO_INTERMISSION_STATS } from "./TVIntermission";
 export type {
   TVIntermissionProps,
   TVIntermissionPodiumRow,
@@ -20,7 +20,7 @@ export { TVRevealStumper } from "./TVRevealStumper";
 export type { TVRevealStumperProps, TVStumperFastest } from "./TVRevealStumper";
 export { TVSectionComplete } from "./TVSectionComplete";
 export type { TVSectionCompleteProps } from "./TVSectionComplete";
-export { TVFinaleWinner } from "./TVFinaleWinner";
+export { TVFinaleWinner, DEMO_WINNER, DEMO_PODIUM, DEMO_STATS } from "./TVFinaleWinner";
 export type {
   TVFinaleWinnerProps,
   TVFinaleWinnerData,
