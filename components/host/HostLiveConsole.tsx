@@ -102,7 +102,7 @@ export function HostLiveConsole(props: HostLiveConsoleProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <HostLiveConsoleInner {...rest} />
+        <HostLiveConsoleInner {...rest} themeKey={themeKey} />
       </ThemeProvider>
     );
   }
@@ -140,7 +140,8 @@ function HostLiveConsoleInner({
   tvLastBroadcastRevealedAt = null,
   tvLastBroadcastServerNow = null,
   welcomeEvent = null,
-}: Omit<HostLiveConsoleProps, "themeKey">) {
+  themeKey,
+}: Omit<HostLiveConsoleProps, never>) {
   const { t } = useTheme();
   const totalPlayers = playersTotal ?? players.length;
   const locks = lockedCount ?? players.filter((p) => p.locked).length;
@@ -217,6 +218,7 @@ function HostLiveConsoleInner({
               onGridCellClick={handleRevealCell}
               hostAdvanced={hostAdvanced}
               welcomeEvent={welcomeEvent}
+              themeKey={themeKey}
             />
           ) : (
             <DevPlaceholder />

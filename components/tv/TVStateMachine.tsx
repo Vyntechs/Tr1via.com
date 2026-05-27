@@ -48,6 +48,7 @@ import {
 import { formatRoomCode } from "@/lib/game/room-code";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
 
@@ -75,6 +76,10 @@ export interface TVStateMachineProps {
    *  owns the timer (mounts the event for ~3s after a player-joined
    *  broadcast, then unmounts by passing null). */
   welcomeEvent?: TVLobbyWelcomeEvent | null;
+  /** The resolved theme for this night — drives the question timer duration
+   *  (20s default, 25s for "may"). When omitted, useTimer falls back to the
+   *  registry default (20s). */
+  themeKey?: ThemeKey;
 }
 
 export function TVStateMachine({
@@ -84,6 +89,7 @@ export function TVStateMachine({
   onGridCellClick,
   hostAdvanced = false,
   welcomeEvent = null,
+  themeKey,
 }: TVStateMachineProps) {
   const games = snapshot.games;
   const game1 = games.find((g) => g.gameNo === 1) ?? null;
@@ -154,6 +160,7 @@ export function TVStateMachine({
           question={liveQuestion}
           revealedAt={lastBroadcastRevealedAt ?? liveQuestion.playedAt}
           serverNow={lastBroadcastServerNow}
+          themeKey={themeKey}
         />
       );
     }
@@ -306,11 +313,13 @@ function TVQuestionView({
   question,
   revealedAt,
   serverNow,
+  themeKey,
 }: {
   snapshot: TVSnapshot;
   question: TVSnapshot["questions"][number];
   revealedAt: string | null;
   serverNow: string | null;
+  themeKey?: ThemeKey;
 }) {
   const cat = snapshot.categories.find((c) => c.id === question.categoryId);
   const category = cat?.name ?? "Trivia";
@@ -326,7 +335,7 @@ function TVQuestionView({
   const { displaySeconds } = useTimer({
     revealedAtMs: revealedMs,
     serverNowMs,
-    durationS: 20,
+    themeKey,
   });
 
   const tiles: TVQuestionTile[] = useMemo(() => {

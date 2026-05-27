@@ -60,6 +60,7 @@ import {
 } from "@/lib/game/room-code";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import type {
   AnswerRow,
   CategoryRow,
@@ -70,7 +71,6 @@ import type {
   QuestionRow,
 } from "@/lib/supabase/types";
 
-const QUESTION_DURATION_S = 20;
 const HEARTBEAT_INTERVAL_MS = 10_000;
 
 export default function PlayerRoomPage() {
@@ -196,7 +196,7 @@ function RoomStateMachine({
   roomCode,
   snapshot,
   me,
-  themeKey: _themeKey,
+  themeKey,
 }: {
   roomCode: string;
   snapshot: ReturnType<typeof useRoom>;
@@ -382,6 +382,7 @@ function RoomStateMachine({
             allAnswers={myAnswers}
             categories={snapshot.categories}
             game={currentGame}
+            themeKey={themeKey}
           />
         );
       }
@@ -395,6 +396,7 @@ function RoomStateMachine({
           game={currentGame}
           categories={snapshot.categories}
           onAnswerOptimistic={recordOptimisticAnswer}
+          themeKey={themeKey}
         />
       );
     }
@@ -617,6 +619,7 @@ function QuestionView({
   game: _game,
   categories,
   onAnswerOptimistic,
+  themeKey,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -626,6 +629,7 @@ function QuestionView({
   game: GameRow;
   categories: CategoryRow[];
   onAnswerOptimistic: (row: AnswerRow) => void;
+  themeKey?: ThemeKey;
 }) {
   // Compute the player-specific scramble. Same fn the server runs to verify
   // submissions, so the slot the player taps maps back to the canonical
@@ -669,7 +673,7 @@ function QuestionView({
   const { displaySeconds } = useTimer({
     revealedAtMs,
     serverNowMs,
-    durationS: QUESTION_DURATION_S,
+    durationS: questionDurationFor(themeKey),
     onZero: handleZero,
   });
 
@@ -763,6 +767,7 @@ function LockedView({
   allAnswers: _allAnswers,
   categories,
   game: _game,
+  themeKey,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -771,6 +776,7 @@ function LockedView({
   allAnswers: AnswerRow[];
   categories: CategoryRow[];
   game: GameRow;
+  themeKey?: ThemeKey;
 }) {
   // Reuse the same scramble — same player + question = same permutation.
   const scramble = useMemo(
@@ -810,7 +816,7 @@ function LockedView({
   }, [question.id]);
   const { displaySeconds } = useTimer({
     revealedAtMs,
-    durationS: QUESTION_DURATION_S,
+    durationS: questionDurationFor(themeKey),
     onZero: handleZero,
   });
 
