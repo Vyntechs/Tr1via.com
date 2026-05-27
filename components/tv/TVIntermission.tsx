@@ -70,7 +70,7 @@ export function TVIntermission({ themeKey, ...rest }: TVIntermissionProps) {
   return <TVIntermissionInner {...rest} />;
 }
 
-function defaultPodium(t: ResolvedTheme): TVIntermissionPodiumRow[] {
+export function demoPodium(t: ResolvedTheme): TVIntermissionPodiumRow[] {
   return [
     { rank: 1, name: "Devon", score: 6280, line: "Two streaks of five. Untouchable.", color: t.accent },
     { rank: 2, name: "Iris",  score: 5740, line: "Fastest hand in the room.",         color: t.pop },
@@ -78,7 +78,7 @@ function defaultPodium(t: ResolvedTheme): TVIntermissionPodiumRow[] {
   ];
 }
 
-const DEMO_STATS: TVIntermissionStat[] = [
+export const DEMO_INTERMISSION_STATS: TVIntermissionStat[] = [
   { l: "FASTEST", v: "0.9s", sub: "Iris on music" },
   { l: "STREAK",  v: "×7",   sub: "Devon on history" },
   { l: "STUMPER", v: "4/32", sub: "Egyptian honey" },
@@ -87,17 +87,19 @@ const DEMO_STATS: TVIntermissionStat[] = [
 function TVIntermissionInner({
   headerLeft = "GAME 1 · COMPLETE",
   headerRight = "GAME 2 LAUNCHES WHEN HOST SAYS GO",
-  footerLeft = "TR1VIA.COM · K9·PR4M · ROOM STILL OPEN",
+  footerLeft = "",
   footerRight = "HOST STARTS GAME 2 WHEN ENOUGH ARE IN",
   podium,
-  readyCount = 24,
-  totalCount = 32,
-  roomCode = "K9·PR4M",
-  joinUrl = "https://tr1via.com/join/K9PR4M",
-  nightStats = DEMO_STATS,
+  readyCount = 0,
+  totalCount = 0,
+  roomCode = "",
+  joinUrl = "",
+  nightStats = [],
 }: Omit<TVIntermissionProps, "themeKey">) {
   const { t } = useTheme();
-  const rows = podium ?? defaultPodium(t);
+  // Production callers MUST pass a real podium. Without one we render
+  // an empty list rather than fake Devon-and-friends placeholder data.
+  const rows = podium ?? [];
 
   return (
     <TVStage data-testid="tv-intermission">
