@@ -87,10 +87,10 @@ describe("HostGenEdit", () => {
     );
 
     // Change the 2nd option, mark the 3rd option as correct, change point value to 600.
-    // Initial correctIndex=0 means rows 2/3/4 each render a "mark" button.
+    // Initial correctIndex=0 means rows 2/3/4 each render a "Make correct" button.
     const optionInputs = screen.getAllByDisplayValue(/^(alpha|bravo|charlie|delta)$/);
     fireEvent.change(optionInputs[1]!, { target: { value: "BRAVO-edited" } });
-    const markButtons = screen.getAllByRole("button", { name: /^mark$/i });
+    const markButtons = screen.getAllByRole("button", { name: /^make correct$/i });
     // markButtons[0] -> row 2, markButtons[1] -> row 3, markButtons[2] -> row 4.
     fireEvent.click(markButtons[1]!);
     fireEvent.click(screen.getByRole("button", { name: "600" }));
