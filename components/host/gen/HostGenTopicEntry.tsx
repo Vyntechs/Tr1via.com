@@ -117,7 +117,7 @@ function HostGenTopicEntryInner({
   }
 
   return (
-    <LaptopShell title={shellTitle}>
+    <LaptopShell>
       <form
         onSubmit={handleSubmit}
         style={{ padding: "40px 56px", flex: 1, display: "grid", gridTemplateColumns: "1fr 300px", gap: 40 }}

@@ -41,7 +41,7 @@ function HostSetupCategoriesInner() {
   ];
 
   return (
-    <LaptopShell title="set up · game 1">
+    <LaptopShell>
       <div
         style={{
           padding: "36px 56px",

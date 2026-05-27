@@ -73,7 +73,7 @@ function HostGenErrorInner({
       ? message
       : "Something went sideways while pulling your questions. It happens — usually a quick retry sorts it.";
   return (
-    <LaptopShell title={shellTitle}>
+    <LaptopShell>
       <div
         style={{
           flex: 1,

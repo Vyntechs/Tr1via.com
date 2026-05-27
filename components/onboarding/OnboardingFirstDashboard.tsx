@@ -67,7 +67,7 @@ function OnboardingFirstDashboardInner({
 }: OnboardingFirstDashboardInnerProps) {
   const { t } = useTheme();
   return (
-    <LaptopShell title="tr1via.com / linda">
+    <LaptopShell>
       <div
         data-testid="host-onboarding-first"
         style={{
