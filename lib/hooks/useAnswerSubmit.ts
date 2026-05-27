@@ -41,6 +41,12 @@ export interface UseAnswerSubmitResult {
   submit: (slot: 1 | 2 | 3 | 4) => void;
   /** Re-attempt after a failed terminal. No-op if not failed. */
   retry: () => void;
+  /**
+   * Timestamp (Date.now()) set the moment the server confirms the answer.
+   * null until then. Task 15 uses this to fire the lock-in ceremony only after
+   * the DB has the answer — not on the tap itself.
+   */
+  confirmedAt: number | null;
 }
 
 const DEFAULT_BACKOFF = [500, 1000, 2000];
@@ -107,6 +113,7 @@ export function useAnswerSubmit({
   backoffMs = DEFAULT_BACKOFF,
 }: UseAnswerSubmitOptions): UseAnswerSubmitResult {
   const [status, setStatus] = useState<AnswerSubmitStatus>("idle");
+  const [confirmedAt, setConfirmedAt] = useState<number | null>(null);
   const lastSlotRef = useRef<1 | 2 | 3 | 4 | null>(null);
   const cancelledRef = useRef(false);
 
@@ -122,6 +129,7 @@ export function useAnswerSubmit({
         if (cancelledRef.current) return;
         if (shouldTreatAsSent(res.status)) {
           clearPendingAnswer();
+          setConfirmedAt(Date.now());
           setStatus("sent");
           return;
         }
@@ -157,6 +165,7 @@ export function useAnswerSubmit({
     lastSlotRef.current = null;
     cancelledRef.current = false;
     setStatus("idle");
+    setConfirmedAt(null);
 
     // Refresh-survives-the-answer: if the player closed/refreshed mid-retry
     // for THIS question, the persisted slot is still in localStorage. Resume
@@ -202,5 +211,5 @@ export function useAnswerSubmit({
     runAttempt(slot, 0);
   }, [status, runAttempt, questionId]);
 
-  return { status, submit, retry };
+  return { status, submit, retry, confirmedAt };
 }
