@@ -19,7 +19,7 @@
 
 "use client";
 
-import {
+import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -36,6 +36,7 @@ import {
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import {
   PlayerLobby,
+  PlayerLockInBolt,
   PlayerQuestion,
   PlayerLocked,
   PlayerRevealCorrect,
@@ -60,7 +61,7 @@ import {
 } from "@/lib/game/room-code";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
-import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import { questionDurationFor, hasCeremony } from "@/lib/theme/lockInCeremony";
 import type {
   AnswerRow,
   CategoryRow,
@@ -319,6 +320,19 @@ function RoomStateMachine({
     return idx >= 0 ? idx + 1 : null;
   }, [scores, me.id]);
 
+  // Bolt ceremony: fires when the server confirms the player's answer.
+  // Rendered once outside all branch returns (position:fixed, pointer-events:none)
+  // so the overlay survives the QuestionView→LockedView switch on optimistic lock-in.
+  const [boltActive, setBoltActive] = useState(false);
+  const handleServerConfirm = useCallback(() => {
+    if (!hasCeremony(themeKey)) return;
+    setBoltActive(true);
+  }, [themeKey]);
+  // Reset if a new question arrives while the bolt is still playing.
+  useEffect(() => {
+    setBoltActive(false);
+  }, [currentQuestion?.id]);
+
   // Player's game-2 opt-in (separate read; one row per game/player).
   const myParticipations = useMyParticipations(me.id);
   // Optimistic flag: postgres_changes for game_participations doesn't reach
@@ -334,6 +348,11 @@ function RoomStateMachine({
     return myParticipations.some((p) => p.game_id === game2.id);
   }, [myParticipations, game2, optimisticInGame2]);
 
+  // ── Compute the screen content. The bolt overlay is rendered once below,
+  //    outside this branch, so it persists across the QuestionView→LockedView
+  //    transition that happens on optimistic lock-in.
+  let inner: React.ReactNode;
+
   // ── PlayerJoinGame2: game 1 'done' and game 2 not done and we haven't opted in ──
   if (
     game1 &&
@@ -342,7 +361,7 @@ function RoomStateMachine({
     game2.state !== "done" &&
     !inGame2
   ) {
-    return (
+    inner = (
       <PlayerJoinGame2Wired
         roomCode={roomCode}
         me={me}
@@ -354,26 +373,22 @@ function RoomStateMachine({
         onJoinSuccess={() => setOptimisticInGame2(true)}
       />
     );
-  }
-
-  // ── Lobby: pre-game (no game yet, or game in draft/ready) ──
-  if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
-    return (
+  } else if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
+    // ── Lobby: pre-game (no game yet, or game in draft/ready) ──
+    inner = (
       <LobbyView
         snapshot={snapshot}
         me={me}
       />
     );
-  }
-
-  // ── Live or just-resolved question paths ──
-  if (currentQuestion && currentCategory) {
+  } else if (currentQuestion && currentCategory) {
+    // ── Live or just-resolved question paths ──
     const myAnswerForQ =
       myAnswers.find((a) => a.question_id === currentQuestion.id) ?? null;
     const isResolved = currentQuestion.finished_at !== null;
     if (!isResolved) {
       if (myAnswerForQ) {
-        return (
+        inner = (
           <LockedView
             question={currentQuestion}
             category={currentCategory}
@@ -385,54 +400,29 @@ function RoomStateMachine({
             themeKey={themeKey}
           />
         );
+      } else {
+        inner = (
+          <QuestionView
+            question={currentQuestion}
+            category={currentCategory}
+            player={me}
+            roomCode={roomCode}
+            revealBroadcast={snapshot.lastBroadcast}
+            game={currentGame}
+            categories={snapshot.categories}
+            onAnswerOptimistic={recordOptimisticAnswer}
+            onServerConfirm={handleServerConfirm}
+            themeKey={themeKey}
+          />
+        );
       }
-      return (
-        <QuestionView
+    } else {
+      // Resolved. Show reveal-correct or reveal-wrong for THIS question.
+      inner = (
+        <RevealView
           question={currentQuestion}
           category={currentCategory}
-          player={me}
-          roomCode={roomCode}
-          revealBroadcast={snapshot.lastBroadcast}
-          game={currentGame}
-          categories={snapshot.categories}
-          onAnswerOptimistic={recordOptimisticAnswer}
-          themeKey={themeKey}
-        />
-      );
-    }
-    // Resolved. Show reveal-correct or reveal-wrong for THIS question.
-    return (
-      <RevealView
-        question={currentQuestion}
-        category={currentCategory}
-        myAnswer={myAnswerForQ}
-        player={me}
-        myAnswers={myAnswers}
-        categories={snapshot.categories}
-        game={currentGame}
-        rank={myRank}
-      />
-    );
-  }
-
-  // ── Between questions: hold on the last reveal until the host moves on. ──
-  // useRoom keeps the most-recently-finished question in lastResolvedQuestion
-  // (separate from currentQuestion which is cleared when finished_at fires).
-  // Render the reveal frame for it so the player sees correct/wrong + score
-  // before the host clicks the next cell.
-  const lastResolvedQuestion = snapshot.lastResolvedQuestion;
-  if (lastResolvedQuestion) {
-    const resolvedCategory = snapshot.categories.find(
-      (c) => c.id === lastResolvedQuestion.category_id,
-    );
-    if (resolvedCategory) {
-      const myAnswerForResolved =
-        myAnswers.find((a) => a.question_id === lastResolvedQuestion.id) ?? null;
-      return (
-        <RevealView
-          question={lastResolvedQuestion}
-          category={resolvedCategory}
-          myAnswer={myAnswerForResolved}
+          myAnswer={myAnswerForQ}
           player={me}
           myAnswers={myAnswers}
           categories={snapshot.categories}
@@ -441,10 +431,51 @@ function RoomStateMachine({
         />
       );
     }
+  } else {
+    // ── Between questions: hold on the last reveal until the host moves on. ──
+    // useRoom keeps the most-recently-finished question in lastResolvedQuestion
+    // (separate from currentQuestion which is cleared when finished_at fires).
+    // Render the reveal frame for it so the player sees correct/wrong + score
+    // before the host clicks the next cell.
+    const lastResolvedQuestion = snapshot.lastResolvedQuestion;
+    if (lastResolvedQuestion) {
+      const resolvedCategory = snapshot.categories.find(
+        (c) => c.id === lastResolvedQuestion.category_id,
+      );
+      if (resolvedCategory) {
+        const myAnswerForResolved =
+          myAnswers.find((a) => a.question_id === lastResolvedQuestion.id) ?? null;
+        inner = (
+          <RevealView
+            question={lastResolvedQuestion}
+            category={resolvedCategory}
+            myAnswer={myAnswerForResolved}
+            player={me}
+            myAnswers={myAnswers}
+            categories={snapshot.categories}
+            game={currentGame}
+            rank={myRank}
+          />
+        );
+      }
+    }
+
+    // Live game with no question on deck and no recent reveal → idle.
+    if (!inner) inner = <BetweenView playerName={me.display_name} />;
   }
 
-  // Live game with no question on deck and no recent reveal → idle.
-  return <BetweenView playerName={me.display_name} />;
+  return (
+    <>
+      {boltActive && me && (
+        <PlayerLockInBolt
+          active={true}
+          tint={playerColorHex(me.id)}
+          onComplete={() => setBoltActive(false)}
+        />
+      )}
+      {inner}
+    </>
+  );
 }
 
 // ─── LOBBY ───────────────────────────────────────────────────────────────
@@ -619,6 +650,7 @@ function QuestionView({
   game: _game,
   categories,
   onAnswerOptimistic,
+  onServerConfirm,
   themeKey,
 }: {
   question: QuestionRow;
@@ -629,6 +661,9 @@ function QuestionView({
   game: GameRow;
   categories: CategoryRow[];
   onAnswerOptimistic: (row: AnswerRow) => void;
+  /** Called the moment the server confirms the answer. Used to fire
+   *  the bolt ceremony from the parent, which survives this unmount. */
+  onServerConfirm: () => void;
   themeKey?: ThemeKey;
 }) {
   // Compute the player-specific scramble. Same fn the server runs to verify
@@ -681,10 +716,23 @@ function QuestionView({
   // The UI flips to "locked" the moment the player taps; the hook keeps
   // retrying in the background. A failed-after-retries state surfaces a
   // small retry prompt the player can tap to re-attempt manually.
-  const { submit, status: submitStatus, retry } = useAnswerSubmit({
+  const { submit, status: submitStatus, retry, confirmedAt } = useAnswerSubmit({
     questionId: question.id,
     scramble: Array.from(scramble),
   });
+
+  // Propagate server confirmation up to the parent (RoomStateMachine) so
+  // the bolt overlay can survive the QuestionView→LockedView unmount.
+  // confirmedAt fires ~150-300ms after the tap; by that point QuestionView
+  // may already be gone if the optimistic answer flipped the parent screen.
+  useEffect(() => {
+    if (!confirmedAt) return;
+    onServerConfirm();
+    // onServerConfirm identity is stable (useCallback in parent); confirmedAt
+    // transitions null→number exactly once per question mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmedAt]);
+
   const handleTap = useCallback(
     (slot: PlayerQuestionSlot) => {
       // Record optimistic answer locally so the page transitions to PlayerLocked
