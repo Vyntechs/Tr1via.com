@@ -6,12 +6,13 @@
 //   2. The hook's *fallback* behavior when measurement is disabled.
 //   3. The hook's *bail* behavior when the frame has zero height.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { renderHook } from "@testing-library/react";
-import { cleanup } from "@testing-library/react";
+import type { RefObject } from "react";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { render, renderHook, cleanup } from "@testing-library/react";
 import {
   pickFittingSize,
   useAutoFitText,
+  type UseAutoFitTextOptions,
 } from "@/lib/hooks/useAutoFitText";
 
 describe("pickFittingSize", () => {
@@ -85,5 +86,76 @@ describe("useAutoFitText", () => {
       useAutoFitText({ sizes: [14, 16, 22, 32, 40], disabled: true }),
     );
     expect(result.current.fontSize).toBe(40);
+  });
+});
+
+describe("useAutoFitText — webfont subscription", () => {
+  afterEach(() => {
+    cleanup();
+    // Restore the (likely missing) document.fonts after each test.
+    if ("fonts" in document) {
+      delete (document as { fonts?: unknown }).fonts;
+    }
+  });
+
+  function installFontsStub() {
+    // Minimal FontFaceSet-shape: a ready promise + add/remove listener.
+    // We don't need a real Promise chain — just enough surface for the
+    // hook to subscribe and clean up.
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const stub = {
+      ready: Promise.resolve(),
+      addEventListener,
+      removeEventListener,
+    };
+    Object.defineProperty(document, "fonts", {
+      value: stub,
+      configurable: true,
+      writable: true,
+    });
+    return stub;
+  }
+
+  // Render harness so the hook's refs land on real DOM nodes — without it,
+  // the hook bails at `if (!frame || !text) return` before subscribing.
+  function Harness(opts: UseAutoFitTextOptions) {
+    const { frameRef, textRef } = useAutoFitText(opts);
+    return (
+      <div ref={frameRef as RefObject<HTMLDivElement>} data-testid="frame">
+        <div ref={textRef as RefObject<HTMLDivElement>}>hello</div>
+      </div>
+    );
+  }
+
+  it("subscribes to document.fonts 'loadingdone' on mount", () => {
+    const stub = installFontsStub();
+    render(<Harness sizes={[16, 24]} />);
+    expect(stub.addEventListener).toHaveBeenCalledWith(
+      "loadingdone",
+      expect.any(Function),
+    );
+  });
+
+  it("removes the 'loadingdone' listener on unmount", () => {
+    const stub = installFontsStub();
+    const { unmount } = render(<Harness sizes={[16, 24]} />);
+    unmount();
+    expect(stub.removeEventListener).toHaveBeenCalledWith(
+      "loadingdone",
+      expect.any(Function),
+    );
+    // Same handler reference on both sides — guards against listener leaks.
+    const added = stub.addEventListener.mock.calls[0]?.[1];
+    const removed = stub.removeEventListener.mock.calls[0]?.[1];
+    expect(added).toBe(removed);
+  });
+
+  it("does not crash when document.fonts is absent", () => {
+    // Default jsdom state — no document.fonts. The hook must still mount,
+    // measure (within rAF), and unmount cleanly.
+    expect("fonts" in document).toBe(false);
+    const { unmount } = render(<Harness sizes={[16, 24]} />);
+    expect(() => unmount()).not.toThrow();
   });
 });
