@@ -141,6 +141,7 @@ export function HostPhoneClient({
     serverNowMs: room.lastBroadcast
       ? new Date(room.lastBroadcast.serverNow).getTime()
       : null,
+    themeKey,
   });
 
   // Action handlers.
@@ -271,6 +272,7 @@ export function HostPhoneClient({
   return (
     <PhoneCenter>
       <HostPhoneUpcoming
+        themeKey={themeKey}
         hostName={hostName.split(" ")[0] ?? hostName}
         roomLive={room.night?.opened_at !== null}
         playerCount={playerCount}
