@@ -9,9 +9,9 @@
 
 "use client";
 
+import type { RefObject } from "react";
 import { TVStage, TVHeader } from "@/components/shells";
 import {
-  Display,
   Eyebrow,
   Numeric,
   PointTag,
@@ -20,8 +20,17 @@ import {
   useTheme,
 } from "@/components/system";
 import type { LockInTile } from "@/components/tv/lockin/roster";
+import { useAutoFitText } from "@/lib/hooks/useAutoFitText";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
+
+// Candidate font sizes for the question prompt — picked so that the longest
+// real-world prompts (the AI generator caps around 200 chars) still fit inside
+// the question region while short prompts get the full editorial hero size.
+// The image variant has less horizontal room because the 260px thumbnail
+// claims its column, so its ceiling is a notch lower.
+const QUESTION_SIZES_NO_IMAGE = [44, 52, 60, 68, 76, 86] as const;
+const QUESTION_SIZES_WITH_IMAGE = [36, 44, 52, 60, 68, 72] as const;
 
 export interface TVQuestionOption {
   n: number;
@@ -76,6 +85,13 @@ function TVQuestionInner({
 }: TVQuestionProps) {
   const { t } = useTheme();
   const cc = categoryColor(category, t.accent);
+  // Shrink the prompt only as much as needed to keep the answer cards on
+  // screen — the host's HDMI'd laptop drives the venue TV, so the actual
+  // pixel viewport varies night to night. Measurement (not media queries) is
+  // what guarantees fit.
+  const { frameRef, textRef, fontSize: questionFontSize } = useAutoFitText({
+    sizes: imageUrl ? QUESTION_SIZES_WITH_IMAGE : QUESTION_SIZES_NO_IMAGE,
+  });
   const opts: TVQuestionOption[] = options ?? [
     { n: 1, text: "Florida" },
     { n: 2, text: "Alaska" },
@@ -131,13 +147,15 @@ function TVQuestionInner({
       <div
         style={{
           flex: 1,
+          minHeight: 0,
           padding: "28px 56px 0",
           display: "grid",
           gridTemplateColumns: imageUrl ? "260px 1fr 180px" : "1fr 180px",
           gap: 32,
-          alignItems: "flex-start",
+          alignItems: "stretch",
           position: "relative",
           zIndex: 1,
+          overflow: "hidden",
         }}
       >
         {imageUrl ? (
@@ -150,6 +168,7 @@ function TVQuestionInner({
               background: t.surface,
               border: `1px solid ${t.line}`,
               flexShrink: 0,
+              alignSelf: "flex-start",
             }}
           >
             <img
@@ -159,12 +178,36 @@ function TVQuestionInner({
             />
           </div>
         ) : null}
-        <span data-testid="tv-question-prompt">
-          <Display size={imageUrl ? 72 : 86} color={t.ink} weight={500} tracking={-0.025}>
+        <div
+          ref={frameRef as RefObject<HTMLDivElement>}
+          data-testid="tv-question-prompt"
+          style={{
+            minWidth: 0,
+            minHeight: 0,
+            overflow: "hidden",
+            display: "flex",
+            alignItems: "flex-start",
+          }}
+        >
+          <div
+            ref={textRef as RefObject<HTMLDivElement>}
+            style={{
+              // Match Display's "Bricolage Grotesque hero" voice so the prompt
+              // keeps the editorial feel — useAutoFitText drives the size.
+              fontFamily: "var(--font-display)",
+              fontOpticalSizing: "auto",
+              fontStretch: "85%",
+              fontWeight: 500,
+              fontSize: `${questionFontSize}px`,
+              letterSpacing: "-0.025em",
+              lineHeight: 0.92,
+              color: t.ink,
+            }}
+          >
             {question}
-          </Display>
-        </span>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
+          </div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, alignSelf: "flex-start" }}>
           <TVTimerArc accent={cc} seconds={seconds} />
           <Eyebrow color={seconds <= 5 ? t.wrong : cc} size={10}>
             {seconds <= 5 ? "FINAL SECONDS" : "SPEED BONUS < 5s"}
@@ -180,6 +223,7 @@ function TVQuestionInner({
           gap: 18,
           position: "relative",
           zIndex: 1,
+          flexShrink: 0,
         }}
       >
         {opts.map((o) => (
@@ -220,6 +264,7 @@ function TVQuestionInner({
             flexDirection: "column",
             gap: 10,
             marginTop: "auto",
+            flexShrink: 0,
           }}
         >
           <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
@@ -252,6 +297,7 @@ function TVQuestionInner({
             marginTop: "auto",
             position: "relative",
             zIndex: 1,
+            flexShrink: 0,
           }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
