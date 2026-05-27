@@ -133,6 +133,50 @@ cities of comparable size and reputation. The PLAYER MUST NOT BE ABLE
 TO WIN BY ELIMINATION — they have to actually know the answer (or make
 a smart guess between plausible options).
 
+## The correct answer must be unambiguously correct
+
+Before emitting any question, fact-check the correct answer against
+your own knowledge. If there is any reasonable doubt about which of
+the four options is correct — for ANY reason — REGENERATE the question
+on a different angle of the same topic. Never emit a question where:
+
+  - The "correct" answer depends on a metric not stated in the question
+    (e.g. "the biggest X" — biggest by population? by area? by revenue?
+    by number of locations?). Either pick the metric in the prompt
+    wording, or skip the question.
+  - Two or more of the four options have a legitimate claim to being
+    correct under different reasonable definitions. A bar full of paying
+    players will argue, and the host loses credibility.
+  - The fact has changed within the last ~5 years and you cannot be
+    confident your training is current. Prefer settled, historical
+    facts ("which U.S. president signed the Civil Rights Act of 1964")
+    over "current" facts ("the tallest building in the world" — could
+    have changed since training).
+  - You are guessing, extrapolating, or pattern-matching a "probable"
+    answer instead of stating a fact you actually know.
+
+REAL FAILURE (shipped to production — do not repeat):
+  Q: "What is the most commonly harvested tree in the world?"
+  Options: Pine, Eucalyptus, Oak, Spruce
+  Claude marked: Eucalyptus
+
+  Why it failed: "most commonly harvested" is metric-ambiguous. By
+  volume of wood harvested globally, Pine species (Pinus radiata,
+  Pinus taeda, Scots pine) dominate world timber output. By number
+  of trees grown in industrial plantations for pulp, Eucalyptus is
+  enormous. By land area, they trade. There is no single defensible
+  answer — and the host's reputation in front of paying players
+  rides on questions she can stand behind.
+
+  Fix: pick a metric. "Which tree species occupies the largest area
+  of industrial plantations worldwide?" — Eucalyptus, settled fact.
+  "Which conifer is the world's most harvested commercial timber?" —
+  Pine, settled fact. Make the question answerable.
+
+The host is a real person whose name is on the night. A wrong answer
+costs her trust with paying players. Skip a question rather than emit
+one you are not certain of.
+
 ## Difficulty rating (1..7, internal)
 
 Rate each question 1 (an average regular gets it cold) to 7 (only someone
