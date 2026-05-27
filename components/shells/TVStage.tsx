@@ -15,6 +15,9 @@ export interface TVStageProps {
   bg?: string;
   weather?: boolean;
   weatherIntensity?: number;
+  /** Bump to fire a beat-triggered May lightning strike. Only meaningful
+   *  on storm-themed nights; ignored by other themes. */
+  lightningTriggerCount?: number;
   style?: CSSProperties;
   /** Forwarded data-testid for E2E tests. Applied to the outer container so
    *  Playwright can target any TV screen by its top-level id. */
@@ -26,6 +29,7 @@ export function TVStage({
   bg,
   weather = true,
   weatherIntensity = 1,
+  lightningTriggerCount = 0,
   style,
   "data-testid": dataTestId,
 }: TVStageProps) {
@@ -46,7 +50,13 @@ export function TVStage({
         ...style,
       }}
     >
-      {weather && <Weather themeKey={themeKey} intensity={weatherIntensity} />}
+      {weather && (
+        <Weather
+          themeKey={themeKey}
+          intensity={weatherIntensity}
+          lightningTriggerCount={lightningTriggerCount}
+        />
+      )}
       <div
         style={{
           position: "absolute",

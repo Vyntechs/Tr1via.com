@@ -22,6 +22,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { TVSectionComplete, TVStateMachine } from "@/components/tv";
+import { fireLightningBeat } from "@/components/system/Lightning";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { deriveHostMode } from "@/lib/host/deriveHostMode";
@@ -171,6 +172,15 @@ function HostLiveConsoleInner({
   const { mode, canEndGame } = modeCtx;
 
   const celebration = useSectionCompleteCelebration(tvSnapshot, hostAdvanced);
+
+  // Section-complete fires a close lightning strike on May "storm" nights.
+  // No-op for other themes (Lightning only mounts on May). Re-runs when
+  // the celebration's triggering question id changes, i.e. each new
+  // section-complete event.
+  const celebrationQuestionId = celebration?.triggeredByQuestionId ?? null;
+  useEffect(() => {
+    if (celebrationQuestionId) fireLightningBeat("close");
+  }, [celebrationQuestionId]);
 
   function handleRevealCell(questionId: string) {
     setHostAdvanced(false);

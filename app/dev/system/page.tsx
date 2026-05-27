@@ -21,6 +21,8 @@ import {
   QRBlock,
   Weather,
   weatherLabel,
+  Lightning,
+  fireLightningBeat,
 } from "@/components/system";
 import { TR1VIA_THEMES, THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
 import { TR1VIA_CATEGORIES, categoryColor } from "@/lib/theme/categories";
@@ -194,6 +196,59 @@ export default function SystemGallery() {
               <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: t.inkMute, fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase" }}>
                 {TR1VIA_THEMES[themeKey].name}
               </div>
+            </div>
+          </Card>
+        </Section>
+
+        <Section title="11a · Lightning · procedural storm strikes">
+          <Card>
+            <p style={{ fontSize: 13, color: t.inkMid, marginBottom: 16, lineHeight: 1.5 }}>
+              Procedural lightning for the May "storm" theme. Click a button
+              below to fire a close beat strike (with thunder + scene
+              illumination). Distant ambient flashes fire automatically on
+              Poisson intervals (~45s mean). The full-scene flash respects
+              WCAG flashing thresholds; reduced-motion users see the legacy
+              soft glow instead.
+            </p>
+            <div style={{ position: "relative", height: 320, overflow: "hidden", borderRadius: 12, background: "#0E0805", border: `1px solid ${t.line}` }}>
+              <Lightning color="#E8C46A" />
+              <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "rgba(244,230,196,.65)", fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", pointerEvents: "none", zIndex: 2 }}>
+                Storm canvas
+              </div>
+            </div>
+            <div style={{ marginTop: 14, display: "flex", gap: 10 }}>
+              <button
+                onClick={() => fireLightningBeat("close")}
+                style={{
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  background: t.accent,
+                  color: "#0E0805",
+                  border: "none",
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 13,
+                }}
+              >
+                Fire close strike
+              </button>
+              <button
+                onClick={() => fireLightningBeat("distant")}
+                style={{
+                  padding: "10px 18px",
+                  borderRadius: 10,
+                  background: t.surface,
+                  color: t.ink,
+                  border: `1px solid ${t.line}`,
+                  cursor: "pointer",
+                  fontWeight: 600,
+                  fontFamily: "var(--font-sans)",
+                  fontSize: 13,
+                }}
+              >
+                Fire distant strike
+              </button>
             </div>
           </Card>
         </Section>

@@ -24,18 +24,18 @@
 // a separate browser tab for the TV.
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useState } from "react";
 import { TVSectionComplete, TVStateMachine } from "@/components/tv";
+import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import { ThemeProvider, WELCOME_OVERLAY_DURATION_MS } from "@/components/system";
+import { fireLightningBeat } from "@/components/system/Lightning";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { formatRoomCode } from "@/lib/game/room-code";
 import { useTVRoom, type TVBroadcast, type TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
-import { useEffect, useState } from "react";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { playWelcomeChime } from "@/lib/audio/welcomeChime";
-import type { TVLobbyWelcomeEvent } from "@/components/tv";
 
 export default function TVPage({
   params,
@@ -157,6 +157,15 @@ function SectionCompleteOverlay({
   // Audience-only callsite — no host-advanced flag; the hook waits for the
   // sticky reveal to clear naturally before celebrating.
   const celebration = useSectionCompleteCelebration(snapshot);
+  // Fire a close lightning strike on May "storm" nights when section-
+  // complete kicks off. The Lightning component subscribes to the
+  // module-level beat and renders the strike across the existing
+  // TVStage's weather canvas. No-op for non-May themes (Lightning isn't
+  // mounted).
+  const celebrationQuestionId = celebration?.triggeredByQuestionId ?? null;
+  useEffect(() => {
+    if (celebrationQuestionId) fireLightningBeat("close");
+  }, [celebrationQuestionId]);
   if (!celebration) return null;
   return (
     <TVSectionComplete
