@@ -8,7 +8,7 @@ import { Eyebrow } from "@/components/system/Eyebrow";
 
 export default function HostSetupLoading() {
   return (
-    <LaptopShell title="tr1via.com / host / setup">
+    <LaptopShell>
       <div
         style={{
           flex: 1,

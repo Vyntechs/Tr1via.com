@@ -97,7 +97,7 @@ function HostGenLoadingInner({
       : loaded.filter((l) => l.imageUrl).length;
   const skeletonCount = Math.max(0, total - questionsLoaded);
   return (
-    <LaptopShell title={shellTitle}>
+    <LaptopShell>
       <div style={{ padding: "24px 56px 12px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
           {onBack && (

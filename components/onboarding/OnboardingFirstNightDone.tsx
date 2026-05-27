@@ -89,7 +89,7 @@ function OnboardingFirstNightDoneInner({
     ? `You hosted ${stats.players} players, ran ${stats.questionsAsked} questions, and gave away one trivia trophy. Next Wednesday's right here when you're ready.`
     : "You hosted 32 players, ran 84 questions, and gave away one trivia trophy. Next Wednesday's right here when you're ready.";
   return (
-    <LaptopShell title="tr1via.com / linda">
+    <LaptopShell>
       <div
         style={{
           flex: 1,
