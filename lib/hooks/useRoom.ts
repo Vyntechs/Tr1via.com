@@ -20,10 +20,11 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
 import { useRevalidateOnFocus } from "@/lib/hooks/useRevalidateOnFocus";
+import { setChannelHealth } from "@/lib/realtime/channelHealth";
 import type {
   AnswerRow,
   CategoryRow,
@@ -116,6 +117,15 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   // — heals the iOS Safari background-suspend pattern where the WebSocket
   // dies and the UI keeps showing stale state until manual refresh.
   const revalidateTick = useRevalidateOnFocus();
+
+  // Bumps when ANY of our Realtime channels reports CHANNEL_ERROR /
+  // TIMED_OUT / CLOSED. Distinct from `revalidateTick` (focus + online)
+  // because those OS-level signals don't fire when the phone is sitting
+  // in a dead-signal corner with the screen lit — the WebSocket dies
+  // silently and we'd never know without observing the channel callback.
+  const [reconnectCounter, setReconnectCounter] = useState(0);
+  // Throttle so a flurry of bad statuses doesn't whip us into a rebootstrap loop.
+  const lastReconnectAtRef = useRef(0);
 
   useEffect(() => {
     if (!roomCode || waitingForDevice) {
@@ -301,6 +311,36 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       // Subscribe to broadcast + 6 tables of postgres changes.
       const filterBy = `night_id=eq.${nightId}`;
 
+      // Channel-health tracking. Each channel reports its own status via the
+      // .subscribe() callback. We aggregate the worst of the two, publish it
+      // for the connection ribbon, and force a re-bootstrap if either goes
+      // unhealthy (the dead-signal-corner case: phone has weak cellular but
+      // the OS never fires `online`/`visibilitychange`).
+      let broadcastChannelState: string | undefined;
+      let dbChannelState: string | undefined;
+      function deriveWorstStatus(): string | undefined {
+        const states = [broadcastChannelState, dbChannelState];
+        if (states.includes("CHANNEL_ERROR")) return "CHANNEL_ERROR";
+        if (states.includes("TIMED_OUT")) return "TIMED_OUT";
+        if (states.includes("CLOSED")) return "CLOSED";
+        if (broadcastChannelState === "SUBSCRIBED" && dbChannelState === "SUBSCRIBED") return "SUBSCRIBED";
+        return broadcastChannelState ?? dbChannelState;
+      }
+      function publishChannelHealth(): void {
+        if (cancelled) return;
+        const worst = deriveWorstStatus();
+        setChannelHealth(worst);
+        if (worst === "CHANNEL_ERROR" || worst === "TIMED_OUT" || worst === "CLOSED") {
+          // Throttle: a dead WebSocket can fire CHANNEL_ERROR several times in
+          // quick succession as the client tries internal reconnects. We only
+          // want to tear-down-and-rebootstrap at most once every 2 seconds.
+          const now = Date.now();
+          if (now - lastReconnectAtRef.current < 2000) return;
+          lastReconnectAtRef.current = now;
+          setReconnectCounter((c) => c + 1);
+        }
+      }
+
       const broadcastChannel = supa
         .channel(`room:${code}`)
         .on("broadcast", { event: "reveal" }, (msg) => {
@@ -366,7 +406,10 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           // game 2). Doesn't need a questionId — game-level wake-up.
           void refreshLiveState(nightId);
         })
-        .subscribe();
+        .subscribe((status) => {
+          broadcastChannelState = status;
+          publishChannelHealth();
+        });
       channelHandles.push(() => {
         void supa.removeChannel(broadcastChannel);
       });
@@ -415,7 +458,10 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           (payload) =>
             mergeRevealChange(payload as unknown as ChangePayload<RevealRow>),
         )
-        .subscribe();
+        .subscribe((status) => {
+          dbChannelState = status;
+          publishChannelHealth();
+        });
       channelHandles.push(() => {
         void supa.removeChannel(dbChannel);
       });
@@ -511,8 +557,11 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       cancelled = true;
       for (const teardown of channelHandles) teardown();
       channelHandles = [];
+      // Clear health so the ribbon doesn't show stale "Reconnecting..." after
+      // navigation away from the room route.
+      setChannelHealth(undefined);
     };
-  }, [roomCode, waitingForDevice, revalidateTick]);
+  }, [roomCode, waitingForDevice, revalidateTick, reconnectCounter]);
 
   return snapshot;
 }
