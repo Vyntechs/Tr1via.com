@@ -14,6 +14,7 @@ import { useTimer } from "@/lib/hooks/useTimer";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { HostPhoneUpcoming, HostPhoneLive, type HostPhoneLivePlayer } from "@/components/host";
 import type { AnswerRow, QuestionRow } from "@/lib/supabase/types";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -21,12 +22,14 @@ export interface HostPhoneClientProps {
   nightId: string;
   roomCode: string;
   hostName: string;
+  themeKey?: ThemeKey;
 }
 
 export function HostPhoneClient({
   nightId: _nightId,
   roomCode,
   hostName,
+  themeKey,
 }: HostPhoneClientProps) {
   const room = useRoom({ roomCode });
   const [allQuestions, setAllQuestions] = useState<QuestionRow[]>([]);
@@ -218,6 +221,7 @@ export function HostPhoneClient({
     return (
       <PhoneCenter>
         <HostPhoneLive
+          themeKey={themeKey}
           secondsRemaining={Math.max(0, Math.floor(timer.secondsRemaining))}
           lockedCount={answers.length}
           totalPlayers={playerCount}
