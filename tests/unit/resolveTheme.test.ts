@@ -73,33 +73,63 @@ describe("resolveTheme", () => {
       ).toBe("july");
     });
 
-    it("skips invalid host.default_theme_key and falls to system default", () => {
+    it("skips invalid host.default_theme_key and falls to the month layer", () => {
+      // Pin to mid-May to assert the next-layer behavior deterministically.
+      const may = new Date(2026, 4, 15);
       expect(
-        resolveTheme(null, { default_theme_key: "midnight-jazz-vibes" }),
-      ).toBe(SYSTEM_DEFAULT_THEME);
+        resolveTheme(null, { default_theme_key: "midnight-jazz-vibes" }, may),
+      ).toBe("may");
     });
   });
 
-  describe("layer 3: system default", () => {
-    it("falls back when both inputs are null", () => {
-      expect(resolveTheme(null, null)).toBe(SYSTEM_DEFAULT_THEME);
+  describe("layer 3: current-month fallback (before system default)", () => {
+    // Note: when no explicit theme is set anywhere, we fall through to
+    // the current calendar month's theme rather than 'daylight'. So a
+    // brand-new host setting up a night in May automatically lands on
+    // the May storm theme without anyone having to pick it.
+    it("returns the current month's theme when both inputs are null", () => {
+      // Pin to mid-May so the month fallback resolves to "may".
+      const may = new Date(2026, 4, 15);
+      expect(resolveTheme(null, null, may)).toBe("may");
     });
 
-    it("falls back when both inputs are undefined", () => {
-      expect(resolveTheme(undefined, undefined)).toBe(SYSTEM_DEFAULT_THEME);
+    it("returns the current month's theme when both inputs are undefined", () => {
+      const october = new Date(2026, 9, 15);
+      expect(resolveTheme(undefined, undefined, october)).toBe("october");
     });
 
-    it("falls back when host has empty object (migration 0006 not yet applied)", () => {
-      // Pre-migration: hosts row lacks default_theme_key column → reads
-      // as undefined. The audience TV with no night override would hit
-      // this in the in-between window.
-      expect(resolveTheme(null, {})).toBe(SYSTEM_DEFAULT_THEME);
+    it("returns the current month's theme when host has empty object", () => {
+      const january = new Date(2026, 0, 15);
+      expect(resolveTheme(null, {}, january)).toBe("january");
+    });
+
+    it("month fallback is reached only after night + host both miss", () => {
+      // Night override still wins even if it's December.
+      const may = new Date(2026, 4, 15);
+      expect(
+        resolveTheme({ theme_key: "house" }, null, may),
+      ).toBe("house");
+      // Host preference still wins even if month would be different.
+      expect(
+        resolveTheme(null, { default_theme_key: "daylight" }, may),
+      ).toBe("daylight");
+    });
+
+    it("covers all 12 months", () => {
+      const expected: Array<[number, string]> = [
+        [0, "january"], [1, "february"], [2, "march"], [3, "april"],
+        [4, "may"], [5, "june"], [6, "july"], [7, "august"],
+        [8, "september"], [9, "october"], [10, "november"], [11, "december"],
+      ];
+      for (const [m, key] of expected) {
+        expect(resolveTheme(null, null, new Date(2026, m, 15))).toBe(key);
+      }
     });
 
     it("SYSTEM_DEFAULT_THEME matches the layout default ('daylight')", () => {
       // Sanity check: if this fails, app/layout.tsx and resolveTheme
       // disagree about the first-paint theme — back to the inconsistency
-      // bug that motivated this PR.
+      // bug that motivated PR #28.
       expect(SYSTEM_DEFAULT_THEME).toBe("daylight");
     });
   });
@@ -140,12 +170,13 @@ describe("resolveTheme", () => {
       ).toBe("october");
     });
 
-    it("Standalone audience TV with no host context: system default", () => {
+    it("Standalone audience TV with no host context: uses current month", () => {
       // /tv/[code] doesn't auth a host. If the night has no override and
-      // we never load the host row, we hit the floor.
-      expect(resolveTheme({ theme_key: null }, undefined)).toBe(
-        SYSTEM_DEFAULT_THEME,
-      );
+      // we never load the host row, we now use the current month's theme
+      // instead of the bare 'daylight' fallback — a brand-new venue in
+      // May sees the storm theme automatically.
+      const may = new Date(2026, 4, 15);
+      expect(resolveTheme({ theme_key: null }, undefined, may)).toBe("may");
     });
   });
 });

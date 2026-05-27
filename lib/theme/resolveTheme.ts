@@ -35,10 +35,33 @@ import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
  *  - the host hasn't picked a default (brand-new account)
  *  - AND the night has no override
  *  - AND we're not on a route that even knows about a host
+ *  - AND we somehow can't read the current month
  *
  *  Matches `app/layout.tsx`'s root <ThemeProvider> so the first paint
  *  before any auth/data lands is stable. */
 export const SYSTEM_DEFAULT_THEME: ThemeKey = "daylight";
+
+/** Map a 1-12 calendar month to a ThemeKey. Used as a fallback BEFORE
+ *  SYSTEM_DEFAULT when the night + host have no explicit pick — so a
+ *  brand-new host in May lands on the May storm theme automatically
+ *  instead of getting "daylight" forever. */
+function themeKeyForMonth(month: number): ThemeKey | null {
+  switch (month) {
+    case 1:  return "january";
+    case 2:  return "february";
+    case 3:  return "march";
+    case 4:  return "april";
+    case 5:  return "may";
+    case 6:  return "june";
+    case 7:  return "july";
+    case 8:  return "august";
+    case 9:  return "september";
+    case 10: return "october";
+    case 11: return "november";
+    case 12: return "december";
+    default: return null;
+  }
+}
 
 /** Subset of NightRow this helper reads — keeps the input loose so any
  *  shape (snapshot, raw DB row, hand-built test fixture) works. */
@@ -60,19 +83,28 @@ export interface HostThemeInput {
  * Order:
  *   1. `night.theme_key` if present and valid (per-night override).
  *   2. `host.default_theme_key` if present and valid (host preference).
- *   3. `SYSTEM_DEFAULT_THEME` ("daylight").
+ *   3. Current month's theme (May → "may" storm, October → "october", etc).
+ *   4. `SYSTEM_DEFAULT_THEME` ("daylight") — last resort.
+ *
+ * Layer 3 catches the brand-new-host case so the first night a customer
+ * creates picks up the seasonal theme without anyone having to set it.
  *
  * Invalid theme strings at any layer are skipped (not coerced) — guards
  * against legacy values that have since been removed from the THEME_KEYS
  * registry. Falls through to the next layer rather than throwing.
+ *
+ * Pass `now` to make the month-fallback deterministic in tests.
  */
 export function resolveTheme(
   night: NightThemeInput | null | undefined,
   host: HostThemeInput | null | undefined,
+  now: Date = new Date(),
 ): ThemeKey {
   const nightKey = night?.theme_key;
   if (isThemeKey(nightKey)) return nightKey;
   const hostKey = host?.default_theme_key;
   if (isThemeKey(hostKey)) return hostKey;
+  const monthKey = themeKeyForMonth(now.getMonth() + 1);
+  if (monthKey) return monthKey;
   return SYSTEM_DEFAULT_THEME;
 }
