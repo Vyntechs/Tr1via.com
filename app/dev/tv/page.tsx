@@ -110,6 +110,22 @@ export default function TVGallery() {
           <Frame label="03 · Question">
             <TVQuestion />
           </Frame>
+          <Frame label="03b · Question · long prompt with image (regression case)">
+            <TVQuestion
+              category="Local Madison"
+              value={500}
+              seconds={16}
+              question="Which Wisconsin-born architect, famous for organic architecture, designed his only Wisconsin home in Madison?"
+              options={[
+                { n: 1, text: "Frank Lloyd Wright" },
+                { n: 2, text: "Louis Sullivan" },
+                { n: 3, text: "Eero Saarinen" },
+                { n: 4, text: "Daniel Burnham" },
+              ]}
+              imageUrl="https://images.pexels.com/photos/2030697/pexels-photo-2030697.jpeg?auto=compress&cs=tinysrgb&w=520"
+              totalPlayers={2}
+            />
+          </Frame>
           <Frame label="04 · Reveal · correct">
             <TVReveal
               headerEyebrow="GAME 1 · GEOGRAPHY · 100 PTS"
