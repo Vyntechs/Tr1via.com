@@ -762,12 +762,14 @@ async function runOnePass(passThemeKey) {
     step("3b. assert empty games refuse to start (server precondition)");
     {
       const r1 = await call(founderJar, `/api/games/${game1Id}/start`, { method: "POST" });
-      if (r1.res.status !== 400) {
-        throw new Error(`g1 start with no categories should 400, got ${r1.res.status} body=${JSON.stringify(r1.body)}`);
+      if (r1.status !== 400) {
+        const body = await r1.text();
+        throw new Error(`g1 start with no categories should 400, got ${r1.status} body=${body}`);
       }
       const r2 = await call(founderJar, `/api/games/${game2Id}/start`, { method: "POST" });
-      if (r2.res.status !== 400) {
-        throw new Error(`g2 start with no categories should 400, got ${r2.res.status} body=${JSON.stringify(r2.body)}`);
+      if (r2.status !== 400) {
+        const body = await r2.text();
+        throw new Error(`g2 start with no categories should 400, got ${r2.status} body=${body}`);
       }
       pass(`empty-game start refused: g1 → 400, g2 → 400 (precondition works)`);
     }
