@@ -4,12 +4,15 @@
 // Sort: score descending, join-order tiebreak (stable). Re-sort on score
 // updates (which only occur at reveal — mid-question scores are static).
 //
-// Auto-scroll comes in Task 10. This file ships the shell: sort, chip
-// rendering, aria-live region, +SPD badge during spotlight strikes.
+// Auto-scroll: when 6+ chips, the track slides left on a pure CSS keyframe
+// so the TV GPU handles the composite. The chip list is duplicated (second
+// set aria-hidden) so the loop has no visible seam. Skipped entirely when
+// the OS prefers reduced motion.
 
 "use client";
 
 import { useMemo } from "react";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 
 export interface MarqueeChip {
   playerId: string;
@@ -30,12 +33,32 @@ export interface TVScoreboardMarqueeProps {
 
 const MAX_NAME_CHARS = 12;
 
+// Scroll kicks in at 6+ chips — fewer fit without overflowing most TV widths.
+const SCROLL_THRESHOLD = 6;
+// At 1.2s per chip the track takes ≥20s for a full pass (feels leisurely on TV).
+const SCROLL_SECONDS_PER_CHIP = 1.2;
+const MIN_SCROLL_SECONDS = 20;
+
 export function TVScoreboardMarquee({
   chips,
   spotlightedPlayerId,
   announcement,
 }: TVScoreboardMarqueeProps) {
   const sorted = useMemo(() => sortChips(chips), [chips]);
+  const reducedMotion = usePrefersReducedMotion();
+  const shouldScroll = sorted.length >= SCROLL_THRESHOLD && !reducedMotion;
+  const scrollSeconds = Math.max(MIN_SCROLL_SECONDS, sorted.length * SCROLL_SECONDS_PER_CHIP);
+
+  const trackStyle: React.CSSProperties = {
+    display: "flex",
+    gap: 8,
+    paddingLeft: 24,
+    paddingRight: 24,
+    willChange: "transform",
+    ...(shouldScroll && {
+      animation: `tv-marquee-scroll ${scrollSeconds}s linear infinite`,
+    }),
+  };
 
   return (
     <div
@@ -63,16 +86,7 @@ export function TVScoreboardMarquee({
         {announcement ?? ""}
       </div>
 
-      <div
-        data-testid="marquee-track"
-        style={{
-          display: "flex",
-          gap: 8,
-          paddingLeft: 24,
-          paddingRight: 24,
-          willChange: "transform",
-        }}
-      >
+      <div data-testid="marquee-track" style={trackStyle}>
         {sorted.map((chip) => (
           <Chip
             key={chip.playerId}
@@ -80,7 +94,22 @@ export function TVScoreboardMarquee({
             spotlight={spotlightedPlayerId === chip.playerId}
           />
         ))}
+        {/* Duplicate set for seamless loop — aria-hidden so readers skip the repeat. */}
+        {shouldScroll && sorted.map((chip) => (
+          <Chip
+            key={`dup-${chip.playerId}`}
+            chip={chip}
+            spotlight={false}
+          />
+        ))}
       </div>
+
+      <style>{`
+        @keyframes tv-marquee-scroll {
+          0% { transform: translateX(0); }
+          100% { transform: translateX(-50%); }
+        }
+      `}</style>
     </div>
   );
 }

@@ -64,3 +64,60 @@ describe("TVScoreboardMarquee — sort + chip rendering", () => {
     expect(screen.queryByTestId("marquee-chip-spd")).toBeNull();
   });
 });
+
+describe("TVScoreboardMarquee — auto-scroll", () => {
+  it("applies a scroll animation when chip count is high enough to overflow", () => {
+    const many: MarqueeChip[] = Array.from({ length: 25 }, (_, i) => ({
+      playerId: `p${i}`,
+      name: `P${i.toString().padStart(2, "0")}`,
+      color: "#fff",
+      score: 1000 - i,
+      joinIndex: i,
+    }));
+    const { container } = render(<TVScoreboardMarquee chips={many} />);
+    const track = container.querySelector("[data-testid='marquee-track']");
+    expect(track?.getAttribute("style") ?? "").toMatch(/animation/i);
+  });
+
+  it("does NOT apply scroll animation for a small chip count", () => {
+    const few: MarqueeChip[] = [
+      { playerId: "a", name: "A", color: "#fff", score: 0, joinIndex: 0 },
+      { playerId: "b", name: "B", color: "#fff", score: 0, joinIndex: 1 },
+    ];
+    const { container } = render(<TVScoreboardMarquee chips={few} />);
+    const track = container.querySelector("[data-testid='marquee-track']");
+    expect(track?.getAttribute("style") ?? "").not.toMatch(/animation/i);
+  });
+
+  it("disables scroll animation when prefers-reduced-motion is set", () => {
+    const originalMatchMedia = window.matchMedia;
+    try {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        configurable: true,
+        value: (q: string) => ({
+          matches: q.includes("reduce"),
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }),
+      });
+      const many: MarqueeChip[] = Array.from({ length: 25 }, (_, i) => ({
+        playerId: `p${i}`,
+        name: `P${i.toString().padStart(2, "0")}`,
+        color: "#fff",
+        score: 1000 - i,
+        joinIndex: i,
+      }));
+      const { container } = render(<TVScoreboardMarquee chips={many} />);
+      const track = container.querySelector("[data-testid='marquee-track']");
+      expect(track?.getAttribute("style") ?? "").not.toMatch(/animation/i);
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        writable: true,
+        configurable: true,
+        value: originalMatchMedia,
+      });
+    }
+  });
+});
