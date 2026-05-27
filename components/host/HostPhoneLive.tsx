@@ -21,7 +21,7 @@ export interface HostPhoneLivePlayer {
 
 export interface HostPhoneLiveProps {
   themeKey?: ThemeKey;
-  /** Seconds remaining on the question (0..20). */
+  /** Seconds remaining on the question (0..max, where max is theme-derived: 20 default, 25 on May/Storm). */
   secondsRemaining?: number;
   /** Players locked in for the live question. */
   lockedCount?: number;
