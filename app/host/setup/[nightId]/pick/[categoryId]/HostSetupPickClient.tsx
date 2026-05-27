@@ -15,7 +15,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   HostGenLoading,
@@ -37,6 +37,7 @@ import {
   deriveInitialGenerationMessage,
   explainGenerationFailure,
 } from "@/lib/host/generationFailureMessages";
+import { mergePickedAfterRefetch } from "@/lib/host/mergePickedAfterRefetch";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostSetupPickClientProps {
@@ -75,6 +76,18 @@ export function HostSetupPickClient({
   const [pickedIds, setPickedIds] = useState<Set<string>>(
     () => new Set(initialQuestions.filter((q) => q.is_picked).map((q) => q.id)),
   );
+  // True while a regenerate ("↻ Another 20") is in flight, even though the
+  // category is technically in 'generating' state on the server. We stay
+  // on the pick view so the host can see her existing picks survive the
+  // refetch — without this flag the page would swap to HostGenLoading.
+  const [regenerating, setRegenerating] = useState(false);
+  // The Realtime broadcast handler is registered once in a useEffect that
+  // closes over `regenerating`. Mirror the value in a ref so the handler
+  // can read the current state without re-subscribing on every flip.
+  const regeneratingRef = useRef(false);
+  useEffect(() => {
+    regeneratingRef.current = regenerating;
+  }, [regenerating]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
   const [difficulty, setDifficulty] = useState<DifficultyTarget>("normal");
   const [flavor, setFlavor] = useState<string[]>([]);
@@ -126,13 +139,31 @@ export function HostSetupPickClient({
       .on("broadcast", { event: "done" }, () => {
         if (cancelled) return;
         setState("review");
+        setRegenerating(false);
         void refetchQuestions();
       })
       .on("broadcast", { event: "error" }, (msg) => {
         if (cancelled) return;
         const payload = msg.payload as { error?: string };
-        // Keep the generation-failure UI persistent; the toast banner
-        // is for transient errors (edit/lock/upload) only.
+        const wasInPlaceRegenerate = regeneratingRef.current;
+        if (wasInPlaceRegenerate) {
+          // Regenerate failed but we already have 20 candidates from the
+          // previous run. Surface a transient toast and let the host
+          // continue picking from what she already has — flipping to the
+          // full failure UI would lose her workspace for no good reason.
+          setError(
+            payload.error
+              ? `Couldn't fetch another 20: ${payload.error}`
+              : "Couldn't fetch another 20. Try again or keep picking from what's here.",
+          );
+          setRegenerating(false);
+          // The server rolled the category back to 'draft'; bump it back
+          // to 'review' locally so the pick view stays mounted. The next
+          // refresh re-reads from the DB and will sync correctly.
+          setState("review");
+          return;
+        }
+        // First-time generation failed — show the persistent failure UI.
         setGenerationFailureMessage(
           explainGenerationFailure({
             broadcastMessage: payload.error ?? null,
@@ -141,6 +172,7 @@ export function HostSetupPickClient({
           }),
         );
         setState("draft");
+        setRegenerating(false);
       })
       .subscribe();
     return () => {
@@ -158,7 +190,14 @@ export function HostSetupPickClient({
     if (data) {
       const rows = data as QuestionRow[];
       setQuestions(rows);
-      setPickedIds(new Set(rows.filter((q) => q.is_picked).map((q) => q.id)));
+      // Picks live in client state until lock — never overwrite the host's
+      // selections with what's in the DB. The merge keeps every client
+      // pick whose row still exists, unions any DB-confirmed is_picked
+      // rows, and drops orphans. See lib/host/mergePickedAfterRefetch.
+      // The previous "blindly replace from DB" version silently wiped the
+      // host's in-progress picks every time `question_added` fired during
+      // an "↻ Another 20" — that was bug A.
+      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
     }
   }, [categoryId]);
 
@@ -244,6 +283,12 @@ export function HostSetupPickClient({
   }
 
   // ── regenerate / flavor tweaks ───────────────────────────────────────
+  // When the host already has 20 candidates loaded and taps "↻ Another 20",
+  // we stay on the pick screen — the server just appends 20 fresh rows to
+  // the same category, the broadcast handler refetches, and the picks the
+  // host has already made stay highlighted. Without `regenerating` here
+  // the state flip to 'generating' would swap the whole screen out for
+  // HostGenLoading and the host would lose sight of her picks.
   async function handleRegenerate(input: {
     difficulty: DifficultyTarget;
     flavor: string[];
@@ -251,6 +296,10 @@ export function HostSetupPickClient({
     setDifficulty(input.difficulty);
     setFlavor(input.flavor);
     setError(null);
+    const isInPlaceRegenerate = state === "review" || state === "ready";
+    if (isInPlaceRegenerate) {
+      setRegenerating(true);
+    }
     try {
       const res = await fetch(`/api/categories/${categoryId}/generate`, {
         method: "POST",
@@ -264,11 +313,14 @@ export function HostSetupPickClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "could not regenerate");
       }
-      if (res.status === 202) {
+      if (res.status === 202 && !isInPlaceRegenerate) {
+        // First-time generation (category was in 'draft') — show the
+        // loading screen the way we did before.
         setState("generating");
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not regenerate.");
+      setRegenerating(false);
     }
   }
 
@@ -625,7 +677,7 @@ export function HostSetupPickClient({
           onBack={() => router.push(`/host/setup/${nightId}`)}
           isRetrying={retrying}
         />
-      ) : state !== "review" && state !== "ready" ? (
+      ) : state !== "review" && state !== "ready" && !regenerating ? (
         <HostGenLoading
           themeKey={themeKey as ThemeKey}
           shellTitle={`pulling questions · ${categoryName.toLowerCase()}`}
@@ -633,6 +685,7 @@ export function HostSetupPickClient({
           loaded={loadingList}
           total={20}
           onCancel={() => router.push(`/host/setup/${nightId}`)}
+          onBack={() => router.push(`/host/setup/${nightId}`)}
         />
       ) : (
         <HostGenPick
@@ -649,8 +702,10 @@ export function HostSetupPickClient({
           onLock={handleLock}
           onRegenerate={handleRegenerate}
           onRename={handleRename}
+          onBack={() => router.push(`/host/setup/${nightId}`)}
           isRenaming={renaming}
           isLocking={locking}
+          isRegenerating={regenerating}
         />
       )}
 

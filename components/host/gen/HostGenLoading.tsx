@@ -46,6 +46,10 @@ export interface HostGenLoadingProps {
   photosLoaded?: number;
   /** Called when the host taps "Cancel". */
   onCancel?: () => void;
+  /** Called when the host taps the "← back" button to return to the
+   *  setup overview. The background generation job keeps running; the
+   *  host can come back to this screen and pick up where she left off. */
+  onBack?: () => void;
 }
 
 const DEMO_LOADED: HostGenLoadingQuestion[] = [
@@ -82,6 +86,7 @@ function HostGenLoadingInner({
   total = 20,
   photosLoaded,
   onCancel,
+  onBack,
 }: Omit<HostGenLoadingProps, "themeKey">) {
   const { t } = useTheme();
   const cc = categoryColor(topic, t.accent);
@@ -95,6 +100,30 @@ function HostGenLoadingInner({
     <LaptopShell title={shellTitle}>
       <div style={{ padding: "24px 56px 12px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              aria-label="Back to setup"
+              data-testid="host-pick-back-btn"
+              style={{
+                padding: "6px 12px",
+                borderRadius: 99,
+                border: `1px solid ${t.line}`,
+                background: "transparent",
+                color: t.inkMid,
+                fontSize: 12,
+                fontWeight: 600,
+                fontFamily: "var(--font-sans)",
+                cursor: "pointer",
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              <span aria-hidden="true">←</span> Back
+            </button>
+          )}
           <span style={{ width: 12, height: 12, borderRadius: 99, background: cc }} />
           <div>
             <Eyebrow color={t.accent} size={11}>PULLING {total} ON</Eyebrow>
