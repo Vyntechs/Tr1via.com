@@ -64,15 +64,17 @@ export interface HostGenImageSwapProps {
   onErrorRetry?: () => void;
 }
 
+// Demo gallery — left empty so `StockImage` falls back to the seeded
+// gradient via the `id`. (The wired flow passes real Pexels URLs.)
 const DEMO_CANDIDATES: HostGenPhotoCandidate[] = [
-  { id: "rat1", url: "rat1" },
-  { id: "rat2", url: "rat2" },
-  { id: "rat3", url: "rat3" },
-  { id: "rat4", url: "rat4" },
-  { id: "rat5", url: "rat5" },
-  { id: "rat6", url: "rat6" },
-  { id: "rat7", url: "rat7" },
-  { id: "rat8", url: "rat8" },
+  { id: "rat1", url: "" },
+  { id: "rat2", url: "" },
+  { id: "rat3", url: "" },
+  { id: "rat4", url: "" },
+  { id: "rat5", url: "" },
+  { id: "rat6", url: "" },
+  { id: "rat7", url: "" },
+  { id: "rat8", url: "" },
 ];
 
 export function HostGenImageSwap(props: HostGenImageSwapProps) {
@@ -92,7 +94,7 @@ function HostGenImageSwapInner({
   topic = "Pixar Movies",
   prompt = "Ratatouille is set in which city?",
   pointValue = 200,
-  currentImageUrl = "rat1",
+  currentImageUrl = null,
   candidates = DEMO_CANDIDATES,
   onChoose,
   onOpenUpload,
@@ -229,7 +231,10 @@ function HostGenImageSwapInner({
                     padding: 0, background: "transparent",
                   }}
                 >
-                  <StockImage seed={c.url} height="100%" radius="10px" />
+                  {/* Real photos: pass the Pexels URL to `src` so an
+                      `<img>` actually renders. `seed` only seeds the
+                      striped fallback when `src` is empty or fails. */}
+                  <StockImage src={c.url} seed={c.id} height="100%" radius="10px" />
                   {isCurrent && (
                     <div style={{ position: "absolute", top: 8, left: 8, padding: "2px 8px", borderRadius: 99, background: "rgba(0,0,0,.55)", color: t.pop, fontFamily: "var(--font-mono)", fontSize: 9, fontWeight: 700, letterSpacing: "0.06em" }}>CURRENT</div>
                   )}
@@ -282,7 +287,12 @@ function HostGenImageSwapInner({
         <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 24 }}>
           <Eyebrow color={t.inkMute} size={10}>PREVIEW · TV REVEAL</Eyebrow>
           <div style={{ borderRadius: 14, overflow: "hidden", border: `1px solid ${t.line}` }}>
-            <StockImage seed={previewUrl || "rat4"} height={200} radius="12px 12px 0 0" />
+            <StockImage
+              src={previewUrl}
+              seed={selected?.id ?? "preview"}
+              height={200}
+              radius="12px 12px 0 0"
+            />
             <div style={{ padding: "16px 18px", background: cc, color: "#0E0805" }}>
               <Eyebrow color="rgba(14,8,5,.65)" size={9}>{topic.toUpperCase()} · {pointValue} PTS</Eyebrow>
               <div style={{ marginTop: 6, fontSize: 18, fontWeight: 700, letterSpacing: "-0.01em", lineHeight: 1.2 }}>{prompt}</div>
