@@ -41,6 +41,20 @@ describe("TVLockInCeremony", () => {
     expect(onEventComplete).toHaveBeenCalledWith("p1");
     vi.useRealTimers();
   });
+
+  it("does NOT call onSpotlight in storm mode (2+ pending)", async () => {
+    vi.useFakeTimers();
+    const onSpotlight = vi.fn();
+    const now = Date.now();
+    const events: CeremonyEvent[] = [
+      { playerId: "p1", tint: "#fff", msToLock: 2000, receivedAtMs: now },
+      { playerId: "p2", tint: "#fff", msToLock: 2000, receivedAtMs: now },
+    ];
+    render(<TVLockInCeremony events={events} onSpotlight={onSpotlight} />);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(onSpotlight).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });
 
 afterEach(() => {

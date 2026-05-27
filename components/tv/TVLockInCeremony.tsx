@@ -69,6 +69,9 @@ export function TVLockInCeremony({
   // Track in-flight state with a ref rather than component state so that
   // updating it doesn't retrigger the effect and cancel the pending timer.
   const activeRef = useRef<CeremonyEvent | null>(null);
+  // Track the mode of the active event so the timeout cleanup can gate
+  // onSpotlight(null) — it must only fire in calm mode.
+  const modeRef = useRef<CeremonyMode | null>(null);
   // Force a re-render when the active event clears so the next queued event
   // is picked up.
   const [, forceUpdate] = useState(0);
@@ -92,6 +95,7 @@ export function TVLockInCeremony({
       nowMs: Date.now(),
     });
     activeRef.current = next;
+    modeRef.current = mode;
 
     if (mode === "calm") {
       onSpotlightRef.current?.(next.playerId);
@@ -105,7 +109,10 @@ export function TVLockInCeremony({
         ...recentRef.current.filter((e) => Date.now() - e.receivedAtMs <= RECENT_WINDOW_MS),
         next,
       ];
-      onSpotlightRef.current?.(null);
+      if (modeRef.current === "calm") {
+        onSpotlightRef.current?.(null);
+      }
+      modeRef.current = null;
       onEventCompleteRef.current?.(next.playerId);
       activeRef.current = null;
       // Trigger re-render so the effect picks up the next queued event.
