@@ -755,6 +755,23 @@ async function runOnePass(passThemeKey) {
       pass(`g1=${game1Id.slice(0, 8)}… (${g1.state})  g2=${game2Id.slice(0, 8)}… (${g2.state})`);
     }
 
+    // 3b. Sad-path guard: starting either game now (zero categories) must
+    //     fail with 400. The server precondition is what stops the host
+    //     from accidentally landing the TV on an empty "0 of 0 ANSWERED"
+    //     board. Both games are still in 'draft' here.
+    step("3b. assert empty games refuse to start (server precondition)");
+    {
+      const r1 = await call(founderJar, `/api/games/${game1Id}/start`, { method: "POST" });
+      if (r1.res.status !== 400) {
+        throw new Error(`g1 start with no categories should 400, got ${r1.res.status} body=${JSON.stringify(r1.body)}`);
+      }
+      const r2 = await call(founderJar, `/api/games/${game2Id}/start`, { method: "POST" });
+      if (r2.res.status !== 400) {
+        throw new Error(`g2 start with no categories should 400, got ${r2.res.status} body=${JSON.stringify(r2.body)}`);
+      }
+      pass(`empty-game start refused: g1 → 400, g2 → 400 (precondition works)`);
+    }
+
     // 4. Set up game 1 categories
     step(`4. set up game 1 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
     {
