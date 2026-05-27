@@ -141,7 +141,7 @@ function HostLiveConsoleInner({
   tvLastBroadcastServerNow = null,
   welcomeEvent = null,
   themeKey,
-}: Omit<HostLiveConsoleProps, never>) {
+}: HostLiveConsoleProps) {
   const { t } = useTheme();
   const totalPlayers = playersTotal ?? players.length;
   const locks = lockedCount ?? players.filter((p) => p.locked).length;
