@@ -17,6 +17,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { secondsRemaining } from "@/lib/game/timer";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import type { ThemeKey } from "@/lib/theme/tokens";
 
 const TICK_MS = 100;
 
@@ -27,6 +29,8 @@ export interface UseTimerOpts {
   serverNowMs?: number | null;
   /** Total question duration in seconds. Defaults to 20 per spec. */
   durationS?: number;
+  /** When set, default duration is derived from this theme's registry entry. */
+  themeKey?: ThemeKey;
   /** Fires exactly once when secondsRemaining first reaches 0. */
   onZero?: () => void;
 }
@@ -43,7 +47,7 @@ export interface UseTimerResult {
 }
 
 export function useTimer(opts: UseTimerOpts): UseTimerResult {
-  const duration = opts.durationS ?? 20;
+  const duration = opts.durationS ?? questionDurationFor(opts.themeKey);
 
   // Clock-skew offset: serverNow - clientNow at the moment the broadcast
   // arrived. Subtracting it from Date.now() gives the device's best
