@@ -138,6 +138,22 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   // Throttle so a flurry of bad statuses doesn't whip us into a rebootstrap loop.
   const lastReconnectAtRef = useRef(0);
 
+  // Heartbeat: defensive periodic re-bootstrap. Catches the case where the
+  // realtime channel claims SUBSCRIBED but a broadcast was silently missed
+  // (Supabase Realtime occasionally drops events under load / weird network
+  // conditions even when the WebSocket stays open). Without this, a player
+  // can be stuck on a previous question's reveal screen indefinitely until
+  // they manually refresh. 15s gives the host enough time to actually
+  // advance between heartbeats, and is light enough that 30 players generate
+  // 2 req/sec of HTTP refresh traffic against prod Supabase — well within
+  // headroom proven by the 30-phone load test.
+  const [heartbeatTick, setHeartbeatTick] = useState(0);
+  useEffect(() => {
+    if (!roomCode || waitingForDevice) return;
+    const id = setInterval(() => setHeartbeatTick((t) => t + 1), 15000);
+    return () => clearInterval(id);
+  }, [roomCode, waitingForDevice]);
+
   useEffect(() => {
     if (!roomCode || waitingForDevice) {
       if (!roomCode) setSnapshot(EMPTY);
@@ -589,7 +605,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       // navigation away from the room route.
       setChannelHealth(undefined);
     };
-  }, [roomCode, waitingForDevice, revalidateTick, reconnectCounter]);
+  }, [roomCode, waitingForDevice, revalidateTick, reconnectCounter, heartbeatTick]);
 
   return snapshot;
 }

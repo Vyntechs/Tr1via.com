@@ -79,21 +79,21 @@ export function TVLobby({ themeKey, ...rest }: TVLobbyProps) {
   return <TVLobbyInner {...rest} />;
 }
 
-const DEMO_ROSTER: string[] = [
+export const DEMO_ROSTER: string[] = [
   "Maya", "Cole", "Theo", "Devon", "Marcus", "Priya", "Sara", "Eli", "Ana",
   "June", "Lex", "Otis", "Sam", "Iris", "Ren", "Kai", "Nadia", "Jules",
   "Ezra", "Mira", "Hank", "Reza", "Tess", "Vee", "Yumi", "Quinn", "Wren",
 ];
 
 function TVLobbyInner({
-  venueName = "SOUL FIRE PIZZA",
-  scheduledDate = "WED MAY 27",
-  roomCode = "K9·PR4M",
-  inRoomCount = 27,
-  roster = DEMO_ROSTER,
+  venueName = "",
+  scheduledDate = "",
+  roomCode = "",
+  inRoomCount = 0,
+  roster = [],
   rosterPlayerIds,
-  joinUrl = "https://tr1via.com/join/K9PR4M",
-  hostStatusLine = "ROOM OPEN · LINDA WILL START WHEN READY",
+  joinUrl = "",
+  hostStatusLine = "ROOM OPEN · STARTS WHEN HOST IS READY",
   gameStatusLine = "GAME 1 OF 2 · WAITING",
   welcomeEvent = null,
 }: Omit<TVLobbyProps, "themeKey">) {

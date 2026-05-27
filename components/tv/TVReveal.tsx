@@ -62,7 +62,7 @@ export function TVReveal({ themeKey, ...rest }: TVRevealProps) {
   return <TVRevealInner {...rest} />;
 }
 
-const DEMO_FASTEST: TVRevealFastest[] = [
+export const DEMO_FASTEST: TVRevealFastest[] = [
   { name: "Devon", time: "1.2s", delta: "+110" },
   { name: "Iris",  time: "1.4s", delta: "+110" },
   { name: "Maya",  time: "2.3s", delta: "+110" },
@@ -71,16 +71,16 @@ const DEMO_FASTEST: TVRevealFastest[] = [
 ];
 
 function TVRevealInner({
-  headerEyebrow = "GAME 1 · GEOGRAPHY · 100 PTS",
-  question = "Which U.S. state has the\nlongest coastline?",
-  correctNumber = 2,
-  correctText = "Alaska",
-  fact = "33,904 miles of tidal coastline — more than all other states combined.",
-  gotIt = 23,
-  ofTotal = 32,
-  fastest = "1.2s",
-  speedBonus = "+10",
-  fastestFive = DEMO_FASTEST,
+  headerEyebrow = "",
+  question = "",
+  correctNumber = 1,
+  correctText = "",
+  fact = "",
+  gotIt = 0,
+  ofTotal = 0,
+  fastest = "—",
+  speedBonus = "",
+  fastestFive = [],
 }: Omit<TVRevealProps, "themeKey">) {
   const { t } = useTheme();
 

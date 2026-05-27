@@ -71,7 +71,7 @@ export function TVFinaleWinner({ themeKey, ...rest }: TVFinaleWinnerProps) {
   return <TVFinaleWinnerInner {...rest} />;
 }
 
-const DEMO_WINNER: TVFinaleWinnerData = {
+export const DEMO_WINNER: TVFinaleWinnerData = {
   name: "Devon",
   score: 8420,
   correct: 38,
@@ -81,12 +81,12 @@ const DEMO_WINNER: TVFinaleWinnerData = {
   blurb: "Two streaks of five and a near-perfect history round. Untouchable from the third question on.",
 };
 
-const DEMO_PODIUM: TVFinalePodiumRow[] = [
+export const DEMO_PODIUM: TVFinalePodiumRow[] = [
   { rank: 2, name: "Iris",  score: 7960 },
   { rank: 3, name: "Priya", score: 7340 },
 ];
 
-const DEMO_STATS: TVFinaleStat[] = [
+export const DEMO_STATS: TVFinaleStat[] = [
   { l: "PLAYERS",      v: "32" },
   { l: "QUESTIONS",    v: "84" },
   { l: "FASTEST EVER", v: "0.6s · Cole" },
@@ -94,12 +94,15 @@ const DEMO_STATS: TVFinaleStat[] = [
 ];
 
 function TVFinaleWinnerInner({
-  headerEyebrow = "SOUL FIRE PIZZA · WED MAY 27",
+  headerEyebrow = "",
   headerRight = "GAME 2 · FINAL",
-  winner = DEMO_WINNER,
-  podium = DEMO_PODIUM,
-  nightStats = DEMO_STATS,
+  winner,
+  podium = [],
+  nightStats = [],
 }: Omit<TVFinaleWinnerProps, "themeKey">) {
+  // No winner data → render nothing rather than fake names. Production
+  // callers MUST pass real data; the empty state prevents demo leakage.
+  if (!winner) return null;
   const { t, themeKey } = useTheme();
 
   // Finale lightning: for the May "storm" theme, fire 2-3 close strikes in

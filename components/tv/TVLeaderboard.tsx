@@ -53,7 +53,7 @@ export function TVLeaderboard({ themeKey, ...rest }: TVLeaderboardProps) {
   return <TVLeaderboardInner {...rest} />;
 }
 
-const DEMO_ROWS: TVLeaderboardRow[] = [
+export const DEMO_ROWS: TVLeaderboardRow[] = [
   { rank: 1,  name: "Devon",  score: 2140, delta: "+330", move: 0 },
   { rank: 2,  name: "Iris",   score: 1990, delta: "+550", move: 2 },
   { rank: 3,  name: "Priya",  score: 1820, delta: "+110", move: -1 },
@@ -67,11 +67,11 @@ const DEMO_ROWS: TVLeaderboardRow[] = [
 ];
 
 function TVLeaderboardInner({
-  headerLeft = "GAME 1 · END OF ROUND 3",
-  headerRight = "32 PLAYERS · 8 OF 42 ANSWERED",
-  footerLeft = "LINDA IS LOADING ROUND 4",
-  footerRight = "34 QUESTIONS LEFT",
-  rows = DEMO_ROWS,
+  headerLeft = "",
+  headerRight = "",
+  footerLeft = "",
+  footerRight = "",
+  rows = [],
 }: Omit<TVLeaderboardProps, "themeKey">) {
   const { t } = useTheme();
   // Be defensive — when the room has fewer than 10 players the right column
