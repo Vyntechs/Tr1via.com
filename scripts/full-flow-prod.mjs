@@ -14,9 +14,20 @@
 //     a real browser. Captures peak intra-game concurrency, which is
 //     the relevant metric for Heather's 30-phone venue night.
 //
+// Theme passes (default mode only):
+//
+//   The script runs the 2-game arc TWICE in sequence:
+//     Pass 1 — themeKey "may":  25s timer, marquee=true.
+//     Pass 2 — themeKey "house": 20s timer, marquee=false.
+//   Each pass creates a fresh night, plays it, asserts theme + timer,
+//   then deletes it before starting the next. Total ~330s.
+//   Set SMOKE_THEME_SINGLE=may|house to run only one pass.
+//
 // Flow:
 //   1.  Founder bypass login.
 //   2.  Create a night (auto-creates 2 game shells).
+//   2b. PATCH /api/nights/:id/theme to set the pass theme.
+//   2c. Assert DB theme_key and derived timer duration.
 //   3.  Resolve game 1 + game 2 ids via Supabase admin.
 //   4.  Set up game 1 category (create, generate, pick 7 — which also
 //       "locks" the category by flipping state to 'ready'; there is NO
@@ -34,8 +45,11 @@
 //   13. Cleanup: delete the night (cascade).
 //
 // Usage:
-//   # Default 3-phone smoke (game logic test):
+//   # Default 3-phone smoke (game logic test, both theme passes):
 //   node --env-file=.env.local scripts/full-flow-prod.mjs [topic1] [topic2]
+//
+//   # Single-pass override:
+//   SMOKE_THEME_SINGLE=may node --env-file=.env.local scripts/full-flow-prod.mjs
 //
 //   # 30-phone load mode with WebSocket subscribes:
 //   SMOKE_PHONES=30 SMOKE_REALTIME=1 node --env-file=.env.local scripts/full-flow-prod.mjs
@@ -86,14 +100,37 @@ const PHONE_NAMES = Array.from({ length: SMOKE_PHONES }, (_, i) => {
   return `Player${String(i + 1).padStart(2, "0")}`;
 });
 
+// Theme passes to run. In load mode there is no theme assertion — the arc
+// is about concurrency, not feature correctness — so we run a single pass
+// with no theme override.  In default (game-logic) mode we run both May
+// and a non-May theme (house) unless SMOKE_THEME_SINGLE overrides to one.
+const SMOKE_THEME_SINGLE = process.env.SMOKE_THEME_SINGLE ?? null;
+const THEME_PASSES = LOAD_MODE
+  ? [null]
+  : SMOKE_THEME_SINGLE
+    ? [SMOKE_THEME_SINGLE]
+    : ["may", "house"];
+
+// Duration constants mirrored from lib/theme/lockInCeremony.ts.
+// These must stay in sync with the TypeScript source; no import possible
+// in a plain .mjs script.
+const DURATION_BY_THEME = { may: 25 };
+const DEFAULT_DURATION = 20;
+function questionDurationFor(themeKey) {
+  if (!themeKey) return DEFAULT_DURATION;
+  return DURATION_BY_THEME[themeKey] ?? DEFAULT_DURATION;
+}
+const MARQUEE_THEMES = new Set(["may"]);
+
 function colorize(s, c) {
-  const codes = { red: 31, green: 32, yellow: 33, cyan: 36, gray: 90 };
+  const codes = { red: 31, green: 32, yellow: 33, cyan: 36, gray: 90, magenta: 35 };
   return `\x1b[${codes[c]}m${s}\x1b[0m`;
 }
 const pass = (s) => console.log(`  ${colorize("✓", "green")} ${s}`);
 const fail = (s) => console.log(`  ${colorize("✗", "red")} ${s}`);
 const step = (s) => console.log(`\n${colorize("▸", "cyan")} ${s}`);
 const note = (s) => console.log(`  ${colorize("·", "gray")} ${s}`);
+const passHeader = (s) => console.log(`\n${colorize(`▶▶▶ ${s}`, "magenta")}`);
 
 class Jar {
   constructor() {
@@ -287,16 +324,14 @@ console.log(`  g1 topics  : ${TOPIC_BANK_G1.slice(0, CATEGORIES_PER_GAME).join("
 if (!LOAD_MODE) {
   console.log(`  g2 topics  : ${TOPIC_BANK_G2.slice(0, CATEGORIES_PER_GAME).join(", ")}`);
 }
+console.log(`  theme passes: ${THEME_PASSES.map((t) => t ?? "none").join(", ")}`);
 
-const founderJar = new Jar();
-const phones = PHONE_NAMES.map((n) => new Phone(n));
-let nightId = null;
-let roomCode = null;
-let game1Id = null;
-let game2Id = null;
-// Per-game arrays of {categoryId, picked} for assertions + cleanup.
-const gameCategories = [[], []];
-const startedAt = Date.now();
+// ── Per-pass mutable state (reset between passes by runOnePass) ───────
+// These are declared in module scope so the helpers below can close over
+// them without needing explicit parameter threading.
+let founderJar = new Jar();
+let phones = PHONE_NAMES.map((n) => new Phone(n));
+let perQuestionTimings = [];
 
 // ── Helpers used by both games ────────────────────────────────────────
 
@@ -462,9 +497,6 @@ async function assertSectionCompletePredicate(gameId, expected, ctx) {
   }
 }
 
-// Per-question timing summary for load-mode runs.
-const perQuestionTimings = [];
-
 async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
   const tag = `G${gameNo} Q${cellGlobalIndex + 1} (${q.point_value}pt)`;
 
@@ -578,358 +610,492 @@ async function endGame(gameId, gameNo) {
   }
 }
 
-// ── Main flow ─────────────────────────────────────────────────────────
+// ── Theme assertions ──────────────────────────────────────────────────
+// Validates the theme path for a night: DB theme_key, computed duration,
+// marquee flag, and API surface (TV snapshot). In load mode this is skipped
+// (nightThemeKey is always null; we don't call PATCH /theme).
 
-try {
-  // 1. Login
-  step("1. founder bypass login");
-  {
-    const res = await call(founderJar, "/api/auth/founder-login", {
-      method: "POST",
-      body: JSON.stringify({ email: FOUNDER_EMAIL }),
-    });
-    if (!res.ok) throw new Error(`login failed: ${res.status} ${await res.text()}`);
-    if (founderJar.cookies.size === 0) throw new Error("no auth cookies set");
-    pass(`logged in (${founderJar.cookies.size} cookies)`);
-  }
+async function assertThemePath(nightId, roomCode, nightThemeKey) {
+  if (LOAD_MODE) return; // load mode doesn't exercise the theme path
 
-  // 2. Create night
-  step("2. create night");
-  {
-    const res = await call(founderJar, "/api/nights", {
-      method: "POST",
-      body: JSON.stringify({ venueName: "Full Flow Driver" }),
-    });
-    if (!res.ok) throw new Error(`create night failed: ${res.status} ${await res.text()}`);
-    const body = await res.json();
-    nightId = body.nightId;
-    roomCode = body.roomCode;
-    pass(`night id=${nightId.slice(0, 8)}… code=${roomCode}`);
-  }
+  const expectedDuration = questionDurationFor(nightThemeKey);
+  const expectedMarquee = MARQUEE_THEMES.has(nightThemeKey ?? "");
+  const themeLabel = nightThemeKey ?? "null (default)";
 
-  // 3. Resolve both games
-  step("3. resolve game ids");
-  {
-    const { data: games, error } = await admin
-      .from("games")
-      .select("id, game_no, state")
-      .eq("night_id", nightId)
-      .order("game_no");
-    if (error || !games?.length) throw new Error(`list games: ${error?.message}`);
-    const g1 = games.find((g) => g.game_no === 1);
-    const g2 = games.find((g) => g.game_no === 2);
-    if (!g1 || !g2) throw new Error(`expected both games, got ${games.map((g) => g.game_no).join(",")}`);
-    game1Id = g1.id;
-    game2Id = g2.id;
-    pass(`g1=${game1Id.slice(0, 8)}… (${g1.state})  g2=${game2Id.slice(0, 8)}… (${g2.state})`);
-  }
+  step(`2c. assert theme path (themeKey=${themeLabel})`);
 
-  // 4. Set up game 1 categories
-  step(`4. set up game 1 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
-  {
-    for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
-      const t0 = Date.now();
-      const topic = TOPIC_BANK_G1[i] ?? `${TOPIC_BANK_G1[0]} ${i + 1}`;
-      const r = await setupCategory(game1Id, topic, i + 1);
-      gameCategories[0].push(r);
-      pass(`g1 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
-    }
-  }
-
-  // 5. Open room
-  step("5. open the room");
-  {
-    const res = await call(founderJar, `/api/nights/${nightId}/open`, {
-      method: "POST",
-    });
-    if (!res.ok) throw new Error(`open: ${res.status} ${await res.text()}`);
-    pass(`opened at ${new Date((await res.json()).openedAt).toISOString().slice(11, 19)}`);
-  }
-
-  // 6. Phones join the night (auto-opts into game 1)
-  step(`6. spawn ${SMOKE_PHONES} phones and join night${SMOKE_JOIN_STAGGER_MS > 0 ? ` (stagger ${SMOKE_JOIN_STAGGER_MS}ms)` : " (burst)"}`);
-  const joinStart = Date.now();
-  if (SMOKE_JOIN_STAGGER_MS === 0) {
-    // Burst: all phones init + join in parallel (worst-case stress).
-    await Promise.all(
-      phones.map(async (p) => {
-        await p.init();
-        await p.joinNight(nightId);
-      }),
+  // 1. DB: nights.theme_key must match what we set.
+  const { data: nightRow } = await admin
+    .from("nights")
+    .select("theme_key")
+    .eq("id", nightId)
+    .maybeSingle();
+  const actualThemeKey = nightRow?.theme_key ?? null;
+  if (actualThemeKey !== nightThemeKey) {
+    throw new Error(
+      `theme DB: expected theme_key="${nightThemeKey}" in nights, got "${actualThemeKey}"`,
     );
-  } else {
-    // Trickle: phones join with a fixed inter-join delay.
-    for (const p of phones) {
-      await p.init();
-      await p.joinNight(nightId);
-      if (p !== phones[phones.length - 1]) {
-        await new Promise((r) => setTimeout(r, SMOKE_JOIN_STAGGER_MS));
+  }
+  pass(`DB nights.theme_key = "${actualThemeKey}" ✓`);
+
+  // 2. Derived timer duration matches lockInCeremonyFor() logic.
+  const actualDuration = questionDurationFor(actualThemeKey);
+  if (actualDuration !== expectedDuration) {
+    throw new Error(
+      `timer duration: expected ${expectedDuration}s for themeKey="${nightThemeKey}", got ${actualDuration}s`,
+    );
+  }
+  pass(`timer duration = ${actualDuration}s (${nightThemeKey === "may" ? "May/Storm extended" : "default"}) ✓`);
+
+  // 3. Marquee flag: may=true, everything else=false.
+  const actualMarquee = MARQUEE_THEMES.has(actualThemeKey ?? "");
+  if (actualMarquee !== expectedMarquee) {
+    throw new Error(
+      `marquee: expected ${expectedMarquee} for themeKey="${nightThemeKey}", got ${actualMarquee}`,
+    );
+  }
+  pass(`marquee = ${actualMarquee} (${nightThemeKey === "may" ? "scoreboard marquee on" : "lock-in pile"}) ✓`);
+
+  // 4. TV snapshot surface: themeKey field is propagated.
+  const snapRes = await fetch(`${BASE}/api/tv/${roomCode}/snapshot`);
+  if (!snapRes.ok) {
+    throw new Error(`TV snapshot: ${snapRes.status} ${await snapRes.text()}`);
+  }
+  const snap = await snapRes.json();
+  // The ok() helper returns the body directly (no wrapper), so the shape
+  // is { night: { themeKey, ... }, games: [...], ... }.
+  const snapThemeKey = snap?.night?.themeKey ?? null;
+  if (snapThemeKey !== nightThemeKey) {
+    throw new Error(
+      `TV snapshot: expected themeKey="${nightThemeKey}", got "${snapThemeKey}"`,
+    );
+  }
+  pass(`TV snapshot.night.themeKey = "${snapThemeKey}" ✓`);
+}
+
+// ── One full night pass ───────────────────────────────────────────────
+
+async function runOnePass(passThemeKey) {
+  // Reset per-pass mutable state.
+  founderJar = new Jar();
+  phones = PHONE_NAMES.map((n) => new Phone(n));
+  perQuestionTimings = [];
+
+  const gameCategories = [[], []];
+  let nightId = null;
+  let roomCode = null;
+  let game1Id = null;
+  let game2Id = null;
+  const passStartedAt = Date.now();
+
+  try {
+    // 1. Login
+    step("1. founder bypass login");
+    {
+      const res = await call(founderJar, "/api/auth/founder-login", {
+        method: "POST",
+        body: JSON.stringify({ email: FOUNDER_EMAIL }),
+      });
+      if (!res.ok) throw new Error(`login failed: ${res.status} ${await res.text()}`);
+      if (founderJar.cookies.size === 0) throw new Error("no auth cookies set");
+      pass(`logged in (${founderJar.cookies.size} cookies)`);
+    }
+
+    // 2. Create night
+    step("2. create night");
+    {
+      const res = await call(founderJar, "/api/nights", {
+        method: "POST",
+        body: JSON.stringify({ venueName: "Full Flow Driver" }),
+      });
+      if (!res.ok) throw new Error(`create night failed: ${res.status} ${await res.text()}`);
+      const body = await res.json();
+      nightId = body.nightId;
+      roomCode = body.roomCode;
+      pass(`night id=${nightId.slice(0, 8)}… code=${roomCode}`);
+    }
+
+    // 2b. Set theme (skip for load mode or null pass)
+    if (!LOAD_MODE && passThemeKey) {
+      step(`2b. set theme to "${passThemeKey}"`);
+      const themeRes = await call(founderJar, `/api/nights/${nightId}/theme`, {
+        method: "PATCH",
+        body: JSON.stringify({ themeKey: passThemeKey }),
+      });
+      if (!themeRes.ok) {
+        throw new Error(`set theme: ${themeRes.status} ${await themeRes.text()}`);
+      }
+      const themeBody = await themeRes.json();
+      // ok() returns the body directly, so the shape is { themeKey: "may" }.
+      if (themeBody?.themeKey !== passThemeKey) {
+        throw new Error(
+          `set theme: response themeKey="${themeBody?.themeKey}", expected "${passThemeKey}"`,
+        );
+      }
+      pass(`PATCH /api/nights/${nightId.slice(0, 8)}…/theme → themeKey="${passThemeKey}" ✓`);
+    }
+
+    // 2c. Assert theme path (DB + derived duration + TV snapshot)
+    await assertThemePath(nightId, roomCode, passThemeKey ?? null);
+
+    // 3. Resolve both games
+    step("3. resolve game ids");
+    {
+      const { data: games, error } = await admin
+        .from("games")
+        .select("id, game_no, state")
+        .eq("night_id", nightId)
+        .order("game_no");
+      if (error || !games?.length) throw new Error(`list games: ${error?.message}`);
+      const g1 = games.find((g) => g.game_no === 1);
+      const g2 = games.find((g) => g.game_no === 2);
+      if (!g1 || !g2) throw new Error(`expected both games, got ${games.map((g) => g.game_no).join(",")}`);
+      game1Id = g1.id;
+      game2Id = g2.id;
+      pass(`g1=${game1Id.slice(0, 8)}… (${g1.state})  g2=${game2Id.slice(0, 8)}… (${g2.state})`);
+    }
+
+    // 4. Set up game 1 categories
+    step(`4. set up game 1 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
+    {
+      for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
+        const t0 = Date.now();
+        const topic = TOPIC_BANK_G1[i] ?? `${TOPIC_BANK_G1[0]} ${i + 1}`;
+        const r = await setupCategory(game1Id, topic, i + 1);
+        gameCategories[0].push(r);
+        pass(`g1 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
       }
     }
-  }
-  const joinElapsedMs = Date.now() - joinStart;
-  if (LOAD_MODE) {
-    pass(`all ${SMOKE_PHONES} phones joined in ${joinElapsedMs}ms (${Math.round(joinElapsedMs / SMOKE_PHONES)}ms/phone avg)`);
-  } else {
-    for (const p of phones) {
-      pass(`${p.name} joined (player=${p.playerId.slice(0, 8)}…)`);
+
+    // 5. Open room
+    step("5. open the room");
+    {
+      const res = await call(founderJar, `/api/nights/${nightId}/open`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error(`open: ${res.status} ${await res.text()}`);
+      pass(`opened at ${new Date((await res.json()).openedAt).toISOString().slice(11, 19)}`);
     }
-  }
-  if (SMOKE_REALTIME) {
-    const rtStart = Date.now();
-    await Promise.all(
-      phones.map((p) => p.openRealtime(roomCode, supaUrl, supaAnonKey)),
-    );
-    pass(`${SMOKE_PHONES}× realtime subscribed in ${Date.now() - rtStart}ms`);
-  }
-  {
-    const { data: parts } = await admin
-      .from("game_participations")
-      .select("player_id")
-      .eq("game_id", game1Id);
-    const ids = new Set((parts ?? []).map((x) => x.player_id));
-    const missing = phones.filter((p) => !ids.has(p.playerId));
-    if (missing.length) {
-      throw new Error(`missing g1 participations: ${missing.map((m) => m.name).join(",")}`);
+
+    // 6. Phones join the night (auto-opts into game 1)
+    step(`6. spawn ${SMOKE_PHONES} phones and join night${SMOKE_JOIN_STAGGER_MS > 0 ? ` (stagger ${SMOKE_JOIN_STAGGER_MS}ms)` : " (burst)"}`);
+    const joinStart = Date.now();
+    if (SMOKE_JOIN_STAGGER_MS === 0) {
+      // Burst: all phones init + join in parallel (worst-case stress).
+      await Promise.all(
+        phones.map(async (p) => {
+          await p.init();
+          await p.joinNight(nightId);
+        }),
+      );
+    } else {
+      // Trickle: phones join with a fixed inter-join delay.
+      for (const p of phones) {
+        await p.init();
+        await p.joinNight(nightId);
+        if (p !== phones[phones.length - 1]) {
+          await new Promise((r) => setTimeout(r, SMOKE_JOIN_STAGGER_MS));
+        }
+      }
     }
-    pass(`all ${SMOKE_PHONES} have game_participations rows for game 1`);
-  }
-
-  // 7. Play game 1
-  step(`7. play game 1 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
-  await playGame(game1Id, 1, gameCategories[0]);
-
-  // 8. End game 1
-  step("8. end game 1 + assert intermission");
-  await endGame(game1Id, 1);
-  pass("game 1 state=done");
-  {
-    const { data: gs } = await admin
-      .from("games")
-      .select("id, game_no, state")
-      .eq("night_id", nightId)
-      .order("game_no");
-    const g1 = gs.find((g) => g.game_no === 1);
-    const g2 = gs.find((g) => g.game_no === 2);
-    if (g1?.state !== "done") throw new Error(`expected g1.state=done, got ${g1?.state}`);
-    if (g2?.state === "done") throw new Error(`unexpected g2.state=done before play`);
-    pass(`intermission state: g1=done, g2=${g2?.state}`);
-  }
-
-  // Steps 9-12 only run in the default (3-phone) game-logic mode. LOAD MODE
-  // stops after game 1 because the relevant signal is intra-game peak
-  // concurrency, not narrative span.
-  if (!LOAD_MODE) {
-    // 9. Phones explicitly join game 2 (the "Join Game 2" button path)
-    step("9. phones join game 2");
-    for (const p of phones) {
-      await p.joinGame(2);
-      pass(`${p.name} joined game 2`);
+    const joinElapsedMs = Date.now() - joinStart;
+    if (LOAD_MODE) {
+      pass(`all ${SMOKE_PHONES} phones joined in ${joinElapsedMs}ms (${Math.round(joinElapsedMs / SMOKE_PHONES)}ms/phone avg)`);
+    } else {
+      for (const p of phones) {
+        pass(`${p.name} joined (player=${p.playerId.slice(0, 8)}…)`);
+      }
+    }
+    if (SMOKE_REALTIME) {
+      const rtStart = Date.now();
+      await Promise.all(
+        phones.map((p) => p.openRealtime(roomCode, supaUrl, supaAnonKey)),
+      );
+      pass(`${SMOKE_PHONES}× realtime subscribed in ${Date.now() - rtStart}ms`);
     }
     {
       const { data: parts } = await admin
         .from("game_participations")
         .select("player_id")
-        .eq("game_id", game2Id);
+        .eq("game_id", game1Id);
       const ids = new Set((parts ?? []).map((x) => x.player_id));
       const missing = phones.filter((p) => !ids.has(p.playerId));
       if (missing.length) {
-        throw new Error(`missing g2 participations: ${missing.map((m) => m.name).join(",")}`);
+        throw new Error(`missing g1 participations: ${missing.map((m) => m.name).join(",")}`);
       }
-      pass("all 3 have game_participations rows for game 2");
+      pass(`all ${SMOKE_PHONES} have game_participations rows for game 1`);
     }
 
-    // 10. Set up game 2 categories
-    step(`10. set up game 2 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
-    {
-      for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
-        const t0 = Date.now();
-        const topic = TOPIC_BANK_G2[i] ?? `${TOPIC_BANK_G2[0]} ${i + 1}`;
-        const r = await setupCategory(game2Id, topic, i + 1);
-        gameCategories[1].push(r);
-        pass(`g2 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
-      }
-    }
+    // 7. Play game 1
+    step(`7. play game 1 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
+    await playGame(game1Id, 1, gameCategories[0]);
 
-    step(`11. play game 2 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
-    await playGame(game2Id, 2, gameCategories[1]);
-
-    // 12. End game 2 + assert finale
-    step("12. end game 2 + assert finale");
-    await endGame(game2Id, 2);
-    pass("game 2 state=done");
+    // 8. End game 1
+    step("8. end game 1 + assert intermission");
+    await endGame(game1Id, 1);
+    pass("game 1 state=done");
     {
       const { data: gs } = await admin
         .from("games")
-        .select("game_no, state")
+        .select("id, game_no, state")
         .eq("night_id", nightId)
         .order("game_no");
       const g1 = gs.find((g) => g.game_no === 1);
       const g2 = gs.find((g) => g.game_no === 2);
-      if (g1?.state !== "done" || g2?.state !== "done") {
-        throw new Error(`finale predicate fails: g1=${g1?.state} g2=${g2?.state}`);
+      if (g1?.state !== "done") throw new Error(`expected g1.state=done, got ${g1?.state}`);
+      if (g2?.state === "done") throw new Error(`unexpected g2.state=done before play`);
+      pass(`intermission state: g1=done, g2=${g2?.state}`);
+    }
+
+    // Steps 9-12 only run in the default (3-phone) game-logic mode. LOAD MODE
+    // stops after game 1 because the relevant signal is intra-game peak
+    // concurrency, not narrative span.
+    if (!LOAD_MODE) {
+      // 9. Phones explicitly join game 2 (the "Join Game 2" button path)
+      step("9. phones join game 2");
+      for (const p of phones) {
+        await p.joinGame(2);
+        pass(`${p.name} joined game 2`);
       }
-      pass(`finale state: g1=done, g2=done`);
+      {
+        const { data: parts } = await admin
+          .from("game_participations")
+          .select("player_id")
+          .eq("game_id", game2Id);
+        const ids = new Set((parts ?? []).map((x) => x.player_id));
+        const missing = phones.filter((p) => !ids.has(p.playerId));
+        if (missing.length) {
+          throw new Error(`missing g2 participations: ${missing.map((m) => m.name).join(",")}`);
+        }
+        pass("all 3 have game_participations rows for game 2");
+      }
+
+      // 10. Set up game 2 categories
+      step(`10. set up game 2 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
+      {
+        for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
+          const t0 = Date.now();
+          const topic = TOPIC_BANK_G2[i] ?? `${TOPIC_BANK_G2[0]} ${i + 1}`;
+          const r = await setupCategory(game2Id, topic, i + 1);
+          gameCategories[1].push(r);
+          pass(`g2 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
+        }
+      }
+
+      step(`11. play game 2 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
+      await playGame(game2Id, 2, gameCategories[1]);
+
+      // 12. End game 2 + assert finale
+      step("12. end game 2 + assert finale");
+      await endGame(game2Id, 2);
+      pass("game 2 state=done");
+      {
+        const { data: gs } = await admin
+          .from("games")
+          .select("game_no, state")
+          .eq("night_id", nightId)
+          .order("game_no");
+        const g1 = gs.find((g) => g.game_no === 1);
+        const g2 = gs.find((g) => g.game_no === 2);
+        if (g1?.state !== "done" || g2?.state !== "done") {
+          throw new Error(`finale predicate fails: g1=${g1?.state} g2=${g2?.state}`);
+        }
+        pass(`finale state: g1=done, g2=done`);
+      }
     }
-  }
 
-  // 13. Strict leaderboard assertion (default mode) OR load summary.
-  step(LOAD_MODE ? `13. load summary (${SMOKE_PHONES} phones)` : "13. assert cumulative leaderboard (across both games)");
-  if (LOAD_MODE) {
-    // Load-mode summary: timings + answer integrity + broadcast deliveries.
-    const picked = gameCategories[0].flatMap((c) => c.picked);
-    const { data: rows } = await admin
-      .from("answers")
-      .select("player_id, question_id, awarded_points, is_correct")
-      .in("question_id", picked.map((q) => q.id));
+    // 13. Strict leaderboard assertion (default mode) OR load summary.
+    step(LOAD_MODE ? `13. load summary (${SMOKE_PHONES} phones)` : "13. assert cumulative leaderboard (across both games)");
+    if (LOAD_MODE) {
+      // Load-mode summary: timings + answer integrity + broadcast deliveries.
+      const picked = gameCategories[0].flatMap((c) => c.picked);
+      const { data: rows } = await admin
+        .from("answers")
+        .select("player_id, question_id, awarded_points, is_correct")
+        .in("question_id", picked.map((q) => q.id));
 
-    const totalAnswers = rows?.length ?? 0;
-    const expectedAnswers = SMOKE_PHONES * picked.length;
-    if (totalAnswers !== expectedAnswers) {
-      throw new Error(
-        `load integrity: expected ${expectedAnswers} answers (${SMOKE_PHONES} × ${picked.length}), got ${totalAnswers}`,
-      );
-    }
-    pass(`integrity: all ${expectedAnswers} answers landed and were graded`);
-
-    // Timing distribution
-    const answerMsValues = perQuestionTimings.map((t) => t.answerMs).sort((a, b) => a - b);
-    const p50 = answerMsValues[Math.floor(answerMsValues.length * 0.5)];
-    const p95 = answerMsValues[Math.floor(answerMsValues.length * 0.95)] ?? answerMsValues[answerMsValues.length - 1];
-    const max = answerMsValues[answerMsValues.length - 1];
-    note(`${SMOKE_PHONES}-phone parallel POST /api/answers per question:`);
-    note(`  p50 = ${p50}ms   p95 = ${p95}ms   max = ${max}ms`);
-
-    // Spot-check per-phone scores: every phone should have a non-null score.
-    const scoreByPlayer = new Map();
-    for (const r of rows ?? []) {
-      scoreByPlayer.set(r.player_id, (scoreByPlayer.get(r.player_id) ?? 0) + (r.awarded_points ?? 0));
-    }
-    const phonesWithZeroScore = phones.filter((p) => (scoreByPlayer.get(p.playerId) ?? 0) === 0);
-    if (phonesWithZeroScore.length > 0) {
-      // Some phones may legitimately get all-wrong; flag but don't fail.
-      note(`${phonesWithZeroScore.length} phone(s) ended with 0 points (acceptable: deterministic decide() may give all-wrong)`);
-    }
-    const scores = phones.map((p) => scoreByPlayer.get(p.playerId) ?? 0);
-    const min = Math.min(...scores);
-    const maxScore = Math.max(...scores);
-    note(`scores: min=${min}  max=${maxScore}  avg=${Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)}`);
-
-    // Realtime broadcast delivery (if enabled)
-    if (SMOKE_REALTIME) {
-      const broadcastsByPhone = phones.map((p) => p.rtBroadcastsReceived);
-      const totalBroadcasts = broadcastsByPhone.reduce((a, b) => a + b, 0);
-      const expectedPerPhone = picked.length * 2; // reveal + end-early per question
-      const minPerPhone = Math.min(...broadcastsByPhone);
-      const maxPerPhone = Math.max(...broadcastsByPhone);
-      note(`realtime: ${totalBroadcasts} broadcasts received across ${SMOKE_PHONES} phones (expected ~${expectedPerPhone}/phone)`);
-      note(`  min/phone=${minPerPhone}  max/phone=${maxPerPhone}`);
-      if (minPerPhone < Math.floor(expectedPerPhone * 0.5)) {
+      const totalAnswers = rows?.length ?? 0;
+      const expectedAnswers = SMOKE_PHONES * picked.length;
+      if (totalAnswers !== expectedAnswers) {
         throw new Error(
-          `realtime delivery: a phone received only ${minPerPhone} broadcasts (expected ~${expectedPerPhone}); WebSocket layer likely struggling at ${SMOKE_PHONES} clients`,
+          `load integrity: expected ${expectedAnswers} answers (${SMOKE_PHONES} × ${picked.length}), got ${totalAnswers}`,
         );
       }
-      pass(`realtime delivery: all phones received at least 50% of expected broadcasts`);
+      pass(`integrity: all ${expectedAnswers} answers landed and were graded`);
+
+      // Timing distribution
+      const answerMsValues = perQuestionTimings.map((t) => t.answerMs).sort((a, b) => a - b);
+      const p50 = answerMsValues[Math.floor(answerMsValues.length * 0.5)];
+      const p95 = answerMsValues[Math.floor(answerMsValues.length * 0.95)] ?? answerMsValues[answerMsValues.length - 1];
+      const max = answerMsValues[answerMsValues.length - 1];
+      note(`${SMOKE_PHONES}-phone parallel POST /api/answers per question:`);
+      note(`  p50 = ${p50}ms   p95 = ${p95}ms   max = ${max}ms`);
+
+      // Spot-check per-phone scores: every phone should have a non-null score.
+      const scoreByPlayer = new Map();
+      for (const r of rows ?? []) {
+        scoreByPlayer.set(r.player_id, (scoreByPlayer.get(r.player_id) ?? 0) + (r.awarded_points ?? 0));
+      }
+      const phonesWithZeroScore = phones.filter((p) => (scoreByPlayer.get(p.playerId) ?? 0) === 0);
+      if (phonesWithZeroScore.length > 0) {
+        // Some phones may legitimately get all-wrong; flag but don't fail.
+        note(`${phonesWithZeroScore.length} phone(s) ended with 0 points (acceptable: deterministic decide() may give all-wrong)`);
+      }
+      const scores = phones.map((p) => scoreByPlayer.get(p.playerId) ?? 0);
+      const min = Math.min(...scores);
+      const maxScore = Math.max(...scores);
+      note(`scores: min=${min}  max=${maxScore}  avg=${Math.round(scores.reduce((a, b) => a + b, 0) / scores.length)}`);
+
+      // Realtime broadcast delivery (if enabled)
+      if (SMOKE_REALTIME) {
+        const broadcastsByPhone = phones.map((p) => p.rtBroadcastsReceived);
+        const totalBroadcasts = broadcastsByPhone.reduce((a, b) => a + b, 0);
+        const expectedPerPhone = picked.length * 2; // reveal + end-early per question
+        const minPerPhone = Math.min(...broadcastsByPhone);
+        const maxPerPhone = Math.max(...broadcastsByPhone);
+        note(`realtime: ${totalBroadcasts} broadcasts received across ${SMOKE_PHONES} phones (expected ~${expectedPerPhone}/phone)`);
+        note(`  min/phone=${minPerPhone}  max/phone=${maxPerPhone}`);
+        if (minPerPhone < Math.floor(expectedPerPhone * 0.5)) {
+          throw new Error(
+            `realtime delivery: a phone received only ${minPerPhone} broadcasts (expected ~${expectedPerPhone}); WebSocket layer likely struggling at ${SMOKE_PHONES} clients`,
+          );
+        }
+        pass(`realtime delivery: all phones received at least 50% of expected broadcasts`);
+      }
+    } else {
+      const picked1 = gameCategories[0].flatMap((c) => c.picked);
+      const picked2 = gameCategories[1].flatMap((c) => c.picked);
+      const allQuestionIds = [...picked1, ...picked2].map((q) => q.id);
+      const { data: rows } = await admin
+        .from("answers")
+        .select("player_id, question_id, awarded_points")
+        .in("question_id", allQuestionIds);
+
+      // Per-game and cumulative totals
+      const g1ids = new Set(picked1.map((q) => q.id));
+      const totals = new Map();
+      const g1Totals = new Map();
+      const g2Totals = new Map();
+      for (const r of rows ?? []) {
+        const pts = r.awarded_points ?? 0;
+        totals.set(r.player_id, (totals.get(r.player_id) ?? 0) + pts);
+        const bucket = g1ids.has(r.question_id) ? g1Totals : g2Totals;
+        bucket.set(r.player_id, (bucket.get(r.player_id) ?? 0) + pts);
+      }
+
+      const ranked = phones
+        .map((p) => ({
+          name: p.name,
+          total: totals.get(p.playerId) ?? 0,
+          g1: g1Totals.get(p.playerId) ?? 0,
+          g2: g2Totals.get(p.playerId) ?? 0,
+        }))
+        .sort((a, b) => b.total - a.total);
+
+      for (const r of ranked) {
+        note(`${r.name.padEnd(6)} total=${String(r.total).padStart(5)}  (g1=${String(r.g1).padStart(4)}  g2=${String(r.g2).padStart(4)})`);
+      }
+
+      if (ranked[0].name !== "Alice") throw new Error(`winner expected Alice, got ${ranked[0].name}`);
+      if (ranked[1].name !== "Carol") throw new Error(`2nd expected Carol, got ${ranked[1].name}`);
+      if (ranked[2].name !== "Bob") throw new Error(`3rd expected Bob, got ${ranked[2].name}`);
+      if (ranked[0].total <= ranked[1].total || ranked[1].total <= ranked[2].total) {
+        throw new Error(`expected strict order Alice > Carol > Bob, got totals ${ranked.map((r) => r.total).join(" > ")}`);
+      }
+      // Bob's game 1 should be 0 (all wrong); his game 2 should be > 0 (alternates).
+      const bob = ranked.find((r) => r.name === "Bob");
+      if (bob.g1 !== 0) throw new Error(`Bob g1 expected 0 (all wrong), got ${bob.g1}`);
+      if (bob.g2 <= 0) throw new Error(`Bob g2 expected > 0 (alternates), got ${bob.g2}`);
+      pass(`leaderboard correct: ${ranked.map((r) => `${r.name}(${r.total})`).join(" > ")}`);
     }
-  } else {
-    const picked1 = gameCategories[0].flatMap((c) => c.picked);
-    const picked2 = gameCategories[1].flatMap((c) => c.picked);
-    const allQuestionIds = [...picked1, ...picked2].map((q) => q.id);
-    const { data: rows } = await admin
-      .from("answers")
-      .select("player_id, question_id, awarded_points")
-      .in("question_id", allQuestionIds);
 
-    // Per-game and cumulative totals
-    const g1ids = new Set(picked1.map((q) => q.id));
-    const totals = new Map();
-    const g1Totals = new Map();
-    const g2Totals = new Map();
-    for (const r of rows ?? []) {
-      const pts = r.awarded_points ?? 0;
-      totals.set(r.player_id, (totals.get(r.player_id) ?? 0) + pts);
-      const bucket = g1ids.has(r.question_id) ? g1Totals : g2Totals;
-      bucket.set(r.player_id, (bucket.get(r.player_id) ?? 0) + pts);
+    const passLabel = passThemeKey ? `themeKey="${passThemeKey}"` : "default (no theme)";
+    const finishedBanner = LOAD_MODE
+      ? `═══ LOAD FLOW GREEN (${SMOKE_PHONES} phones) ═══`
+      : `═══ PASS GREEN — ${passLabel} ═══`;
+    console.log(`\n${colorize(finishedBanner, "green")} (${Math.round((Date.now() - passStartedAt) / 1000)}s)`);
+    if (!LOAD_MODE) {
+      const themeChecks = passThemeKey
+        ? `Theme="${passThemeKey}" ✓  Timer=${questionDurationFor(passThemeKey)}s ✓  Marquee=${MARQUEE_THEMES.has(passThemeKey)} ✓  `
+        : `Theme=null (default) ✓  Timer=${questionDurationFor(null)}s ✓  Marquee=false ✓  `;
+      console.log(`  ${themeChecks}Login ✓  Night ✓  G1 setup/play/end ✓  Phones joined g2 ✓  G2 setup/play/end ✓  Leaderboard ✓\n`);
+    } else {
+      console.log(`  Login ✓  Night ✓  ${SMOKE_PHONES} phones joined ✓  G1 played (parallel answers) ✓  Integrity + timings reported ✓\n`);
     }
+  } catch (e) {
+    console.log(`\n${colorize("═══ PASS RED ═══", "red")} (themeKey=${passThemeKey ?? "null"})`);
+    console.log(`  ${e?.message ?? e}`);
 
-    const ranked = phones
-      .map((p) => ({
-        name: p.name,
-        total: totals.get(p.playerId) ?? 0,
-        g1: g1Totals.get(p.playerId) ?? 0,
-        g2: g2Totals.get(p.playerId) ?? 0,
-      }))
-      .sort((a, b) => b.total - a.total);
-
-    for (const r of ranked) {
-      note(`${r.name.padEnd(6)} total=${String(r.total).padStart(5)}  (g1=${String(r.g1).padStart(4)}  g2=${String(r.g2).padStart(4)})`);
-    }
-
-    if (ranked[0].name !== "Alice") throw new Error(`winner expected Alice, got ${ranked[0].name}`);
-    if (ranked[1].name !== "Carol") throw new Error(`2nd expected Carol, got ${ranked[1].name}`);
-    if (ranked[2].name !== "Bob") throw new Error(`3rd expected Bob, got ${ranked[2].name}`);
-    if (ranked[0].total <= ranked[1].total || ranked[1].total <= ranked[2].total) {
-      throw new Error(`expected strict order Alice > Carol > Bob, got totals ${ranked.map((r) => r.total).join(" > ")}`);
-    }
-    // Bob's game 1 should be 0 (all wrong); his game 2 should be > 0 (alternates).
-    const bob = ranked.find((r) => r.name === "Bob");
-    if (bob.g1 !== 0) throw new Error(`Bob g1 expected 0 (all wrong), got ${bob.g1}`);
-    if (bob.g2 <= 0) throw new Error(`Bob g2 expected > 0 (alternates), got ${bob.g2}`);
-    pass(`leaderboard correct: ${ranked.map((r) => `${r.name}(${r.total})`).join(" > ")}`);
-  }
-
-  const finishedBanner = LOAD_MODE
-    ? `═══ LOAD FLOW GREEN (${SMOKE_PHONES} phones) ═══`
-    : `═══ FULL FLOW GREEN (2 games) ═══`;
-  console.log(`\n${colorize(finishedBanner, "green")} (total ${Math.round((Date.now() - startedAt) / 1000)}s)`);
-  if (!LOAD_MODE) {
-    console.log("Login ✓  Night ✓  G1 setup/play/end ✓  Phones joined g2 ✓  G2 setup/play/end ✓  Cumulative leaderboard ✓\n");
-  } else {
-    console.log(`Login ✓  Night ✓  ${SMOKE_PHONES} phones joined ✓  G1 played (parallel answers) ✓  Integrity + timings reported ✓\n`);
-  }
-} catch (e) {
-  console.log(`\n${colorize("═══ FULL FLOW RED ═══", "red")}`);
-  console.log(`  ${e?.message ?? e}`);
-
-  // Best-effort state dump for actionable failures
-  for (let i = 0; i < 2; i++) {
-    const gid = i === 0 ? game1Id : game2Id;
-    if (!gid) continue;
-    const { data: g } = await admin
-      .from("games")
-      .select("state, started_at, ended_at")
-      .eq("id", gid)
-      .maybeSingle();
-    note(`g${i + 1} state=${g?.state ?? "?"} started=${!!g?.started_at} ended=${!!g?.ended_at}`);
-    for (const { categoryId } of gameCategories[i]) {
-      if (!categoryId) continue;
-      const { data: cat } = await admin
-        .from("categories")
-        .select("state, name")
-        .eq("id", categoryId)
+    // Best-effort state dump for actionable failures
+    for (let i = 0; i < 2; i++) {
+      const gid = i === 0 ? game1Id : game2Id;
+      if (!gid) continue;
+      const { data: g } = await admin
+        .from("games")
+        .select("state, started_at, ended_at")
+        .eq("id", gid)
         .maybeSingle();
-      note(`g${i + 1} category "${cat?.name}" state=${cat?.state ?? "?"}`);
-      const { data: qs } = await admin
-        .from("questions")
-        .select("point_value, played_at, finished_at")
-        .eq("category_id", categoryId)
-        .order("point_value");
-      for (const q of qs ?? []) {
-        note(`  Q ${q.point_value}pt played=${!!q.played_at} finished=${!!q.finished_at}`);
+      note(`g${i + 1} state=${g?.state ?? "?"} started=${!!g?.started_at} ended=${!!g?.ended_at}`);
+      for (const { categoryId } of gameCategories[i]) {
+        if (!categoryId) continue;
+        const { data: cat } = await admin
+          .from("categories")
+          .select("state, name")
+          .eq("id", categoryId)
+          .maybeSingle();
+        note(`g${i + 1} category "${cat?.name}" state=${cat?.state ?? "?"}`);
+        const { data: qs } = await admin
+          .from("questions")
+          .select("point_value, played_at, finished_at")
+          .eq("category_id", categoryId)
+          .order("point_value");
+        for (const q of qs ?? []) {
+          note(`  Q ${q.point_value}pt played=${!!q.played_at} finished=${!!q.finished_at}`);
+        }
       }
     }
+    console.log("");
+    throw e; // re-throw so the outer loop can mark the run failed
+  } finally {
+    // Close any per-phone WebSocket subscriptions before exiting the process.
+    if (SMOKE_REALTIME) {
+      await Promise.all(phones.map((p) => p.closeRealtime().catch(() => undefined)));
+    }
+    if (nightId) {
+      step("cleanup");
+      const { error } = await admin.from("nights").delete().eq("id", nightId);
+      if (error) note(`cleanup warning: ${error.message}`);
+      else pass(`deleted night ${nightId.slice(0, 8)}… (cascade)`);
+    }
   }
-  console.log("");
+}
+
+// ── Main: run all theme passes ────────────────────────────────────────
+
+const overallStart = Date.now();
+let anyFailed = false;
+
+for (const passThemeKey of THEME_PASSES) {
+  const passLabel = passThemeKey
+    ? `theme="${passThemeKey}" (${questionDurationFor(passThemeKey)}s timer, marquee=${MARQUEE_THEMES.has(passThemeKey)})`
+    : "default (no theme override, 20s timer)";
+  passHeader(`PASS: ${passLabel}`);
+
+  try {
+    await runOnePass(passThemeKey);
+  } catch {
+    anyFailed = true;
+    // Continue to run remaining passes so all failures surface together.
+    note(`pass "${passThemeKey ?? "null"}" FAILED — continuing to next pass`);
+  }
+}
+
+if (anyFailed) {
+  console.log(`\n${colorize("═══ FULL FLOW RED ═══", "red")} (total ${Math.round((Date.now() - overallStart) / 1000)}s)\n`);
   process.exitCode = 1;
-} finally {
-  // Close any per-phone WebSocket subscriptions before exiting the process.
-  if (SMOKE_REALTIME) {
-    await Promise.all(phones.map((p) => p.closeRealtime().catch(() => undefined)));
-  }
-  if (nightId) {
-    step("cleanup");
-    const { error } = await admin.from("nights").delete().eq("id", nightId);
-    if (error) note(`cleanup warning: ${error.message}`);
-    else pass(`deleted night ${nightId.slice(0, 8)}… (cascade)`);
-  }
+} else {
+  const passesLabel = THEME_PASSES.map((t) => t ?? "default").join(" + ");
+  console.log(
+    `\n${colorize(`═══ FULL FLOW GREEN (${passesLabel}) ═══`, "green")} (total ${Math.round((Date.now() - overallStart) / 1000)}s)\n`,
+  );
 }
