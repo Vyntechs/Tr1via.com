@@ -166,6 +166,30 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
     const supa = getSupabaseBrowser();
 
     /**
+     * Re-fetch the players list and merge it into the snapshot. Called as a
+     * fallback from the `player-joined` broadcast handler so the host's
+     * lobby roster doesn't sit stale waiting on `postgres_changes` — which
+     * can drop INSERTs under burst-join load (e.g., 10–15 patrons scanning
+     * the QR within a couple seconds at the start of a night), or get
+     * missed entirely during the channel-subscribe race on slower hosts.
+     *
+     * Idempotent with the `mergePlayerChange` postgres_changes handler:
+     * both paths converge on the same canonical row set keyed by `id`.
+     */
+    async function refreshPlayers(nightId: string): Promise<void> {
+      if (cancelled) return;
+      const { data, error } = await supa
+        .from("players")
+        .select("*")
+        .eq("night_id", nightId)
+        .is("removed_at", null)
+        .order("joined_at", { ascending: true });
+      if (cancelled || error) return;
+      const next = (data ?? []) as PlayerRow[];
+      setSnapshot((prev) => ({ ...prev, players: next }));
+    }
+
+    /**
      * Re-fetch the moving parts of the snapshot — games (state may have
      * flipped ready→live), the live question (played_at / finished_at), and
      * answers for the live question. We hit these via HTTP through the
@@ -436,8 +460,13 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
         .on("broadcast", { event: "player-joined" }, (msg) => {
           // Magic-Welcome wake-up. Tags the lastBroadcast so the host live
           // console can fire the slide-in tile + chime within ~300ms of
-          // the join — postgres_changes for the players row will land
-          // shortly after and refresh the durable roster.
+          // the join. We ALSO refetch the players list over REST — under
+          // burst-join load (a dozen patrons scanning the QR within a few
+          // seconds) postgres_changes for the players row drops INSERTs,
+          // leaving the host's lobby count stuck at 0 until the 15s
+          // heartbeat catches up. The broadcast IS reliable, so we use it
+          // as the wake-up signal for a durable HTTP refetch — same
+          // pattern as `refreshLiveState` for reveal/undo/resolve events.
           const p = msg.payload as Record<string, unknown>;
           mergeBroadcast({
             event: "player-joined",
@@ -449,6 +478,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
             colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
             joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
           });
+          void refreshPlayers(nightId);
         })
         .subscribe((status) => {
           broadcastChannelState = status;
