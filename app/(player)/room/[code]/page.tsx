@@ -917,7 +917,23 @@ function RevealView({
     | 4;
   const correctText = question.options[question.correct_index];
 
-  const wasCorrect = myAnswer?.is_correct === true;
+  // Source the right/wrong decision from the data already on hand — the
+  // player's own chosen_index plus the question's correct_index — rather
+  // than waiting on the server-set `is_correct` echo. The resolve route
+  // does set is_correct true/false on the answer row, but it lands via a
+  // separate REST refetch keyed off the resolve broadcast (see
+  // `useMyAnswers`). For a few hundred ms after the broadcast arrives,
+  // is_correct is still null — `null === true` evaluates to false, so
+  // players who picked correctly briefly see PlayerRevealWrong. Reported
+  // live by Brandon during the first host's first night: "customers complain of
+  // ... they got the wrong answer even when they selected the right
+  // answer." Trust either source; OR-logic means any signal of correct
+  // wins. Still respects post-resolve overrides (e.g., host mark-correct)
+  // — those flip is_correct=true and the first branch fires.
+  const wasCorrect =
+    myAnswer != null &&
+    (myAnswer.is_correct === true ||
+      myAnswer.chosen_index === question.correct_index);
 
   if (wasCorrect && myAnswer) {
     const awarded =
