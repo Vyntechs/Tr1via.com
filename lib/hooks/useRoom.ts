@@ -175,6 +175,12 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       const supa = getSupabaseBrowser();
       // Show the calm host banner while we rebuild.
       setChannelHealth("CHANNEL_ERROR");
+      // Stamp the channel-error throttle BEFORE dropping the socket: disconnect()
+      // makes the old channels fire CLOSED, which would otherwise bump
+      // reconnectCounter and cause a SECOND teardown/re-bootstrap. Stamping first
+      // keeps those CLOSED callbacks inside the 2s throttle window, so watchdogTick
+      // stays the single rebuild trigger.
+      lastReconnectAtRef.current = Date.now();
       try {
         // Drop the dead transport. Confirmed (realtime-js 2.106.1): this
         // closes the socket but keeps channels registered, so they rejoin
@@ -186,11 +192,6 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       supa.realtime.connect();
       // Reset freshness so we don't immediately re-trigger before data resumes.
       lastMessageAtRef.current = Date.now();
-      // Stamp the channel-error throttle too: dropping the socket above makes
-      // the old channels fire CLOSED, which would otherwise bump reconnectCounter
-      // and cause a SECOND teardown/re-bootstrap. Suppress that so watchdogTick
-      // is the single rebuild trigger.
-      lastReconnectAtRef.current = Date.now();
       // Re-run the main effect: tears down our 2 channels and re-bootstraps
       // (HTTP refetch of any state missed during the dead window + fresh
       // .subscribe() on the new socket).

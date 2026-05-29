@@ -52,7 +52,7 @@ Add a **freshness watchdog** to `useRoom`, active **only on the host surface**. 
 **1. Track freshness.** Stamp `lastMessageAt = Date.now()` on every received realtime event — both broadcast handlers (`useRoom.ts:397-482`) and every `postgres_changes` merge handler (`useRoom.ts:549-625`). One small `markFresh()` call per handler.
 
 **2. Detect death two ways.** A 1-second `setInterval` checks:
-- **Stale:** `now - lastMessageAt > STALE_MS` (~30s) *while* channels still claim `SUBSCRIBED`. Tunable; chosen so a normal lull between questions never trips it.
+- **Stale:** `now - lastMessageAt > STALE_MS` (90s) *while* channels still claim `SUBSCRIBED`. Set above the 64s longest legitimate between-question pause seen in show data so a normal lull never trips it; the sleep-gap check is the fast path.
 - **Sleep-wake gap:** the same tick compares wall-clock delta to its expected 1s interval; a delta far larger than expected (e.g. >5s) means the machine slept — treat wake as a recovery trigger. This catches the foreground-sleep case layer 1 misses.
 
 **3. Hard recovery (the new behavior).** On a trigger, drop the transport and rebuild — `supa.realtime.disconnect()` then reconnect — forcing a brand-new socket. The central `RealtimeClient` re-joins its registered channels on the new socket (the host live console's extra channels included); then bump the effect to re-`bootstrap()` so any state missed during the dead window is re-fetched over HTTP. This is the one thing the existing three layers do not do.
