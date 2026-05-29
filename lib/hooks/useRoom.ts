@@ -168,6 +168,8 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   useFreshnessWatchdog({
     enabled: isHost && !!roomCode,
     getLastMessageAt: () => lastMessageAtRef.current,
+    // "SUBSCRIBED" here means BOTH channels are up (see deriveWorstStatus);
+    // stale recovery only fires when we believe we're fully connected yet silent.
     getSubscribed: () => getChannelHealth() === "SUBSCRIBED",
     onRecover: async () => {
       const supa = getSupabaseBrowser();
@@ -184,6 +186,11 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       supa.realtime.connect();
       // Reset freshness so we don't immediately re-trigger before data resumes.
       lastMessageAtRef.current = Date.now();
+      // Stamp the channel-error throttle too: dropping the socket above makes
+      // the old channels fire CLOSED, which would otherwise bump reconnectCounter
+      // and cause a SECOND teardown/re-bootstrap. Suppress that so watchdogTick
+      // is the single rebuild trigger.
+      lastReconnectAtRef.current = Date.now();
       // Re-run the main effect: tears down our 2 channels and re-bootstraps
       // (HTTP refetch of any state missed during the dead window + fresh
       // .subscribe() on the new socket).
