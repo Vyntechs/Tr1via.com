@@ -37,6 +37,7 @@ import {
   TVReveal,
   TVRevealStumper,
   type TVGridCell,
+  type TVGridLeaderRow,
   type TVIntermissionPodiumRow,
   type TVIntermissionStat,
   type TVLeaderboardRow,
@@ -333,7 +334,7 @@ function TVGridView({
     });
   });
 
-  const leader = topScore(snapshot);
+  const leaders = topScores(snapshot);
   const boardLeft = cells.flat().filter((c) => !c.played).length;
 
   const upNext = (() => {
@@ -361,7 +362,7 @@ function TVGridView({
       categories={categoryNames.length > 0 ? categoryNames : undefined}
       cells={cells.length > 0 ? cells : undefined}
       values={values.length > 0 ? values : undefined}
-      leader={leader ?? undefined}
+      leaders={leaders}
       boardLeft={boardLeft}
       upNext={upNext}
       footerLeft={pickLiveQuestion(snapshot) ? "REVEAL TO BEGIN" : "WAITING ON HOST"}
@@ -798,9 +799,15 @@ function pickLiveQuestion(snapshot: TVSnapshot) {
   return snapshot.questions.find((q) => q.id === snapshot.liveQuestionId) ?? null;
 }
 
-function topScore(snapshot: TVSnapshot): { name: string; score: number } | null {
-  const top = snapshot.scores[0];
-  return top ? { name: top.display_name, score: top.score } : null;
+function topScores(snapshot: TVSnapshot): TVGridLeaderRow[] {
+  // snapshot.scores is pre-sorted score-descending by both snapshot builders
+  // (roomToTVSnapshot + the /tv/[code] snapshot route), so the first four rows
+  // are the true top four.
+  return snapshot.scores.slice(0, 4).map((s, idx) => ({
+    rank: idx + 1,
+    name: s.display_name,
+    score: s.score,
+  }));
 }
 
 function uniqueAscendingPointValues(
