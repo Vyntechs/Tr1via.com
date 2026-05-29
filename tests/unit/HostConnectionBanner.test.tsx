@@ -21,4 +21,13 @@ describe("HostConnectionBanner", () => {
     render(<HostConnectionBanner />);
     expect(screen.getByRole("status")).toHaveTextContent(/reconnecting/i);
   });
+
+  it.each(["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"])(
+    "shows the banner when channel health is %s",
+    (state) => {
+      setChannelHealth(state);
+      render(<HostConnectionBanner />);
+      expect(screen.getByRole("status")).toHaveTextContent(/reconnecting/i);
+    },
+  );
 });

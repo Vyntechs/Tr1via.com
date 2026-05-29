@@ -43,4 +43,28 @@ describe("useFreshnessWatchdog", () => {
     vi.advanceTimersByTime(5_000);
     expect(onRecover).not.toHaveBeenCalled();
   });
+
+  // -------------------------------------------------------------------
+  // NOTE: No separate timer-jump test for the slept→recover path.
+  //
+  // Why: vitest fake timers control Date.now() by advancing it in sync
+  // with scheduled timer fire times. When a setInterval callback fires
+  // after vi.advanceTimersByTime(N), Date.now() returns the timer's
+  // scheduled fire time — NOT a wall-clock jumped ahead by a sleep gap.
+  // A vi.setSystemTime() jump issued before the advance gets overridden
+  // by vitest's internal clock step, so lastTickAt and now always differ
+  // by ~WATCHDOG_INTERVAL_MS, never by SLEEP_GAP_MS. The slept branch
+  // cannot be reliably triggered this way without flaking.
+  //
+  // Coverage by composition (accepted alternative per code-review):
+  //   • The slept DECISION (lastTickAt gap ≥ SLEEP_GAP_MS AND visible)
+  //     is unit-tested in freshnessWatchdog.test.ts:
+  //       – "flags slept when a tick lands far later than expected…"
+  //       – "does NOT flag slept when the tab is hidden…"
+  //   • The hook forwards verdict.shouldRecover uniformly for both stale
+  //     and slept paths — same lock/cooldown/onRecover wiring — proven
+  //     by the stale test above ("calls onRecover once when stale…").
+  //   So stale and slept take the identical execution path through the
+  //   hook; a separate hook-level sleep test adds no new coverage.
+  // -------------------------------------------------------------------
 });

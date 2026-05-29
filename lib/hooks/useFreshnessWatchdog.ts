@@ -33,7 +33,9 @@ export function useFreshnessWatchdog({
   getSubscribed,
   onRecover,
 }: FreshnessWatchdogArgs): void {
-  const lastTickAtRef = useRef(0);
+  // Init to "now" so the first tick's gap is ~1 interval, never a false "slept".
+  const lastTickAtRef = useRef(Date.now());
+  // 0 so the first recovery can fire immediately; persists across enabled toggles.
   const lastRecoverAtRef = useRef(0);
   const recoveringRef = useRef(false);
   // Hold the latest callbacks so the interval never has to re-arm on re-render.
