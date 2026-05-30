@@ -6,6 +6,9 @@ export const TID = {
   // Landing
   home: { root: "home", roomCodeInput: "home-room-code-input", findRoomBtn: "home-find-room-btn", hostSignInLink: "home-host-signin" },
 
+  // Host login
+  login: { submit: "login-submit" },
+
   // Player phone — pre-join
   playerJoinCodeEntry: { root: "player-code-entry", input: "player-code-input", submit: "player-code-submit" },
   playerJoin: { root: "player-join", input: "player-name-input", submit: "player-join-submit" },

@@ -4,13 +4,17 @@
 // validation.
 //
 // What this proves (and the API-only smoke doesn't):
-//   1. /login renders, email input accepts text, Send button is clickable
-//   2. The button's submit handler calls /api/auth/founder-login (via the
-//      page's wired-in fetch)
-//   3. On 200, the React router actually navigates to /host
-//   4. /host renders, hosts row is found, HostDashboard component mounts
-//   5. The "New Night" button (or "Open tonight's room" if a night exists)
-//      is visible — proving the dashboard isn't a blank crash
+//   1. /login renders and the email input accepts text
+//   2. Clicking "Sign in" fires the submit handler → /api/auth/founder-login
+//      (via the page's wired-in fetch) and, on 200, the client navigates to
+//      /host
+//   3. /host renders without crashing — either the returning-host dashboard
+//      (host-dashboard) or the first-time onboarding (host-onboarding-first)
+//      mounts, and no console errors fire on the page
+//
+// The sign-in button is targeted by data-testid (login-submit), never by
+// its visible copy — that label has been renamed before (it once said
+// "Send sign-in link"), and a copy change must never break CI again.
 //
 // What this still doesn't prove:
 //   - The setup → topic → generate UI flow (multi-step, slow)
@@ -20,6 +24,7 @@
 // Cleans up after itself if it creates any nights (currently does not).
 
 import { test, expect } from "@playwright/test";
+import { TID } from "./helpers/selectors";
 
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
 
@@ -40,7 +45,7 @@ test.describe("prod UI smoke — login → dashboard", () => {
 
     // 2. Submit the form
     await emailInput.fill(FOUNDER_EMAIL);
-    await page.getByRole("button", { name: /send sign-in link/i }).click();
+    await page.getByTestId(TID.login.submit).click();
 
     // 3. Bypass should route us to /host
     await page.waitForURL(/\/host\b/, { timeout: 30_000 });
