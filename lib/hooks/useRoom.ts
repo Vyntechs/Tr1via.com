@@ -24,7 +24,8 @@ import { useEffect, useRef, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
 import { useRevalidateOnFocus } from "@/lib/hooks/useRevalidateOnFocus";
-import { setChannelHealth } from "@/lib/realtime/channelHealth";
+import { setChannelHealth, getChannelHealth } from "@/lib/realtime/channelHealth";
+import { useFreshnessWatchdog } from "@/lib/hooks/useFreshnessWatchdog";
 import type {
   AnswerRow,
   CategoryRow,
@@ -153,6 +154,50 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
     const id = setInterval(() => setHeartbeatTick((t) => t + 1), 15000);
     return () => clearInterval(id);
   }, [roomCode, waitingForDevice]);
+
+  // ── Layer 4: freshness watchdog (HOST ONLY) ───────────────────────────
+  // Layers 1-3 above all trust channel STATUS. None notices a socket that
+  // reports SUBSCRIBED but has gone silent — the zombie after laptop sleep
+  // that froze Heather's show for 215s. This watches DATA freshness + a
+  // wake-from-sleep gap and forces a brand-NEW socket (the one thing the
+  // others don't do). Host surfaces omit `deviceId` (see UseRoomArgs); we
+  // gate on that so players' phones are completely untouched.
+  const isHost = deviceId === undefined;
+  const lastMessageAtRef = useRef(Date.now());
+  const [watchdogTick, setWatchdogTick] = useState(0);
+  useFreshnessWatchdog({
+    enabled: isHost && !!roomCode,
+    getLastMessageAt: () => lastMessageAtRef.current,
+    // "SUBSCRIBED" here means BOTH channels are up (see deriveWorstStatus);
+    // stale recovery only fires when we believe we're fully connected yet silent.
+    getSubscribed: () => getChannelHealth() === "SUBSCRIBED",
+    onRecover: async () => {
+      const supa = getSupabaseBrowser();
+      // Show the calm host banner while we rebuild.
+      setChannelHealth("CHANNEL_ERROR");
+      // Stamp the channel-error throttle BEFORE dropping the socket: disconnect()
+      // makes the old channels fire CLOSED, which would otherwise bump
+      // reconnectCounter and cause a SECOND teardown/re-bootstrap. Stamping first
+      // keeps those CLOSED callbacks inside the 2s throttle window, so watchdogTick
+      // stays the single rebuild trigger.
+      lastReconnectAtRef.current = Date.now();
+      try {
+        // Drop the dead transport. Confirmed (realtime-js 2.106.1): this
+        // closes the socket but keeps channels registered, so they rejoin
+        // on the new socket — including the host console's own channels.
+        await supa.realtime.disconnect();
+      } catch {
+        // Rebuilding regardless; a throw here just means it was already down.
+      }
+      supa.realtime.connect();
+      // Reset freshness so we don't immediately re-trigger before data resumes.
+      lastMessageAtRef.current = Date.now();
+      // Re-run the main effect: tears down our 2 channels and re-bootstraps
+      // (HTTP refetch of any state missed during the dead window + fresh
+      // .subscribe() on the new socket).
+      setWatchdogTick((t) => t + 1);
+    },
+  });
 
   useEffect(() => {
     if (!roomCode || waitingForDevice) {
@@ -541,13 +586,20 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       });
 
       // ── change handlers (closures share `setSnapshot`) ──
+      // Stamp freshness on every received realtime event so the watchdog can
+      // tell a live connection from a zombie one.
+      function markFresh() {
+        lastMessageAtRef.current = Date.now();
+      }
       function mergeBroadcast(tag: BroadcastTag) {
         if (cancelled) return;
+        markFresh();
         setSnapshot((prev) => ({ ...prev, lastBroadcast: tag }));
       }
 
       function mergePlayerChange(payload: ChangePayload<PlayerRow>) {
         if (cancelled) return;
+        markFresh();
         setSnapshot((prev) => ({
           ...prev,
           players: applyRow(prev.players, payload, (a, b) =>
@@ -557,11 +609,13 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       }
       function mergeNightChange(payload: ChangePayload<NightRow>) {
         if (cancelled) return;
+        markFresh();
         if (payload.eventType === "DELETE") return;
         setSnapshot((prev) => ({ ...prev, night: payload.new as NightRow }));
       }
       function mergeGameChange(payload: ChangePayload<GameRow>) {
         if (cancelled) return;
+        markFresh();
         setSnapshot((prev) => {
           const games = applyRow(prev.games, payload, (a, b) => a.game_no - b.game_no);
           return { ...prev, games, currentGame: pickCurrentGame(games) };
@@ -569,6 +623,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       }
       function mergeCategoryChange(payload: ChangePayload<CategoryRow>) {
         if (cancelled) return;
+        markFresh();
         const row = (payload.new ?? payload.old) as CategoryRow;
         if (!games.some((g) => g.id === row.game_id)) return;
         setSnapshot((prev) => ({
@@ -580,6 +635,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       }
       function mergeQuestionChange(payload: ChangePayload<QuestionRow>) {
         if (cancelled) return;
+        markFresh();
         const row = (payload.new ?? payload.old) as QuestionRow;
         // Filter to questions whose category belongs to a game in this night.
         if (!categories.some((c) => c.id === row.category_id)) {
@@ -618,6 +674,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       }
       function mergeRevealChange(payload: ChangePayload<RevealRow>) {
         if (cancelled) return;
+        markFresh();
         if (payload.eventType === "DELETE") return;
         const row = payload.new as RevealRow;
         // Filter to reveals whose game belongs to this night.
@@ -635,7 +692,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       // navigation away from the room route.
       setChannelHealth(undefined);
     };
-  }, [roomCode, waitingForDevice, revalidateTick, reconnectCounter, heartbeatTick]);
+  }, [roomCode, waitingForDevice, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick]);
 
   return snapshot;
 }

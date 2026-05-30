@@ -44,6 +44,13 @@ export function useChannelHealth(): string | undefined {
   return state;
 }
 
+/** Non-hook read of the latest channel status. Used by the freshness
+ *  watchdog, which needs the current value inside a setInterval without
+ *  subscribing as a React hook. */
+export function getChannelHealth(): string | undefined {
+  return currentState;
+}
+
 // Test-only: drop all listeners + reset state. Not used in production paths.
 export function __resetChannelHealthForTests(): void {
   listeners.clear();
