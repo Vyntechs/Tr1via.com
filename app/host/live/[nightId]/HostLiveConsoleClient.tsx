@@ -31,6 +31,7 @@ import {
   HostLiveConsole,
   type HostLivePlayer,
 } from "@/components/host";
+import { HostConnectionBanner } from "@/components/host/HostConnectionBanner";
 import type {
   AnswerRow,
   QuestionRow,
@@ -429,6 +430,7 @@ export function HostLiveConsoleClient({
 
   return (
     <>
+      <HostConnectionBanner />
       <HostLiveConsole
         themeKey={themeKey as ThemeKey}
         title={`${venueName.toLowerCase()} · ${titleSuffix} · ${roomCode}`}
