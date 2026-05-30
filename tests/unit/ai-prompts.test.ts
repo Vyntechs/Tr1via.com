@@ -92,3 +92,25 @@ describe("userPromptFor", () => {
     expect(out).not.toMatch(/Flavor:/);
   });
 });
+
+describe("userPromptFor avoidPrompts", () => {
+  it("includes an avoid block listing prompts the host has already seen", () => {
+    const out = userPromptFor({
+      topic: "Volcanoes",
+      avoidPrompts: ["What is lava?", "Tallest volcano?"],
+    });
+    expect(out).toContain("already seen");
+    expect(out).toContain("What is lava?");
+    expect(out).toContain("Tallest volcano?");
+  });
+
+  it("omits the avoid block when no prompts are supplied", () => {
+    const out = userPromptFor({ topic: "Volcanoes" });
+    expect(out).not.toContain("already seen");
+  });
+
+  it("ignores blank avoid prompts", () => {
+    const out = userPromptFor({ topic: "X", avoidPrompts: ["  ", ""] });
+    expect(out).not.toContain("already seen");
+  });
+});
