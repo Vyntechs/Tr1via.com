@@ -77,11 +77,19 @@ jobs:
       # bug class that bypassed seed-night this week: real /api/nights →
       # 'draft' state → /open → join → /start → reveal → /answers → resolve.
       # If this step turns red, a real player just hit a bug.
-      - name: Full-flow driver (3 phones × 2 games against prod)
-        timeout-minutes: 3
+      # One theme pass (not both): the driver plays two full game-nights with
+      # real Anthropic generation, ~25-30s per category × 4 ≈ a single pass
+      # already runs ~3 min. Two passes (may + house) need 5+ min and can't
+      # fit any sane CI budget. One full pass proves the game arc end to end;
+      # SMOKE_THEME_SINGLE=may exercises the currently-live theme. Timeout is
+      # 6 min (one pass measured 173s on prod; this leaves headroom for AI
+      # latency spikes) — not 3, which silently killed this step mid-game.
+      - name: Full-flow driver (3 phones × 2 games, single theme pass)
+        timeout-minutes: 6
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
           SMOKE_BASE_URL: https://tr1via.com
+          SMOKE_THEME_SINGLE: may
         run: node scripts/full-flow-prod.mjs
