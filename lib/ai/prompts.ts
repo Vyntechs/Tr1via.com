@@ -243,10 +243,13 @@ export function userPromptFor(opts: {
   count?: number;
   /** Theme key for the night — controls the question timer duration. */
   themeKey?: ThemeKey;
+  /** Question prompts the host has already seen — the generator must not repeat them. */
+  avoidPrompts?: string[];
 }): string {
   const count = opts.count ?? 20;
   const difficulty = opts.difficulty ?? "normal";
   const flavor = (opts.flavor ?? []).filter((f) => f && f.trim().length > 0);
+  const avoid = (opts.avoidPrompts ?? []).filter((p) => p && p.trim().length > 0);
   const durationS = questionDurationFor(opts.themeKey);
 
   const lines: string[] = [];
@@ -256,6 +259,13 @@ export function userPromptFor(opts: {
   lines.push(`Question timer: ${durationS} seconds`);
   if (flavor.length > 0) {
     lines.push(`Flavor: ${flavor.map((f) => f.trim()).join(", ")}`);
+  }
+  if (avoid.length > 0) {
+    lines.push("");
+    lines.push(
+      `Do NOT repeat or closely paraphrase any of these ${avoid.length} questions the host has already seen:`,
+    );
+    for (const p of avoid) lines.push(`- ${p.trim()}`);
   }
   lines.push("");
   lines.push(
