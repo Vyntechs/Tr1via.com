@@ -29,6 +29,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { autoAttachPhoto } from "@/lib/ai/auto-attach-photo";
 import { generateQuestions } from "@/lib/ai/generate-questions";
+import { rerollPlan } from "@/lib/host/rerollPlan";
 import { PexelsRateLimitError } from "@/lib/pexels/search";
 import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
 
@@ -71,7 +72,14 @@ export async function POST(
   // Mark generating + remember the flavor so we can regenerate identically.
   // The schema's strict shape -> Json roundtrip is safe (only strings + a
   // string-enum in the schema).
-  const flavorJson: Json = JSON.parse(JSON.stringify(parsed.data));
+  // Only flavor + difficulty are persisted for "regenerate identically".
+  // keptIds is per-reroll and must not pollute the stored flavor.
+  const flavorJson: Json = JSON.parse(
+    JSON.stringify({
+      flavor: parsed.data.flavor,
+      difficulty: parsed.data.difficulty,
+    }),
+  );
   const { error: updateError } = await admin
     .from("categories")
     .update({
@@ -94,6 +102,7 @@ export async function POST(
       flavor: parsed.data.flavor,
       difficulty: parsed.data.difficulty,
       themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,
+      keptIds: parsed.data.keptIds,
     }).catch(async (err) => {
       // Rollback + broadcast on any unexpected failure inside the job.
       // (Per-question failures are handled inside runGenerationJob.)
@@ -142,8 +151,25 @@ async function runGenerationJob(opts: {
   flavor?: string[];
   difficulty?: "easy" | "normal" | "hard";
   themeKey?: ThemeKey;
+  // Present ⇒ in-place reroll ("↻ Another 20"): keep these picked ids, avoid
+  // repeating already-shown questions, and remove the unpicked candidates once
+  // the fresh batch is in. Absent ⇒ first generation (append-only, nothing to
+  // keep or delete).
+  keptIds?: string[];
 }): Promise<void> {
   const admin = getSupabaseAdmin();
+
+  // Reroll: gather what the host has already seen so we avoid repeats, and
+  // remember which unpicked rows to remove once the fresh batch is inserted.
+  let reroll: { deleteIds: string[]; avoidPrompts: string[] } | null = null;
+  if (opts.keptIds) {
+    const { data: existing } = await admin
+      .from("questions")
+      .select("id, prompt, is_picked")
+      .eq("category_id", opts.categoryId);
+    const plan = rerollPlan(existing ?? [], opts.keptIds);
+    reroll = { deleteIds: plan.deleteIds, avoidPrompts: plan.avoidPrompts };
+  }
 
   // Step 1: ask Claude for the batch. ~3-8s typical.
   const generated = await generateQuestions({
@@ -152,6 +178,7 @@ async function runGenerationJob(opts: {
     difficulty: opts.difficulty,
     count: 20,
     themeKey: opts.themeKey,
+    avoidPrompts: reroll?.avoidPrompts,
   });
   if (generated.length === 0) {
     throw new Error("Claude returned zero valid questions");
@@ -178,6 +205,21 @@ async function runGenerationJob(opts: {
   }
   if (!inserted) {
     throw new Error("insert returned no rows");
+  }
+
+  // Reroll cleanup: the fresh batch is safely inserted, so now remove the
+  // previously-shown unpicked candidates. Picked rows were spared by the plan.
+  // Generate-first ordering guarantees a generation/insert failure never
+  // empties the pool. Non-fatal if it fails — worst case the old pile lingers.
+  if (reroll && reroll.deleteIds.length > 0) {
+    const { error: cleanupError } = await admin
+      .from("questions")
+      .delete()
+      .eq("category_id", opts.categoryId)
+      .in("id", reroll.deleteIds);
+    if (cleanupError) {
+      console.warn("[generate] reroll cleanup failed:", cleanupError.message);
+    }
   }
 
   // Broadcast question_added for each row so HostGenLoading can populate.
