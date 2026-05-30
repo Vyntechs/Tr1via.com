@@ -307,6 +307,9 @@ export function HostSetupPickClient({
         body: JSON.stringify({
           difficulty: input.difficulty,
           flavor: input.flavor.length > 0 ? input.flavor : undefined,
+          // On an in-place reroll, tell the server which picks to keep so it
+          // can swap out the rest and avoid repeats. First-gen sends nothing.
+          keptIds: isInPlaceRegenerate ? Array.from(pickedIds) : undefined,
         }),
       });
       if (!res.ok && res.status !== 202 && res.status !== 409) {

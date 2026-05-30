@@ -106,6 +106,8 @@ export interface GenerateQuestionsOptions {
   count?: number;
   /** Theme key for the night — sets the question timer duration in the prompt. */
   themeKey?: ThemeKey;
+  /** Question prompts already shown to the host — excluded from this batch. */
+  avoidPrompts?: string[];
   /** Optional: inject a client for testing. */
   client?: Pick<Anthropic, "beta">;
   /** Optional override of the model id. */
@@ -225,6 +227,7 @@ export async function generateQuestions(
     difficulty: opts.difficulty,
     count,
     themeKey: opts.themeKey,
+    avoidPrompts: opts.avoidPrompts,
   });
 
   // Time the Anthropic call so prod logs surface actual duration on
