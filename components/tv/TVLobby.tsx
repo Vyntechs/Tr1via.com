@@ -19,6 +19,8 @@ import {
 } from "@/components/system";
 import { colorHexFromKey, playerColorHex } from "@/lib/player/playerColor";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { TVLobbyTopics } from "./TVLobbyTopics";
+import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 
 export interface TVLobbyWelcomeEvent {
   /** Stable id of the joining player — also the React key for the overlay. */
@@ -66,6 +68,9 @@ export interface TVLobbyProps {
    *  — pass a new object (new key) to trigger a new welcome moment;
    *  pass `null` to hide it. */
   welcomeEvent?: TVLobbyWelcomeEvent | null;
+  /** Upcoming game's ready topics for the "Tonight's Topics" panel. Empty or
+   *  omitted → the panel is hidden and the screen looks as it did before. */
+  topics?: LobbyTopic[];
 }
 
 export function TVLobby({ themeKey, ...rest }: TVLobbyProps) {
@@ -96,6 +101,7 @@ function TVLobbyInner({
   hostStatusLine = "ROOM OPEN · STARTS WHEN HOST IS READY",
   gameStatusLine = "GAME 1 OF 2 · WAITING",
   welcomeEvent = null,
+  topics = [],
 }: Omit<TVLobbyProps, "themeKey">) {
   const { t } = useTheme();
 
@@ -188,6 +194,8 @@ function TVLobbyInner({
               </div>
             </div>
           </div>
+
+          <TVLobbyTopics topics={topics} />
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
