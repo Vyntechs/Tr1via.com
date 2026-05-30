@@ -9,6 +9,7 @@
 import {
   TVLobby,
   DEMO_ROSTER,
+  DEMO_LOBBY_TOPICS,
   TVGrid,
   DEMO_CATEGORIES,
   DEMO_VALUES,
@@ -105,6 +106,19 @@ export default function TVGallery() {
               joinUrl="https://tr1via.com/join/K9PR4M"
               hostStatusLine="ROOM OPEN · LINDA WILL START WHEN READY"
               gameStatusLine="GAME 1 OF 2 · WAITING"
+            />
+          </Frame>
+          <Frame label="01a · Lobby · with tonight's topics">
+            <TVLobby
+              venueName="SOUL FIRE PIZZA"
+              scheduledDate="WED MAY 27"
+              roomCode="K9·PR4M"
+              inRoomCount={27}
+              roster={DEMO_ROSTER}
+              joinUrl="https://tr1via.com/join/K9PR4M"
+              hostStatusLine="ROOM OPEN · LINDA WILL START WHEN READY"
+              gameStatusLine="GAME 1 OF 2 · WAITING"
+              topics={DEMO_LOBBY_TOPICS}
             />
           </Frame>
           <Frame label="02 · Grid">
