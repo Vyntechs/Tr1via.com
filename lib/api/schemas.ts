@@ -164,6 +164,10 @@ export const GenerateCategoryBodySchema = z
   .object({
     flavor: FlavorListSchema,
     difficulty: DifficultyTargetSchema,
+    // Present (even empty) ⇒ in-place reroll: keep these picked ids, swap out
+    // the rest, and avoid repeating questions already shown. Absent ⇒ first
+    // generation from draft (nothing to keep or delete).
+    keptIds: z.array(UuidSchema).optional(),
   })
   .strict();
 
