@@ -1,4 +1,4 @@
-import type { GameScoreRow } from "@/lib/supabase/types";
+import type { GameScoreRow, GameRow, CategoryRow, QuestionRow } from "@/lib/supabase/types";
 
 export interface StandingRow {
   /** 1-based rank within the game. */
@@ -64,4 +64,40 @@ export function selectBetweenGamesView(args: {
   if (!inGame2) return "join";
   if (game2State === "draft" || game2State === "ready") return "waiting";
   return null; // joined, but game 2 is live → question flow owns the screen
+}
+
+function questionBelongsToDoneGame(
+  q: QuestionRow | null,
+  categories: CategoryRow[],
+  games: GameRow[],
+): boolean {
+  if (!q) return false;
+  const cat = categories.find((c) => c.id === q.category_id);
+  if (!cat) return false; // unknown category → can't tell, leave it alone
+  const game = games.find((g) => g.id === cat.game_id);
+  if (!game) return false;
+  return game.state === "done";
+}
+
+/**
+ * After a game ends, drop any tracked question that belongs to a game that has
+ * now finished — so the previous game's reveal can't linger into the next game
+ * (the flash at Game 2's start that the new "waiting" branch alone doesn't cover).
+ * Scoped to done games, so it never wipes a still-live game's question.
+ */
+export function clearEndedGameQuestions(args: {
+  games: GameRow[];
+  categories: CategoryRow[];
+  currentQuestion: QuestionRow | null;
+  lastResolvedQuestion: QuestionRow | null;
+}): { currentQuestion: QuestionRow | null; lastResolvedQuestion: QuestionRow | null } {
+  const { games, categories, currentQuestion, lastResolvedQuestion } = args;
+  return {
+    currentQuestion: questionBelongsToDoneGame(currentQuestion, categories, games)
+      ? null
+      : currentQuestion,
+    lastResolvedQuestion: questionBelongsToDoneGame(lastResolvedQuestion, categories, games)
+      ? null
+      : lastResolvedQuestion,
+  };
 }

@@ -1,6 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { buildGame1Standings, selectBetweenGamesView } from "@/lib/player/betweenGames";
-import type { GameScoreRow } from "@/lib/supabase/types";
+import {
+  buildGame1Standings,
+  selectBetweenGamesView,
+  clearEndedGameQuestions,
+} from "@/lib/player/betweenGames";
+import type {
+  GameScoreRow,
+  GameRow,
+  CategoryRow,
+  QuestionRow,
+} from "@/lib/supabase/types";
 
 function score(player_id: string, display_name: string, score: number): GameScoreRow {
   return {
@@ -75,5 +84,51 @@ describe("selectBetweenGamesView", () => {
 
   it("returns null when there is no game 2", () => {
     expect(selectBetweenGamesView({ game1State: "done", game2State: null, inGame2: false })).toBeNull();
+  });
+});
+
+const games = [
+  { id: "g1", state: "done" },
+  { id: "g2", state: "live" },
+] as GameRow[];
+const categories = [
+  { id: "c1", game_id: "g1" },
+  { id: "c2", game_id: "g2" },
+] as CategoryRow[];
+const q = (id: string, category_id: string) => ({ id, category_id }) as QuestionRow;
+
+describe("clearEndedGameQuestions", () => {
+  it("clears a question whose game is now done", () => {
+    const out = clearEndedGameQuestions({
+      games, categories,
+      currentQuestion: null,
+      lastResolvedQuestion: q("q1", "c1"), // belongs to done g1
+    });
+    expect(out.lastResolvedQuestion).toBeNull();
+  });
+
+  it("keeps a question whose game is still live", () => {
+    const lrq = q("q2", "c2"); // belongs to live g2
+    const out = clearEndedGameQuestions({
+      games, categories, currentQuestion: null, lastResolvedQuestion: lrq,
+    });
+    expect(out.lastResolvedQuestion).toBe(lrq);
+  });
+
+  it("clears currentQuestion too when its game is done", () => {
+    const out = clearEndedGameQuestions({
+      games, categories,
+      currentQuestion: q("q1", "c1"),
+      lastResolvedQuestion: null,
+    });
+    expect(out.currentQuestion).toBeNull();
+  });
+
+  it("keeps a question when its category isn't known (can't determine the game)", () => {
+    const orphan = q("q9", "cX");
+    const out = clearEndedGameQuestions({
+      games, categories, currentQuestion: null, lastResolvedQuestion: orphan,
+    });
+    expect(out.lastResolvedQuestion).toBe(orphan);
   });
 });
