@@ -5,7 +5,7 @@
 
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTheme, Display, Eyebrow, Numeric } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import type { StandingRow } from "@/lib/player/betweenGames";
@@ -28,13 +28,20 @@ export function PlayerBetweenGames({
   const { t } = useTheme();
   const [floats, setFloats] = useState<{ id: number; emoji: string }[]>([]);
   const nextId = useRef(0);
+  const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  // Cancel any pending float-cleanup timers on unmount (e.g. host starts Game 2
+  // within 1.2s of a cheer tap) so they can't fire against an unmounted tree.
+  useEffect(() => () => timers.current.forEach(clearTimeout), []);
 
   function cheer(emoji: string) {
     const id = nextId.current++;
     setFloats((f) => [...f, { id, emoji }]);
     // Remove after the rise animation. setTimeout (not onAnimationEnd) so the
     // cleanup is deterministic and works in jsdom too.
-    setTimeout(() => setFloats((f) => f.filter((x) => x.id !== id)), 1200);
+    timers.current.push(
+      setTimeout(() => setFloats((f) => f.filter((x) => x.id !== id)), 1200),
+    );
   }
 
   function Row({ row, pinned }: { row: StandingRow; pinned?: boolean }) {
