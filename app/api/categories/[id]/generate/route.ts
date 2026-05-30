@@ -109,10 +109,15 @@ export async function POST(
       const message =
         err instanceof Error ? err.message : "unknown generation error";
       console.error("[generate] job failed:", message);
+      // First-gen failure rolls back to 'draft' (no questions exist yet). A
+      // reroll (keptIds present) failed from 'review' with the host's pool +
+      // picks intact — generate-first ordering means nothing was deleted — so
+      // restore 'review', not 'draft', or a hard reload would look empty.
+      const rollbackState = parsed.data.keptIds ? "review" : "draft";
       try {
         await admin
           .from("categories")
-          .update({ state: "draft" })
+          .update({ state: rollbackState })
           .eq("id", categoryId);
       } catch {
         /* best-effort */
@@ -163,10 +168,17 @@ async function runGenerationJob(opts: {
   // remember which unpicked rows to remove once the fresh batch is inserted.
   let reroll: { deleteIds: string[]; avoidPrompts: string[] } | null = null;
   if (opts.keptIds) {
-    const { data: existing } = await admin
+    const { data: existing, error: existingError } = await admin
       .from("questions")
       .select("id, prompt, is_picked")
       .eq("category_id", opts.categoryId);
+    // Surface the failure instead of degrading: if we can't read the current
+    // pool, an `existing ?? []` would silently skip the swap + avoid-list and
+    // reroll would append-with-repeats — the exact bug this fixes. Throwing
+    // here runs the rollback before anything is generated or deleted.
+    if (existingError) {
+      throw new Error(`reroll: failed to load existing questions: ${existingError.message}`);
+    }
     const plan = rerollPlan(existing ?? [], opts.keptIds);
     reroll = { deleteIds: plan.deleteIds, avoidPrompts: plan.avoidPrompts };
   }
