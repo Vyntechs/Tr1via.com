@@ -41,3 +41,27 @@ export function buildGame1Standings(
   const you = meIndex >= limit ? ranked[meIndex] : null;
   return { top, you };
 }
+
+export type BetweenGamesView = "join" | "waiting" | null;
+
+/**
+ * Decide which between-games screen (if any) the player should see.
+ * - "join": Game 1 done, Game 2 not done, player has NOT opted in → recap + Join CTA.
+ * - "waiting": player HAS opted in and Game 2 hasn't started yet (draft/ready)
+ *   → standings + "waiting for host". This is the branch that replaces the old
+ *   fall-through to Game 1's last reveal (the freeze).
+ * - null: anything else — let the normal lobby/question flow render. The moment
+ *   Game 2 goes "live", this returns null and the phone advances on its own.
+ */
+export function selectBetweenGamesView(args: {
+  game1State: string | null;
+  game2State: string | null;
+  inGame2: boolean;
+}): BetweenGamesView {
+  const { game1State, game2State, inGame2 } = args;
+  if (game1State !== "done" || game2State === null) return null;
+  if (game2State === "done") return null;
+  if (!inGame2) return "join";
+  if (game2State === "draft" || game2State === "ready") return "waiting";
+  return null; // joined, but game 2 is live → question flow owns the screen
+}

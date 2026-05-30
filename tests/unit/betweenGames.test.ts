@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildGame1Standings } from "@/lib/player/betweenGames";
+import { buildGame1Standings, selectBetweenGamesView } from "@/lib/player/betweenGames";
 import type { GameScoreRow } from "@/lib/supabase/types";
 
 function score(player_id: string, display_name: string, score: number): GameScoreRow {
@@ -49,5 +49,31 @@ describe("buildGame1Standings", () => {
     const { top, you } = buildGame1Standings(SCORES.slice(0, 3), "y", 5);
     expect(top.map((r) => r.name)).toEqual(["Alice", "Carol", "You"]);
     expect(you).toBeNull();
+  });
+});
+
+describe("selectBetweenGamesView", () => {
+  const base = { game1State: "done", game2State: "ready", inGame2: false };
+
+  it("returns 'join' when game 1 is done, game 2 not started, and player hasn't joined", () => {
+    expect(selectBetweenGamesView(base)).toBe("join");
+  });
+
+  it("returns 'waiting' once the player has joined and game 2 is still draft/ready", () => {
+    expect(selectBetweenGamesView({ ...base, inGame2: true })).toBe("waiting");
+    expect(selectBetweenGamesView({ ...base, game2State: "draft", inGame2: true })).toBe("waiting");
+  });
+
+  it("returns null once game 2 goes live (the question flow takes over)", () => {
+    expect(selectBetweenGamesView({ ...base, game2State: "live", inGame2: true })).toBeNull();
+  });
+
+  it("returns null when game 2 is done (night over) or game 1 isn't done yet", () => {
+    expect(selectBetweenGamesView({ ...base, game2State: "done", inGame2: true })).toBeNull();
+    expect(selectBetweenGamesView({ ...base, game1State: "live" })).toBeNull();
+  });
+
+  it("returns null when there is no game 2", () => {
+    expect(selectBetweenGamesView({ game1State: "done", game2State: null, inGame2: false })).toBeNull();
   });
 });
