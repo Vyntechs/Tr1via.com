@@ -26,6 +26,7 @@ import { parseRoomCode } from "@/lib/game/room-code";
 import { useRevalidateOnFocus } from "@/lib/hooks/useRevalidateOnFocus";
 import { setChannelHealth, getChannelHealth } from "@/lib/realtime/channelHealth";
 import { useFreshnessWatchdog } from "@/lib/hooks/useFreshnessWatchdog";
+import { clearEndedGameQuestions } from "@/lib/player/betweenGames";
 import type {
   AnswerRow,
   CategoryRow,
@@ -273,6 +274,19 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
             currentQuestion = nextQ;
             if (lastResolvedQuestion?.id !== nextQ.id) lastResolvedQuestion = null;
           }
+        } else {
+          // Game-level wake-up (e.g. 'game-ended') with no specific question:
+          // drop any tracked question that belongs to a game that just
+          // finished, so the previous game's reveal can't linger into the next
+          // game. Scoped to done games — never wipes a still-live question.
+          const cleared = clearEndedGameQuestions({
+            games,
+            categories: prev.categories,
+            currentQuestion,
+            lastResolvedQuestion,
+          });
+          currentQuestion = cleared.currentQuestion;
+          lastResolvedQuestion = cleared.lastResolvedQuestion;
         }
         return {
           ...prev,

@@ -42,6 +42,7 @@ import {
   PlayerRevealCorrect,
   PlayerRevealWrong,
   PlayerJoinGame2,
+  PlayerBetweenGames,
   type PlayerQuestionSlot,
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
@@ -53,6 +54,7 @@ import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { playerColorHex } from "@/lib/player/playerColor";
+import { selectBetweenGamesView, buildGame1Standings } from "@/lib/player/betweenGames";
 import { playWelcomeChime, triggerWelcomeHaptic } from "@/lib/audio/welcomeChime";
 import {
   formatRoomCode,
@@ -353,16 +355,17 @@ function RoomStateMachine({
   //    transition that happens on optimistic lock-in.
   let inner: React.ReactNode;
 
-  // ── PlayerJoinGame2: game 1 'done' and game 2 not done and we haven't opted in ──
-  if (
-    game1 &&
-    game1.state === "done" &&
-    game2 &&
-    game2.state !== "done" &&
-    !inGame2
-  ) {
+  // ── Between games: 'join' recap (not opted in) or 'waiting' (opted in, G2 not started) ──
+  //    selectBetweenGamesView returns null the moment game 2 goes live, so the
+  //    question flow below resumes on its own — no separate auto-advance signal.
+  const betweenView = selectBetweenGamesView({
+    game1State: game1?.state ?? null,
+    game2State: game2?.state ?? null,
+    inGame2,
+  });
+  if (betweenView && game1 && game2) {
     inner = (
-      <PlayerJoinGame2Wired
+      <PlayerBetweenGamesWired
         roomCode={roomCode}
         me={me}
         game1Id={game1.id}
@@ -370,6 +373,7 @@ function RoomStateMachine({
         playerName={me.display_name}
         myAnswers={myAnswers}
         categories={snapshot.categories}
+        joined={betweenView === "waiting"}
         onJoinSuccess={() => setOptimisticInGame2(true)}
       />
     );
@@ -1027,13 +1031,14 @@ function BetweenView({ playerName }: { playerName: string }) {
 
 // ─── PLAYER JOIN GAME 2 ──────────────────────────────────────────────────
 
-function PlayerJoinGame2Wired({
+function PlayerBetweenGamesWired({
   me,
   game1Id,
   game2Id: _game2Id,
   playerName,
   myAnswers,
   categories,
+  joined,
   onJoinSuccess,
 }: {
   roomCode: string;
@@ -1043,6 +1048,9 @@ function PlayerJoinGame2Wired({
   playerName: string;
   myAnswers: AnswerRow[];
   categories: CategoryRow[];
+  /** Player has opted into game 2 and is waiting for it to start → render the
+   *  Between Games screen (Look B). Otherwise the join recap (Look A). */
+  joined: boolean;
   /** Called once the join API returns OK so the parent can flip
    *  optimistic state and stop rendering this screen. */
   onJoinSuccess?: () => void;
@@ -1137,6 +1145,13 @@ function PlayerJoinGame2Wired({
     return idx >= 0 ? idx + 1 : null;
   }, [game1Scores, me.id]);
 
+  // Full ranked standings for the "waiting" (joined) look — reuses the same
+  // game-1 leaderboard already loaded above for the final-rank stat.
+  const standings = useMemo(
+    () => buildGame1Standings(game1Scores ?? [], me.id),
+    [game1Scores, me.id],
+  );
+
   const handleJoin = useCallback(async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -1154,6 +1169,16 @@ function PlayerJoinGame2Wired({
       setSubmitting(false);
     }
   }, [me.id, submitting, onJoinSuccess]);
+
+  if (joined) {
+    return (
+      <PlayerBetweenGames
+        playerName={playerName}
+        top={standings.top}
+        you={standings.you}
+      />
+    );
+  }
 
   return (
     <PlayerJoinGame2

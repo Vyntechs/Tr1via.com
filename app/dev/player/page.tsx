@@ -22,6 +22,7 @@ import {
   PlayerRevealCorrect,
   PlayerRevealWrong,
   PlayerJoinGame2,
+  PlayerBetweenGames,
   PlayerWinnerCard,
   PlayerRecap,
 } from "@/components/player";
@@ -61,6 +62,24 @@ function PlayerQuestionLong() {
   );
 }
 
+// ⚠️ Fixed-size preview only — validate the REAL /room/[code] route (dev frames
+// hide the flex/grid behavior that fires in production layouts).
+function PlayerBetweenGamesSample() {
+  return (
+    <PlayerBetweenGames
+      playerName="You"
+      top={[
+        { rank: 1, name: "Alice", score: 12320, isYou: false },
+        { rank: 2, name: "You", score: 9160, isYou: true },
+        { rank: 3, name: "Carol", score: 8420, isYou: false },
+        { rank: 4, name: "Bob", score: 3080, isYou: false },
+        { rank: 5, name: "Dave", score: 2100, isYou: false },
+      ]}
+      you={null}
+    />
+  );
+}
+
 const SCREENS: ScreenEntry[] = [
   { key: "join",                title: "01 · Join",                       Component: PlayerJoin },
   { key: "lobby",               title: "02 · Lobby",                      Component: PlayerLobby },
@@ -71,6 +90,7 @@ const SCREENS: ScreenEntry[] = [
   { key: "reveal-correct",      title: "05 · Reveal · correct",           Component: PlayerRevealCorrect },
   { key: "reveal-wrong",        title: "06 · Reveal · wrong",             Component: PlayerRevealWrong },
   { key: "join-game-2",         title: "07 · Join Game 2",                Component: PlayerJoinGame2 },
+  { key: "between-games",       title: "07b · Between Games · waiting",   Component: PlayerBetweenGamesSample },
   { key: "winner-card",         title: "08 · Winner card · finale",       Component: PlayerWinnerCard },
   { key: "recap",               title: "09 · Recap · finale",             Component: PlayerRecap },
 ];

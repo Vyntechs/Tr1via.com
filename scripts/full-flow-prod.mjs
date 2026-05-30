@@ -67,6 +67,10 @@ const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
 const SMOKE_PHONES = Math.max(1, Math.min(100, Number(process.env.SMOKE_PHONES ?? 3)));
 const LOAD_MODE = SMOKE_PHONES > 3;
 const SMOKE_REALTIME = process.env.SMOKE_REALTIME === "1";
+// Skip the end-of-run night deletion so a downstream read-only validator
+// (e.g. validate-points-reset-prod.mjs) can inspect the just-played night.
+// Prints the full NIGHT_ID to pass along. Off by default (nights are cleaned).
+const SMOKE_KEEP_NIGHT = process.env.SMOKE_KEEP_NIGHT === "1";
 // Default 0 = burst (all phones hit /api/players within ~50ms). Set higher
 // to simulate real-world trickle joins (e.g. 1500 = roughly one new phone
 // every 1.5s).
@@ -1082,9 +1086,14 @@ async function runOnePass(passThemeKey) {
     }
     if (nightId) {
       step("cleanup");
-      const { error } = await admin.from("nights").delete().eq("id", nightId);
-      if (error) note(`cleanup warning: ${error.message}`);
-      else pass(`deleted night ${nightId.slice(0, 8)}… (cascade)`);
+      if (SMOKE_KEEP_NIGHT) {
+        note("SMOKE_KEEP_NIGHT=1 — night left in place for inspection");
+        pass(`NIGHT_ID=${nightId}  (pass to validate-points-reset-prod.mjs)`);
+      } else {
+        const { error } = await admin.from("nights").delete().eq("id", nightId);
+        if (error) note(`cleanup warning: ${error.message}`);
+        else pass(`deleted night ${nightId.slice(0, 8)}… (cascade)`);
+      }
     }
   }
 }
