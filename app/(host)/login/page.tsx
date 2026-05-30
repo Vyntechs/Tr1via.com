@@ -1,11 +1,13 @@
-// HOST LOGIN — magic-link only. One email field, one button. After submit
-// we show a "check your email" confirmation in the same shell, so the host
-// never has to leave the page or reload. Wrapped in the LaptopShell so it
-// matches the rest of the host-laptop aesthetic.
+// HOST LOGIN — one email field, one "Sign in" button. Wrapped in the
+// LaptopShell so it matches the rest of the host-laptop aesthetic.
 //
-// Auth: Supabase signInWithOtp. The redirectTo points at /auth/callback,
-// which exchanges the code for a session and routes the host to either
-// /host/onboarding (first time) or /host (returning).
+// Auth: POST /api/auth/founder-login looks the email up against the hosts
+// table and mints that host's session on the response — no magic link, no
+// OTP, no email round-trip. Sign-in completes in one request. On 200 the
+// client does router.replace("/host"); the first-time-vs-returning split is
+// decided server-side (app/host/page.tsx redirects to /host/onboarding when
+// there's no hosts row, and HostHomeClient picks onboarding vs dashboard by
+// isFirstNightComplete).
 
 "use client";
 
@@ -204,6 +206,7 @@ function HostLoginInner() {
 
             <button
               type="submit"
+              data-testid="login-submit"
               disabled={isSending || !email.trim()}
               style={{
                 marginTop: 4,
@@ -255,12 +258,11 @@ function HostLoginInner() {
 /**
  * Right-column when the visitor already has a Supabase session. Lead with
  * "Go to your dashboard" — the email form below is for switching accounts,
- * not for the already-signed-in case. Previously (pre-magic-link removal)
- * this surface also protected against an authed visitor mashing "Send
- * sign-in link" and tripping Supabase's per-email OTP rate limit, which
- * is what the first host hit on 2026-05-25. With magic-link gone the urgency of
- * that protection drops, but the UX win — "you're already signed in, go
- * to your dashboard" instead of an empty-form invitation — stays.
+ * not for the already-signed-in case. (This surface originally also guarded
+ * against an authed visitor re-triggering the old magic-link OTP and
+ * tripping Supabase's per-email rate limit, which is what the first host hit on
+ * 2026-05-25; magic-link is gone now, but the "you're already signed in,
+ * go to your dashboard" UX win stays.)
  */
 function SignedInPanel({
   email,
