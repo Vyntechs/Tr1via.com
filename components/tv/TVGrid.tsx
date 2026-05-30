@@ -1,7 +1,7 @@
 // TV — the grid. Each category column = its color. Big, weighty board.
 // One selected cell (host's pick) glows. Played cells are dashed-out and
-// struck through. Sidebar shows leader, board status, and the pick that's
-// loading.
+// struck through. Sidebar shows the top-4 standings, board status, and the
+// pick that's loading.
 //
 // Driven by props so the live `/tv/[code]` route can feed real category +
 // question state. Falls back to a designer-friendly demo for `/dev/tv`.
@@ -10,7 +10,6 @@
 
 import { TVStage, TVHeader, TVFooter } from "@/components/shells";
 import {
-  Display,
   Eyebrow,
   Numeric,
   ThemeProvider,
@@ -31,7 +30,9 @@ export interface TVGridCell {
   questionId?: string | null;
 }
 
-export interface TVGridLeader {
+export interface TVGridLeaderRow {
+  /** 1-based standing, 1 = leader. */
+  rank: number;
   name: string;
   score: number;
 }
@@ -51,8 +52,9 @@ export interface TVGridProps {
   cells?: TVGridCell[][];
   /** Point values shown down the column, e.g. [100, 200, ..., 700]. */
   values?: number[];
-  /** Top-of-leaderboard for the right sidebar. */
-  leader?: TVGridLeader;
+  /** Top-of-leaderboard standings for the right sidebar. Up to the first 4
+   *  are shown (rank 1 wears the accent). Pre-sorted, leader first. */
+  leaders?: TVGridLeaderRow[];
   /** Total remaining cells number for the bottom-right line. */
   boardLeft?: number;
   /** Footer left, e.g. "WAITING ON LINDA". */
@@ -101,7 +103,7 @@ function TVGridInner({
   categories = [],
   cells,
   values = [],
-  leader,
+  leaders = [],
   boardLeft = 0,
   footerLeft = "",
   footerRight = "",
@@ -274,14 +276,60 @@ function TVGridInner({
 
         {/* Sidebar */}
         <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
-          {leader && (
-            <div style={{ padding: "18px 22px", borderRadius: 14, background: t.surface }}>
-              <Eyebrow color={t.inkMute} size={10}>LEADER</Eyebrow>
-              <div style={{ marginTop: 8 }}>
-                <Display size={48} color={t.ink} weight={700}>{leader.name}</Display>
-                <Numeric size={26} weight={700} color={t.accent} style={{ display: "block", marginTop: 4 }}>
-                  {leader.score.toLocaleString()}
-                </Numeric>
+          {leaders.length > 0 && (
+            <div
+              data-testid="tv-grid-standings"
+              style={{ padding: "16px 22px", borderRadius: 14, background: t.surface }}
+            >
+              <Eyebrow color={t.inkMute} size={10}>STANDINGS</Eyebrow>
+              <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+                {leaders.slice(0, 4).map((r) => {
+                  const top = r.rank === 1;
+                  return (
+                    <div
+                      key={r.rank}
+                      data-testid={`tv-grid-standing-${r.rank}`}
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "26px minmax(0, 1fr) auto",
+                        alignItems: "baseline",
+                        gap: 12,
+                      }}
+                    >
+                      <Numeric
+                        size={top ? 24 : 19}
+                        weight={700}
+                        color={top ? t.accent : t.inkMute}
+                        tracking={-0.03}
+                      >
+                        {r.rank}
+                      </Numeric>
+                      <span
+                        data-testid="tv-grid-standing-name"
+                        style={{
+                          fontSize: top ? 26 : 21,
+                          fontWeight: 700,
+                          letterSpacing: "-0.015em",
+                          color: t.ink,
+                          fontFamily: "var(--font-sans)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          minWidth: 0,
+                        }}
+                      >
+                        {r.name}
+                      </span>
+                      <Numeric
+                        size={top ? 24 : 19}
+                        weight={700}
+                        color={top ? t.accent : t.ink}
+                      >
+                        {r.score.toLocaleString()}
+                      </Numeric>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}

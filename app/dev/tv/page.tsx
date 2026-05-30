@@ -113,7 +113,12 @@ export default function TVGallery() {
               rightHeaderLine="10 OF 42 ANSWERED"
               categories={DEMO_CATEGORIES}
               values={DEMO_VALUES}
-              leader={{ name: "Devon", score: 2140 }}
+              leaders={[
+                { rank: 1, name: "Devon", score: 2140 },
+                { rank: 2, name: "Iris", score: 1990 },
+                { rank: 3, name: "Priya", score: 1820 },
+                { rank: 4, name: "Cole", score: 1740 },
+              ]}
               boardLeft={32}
               footerLeft="WAITING ON LINDA"
               footerRight="TR1VIA.COM · K9·PR4M"
@@ -215,7 +220,12 @@ export default function TVGallery() {
                 rightHeaderLine="10 OF 42 ANSWERED"
                 categories={DEMO_CATEGORIES}
                 values={DEMO_VALUES}
-                leader={{ name: "Devon", score: 2140 }}
+                leaders={[
+                  { rank: 1, name: "Devon", score: 2140 },
+                  { rank: 2, name: "Iris", score: 1990 },
+                  { rank: 3, name: "Priya", score: 1820 },
+                  { rank: 4, name: "Cole", score: 1740 },
+                ]}
               />
               <TVSectionComplete
                 topicName="Martial Arts"
