@@ -100,9 +100,11 @@ function TVFinaleWinnerInner({
   podium = [],
   nightStats = [],
 }: Omit<TVFinaleWinnerProps, "themeKey">) {
-  // No winner data → render nothing rather than fake names. Production
-  // callers MUST pass real data; the empty state prevents demo leakage.
-  if (!winner) return null;
+  // Hooks first — ALWAYS, before any early return. These three previously sat
+  // below the `if (!winner)` guard; when `winner` flipped null→populated across
+  // renders (finale data arriving), the hook COUNT changed and React #310
+  // crashed the venue TV at the finale — same class as the #67 TVPage crash.
+  // Regression: tests/unit/tv-finale-winner-hooks.test.tsx.
   const { t, themeKey } = useTheme();
 
   // Finale lightning: for the May "storm" theme, fire 2-3 close strikes in
@@ -122,6 +124,11 @@ function TVFinaleWinnerInner({
       clearTimeout(t3);
     };
   }, [themeKey]);
+
+  // No winner data → render nothing rather than fake names. Production callers
+  // MUST pass real data; the empty state prevents demo leakage. (After the
+  // hooks, so the hook order is identical whether or not `winner` is present.)
+  if (!winner) return null;
 
   return (
     <div
