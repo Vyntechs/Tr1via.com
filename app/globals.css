@@ -92,9 +92,9 @@ body {
   100% { transform: translate(-50%, -50%) scale(1.8);  opacity: 0; }
 }
 @keyframes tr1via-water-reflect {
-  0%   { opacity: 0;   transform: translateY(10px) scaleY(.7); }
-  28%  { opacity: .85; transform: translateY(0)    scaleY(1); }
-  100% { opacity: 0;   transform: translateY(0)    scaleY(1.05); }
+  0%   { opacity: 0;   transform: translateX(-50%) translateY(10px) scaleY(.7); }
+  28%  { opacity: .85; transform: translateX(-50%) translateY(0)    scaleY(1); }
+  100% { opacity: 0;   transform: translateX(-50%) translateY(0)    scaleY(1.05); }
 }
 
 /* Respect user preference for reduced motion */
