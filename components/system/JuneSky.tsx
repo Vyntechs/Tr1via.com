@@ -95,7 +95,12 @@ export function JuneSky({ intensity = 1 }: JuneSkyProps) {
         style={{
           position: "absolute",
           inset: "-20%",
-          background:
+          // backgroundImage (longhand) — NOT the `background` shorthand — paired
+          // with backgroundSize below. The shorthand resets background-size to
+          // auto on re-render (e.g. when the lock filter changes), which both
+          // breaks the drift (the 200% size gives the gradient room to move) and
+          // trips React's shorthand/longhand-conflict warning.
+          backgroundImage:
             "radial-gradient(55% 50% at 28% 22%, #F6B45C 0%, transparent 60%)," +
             "radial-gradient(60% 55% at 82% 26%, #E85C82 0%, transparent 60%)," +
             "linear-gradient(180deg,#6E5DB6 0%, #C56E84 52%, #F2A65C 100%)",
