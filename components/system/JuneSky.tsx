@@ -112,6 +112,24 @@ export function JuneSky({ intensity = 1 }: JuneSkyProps) {
         }}
       />
 
+      {/* Water body — a cool mirror of the warm sky, pinned to the bottom band,
+          breathing slowly at rest. The same evening light, reflected cooler. */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: "26%",
+          mixBlendMode: "screen",
+          backgroundImage:
+            "linear-gradient(0deg, rgba(120,200,220,.55) 0%, rgba(150,190,225,.30) 45%, transparent 100%)," +
+            "radial-gradient(120% 90% at 50% 120%, rgba(255,225,180,.28) 0%, transparent 60%)",
+          filter: "blur(3px)",
+          animation: "tr1via-water-breathe 7s ease-in-out infinite",
+        }}
+      />
+
       {/* Layer 2 — thin cool water shimmer along the very bottom (the sliver). */}
       <div
         style={{
