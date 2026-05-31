@@ -42,7 +42,7 @@ const DEMO_MARQUEE_CHIPS: MarqueeChip[] = [
   { playerId: "p8", name: "Lex",     color: "#C77DFF", score:  980, joinIndex: 7 },
 ];
 import { resolveTheme } from "@/lib/theme/resolve";
-import { useTheme, Wordmark, Eyebrow } from "@/components/system";
+import { useTheme, Wordmark, Eyebrow, JuneSky, fireJuneBeat } from "@/components/system";
 import { TR1VIA_THEMES, THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
 import type { ReactNode } from "react";
 
@@ -96,6 +96,19 @@ export default function TVGallery() {
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 56 }}>
+          <Frame label="00 · June · Endless Evening atmosphere">
+            <div style={{ position: "relative", width: "100%", height: "100%", background: "#6E5DB6" }}>
+              <JuneSky />
+              <div style={{ position: "absolute", inset: 0, display: "flex", gap: 12, alignItems: "flex-end", padding: 24 }}>
+                <button className="mock-button" onClick={() => fireJuneBeat("lock")} style={{ pointerEvents: "auto", padding: "8px 14px", borderRadius: 8 }}>
+                  Fire lock-in
+                </button>
+                <button className="mock-button" onClick={() => fireJuneBeat("reveal")} style={{ pointerEvents: "auto", padding: "8px 14px", borderRadius: 8 }}>
+                  Fire reveal
+                </button>
+              </div>
+            </div>
+          </Frame>
           <Frame label="01 · Lobby">
             <TVLobby
               venueName="SOUL FIRE PIZZA"

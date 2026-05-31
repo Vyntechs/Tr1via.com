@@ -1,7 +1,7 @@
 // Per-month weather. Each themeKey gets a distinct ambient visual:
 // drifting snow for January, heart confetti for February, falling clovers
-// for March, spring rain for April, distant lightning for May, sun shimmer
-// for June, firework bursts for July, drifting leaves for fall months,
+// for March, spring rain for April, distant lightning for May, endless
+// evening sky for June, firework bursts for July, drifting leaves for fall months,
 // pumpkin glow for October, snow+pine for December.
 //
 // Discipline: subtle, always under ~8% opacity for ambient particles.
@@ -9,6 +9,7 @@
 
 import { ParticleField } from "./ParticleField";
 import { Lightning } from "./Lightning";
+import { JuneSky } from "./JuneSky";
 import { Snowflake, Heart, Clover, Leaf, Pumpkin, Firework, Pine, Rain } from "./motifs";
 import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 
@@ -92,7 +93,7 @@ export function Weather({
         />
       );
     case "june":
-      return <SunShimmer color={t.accent} />;
+      return <JuneSky intensity={intensity} />;
     case "july":
       return <FireworkBursts colors={["#E63946", "#FFD93D", "#FFFFFF"]} />;
     case "august":
@@ -218,19 +219,6 @@ function WarmLight() {
   );
 }
 
-function SunShimmer({ color = "#F2A02D" }: { color?: string }) {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        pointerEvents: "none",
-        background: `radial-gradient(60% 40% at 80% 10%, ${color}1A, transparent 60%), radial-gradient(50% 40% at 20% 90%, ${color}10, transparent 60%)`,
-      }}
-    />
-  );
-}
-
 /** Human-readable label for each microclimate, used in /dev/system. */
 export function weatherLabel(themeKey: ThemeKey): string {
   return ({
@@ -241,7 +229,7 @@ export function weatherLabel(themeKey: ThemeKey): string {
     march: "falling clovers",
     april: "spring rain",
     may: "distant lightning",
-    june: "sun shimmer",
+    june: "endless evening",
     july: "firework bursts",
     august: "drifting leaves",
     september: "drifting leaves",
