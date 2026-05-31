@@ -183,6 +183,26 @@ export function JuneSky({ intensity = 1 }: JuneSkyProps) {
           }}
         />
       )}
+
+      {/* Lock-in ripple — a drop into the pool. key={beat.at} restarts the ring
+          on every new lock so bursts read as multiple drops. */}
+      {lockActive && (
+        <div
+          key={beat?.at}
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: "13%",
+            width: "42%",
+            height: "42%",
+            borderRadius: "50%",
+            border: "2px solid rgba(170,225,235,.5)",
+            transform: "translate(-50%, -50%)",
+            animation: "tr1via-water-ripple 1100ms ease-out forwards",
+          }}
+        />
+      )}
     </div>
   );
 }
