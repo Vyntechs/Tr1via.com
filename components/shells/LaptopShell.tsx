@@ -6,18 +6,28 @@
 //
 // What remains: a theme-aware paper-background flex column that the
 // host views fill. No chrome, no title bar, no wordmark.
+//
+// `weather` (opt-in, default off) layers the active theme's ambient weather
+// behind the content at low opacity, so a host surface feels like the same
+// "night" as the player phones (which layer Weather via PhoneScreen) and the
+// TV. Off by default so other host screens (dashboard, live console) are
+// unaffected.
 
 "use client";
 
 import type { ReactNode } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
+import { Weather } from "@/components/system/Weather";
 
 export interface LaptopShellProps {
   children: ReactNode;
+  /** Layer the active theme's ambient weather behind the content at low
+   *  opacity. Default off — only the setup overview opts in. */
+  weather?: boolean;
 }
 
-export function LaptopShell({ children }: LaptopShellProps) {
-  const { t } = useTheme();
+export function LaptopShell({ children, weather = false }: LaptopShellProps) {
+  const { t, themeKey } = useTheme();
   return (
     <div
       style={{
@@ -28,9 +38,19 @@ export function LaptopShell({ children }: LaptopShellProps) {
         fontFamily: "var(--font-sans)",
         display: "flex",
         flexDirection: "column",
+        position: "relative",
+        overflow: "hidden",
       }}
     >
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      {weather && (
+        <div
+          aria-hidden
+          style={{ position: "absolute", inset: 0, opacity: 0.5, pointerEvents: "none", zIndex: 0 }}
+        >
+          <Weather themeKey={themeKey} intensity={0.5} />
+        </div>
+      )}
+      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", zIndex: 1 }}>
         {children}
       </div>
     </div>
