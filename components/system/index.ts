@@ -15,6 +15,8 @@ export { TVTimerArc } from "./TVTimerArc";
 export { QRBlock } from "./QRBlock";
 export { Weather, weatherLabel } from "./Weather";
 export { Lightning, fireLightningBeat } from "./Lightning";
+export { JuneSky, fireJuneBeat } from "./JuneSky";
+export type { JuneBeatKind } from "./JuneSky";
 export { ParticleField } from "./ParticleField";
 export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps } from "./EmptyState";
