@@ -144,7 +144,7 @@ function HostGenOverviewInner({
 }: Omit<HostGenOverviewProps, "themeKey">) {
   const { t } = useTheme();
   return (
-    <LaptopShell>
+    <LaptopShell weather>
       <div style={{ padding: "32px 56px", display: "grid", gridTemplateColumns: "1fr 300px", gap: 36, flex: 1, overflow: "hidden" }}>
         <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <Eyebrow color={t.accent} size={11}>{eyebrow}</Eyebrow>

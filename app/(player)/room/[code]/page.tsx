@@ -63,6 +63,7 @@ import {
 } from "@/lib/game/room-code";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
+import { readThemeSeed, writeThemeSeed } from "@/lib/theme/themeSeed";
 import { questionDurationFor, hasCeremony } from "@/lib/theme/lockInCeremony";
 import type {
   AnswerRow,
@@ -96,10 +97,23 @@ function PlayerRoomInner({ roomCode }: { roomCode: string }) {
   const { deviceId, isLoading: deviceLoading } = useDeviceSession();
   const snapshot = useRoom({ roomCode, deviceId });
 
-  const themeKey: ThemeKey = resolveTheme(
+  // Seed the first paint from the /join → /room hand-off so the room shows the
+  // night's real theme immediately instead of flashing resolveTheme's month/
+  // default fallback while useRoom fetches the night row. Read once on mount.
+  const [seededTheme] = useState<ThemeKey | null>(() => readThemeSeed(roomCode));
+
+  const resolvedTheme: ThemeKey = resolveTheme(
     snapshot.night,
     { default_theme_key: snapshot.hostDefaultThemeKey },
   );
+  // Until the night row loads, prefer the seed (correct) over the month/default
+  // fallback. Once the night is in hand, the resolved theme is authoritative.
+  const themeKey: ThemeKey = snapshot.night ? resolvedTheme : (seededTheme ?? resolvedTheme);
+
+  // Keep the seed fresh so a same-tab refresh of /room stays flash-free.
+  useEffect(() => {
+    if (snapshot.night) writeThemeSeed(roomCode, resolvedTheme);
+  }, [snapshot.night, roomCode, resolvedTheme]);
 
   return (
     <ThemeProvider themeKey={themeKey}>

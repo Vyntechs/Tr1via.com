@@ -45,6 +45,12 @@ export function PhoneScreen({
       style={{
         width: "100%",
         height: "100%",
+        // Grow to fill a flex-column parent (the player layout) so short
+        // screens still cover the viewport. height:100% alone doesn't resolve
+        // through a min-height-only chain; flexGrow does. Harmless in fixed-
+        // size embeds (dev gallery / host-phone), where it's simply ignored.
+        flexGrow: 1,
+        minHeight: 0,
         background: bg,
         color: fg,
         fontFamily: "var(--font-sans)",

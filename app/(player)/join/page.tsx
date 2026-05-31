@@ -34,6 +34,7 @@ import {
 } from "@/lib/game/room-code";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
+import { writeThemeSeed } from "@/lib/theme/themeSeed";
 
 interface NightLookup {
   nightId: string;
@@ -279,6 +280,13 @@ function JoinWithCode({ roomCode }: { roomCode: string }) {
         setSubmitError(extractMessage(body, res.status));
         return;
       }
+      writeThemeSeed(
+        roomCode,
+        resolveTheme(
+          { theme_key: lookup.night.themeKey },
+          { default_theme_key: lookup.night.hostDefaultThemeKey },
+        ),
+      );
       router.push(`/room/${roomCode}`);
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : "Network error.");
