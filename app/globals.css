@@ -58,6 +58,9 @@ body {
 /* Continuous spin for the Spinner atom — only used as an infinite loop, so
    each individual turn stays comfortably under the 800ms motion budget. */
 @keyframes tr1via-spin         { from { transform:rotate(0deg); } to { transform:rotate(360deg); } }
+/* Low-amplitude idle float for the TV lobby "Tonight's Topics" board — looped,
+   so the 4px travel keeps it calm and the motion budget low on the host laptop. */
+@keyframes tr1via-float        { 0%,100% { transform:translateY(0); } 50% { transform:translateY(-4px); } }
 
 /* Respect user preference for reduced motion */
 @media (prefers-reduced-motion: reduce) {

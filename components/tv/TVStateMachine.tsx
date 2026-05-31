@@ -55,6 +55,7 @@ import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { hasCeremony, hasMarquee } from "@/lib/theme/lockInCeremony";
 import { shouldHoldReveal } from "@/lib/tv/revealPause";
+import { selectLobbyTopics } from "@/lib/tv/lobbyTopics";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
@@ -297,6 +298,7 @@ function TVLobbyView({
       joinUrl={joinUrl(snapshot.night.roomCode)}
       hostStatusLine="ROOM OPEN · STARTS WHEN HOST IS READY"
       gameStatusLine={gameStatus}
+      topics={selectLobbyTopics(snapshot)}
       welcomeEvent={welcomeEvent}
     />
   );
