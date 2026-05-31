@@ -184,6 +184,29 @@ export function JuneSky({ intensity = 1 }: JuneSkyProps) {
         />
       )}
 
+      {/* Reveal reflection — the warm bloom above, caught cool on the water.
+          Same light, two media. Mirrors the bloom's centered position. */}
+      {revealActive && (
+        <div
+          key={`reflect-${beat?.at}`}
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: 0,
+            width: "70%",
+            height: "30%",
+            transform: "translateX(-50%)",
+            transformOrigin: "bottom center",
+            mixBlendMode: "screen",
+            backgroundImage:
+              "radial-gradient(closest-side, rgba(150,225,235,.6) 0%, rgba(170,210,240,.25) 45%, transparent 75%)",
+            filter: "blur(4px)",
+            animation: "tr1via-water-reflect 1300ms ease-out forwards",
+          }}
+        />
+      )}
+
       {/* Lock-in ripple — a drop into the pool. key={beat.at} restarts the ring
           on every new lock so bursts read as multiple drops. */}
       {lockActive && (
