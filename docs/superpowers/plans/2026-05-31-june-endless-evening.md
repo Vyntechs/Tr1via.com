@@ -401,7 +401,8 @@ git commit -m "feat(theme): JuneSky layered atmosphere + reactive lock/reveal"
 **Files:**
 - Modify: `components/system/Weather.tsx:95` (the `case "june"`), `:244` (`weatherLabel`), and `SunShimmer` (lines 221-232) if now unused
 - Modify: `components/system/index.ts`
-- Test: `tests/unit/weatherLabel.test.ts` (existing — must stay green)
+
+(Note: there is no `weatherLabel`/`Weather` unit test in the repo — verified — so this task gates on `tsc` only, not a label test.)
 
 - [ ] **Step 1: Swap the june case**
 
@@ -444,10 +445,10 @@ export { JuneSky, fireJuneBeat } from "./JuneSky";
 export type { JuneBeatKind } from "./JuneSky";
 ```
 
-- [ ] **Step 5: Run weatherLabel + typecheck**
+- [ ] **Step 5: Typecheck + full unit suite (no weatherLabel test exists)**
 
-Run: `npx vitest run tests/unit/weatherLabel.test.ts && npx tsc --noEmit`
-Expected: PASS (label test only checks truthiness; tsc clean).
+Run: `npx tsc --noEmit && npx vitest run`
+Expected: PASS — tsc clean; full suite green (nothing imports `SunShimmer` or asserts the june label, so removal/relabel is safe).
 
 - [ ] **Step 6: Commit**
 
