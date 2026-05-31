@@ -44,8 +44,8 @@ export interface JuneSkyProps {
 
 export function JuneSky({ intensity = 1 }: JuneSkyProps) {
   const reduced = usePrefersReducedMotion();
-  // beat state drives the reactive overlays; set in a later task.
-  const [, setBeat] = useState<{ kind: JuneBeatKind; at: number } | null>(null);
+  // beat state drives the reactive overlays.
+  const [beat, setBeat] = useState<{ kind: JuneBeatKind; at: number } | null>(null);
   const clearRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -63,20 +63,103 @@ export function JuneSky({ intensity = 1 }: JuneSkyProps) {
 
   if (intensity <= 0) return null;
 
-  // Visual layers added in a later task. For now render the static base so the
-  // theme never looks broken mid-implementation.
+  // Reduced motion: a single calm static evening gradient. No animation,
+  // no reactive overlays.
+  if (reduced) {
+    return (
+      <div
+        data-testid="june-sky"
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          background:
+            "linear-gradient(180deg,#6E5DB6 0%, #C56E84 52%, #F7D9B0 100%)",
+        }}
+      />
+    );
+  }
+
+  const lockActive = beat?.kind === "lock";
+  const revealActive = beat?.kind === "reveal";
+
   return (
     <div
       data-testid="june-sky"
       aria-hidden
-      style={{
-        position: "absolute",
-        inset: 0,
-        pointerEvents: "none",
-        background:
-          "linear-gradient(180deg,#6E5DB6 0%, #C56E84 52%, #F2A65C 100%)",
-        opacity: reduced ? 1 : 1,
-      }}
-    />
+      style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}
+    >
+      {/* Layer 1 — the drifting warm sky (sky-led: fills the whole stage). */}
+      <div
+        style={{
+          position: "absolute",
+          inset: "-20%",
+          background:
+            "radial-gradient(55% 50% at 28% 22%, #F6B45C 0%, transparent 60%)," +
+            "radial-gradient(60% 55% at 82% 26%, #E85C82 0%, transparent 60%)," +
+            "linear-gradient(180deg,#6E5DB6 0%, #C56E84 52%, #F2A65C 100%)",
+          backgroundSize: "200% 200%, 200% 200%, 100% 100%",
+          animation: "tr1via-june-drift 18s ease-in-out infinite",
+          // Lock-in warms the whole field a touch via saturation/brightness.
+          filter: lockActive ? "blur(6px) saturate(1.18) brightness(1.06)" : "blur(6px)",
+          transition: "filter 700ms ease-out",
+        }}
+      />
+
+      {/* Layer 2 — thin cool water shimmer along the very bottom (the sliver). */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: "18%",
+          mixBlendMode: "screen",
+          background:
+            "radial-gradient(closest-side, rgba(190,255,248,.55), transparent 70%) 18% 60%/110px 60px," +
+            "radial-gradient(closest-side, rgba(210,255,250,.45), transparent 70%) 62% 70%/140px 70px," +
+            "radial-gradient(closest-side, rgba(255,245,220,.5), transparent 70%) 84% 55%/90px 50px",
+          backgroundRepeat: "no-repeat",
+          filter: "blur(2px)",
+          animation: "tr1via-june-shimmer 9s ease-in-out infinite",
+        }}
+      />
+
+      {/* Layer 3 — the glowing horizon seam where sky meets water. Swells on reveal. */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: "16%",
+          height: revealActive ? "44px" : "26px",
+          background:
+            "linear-gradient(180deg, transparent 0%, rgba(255,236,190,.7) 50%, rgba(160,220,225,.35) 70%, transparent 100%)",
+          filter: "blur(2px)",
+          opacity: revealActive ? 1 : 0.7,
+          transition: "height 600ms ease-out, opacity 600ms ease-out",
+        }}
+      />
+
+      {/* Layer 4 — reveal bloom: a soft light rising once when "reveal" fires.
+          key={beat.at} restarts the one-shot breathe animation each reveal. */}
+      {revealActive && (
+        <div
+          key={beat?.at}
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: "10%",
+            width: "60%",
+            height: "55%",
+            transform: "translateX(-50%)",
+            background:
+              "radial-gradient(closest-side, rgba(255,238,200,.6), transparent 72%)",
+            animation: "tr1via-june-breathe 1300ms ease-out forwards",
+          }}
+        />
+      )}
+    </div>
   );
 }
