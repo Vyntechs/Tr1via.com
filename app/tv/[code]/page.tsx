@@ -45,6 +45,14 @@ export default function TVPage({
   const { code } = use(params);
   const { status, snapshot, lastBroadcast } = useTVRoom(code);
 
+  // Hooks must run on every render — call BEFORE any conditional return.
+  // (`snapshot` is null until the room loads; the hook reads `players?.length`
+  //  defensively and only acts on a `player-joined` broadcast, so passing
+  //  `snapshot?.players ?? []` is safe.) Leaving this below the early returns
+  //  meant it was skipped while loading and suddenly ran once ready — the hook
+  //  count changed between renders and React crashed the whole TV (React #310).
+  const welcomeEvent = useTVWelcomeEvent(lastBroadcast, snapshot?.players ?? []);
+
   if (status === "loading") {
     return <TVMessageStage title="Loading..." subtitle="" />;
   }
@@ -75,10 +83,8 @@ export default function TVPage({
   const broadcastServerNow =
     lastBroadcast?.event === "reveal" ? lastBroadcast.serverNow ?? null : null;
 
-  // Magic-Welcome: lift the `player-joined` broadcast into a short-lived
-  // overlay event the lobby renders. Owns the mount/unmount lifecycle so
-  // the lobby component stays pure.
-  const welcomeEvent = useTVWelcomeEvent(lastBroadcast, snapshot.players);
+  // `welcomeEvent` is computed at the top of this component (above the early
+  // returns) so its hook runs on every render — see the call site there.
 
   return (
     <ThemeProvider themeKey={themeKey}>
