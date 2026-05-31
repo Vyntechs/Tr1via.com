@@ -80,6 +80,23 @@ body {
   100% { opacity: 0; }
 }
 
+/* June water — the surface that answers the room. CSS-only (no SVG turbulence:
+   venue-TV performance). breathe = low resting life; ripple = a lock-in drop;
+   reflect = the reveal bloom mirrored cool and settling. */
+@keyframes tr1via-water-breathe {
+  0%, 100% { opacity: .42; transform: translateY(0) scaleY(1); }
+  50%      { opacity: .60; transform: translateY(-1px) scaleY(1.04); }
+}
+@keyframes tr1via-water-ripple {
+  0%   { transform: translate(-50%, -50%) scale(0.25); opacity: .55; }
+  100% { transform: translate(-50%, -50%) scale(1.8);  opacity: 0; }
+}
+@keyframes tr1via-water-reflect {
+  0%   { opacity: 0;   transform: translateY(10px) scaleY(.7); }
+  28%  { opacity: .85; transform: translateY(0)    scaleY(1); }
+  100% { opacity: 0;   transform: translateY(0)    scaleY(1.05); }
+}
+
 /* Respect user preference for reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
