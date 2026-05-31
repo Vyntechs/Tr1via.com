@@ -112,6 +112,24 @@ export function JuneSky({ intensity = 1 }: JuneSkyProps) {
         }}
       />
 
+      {/* Water body — a cool mirror of the warm sky, pinned to the bottom band,
+          breathing slowly at rest. The same evening light, reflected cooler. */}
+      <div
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          height: "26%",
+          mixBlendMode: "screen",
+          backgroundImage:
+            "linear-gradient(0deg, rgba(120,200,220,.55) 0%, rgba(150,190,225,.30) 45%, transparent 100%)," +
+            "radial-gradient(120% 90% at 50% 120%, rgba(255,225,180,.28) 0%, transparent 60%)",
+          filter: "blur(3px)",
+          animation: "tr1via-water-breathe 7s ease-in-out infinite",
+        }}
+      />
+
       {/* Layer 2 — thin cool water shimmer along the very bottom (the sliver). */}
       <div
         style={{
@@ -162,6 +180,49 @@ export function JuneSky({ intensity = 1 }: JuneSkyProps) {
             background:
               "radial-gradient(closest-side, rgba(255,238,200,.6), transparent 72%)",
             animation: "tr1via-june-breathe 1300ms ease-out forwards",
+          }}
+        />
+      )}
+
+      {/* Reveal reflection — the warm bloom above, caught cool on the water.
+          Same light, two media. Mirrors the bloom's centered position. */}
+      {revealActive && (
+        <div
+          key={`reflect-${beat?.at}`}
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: 0,
+            width: "70%",
+            height: "30%",
+            transform: "translateX(-50%)",
+            transformOrigin: "bottom center",
+            mixBlendMode: "screen",
+            backgroundImage:
+              "radial-gradient(closest-side, rgba(150,225,235,.6) 0%, rgba(170,210,240,.25) 45%, transparent 75%)",
+            filter: "blur(4px)",
+            animation: "tr1via-water-reflect 1300ms ease-out forwards",
+          }}
+        />
+      )}
+
+      {/* Lock-in ripple — a drop into the pool. key={beat.at} restarts the ring
+          on every new lock so bursts read as multiple drops. */}
+      {lockActive && (
+        <div
+          key={beat?.at}
+          aria-hidden
+          style={{
+            position: "absolute",
+            left: "50%",
+            bottom: "13%",
+            width: "42%",
+            height: "42%",
+            borderRadius: "50%",
+            border: "2px solid rgba(170,225,235,.5)",
+            transform: "translate(-50%, -50%)",
+            animation: "tr1via-water-ripple 1100ms ease-out forwards",
           }}
         />
       )}
