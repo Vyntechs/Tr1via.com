@@ -18,15 +18,15 @@ describe("userPromptFor duration", () => {
     expect(prompt).not.toContain("20 seconds");
   });
 
-  it("renders '20 seconds' for non-May themes", () => {
+  it("renders '25 seconds' for every theme (the default)", () => {
     const prompt = userPromptFor({ topic: "Geography", themeKey: "house" });
-    expect(prompt).toContain("20 seconds");
-    expect(prompt).not.toContain("25 seconds");
+    expect(prompt).toContain("25 seconds");
+    expect(prompt).not.toContain("20 seconds");
   });
 
-  it("renders '20 seconds' when themeKey is omitted", () => {
+  it("renders '25 seconds' when themeKey is omitted", () => {
     const prompt = userPromptFor({ topic: "Geography" });
-    expect(prompt).toContain("20 seconds");
-    expect(prompt).not.toContain("25 seconds");
+    expect(prompt).toContain("25 seconds");
+    expect(prompt).not.toContain("20 seconds");
   });
 });

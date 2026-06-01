@@ -44,7 +44,7 @@ export const TR1VIA_THEMES: Record<ThemeKey, ThemeDef> = {
   march:     { name: "March · St. Patrick",  mode: "dark",  paper: "#0E1F12", ink: "#E8F0D8", accent: "#3FAE56", pop: "#F2C94C", correct: "#C8E25E", wrong: "#E55A4F" },
   april:     { name: "April · Spring",       mode: "light", paper: "#F5EAEF", ink: "#22112A", accent: "#7A4FCC", pop: "#E64A8C", correct: "#3F8030", wrong: "#A92E22" },
   may:       { name: "May · Storm",          mode: "dark",  paper: "#181C24", ink: "#ECE6DC", accent: "#E8C46A", pop: "#94A5BC", correct: "#A8D88C", wrong: "#E58A7A" },
-  june:      { name: "June · Summer",        mode: "light", paper: "#FCDEC8", ink: "#26120A", accent: "#E04A6B", pop: "#F2A02D", correct: "#3F8030", wrong: "#A92E22" },
+  june:      { name: "June · Summer",        mode: "light", paper: "#F7D9B0", ink: "#2A1620", accent: "#E04A6B", pop: "#F2A02D", correct: "#3F8030", wrong: "#A92E22" },
   july:      { name: "July · 4th",           mode: "dark",  paper: "#0E1A36", ink: "#F4E6C4", accent: "#E63946", pop: "#FFD93D", correct: "#C8E25E", wrong: "#FFB3B3" },
   august:    { name: "August · Late Sun",    mode: "dark",  paper: "#1F1208", ink: "#F2E2B8", accent: "#F08C2A", pop: "#C84A2C", correct: "#C8E25E", wrong: "#E58A7A" },
   september: { name: "September · Fall",     mode: "dark",  paper: "#1A0F08", ink: "#F2DEAE", accent: "#C84A2C", pop: "#E8A02A", correct: "#C8E25E", wrong: "#E58A7A" },

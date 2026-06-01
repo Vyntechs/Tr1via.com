@@ -55,7 +55,9 @@ import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { hasCeremony, hasMarquee } from "@/lib/theme/lockInCeremony";
 import { shouldHoldReveal } from "@/lib/tv/revealPause";
+import { selectLobbyTopics } from "@/lib/tv/lobbyTopics";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { fireJuneBeat } from "@/components/system";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
 
@@ -235,7 +237,7 @@ export function TVStateMachine({
           />
         );
       }
-      return <TVRevealView snapshot={snapshot} question={targetQuestion} />;
+      return <TVRevealView snapshot={snapshot} question={targetQuestion} themeKey={themeKey} />;
     }
 
     // No live question, no recent resolve → the Jeopardy grid is the
@@ -297,6 +299,7 @@ function TVLobbyView({
       joinUrl={joinUrl(snapshot.night.roomCode)}
       hostStatusLine="ROOM OPEN · STARTS WHEN HOST IS READY"
       gameStatusLine={gameStatus}
+      topics={selectLobbyTopics(snapshot)}
       welcomeEvent={welcomeEvent}
     />
   );
@@ -460,9 +463,21 @@ function TVQuestionView({
   // seenLocksRef tracks player ids we've already queued so snapshot re-fetches
   // (which repeat the full liveAnswers list) don't double-fire ceremonies.
   const seenLocksRef = useRef<Set<string>>(new Set());
+  // June de-dups its lock-in sky pulse separately from the May ceremony queue.
+  const juneSeenLocksRef = useRef<Set<string>>(new Set());
 
   // Enqueue a ceremony event for each newly-seen lock-in.
   useEffect(() => {
+    // June warms the sky on every new lock-in, independent of the May-only
+    // ceremony queue, de-duped via its own ref so snapshot re-fetches don't
+    // re-pulse for the same player.
+    if (themeKey === "june") {
+      const newlyLockedJune = lockedAnswers.filter((a) => !juneSeenLocksRef.current.has(a.player_id));
+      if (newlyLockedJune.length > 0) {
+        for (const a of newlyLockedJune) juneSeenLocksRef.current.add(a.player_id);
+        fireJuneBeat("lock");
+      }
+    }
     if (!hasCeremony(themeKey)) return;
     const newlyLocked = lockedAnswers.filter((a) => !seenLocksRef.current.has(a.player_id));
     for (const a of newlyLocked) seenLocksRef.current.add(a.player_id);
@@ -566,10 +581,16 @@ function TVQuestionView({
 function TVRevealView({
   snapshot,
   question,
+  themeKey,
 }: {
   snapshot: TVSnapshot;
   question: TVSnapshot["questions"][number];
+  themeKey?: ThemeKey;
 }) {
+  useEffect(() => {
+    if (themeKey === "june") fireJuneBeat("reveal");
+  }, [themeKey]);
+
   const cat = snapshot.categories.find((c) => c.id === question.categoryId);
   const category = cat?.name ?? "Trivia";
   const game = snapshot.games.find((g) =>

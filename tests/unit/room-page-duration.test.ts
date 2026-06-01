@@ -5,7 +5,7 @@ describe("room page duration source", () => {
   it("yields 25s for may", () => {
     expect(questionDurationFor("may")).toBe(25);
   });
-  it("yields 20s otherwise", () => {
-    expect(questionDurationFor("house")).toBe(20);
+  it("yields 25s for every theme (the default)", () => {
+    expect(questionDurationFor("house")).toBe(25);
   });
 });
