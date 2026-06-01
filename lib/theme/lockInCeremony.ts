@@ -1,10 +1,10 @@
 // Per-theme registry for the lock-in ceremony treatment. Parallel to the
 // Weather component's switch-on-themeKey pattern in components/system/Weather.tsx.
 //
-// Themes that register a config opt INTO the new live-question experience
-// (longer timer, auto-scrolling marquee scoreboard, per-player lightning
-// strike on lock-in). Themes that don't register fall back to the default —
-// today's 20s timer, lock-in pile, no transit ceremony.
+// The question timer is 25s for every theme (the default). Themes may register
+// to opt INTO extra live-question treatments — an auto-scrolling marquee
+// scoreboard and per-player lightning on lock-in (May/Storm). Themes that don't
+// register fall back to the default: 25s timer, lock-in pile, no transit ceremony.
 //
 // This is the single source of truth. Every conditional in the codebase that
 // asks "is this theme on the new May/Storm experience?" reads from here.
@@ -14,7 +14,7 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 export type CeremonyKind = "lightning" | null;
 
 export interface LockInCeremonyConfig {
-  /** Question timer length in seconds. May & June = 25, default = 20. */
+  /** Question timer length in seconds. 25 for every theme (the default). */
   duration: number;
   /** True → bottom strip is the auto-scrolling marquee. False → existing lock-in pile. */
   marquee: boolean;
@@ -23,24 +23,18 @@ export interface LockInCeremonyConfig {
 }
 
 const DEFAULT_CONFIG: LockInCeremonyConfig = {
-  duration: 20,
+  duration: 25,
   marquee: false,
   ceremony: null,
 };
 
-/** Themes opt IN to the new behavior by registering here. */
+/** Themes register here to opt into extra treatments (marquee / lightning).
+ *  The 25s timer is the default — no entry needed just for the timer length. */
 const REGISTRY: Partial<Record<ThemeKey, LockInCeremonyConfig>> = {
   may: {
     duration: 25,
     marquee: true,
     ceremony: "lightning",
-  },
-  // June opts into the longer 25s timer only — no marquee, no lightning. Its
-  // atmosphere is the reactive water, not the storm.
-  june: {
-    duration: 25,
-    marquee: false,
-    ceremony: null,
   },
 };
 

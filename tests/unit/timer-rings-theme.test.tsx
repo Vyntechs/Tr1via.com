@@ -26,9 +26,9 @@ describe("TimerRing themeKey", () => {
     expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
 
-  it("uses max=20 when themeKey is omitted", () => {
-    // seconds=20 fills the arc completely only when resolvedMax=20
-    const { container } = render(wrap(<TimerRing seconds={20} accent="#fff" />));
+  it("uses the 25s default (house context) when themeKey is omitted", () => {
+    // seconds=25 fills the arc completely only when resolvedMax=25
+    const { container } = render(wrap(<TimerRing seconds={25} accent="#fff" />));
     const circle = getProgressCircle(container);
     expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
@@ -96,9 +96,9 @@ describe("TVTimerArc themeKey", () => {
     expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
 
-  it("uses max=20 when themeKey is omitted", () => {
-    // seconds=20 fills the arc completely only when resolvedMax=20
-    const { container } = render(wrap(<TVTimerArc seconds={20} accent="#fff" />));
+  it("uses the 25s default (house context) when themeKey is omitted", () => {
+    // seconds=25 fills the arc completely only when resolvedMax=25
+    const { container } = render(wrap(<TVTimerArc seconds={25} accent="#fff" />));
     const circle = getTVProgressCircle(container);
     expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
