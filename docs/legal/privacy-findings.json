@@ -1,0 +1,1412 @@
+{
+  "generated": "2026-06-01",
+  "method": "64-agent verified fleet (3 forensic ground-truth -> 5 legal lenses -> adversarial verification of every finding)",
+  "counts": {
+    "total": 56,
+    "critical": 12,
+    "high": 18,
+    "medium": 18,
+    "low": 8
+  },
+  "groundTruth": [
+    {
+      "domain": "Data retention — player display names, answers, timing, persistent identifiers (TR1VIA / Supabase Postgres)",
+      "summary": "The privacy policy's core retention claims are FALSE across the board. There is NO automated deletion anywhere in the codebase — no cron, no pg_cron, no vercel.json schedule, no purge/anonymize/TTL/expire logic exists. \"Ending a game\" (POST /api/nights/:id/close) only stamps nights.closed_at; it deletes nothing. Player display names, answers, answer timestamps (ms_to_lock, locked_at), game_scores, game_participations, reveals, and adjustments all persist indefinitely in Postgres after a night ends. The host dashboard actively reads persisted player rows from CLOSED (ended) nights. Players are NOT anonymous: every player row carries a device_id UUID that comes from a signed, httpOnly, 365-day \"tr1via_device\" cookie — a persistent cross-session/cross-night identifier directly contradicting \"not linked to any persistent identifier.\" The only deletion that exists anywhere is reset_night_to_setup (a host-triggered \"reset and edit game\" RPC, not a session-end event), and it EXPLICITLY PRESERVES players (counts them as \"kept\") — it never deletes display names. Even reset only wipes answers/reveals/adjustments for games in live/done state, leaving player identity and device linkage fully intact. Separately, the policy describes Google Analytics, Vercel Analytics, Resend email, and magic-link auth that do not exist in this codebase (no analytics/email deps in package.json; magic-link was removed) — over-disclosure, but the retention claims are the material falsehoods.",
+      "facts": [
+        {
+          "area": "Player display names persist after a game ends",
+          "reality": "Closing a night (POST /api/nights/:id/close) only sets nights.closed_at; it issues no DELETE against players. Player rows (with display_name) survive indefinitely. The host dashboard proves it actively reads persisted players from already-CLOSED nights: recentNights is filtered to nights where closed_at is set, then fetchPlayerCountByNight queries the players table for exactly those ended nights.",
+          "evidence": [
+            "app/api/nights/[id]/close/route.ts:26-30",
+            "supabase/migrations/0001_init.sql:113-123",
+            "app/host/page.tsx:72-77",
+            "app/host/page.tsx:200-204"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Player display names | Deleted when game session ends"
+        },
+        {
+          "area": "No automated deletion exists anywhere",
+          "reality": "There is no cron job, no pg_cron, no vercel.json schedule, and no purge/anonymize/retention/TTL/expire code in the entire repo. The ONLY deletion routine touching personal data is reset_night_to_setup, which is a host-initiated 'reset and edit game' RPC (not a session-end trigger) and it explicitly counts players as KEPT and never deletes display names; it only wipes answers/reveals/adjustments for live/done games.",
+          "evidence": [
+            "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:71-95",
+            "app/api/nights/[id]/reset-to-setup/route.ts:27-30"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "We do not retain player display names after a game ends."
+        },
+        {
+          "area": "Answers and answer timestamps persist after a game ends",
+          "reality": "The answers table stores chosen_index, locked_at, and ms_to_lock (answer timing) per player. Closing the night never deletes these rows. The player recap and won pages read answers (filtered by player_id) and the game_scores view AFTER the night is closed, and the TV snapshot reads answer timing too. No code deletes answers on game/night end; only the host-only reset RPC deletes answers, and only for live/done games.",
+          "evidence": [
+            "supabase/migrations/0001_init.sql:141-153",
+            "app/(player)/room/[code]/recap/page.tsx:104-115",
+            "app/api/tv/[code]/snapshot/route.ts:191-209",
+            "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:83-89"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Player session data and answer timestamps | Not retained after game ends"
+        },
+        {
+          "area": "Players ARE linked to a persistent identifier",
+          "reality": "Every players row stores device_id (a UUID). That UUID originates from the signed httpOnly cookie 'tr1via_device' minted in POST /api/session/init with maxAge = 365 days (60*60*24*365). The same device joining the same night returns the existing row (unique night_id,device_id), and across DIFFERENT nights the same device_id recurs — a stable cross-session, cross-night identifier the host dashboard and RLS resolve players by. This directly contradicts the policy's anonymity claim.",
+          "evidence": [
+            "supabase/migrations/0001_init.sql:113-123",
+            "app/api/session/init/route.ts:25-26",
+            "app/api/session/init/route.ts:47-53",
+            "app/api/players/route.ts:62-80"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "are not linked to any persistent identifier for players"
+        },
+        {
+          "area": "Cross-game / cross-night linkage of player identity",
+          "reality": "game_participations FKs player_id to players (which holds display_name + device_id), one row per game the player opts into. The game_scores view joins game_participations -> players to expose display_name with scores. Because device_id is reused per device, a single physical device's display names and answers are linkable across every game and every night it ever joined — there is no per-session anonymization.",
+          "evidence": [
+            "supabase/migrations/0001_init.sql:128-134",
+            "supabase/migrations/0001_init.sql:207-227"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "not linked to any persistent identifier"
+        },
+        {
+          "area": "WebSocket / connection metadata retention (related claim)",
+          "reality": "Connection liveness is persisted, not ephemeral: players.last_seen_at and players.app_switch_total_seconds are written to the DB row and survive after the night closes alongside the rest of the player record. The policy frames connection/session data as not retained after the session.",
+          "evidence": [
+            "supabase/migrations/0001_init.sql:118-120",
+            "app/api/players/route.ts:71-77"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "This data is not retained after a game ends."
+        },
+        {
+          "area": "Host point adjustments persist after a game ends",
+          "reality": "The adjustments table stores per-player point edits with an optional free-text reason and FK to players + games. These persist after night close; nothing deletes them on session end. Only the host-only reset RPC deletes them, and only for live/done games. They are read into the game_scores leaderboard view after the night ends.",
+          "evidence": [
+            "supabase/migrations/0001_init.sql:170-178",
+            "supabase/migrations/0001_init.sql:212-218",
+            "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:91-95"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Player session data and answer timestamps | Not retained after game ends"
+        },
+        {
+          "area": "RLS keeps personal data readable after a game ends (no access cutoff)",
+          "reality": "No RLS policy nor any read path gates the personal tables on closed_at. answers_post_resolve_read makes answers readable to participants once a question is finished; players_self_select / participations_read / the admin TV snapshot keep names and answers visible after the night closes. So data is both retained AND remains accessible after the 'session ends'.",
+          "evidence": [
+            "supabase/migrations/0002_rls.sql:171-172",
+            "app/api/tv/[code]/snapshot/route.ts:64-69",
+            "app/api/tv/[code]/snapshot/route.ts:259-266"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Not retained after game ends"
+        },
+        {
+          "area": "Right-to-delete / privacy-request mechanism",
+          "reality": "The policy promises players can exercise deletion by providing date/venue/time, but there is no deletion endpoint or admin tooling for player data in the codebase — the only player-data deletion that exists is the host's reset RPC (which preserves players anyway). There is no /privacy-request route; the policy itself leaves the form URL as a placeholder.",
+          "evidence": [
+            "app/api/nights/[id]/reset-to-setup/route.ts:1-33",
+            "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:71-75"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Right to delete | Everyone | Email support@vyntechs.com or use the privacy request form"
+        }
+      ]
+    },
+    {
+      "domain": "Third-party / sub-processor mapping — actual external services receiving user/host data vs. what the privacy policy claims",
+      "summary": "The as-delivered privacy policy (docs/legal/privacy-policy-ORIGINAL.md) describes a sub-processor set that does not match the code. Two of its three named processors are PHANTOMS: Google Analytics (GA4) is not installed anywhere (no gtag, no measurement ID, no googletagmanager in source OR built JS — the only .next match was the benign string \"g-complete\"), and Resend / any email send does not exist (no email lib in package.json; the host \"magic link\" is generated as a URL and handed off manually via text/AirDrop, with verifyOtp consumed server-side — Supabase never sends an email). Vercel Analytics is also a phantom (@vercel/analytics not in package.json, no <Analytics> render). Meanwhile the two LARGEST real sub-processors are entirely UNDISCLOSED: (1) Supabase — the US-hosted Postgres datastore + Auth + Realtime that holds hosts.email, player display_names, device-id cookies, answers, and carries the live WebSocket (player IPs); never named in the policy. (2) Pexels — receives AI-generated image-search query text server-side, AND its CDN (images.pexels.com) is loaded directly by every player phone and TV browser, leaking viewer IP/User-Agent. Anthropic is a third undisclosed processor but receives only topic prompts, no personal data. Google Fonts is NOT a runtime flow (next/font/google self-hosts at build time). Net: the policy's entire \"analytics\" section, _ga/_ga_[ID] cookies, GA4 sharing/CCPA opt-out machinery, Resend email row, and \"magic link\" auth narrative describe a system that doesn't exist; the policy fails to disclose Supabase, Pexels, and Anthropic — the only third parties actually receiving data. The \"magic link sent to email\" description is also factually wrong about how hosts authenticate.",
+      "facts": [
+        {
+          "area": "Google Analytics (GA4) — claimed processor (PHANTOM)",
+          "reality": "GA4 is not installed anywhere. No gtag, no G-XXXX measurement ID, no googletagmanager.com, no react-ga, no next/third-parties in source. Built JS in .next contains no googletagmanager.com / google-analytics.com / gtag(. The only .next/static match for the search regex was the unrelated string 'g-complete'. The root layout renders zero analytics scripts.",
+          "evidence": [
+            "package.json:13-23 (dependencies — no GA / next-third-parties)",
+            "app/layout.tsx:36-49 (root layout, no script tags)",
+            ".next build grep: googletagmanager.com / google-analytics.com / gtag( = zero matches"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Google Analytics 4 collects: IP address ... Device identifiers ... | _ga | Google Analytics | Distinguishes unique users | 2 years |"
+        },
+        {
+          "area": "Vercel Analytics — claimed processor (PHANTOM)",
+          "reality": "@vercel/analytics and @vercel/speed-insights are not in package.json and no <Analytics>/<SpeedInsights> component is rendered. No /_vercel/insights instrumentation in source. The policy's 'Vercel Analytics' product is not wired in.",
+          "evidence": [
+            "package.json:13-23 (no @vercel/analytics)",
+            "app/layout.tsx:36-49 (no Analytics component)",
+            "grep for <Analytics|<SpeedInsights|_vercel/insights in app/ components/ = zero matches"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "TR1VIA uses two analytics services: Vercel Analytics and Google Analytics (GA4)."
+        },
+        {
+          "area": "Resend / email delivery — claimed processor (PHANTOM)",
+          "reality": "No email-send library exists (no resend/sendgrid/postmark/nodemailer/smtp in package.json or code). Host 'magic link' is generated via admin.auth.admin.generateLink and the resulting URL is RETURNED to the founder to share manually (text/AirDrop/in-person). The founder-login route consumes the token server-side via verifyOtp — Supabase never sends an email. So hosts do not receive any email, and no host email is transmitted to any delivery processor.",
+          "evidence": [
+            "package.json:13-23 (no email lib)",
+            "app/api/admin/grant-magic-link/route.ts:97-119 (generateLink → returns grantUrl for manual handoff, no send)",
+            "app/api/auth/founder-login/route.ts:70-101 (generateLink + verifyOtp server-side, no email)",
+            "grep resend|sendgrid|postmark|nodemailer|smtp across code = zero send-path matches"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Host email addresses are transmitted to Resend for magic link delivery. | Resend | Email delivery processor | Host email address, magic link content |"
+        },
+        {
+          "area": "Host authentication model — claimed in policy",
+          "reality": "Policy says hosts 'log in via a magic link sent to their email address.' Actual model: host types email at /login → server looks up the hosts row and mints a Supabase session directly on the response (no email round-trip). Cross-device onboarding uses a /auth/grant?t= URL the founder shares manually. 'magiclink' appears only as the internal Supabase generateLink token TYPE, not an emailed link.",
+          "evidence": [
+            "app/(host)/login/page.tsx:5 ('mints that host's session on the response — no magic link, no')",
+            "app/api/auth/founder-login/route.ts:1-21,70-101 (passwordless server-side session mint)",
+            "app/auth/grant/route.ts:1-4 (founder-shared grant URL, not emailed)"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Hosts log in via a magic link sent to their email address."
+        },
+        {
+          "area": "Supabase — REAL undisclosed sub-processor (datastore + auth + realtime)",
+          "reality": "Supabase (US-hosted Postgres) is the primary datastore. It holds hosts.email (via Supabase Auth users), player display_names + device_id cookie UUIDs, answers, game_scores, etc. Supabase Auth mints host sessions; Supabase Realtime carries the live game WebSocket and is sent service-role broadcasts. Player IPs hit Supabase's realtime endpoint directly. Supabase is named NOWHERE in the policy's sub-processor table or international-transfer section.",
+          "evidence": [
+            "lib/supabase/admin.ts:1-33 (service-role client over user data)",
+            "supabase/migrations/0001_init.sql:113-122 (players table: device_id uuid, display_name persisted)",
+            "lib/api/broadcast.ts:6-19,69-74 (Supabase Realtime REST broadcast; clients subscribe via supabase.channel)",
+            "package.json:11-12 (@supabase/ssr, @supabase/supabase-js)"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "| Provider | Role | Data Shared | ... | Vercel ... | Google ... | Resend ... | (Supabase absent)"
+        },
+        {
+          "area": "Player WebSocket layer — 'our servers' claim",
+          "reality": "The policy says live games use 'a persistent WebSocket connection' visible to 'our servers.' The WebSocket layer is Supabase Realtime, a separate US sub-processor; player IPs and connection metadata are processed by Supabase, not first-party infrastructure. Supabase is undisclosed.",
+          "evidence": [
+            "lib/api/broadcast.ts:6-19 (POST /realtime/v1/api/broadcast; clients subscribe via supabase.channel(\"room:...\"))",
+            "lib/api/broadcast.ts:69-74 (fetch ${NEXT_PUBLIC_SUPABASE_URL}/realtime/v1/api/broadcast)"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Live trivia games use a persistent WebSocket connection. During an active game session, the following are visible to our servers: Your IP address ..."
+        },
+        {
+          "area": "Pexels — REAL undisclosed sub-processor (image search + CDN)",
+          "reality": "Pexels receives AI-generated image-search query text server-side (logged at Pexels' edge per the code's own comment). Separately, image src URLs point at images.pexels.com and are rendered with a plain <img> (no proxy) on player phones and the TV — so every viewer browser fetches images directly from Pexels' CDN, exposing viewer IP/User-Agent to Pexels. Pexels is named nowhere in the policy.",
+          "evidence": [
+            "lib/pexels/search.ts:14-18 (query 'logged by Pexels edge'; server-side search)",
+            "package.json:18 (pexels dependency)",
+            "components/player/PlayerQuestion.tsx:158-159 ('URLs are external; no /api/image proxy' — direct <img>)",
+            "next.config.ts:9-10 (remotePatterns allows images.pexels.com for browser image loads)"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "We do not share your data with third parties except as described below. (Pexels absent from sub-processor table)"
+        },
+        {
+          "area": "Anthropic — REAL undisclosed sub-processor (AI question generation)",
+          "reality": "Anthropic (@anthropic-ai/sdk, model claude-haiku-4-5) receives only host-supplied topic/flavor/difficulty prompt text plus the static system prompt — no player or host personal data (no emails, names, IPs). Still a US third party processing host-entered content, and it is named nowhere in the policy. Lower-risk than the omissions above (no personal data sent) but still an undisclosed processor.",
+          "evidence": [
+            "lib/ai/generate-questions.ts:42-46,180-184,216-269 (Anthropic client; sends SYSTEM_PROMPT + userPromptFor(topic/flavor/difficulty), no PII)",
+            "package.json:10 (@anthropic-ai/sdk)"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "(Anthropic absent from sub-processor table)"
+        },
+        {
+          "area": "Google Fonts — NOT a runtime data flow",
+          "reality": "Fonts (Geist, Geist_Mono, Bricolage_Grotesque) are loaded via next/font/google, which self-hosts font files at build time and serves them from the app's own origin — no runtime request to fonts.googleapis.com/fonts.gstatic.com from the user's browser. So Google does not receive viewer data via fonts; this is NOT an undisclosed flow (and conversely the policy's only Google mention, GA4, is the phantom).",
+          "evidence": [
+            "app/layout.tsx:2,6-13 (next/font/google — build-time self-host)",
+            "app/globals.css:5-7 (font CSS vars resolved to self-hosted faces)"
+          ],
+          "contradicts_policy": false,
+          "policy_quote": "n/a"
+        },
+        {
+          "area": "Persistent player device cookie — undisclosed tracking identifier",
+          "reality": "Players get a tr1via_device cookie: a signed UUID set httpOnly, SameSite=lax, Secure(prod), maxAge 365 days — a year-long persistent identifier stored in the players.device_id column. The policy lists no player cookie at all (its cookie table only shows GA + host session/CSRF), and claims player data 'is not retained after a game ends,' yet this device id persists in the cookie and DB across nights.",
+          "evidence": [
+            "app/api/session/init/route.ts:25-26,47-53 (tr1via_device, httpOnly, 365d)",
+            "supabase/migrations/0001_init.sql:113-122 (players.device_id uuid persisted, unique(night_id,device_id))",
+            "supabase/migrations/0002_rls.sql:14-22 (current_device_id() reads cookie via x-tr1via-device header)"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Player session data and answer timestamps | Not retained after game ends — and cookie table lists no player cookie"
+        },
+        {
+          "area": "Vercel — the one correctly-named processor (hosting/logs)",
+          "reality": "Vercel is the real hosting/edge provider (server logs, IP, User-Agent) and is correctly named as an infrastructure processor. The accurate part is server logs; the inaccurate part is the 'and analytics' role and the Vercel Analytics cookie/row, which are not wired in. So Vercel is half-right: real as host, phantom as analytics.",
+          "evidence": [
+            "docs/legal/privacy-policy-ORIGINAL.md:38-46 (server logs claim — plausibly accurate for Vercel hosting)",
+            "package.json:13-23 (no @vercel/analytics — analytics role unsupported)"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "| Vercel | Infrastructure and analytics processor | IP address, User-Agent, page requests, performance data |"
+        },
+        {
+          "area": "Published vs as-delivered policy status",
+          "reality": "The ORIGINAL policy's header references a corrected published policy at docs/legal/privacy-policy.md and app/privacy/page.tsx, but NEITHER FILE EXISTS — only the ORIGINAL baseline is present. There is no live privacy page in the app. So the document under audit is the only policy artifact, and it is the inaccurate one.",
+          "evidence": [
+            "docs/legal/privacy-policy-ORIGINAL.md:4-5 (claims a corrected policy + app/privacy/page.tsx exist)",
+            "filesystem: docs/legal/ contains only privacy-policy-ORIGINAL.md; app/privacy/ does not exist"
+          ],
+          "contradicts_policy": false,
+          "policy_quote": "n/a"
+        }
+      ]
+    },
+    {
+      "domain": "Authentication, session cookies, and tracking/privacy signals",
+      "summary": "TR1VIA has TWO identity tracks: (1) Hosts authenticate via Supabase Auth, but NOT the way the policy describes. The live host login at /login posts an email to POST /api/auth/founder-login, which mints a session SERVER-SIDE (admin.generateLink + verifyOtp) and writes auth cookies directly on the response — NO magic-link email is ever sent, no email round-trip, no OTP click. The policy's repeated \"magic link emailed to the host / host clicks a magic link\" language is FALSE for the primary flow. A real magic-link-style flow does still exist but is founder-initiated and out-of-band: POST /api/admin/grant-magic-link (founder-only) generates a one-click /auth/grant?t=<token> URL the founder copies and texts/AirDrops to a new host — it is never auto-emailed by the app (no email-send library exists in package.json). /auth/callback exists as a legacy Supabase email-redirect handler but nothing in the app triggers a Supabase-sent email. (2) Players never authenticate — they get a signed HMAC device cookie tr1via_device set by POST /api/session/init. COOKIES ACTUALLY SET: tr1via_device (httpOnly, sameSite=lax, secure in prod, 365d), the Supabase sb-* auth-token cookies (httpOnly, set by @supabase/ssr defaults), plus a localStorage mirror tr1via_device_id (not a cookie). The policy's cookie table lists _ga, _ga_[ID], \"Vercel Analytics\", and a \"CSRF token\" — NONE of these exist in code (no analytics lib, no @vercel/analytics, no CSRF implementation). The table omits every cookie the app actually sets. GPC: NO code reads Sec-GPC or navigator.globalPrivacyControl anywhere — the policy's \"TR1VIA honors GPC signals\" is an affirmative false statement. NO /privacy-request form or privacy route exists anywhere in app/.",
+      "facts": [
+        {
+          "area": "Host login flow — actual mechanism (no magic-link email)",
+          "reality": "Primary host login is passwordless type-email-and-mint-session. /login POSTs the email to /api/auth/founder-login, which finds the auth user + hosts row, then internally calls admin.auth.admin.generateLink({type:'magiclink'}) and immediately redeems it with supabase.auth.verifyOtp server-side, writing Supabase auth cookies onto the response. No email is sent; sign-in completes in one HTTP request. The login page itself states 'No magic link, no OTP, no email round-trip.'",
+          "evidence": [
+            "app/(host)/login/page.tsx:1-10",
+            "app/(host)/login/page.tsx:74-84",
+            "app/api/auth/founder-login/route.ts:1-21",
+            "app/api/auth/founder-login/route.ts:70-101"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "a magic link emailed to the host / the host clicks a magic link"
+        },
+        {
+          "area": "Magic-link-style flow that DOES exist (founder-initiated, out-of-band, not emailed)",
+          "reality": "POST /api/admin/grant-magic-link (founder-only via requireFounder) generates a one-click sign-in URL of the form <site>/auth/grant?t=<hashed_token> and RETURNS it to the founder UI to copy/text/AirDrop. /auth/grant redeems the token via verifyOtp server-side and sets cookies. The token is single-use, email-scoped, ~1hr expiry. Crucially the app never emails this link — there is no email-send library (no resend/sendgrid/postmark/nodemailer in package.json).",
+          "evidence": [
+            "app/api/admin/grant-magic-link/route.ts:1-23",
+            "app/api/admin/grant-magic-link/route.ts:103-119",
+            "app/auth/grant/route.ts:1-26",
+            "app/auth/grant/route.ts:72-85"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "a magic link emailed to the host"
+        },
+        {
+          "area": "/auth/callback purpose",
+          "reality": "GET /auth/callback is a legacy Supabase email-redirect handler that exchanges a ?code for a session (exchangeCodeForSession) and routes to /host or /host/onboarding. It is the redirect target for Supabase-sent magic-link emails, but nothing in the current app triggers Supabase to send such an email, so this path is effectively dormant.",
+          "evidence": [
+            "app/auth/callback/route.ts:1-8",
+            "app/auth/callback/route.ts:28-37",
+            "app/auth/callback/route.ts:66-69"
+          ],
+          "contradicts_policy": false,
+          "policy_quote": "n/a"
+        },
+        {
+          "area": "Cookie: tr1via_device (player device session)",
+          "reality": "Set by POST /api/session/init. Value is `${uuid}.${hmac-sha256}` signed with SESSION_SECRET. Flags: httpOnly=true, sameSite='lax', secure=(NODE_ENV==='production'), path='/', maxAge=365 days. Verified server-side on every player request and forwarded to Postgres as the x-tr1via-device header for RLS. Not in the policy's cookie table.",
+          "evidence": [
+            "app/api/session/init/route.ts:25-26",
+            "app/api/session/init/route.ts:44-53",
+            "lib/auth/device-cookie.ts:20-25",
+            "lib/api/auth.ts:10-13"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Session token cookie (table lists _ga, _ga_[ID], Session token cookie, CSRF token, Vercel Analytics)"
+        },
+        {
+          "area": "Cookie: Supabase auth cookies (sb-*)",
+          "reality": "Host sessions are stored in Supabase @supabase/ssr cookies (sb-<project-ref>-auth-token, possibly chunked .0/.1). Set/refreshed by createServerClient setAll in middleware, founder-login, grant, logout, and lib/supabase/server. The app uses @supabase/ssr defaults — it never overrides cookieOptions or storageKey — so flags are the library defaults (httpOnly, sameSite=lax, secure, path=/). These are the real 'session token' cookies and are absent from the policy table.",
+          "evidence": [
+            "middleware.ts:45-60",
+            "app/api/auth/founder-login/route.ts:79-92",
+            "app/auth/grant/route.ts:56-70",
+            "lib/supabase/server.ts:48-74"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "Session token cookie"
+        },
+        {
+          "area": "Client identifier: tr1via_device_id (localStorage, not a cookie)",
+          "reality": "A non-cookie localStorage mirror of the device UUID, key 'tr1via_device_id', written by useDeviceSession and read by the browser Supabase client to attach the x-tr1via-device header. It is browser storage, not an HTTP cookie, and is not in the policy's cookie table.",
+          "evidence": [
+            "lib/hooks/useDeviceSession.ts:14",
+            "lib/hooks/useDeviceSession.ts:60-65",
+            "lib/supabase/client.ts:26",
+            "lib/supabase/client.ts:33-42"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "n/a"
+        },
+        {
+          "area": "Google Analytics cookies (_ga, _ga_[ID]) and Vercel Analytics",
+          "reality": "No Google Analytics or Vercel Analytics anywhere. package.json contains no @vercel/analytics, gtag, google-analytics, react-ga, posthog, mixpanel, or segment. The only literal '_ga' matches in the repo are unrelated local variables like `_game` / `_game2Id`. No _ga, _ga_[ID], or Vercel Analytics cookie is ever set.",
+          "evidence": [
+            "app/(player)/room/[code]/page.tsx:734",
+            "app/(player)/room/[code]/page.tsx:1117"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "_ga, _ga_[ID] ... Vercel Analytics (cookie table)"
+        },
+        {
+          "area": "CSRF token cookie",
+          "reality": "No CSRF/XSRF implementation exists — zero matches for csrf/xsrf in app, lib, components, or middleware, and no CSRF library in package.json. The policy table's 'CSRF token' cookie is never set.",
+          "evidence": [
+            "middleware.ts:1-94",
+            "app/api/session/init/route.ts:1-56"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "CSRF token (cookie table)"
+        },
+        {
+          "area": "Global Privacy Control (GPC)",
+          "reality": "No code reads the Sec-GPC request header or navigator.globalPrivacyControl, and no behavior changes based on any privacy signal. Repo-wide search for globalPrivacyControl / Sec-GPC / GPC returns nothing. The policy's claim that TR1VIA honors GPC is unimplemented — an affirmative false statement (CCPA risk, cf. Sephora).",
+          "evidence": [
+            "middleware.ts:29-86",
+            "lib/supabase/server.ts:40-76"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "TR1VIA honors GPC signals"
+        },
+        {
+          "area": "Privacy request form / privacy route",
+          "reality": "No /privacy-request route and no privacy/legal/terms route exists anywhere under app/. There is no page or handler implementing a privacy/data-deletion request despite the policy linking to one. (The only 'privacy' string hits are about browser private-mode storage fallbacks, not a privacy form.)",
+          "evidence": [
+            "app/(player)/room/[code]/page.tsx:630",
+            "lib/hooks/useDeviceSession.ts:62"
+          ],
+          "contradicts_policy": true,
+          "policy_quote": "submit a privacy request at /privacy-request"
+        }
+      ]
+    }
+  ],
+  "findings": [
+    {
+      "id": "false-retention-display-names",
+      "lens": "accuracy-ftc",
+      "severity": "critical",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy promises player display names are deleted at game end; code never deletes them",
+      "policy_quote": "We do not retain player display names after a game ends.",
+      "problem": "This is an affirmative false statement about data deletion. Closing a night (POST /api/nights/:id/close) only stamps nights.closed_at — it issues no DELETE against the players table, so display_name rows persist in Postgres indefinitely. The host dashboard actively reads these persisted player rows from already-CLOSED nights, proving the data is kept and used after 'the game ends.' A deletion promise the product structurally cannot keep is the textbook deceptive privacy practice the FTC pursues: a company is liable under §5 for stating a data practice (here, deletion) that does not match reality, regardless of intent. If a player or a state AG ever requests deletion and the data is still there, the policy is the evidence of the violation.",
+      "law": "FTC Act §15 U.S.C. §45 (Section 5 — deceptive acts/practices); FTC enforcement precedent on false data-deletion/retention claims (In re Snapchat, FTC 2014, No. C-4501 — penalized for claiming data was deleted when it persisted); Tex. Bus. & Com. Code §17.46 (DTPA, false representation about services)",
+      "evidence": [
+        "app/api/nights/[id]/close/route.ts:26-30 (only updates closed_at, no DELETE on players)",
+        "supabase/migrations/0001_init.sql:113-123 (players table holds display_name, no TTL)",
+        "app/host/page.tsx:72-77 (recentNights filtered to nights where closed_at is set)",
+        "app/host/page.tsx:200-204 (fetchPlayerCountByNight queries players for those ended nights)",
+        "Verified: close/route.ts updates only {closed_at} and the host flag — no delete path"
+      ],
+      "recommended_fix": "Either (a) build and ship an actual deletion/anonymization job (cron or pg_cron) that purges/anonymizes player display names at night close, then keep the sentence; or (b) replace the sentence with the truth: 'Player display names are stored in our database and retained after a game ends. We retain them for [stated period] to support host leaderboards and recaps, then delete or anonymize them.' Do not claim deletion until the deletion code exists."
+    },
+    {
+      "id": "false-retention-answers-timestamps",
+      "lens": "accuracy-ftc",
+      "severity": "critical",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy claims answers and answer timestamps are not retained after a game; they persist indefinitely",
+      "policy_quote": "Player session data and answer timestamps | Not retained after game ends",
+      "problem": "The answers table stores chosen_index, locked_at, and ms_to_lock per player and is never deleted on night close. The player recap page, the won page, and the TV snapshot all read answers (by player_id) and answer timing AFTER the night is closed. So the policy's retention table makes a false zero-retention representation about data that in fact lives in Postgres forever. Same FTC §5 exposure as the display-name claim — and answer data is tied to a persistent device_id, so it is identifiable.",
+      "law": "FTC Act §5 (15 U.S.C. §45); In re Snapchat (FTC 2014); CCPA §1798.130(a)(3) (retention disclosures must be accurate); Tex. DTPA §17.46",
+      "evidence": [
+        "supabase/migrations/0001_init.sql:141-153 (answers: chosen_index, locked_at, ms_to_lock)",
+        "app/(player)/room/[code]/recap/page.tsx:104-115 (reads answers after close)",
+        "app/api/tv/[code]/snapshot/route.ts:191-209 (reads answer timing)",
+        "Verified: close/route.ts deletes nothing in answers"
+      ],
+      "recommended_fix": "Change the retention table row to the truth: 'Player answers and answer timestamps are retained in our database after the game ends (used for recaps and leaderboards) and deleted/anonymized after [period].' Or implement deletion at close and keep the claim."
+    },
+    {
+      "id": "false-anonymity-persistent-identifier",
+      "lens": "accuracy-ftc",
+      "severity": "critical",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy says player timing data is not linked to any persistent identifier; every player row carries a 365-day device UUID",
+      "policy_quote": "are not linked to any persistent identifier for players",
+      "problem": "Directly false. Every players row stores device_id (a UUID) sourced from the signed, httpOnly 'tr1via_device' cookie set with maxAge = 365 days. The same device joining the same night returns the existing row (unique night_id,device_id), and across DIFFERENT nights the same device_id recurs — a stable cross-session, cross-night identifier that the host dashboard and RLS use to resolve players. The policy's anonymity representation is the kind of false 'we don't track you / it's anonymous' claim the FTC and state AGs treat as deceptive, and it also undercuts the policy's own 'no account / we don't ask your name' framing. This is high-damage because it's the policy's central trust claim to players.",
+      "law": "FTC Act §5 (15 U.S.C. §45); CCPA §1798.140(v) 'unique personal identifier'/'persistent identifier' definition (device IDs are PI); In re Nomi Technologies (FTC 2015 — deceptive statements about tracking/opt-out); Tex. DTPA §17.46",
+      "evidence": [
+        "app/api/session/init/route.ts:25-26,44-53 (tr1via_device cookie, httpOnly, maxAge 365 days — verified)",
+        "supabase/migrations/0001_init.sql:113-123 (players.device_id uuid, unique(night_id,device_id))",
+        "app/api/players/route.ts:62-80 (device resolves existing player row)",
+        "supabase/migrations/0002_rls.sql:14-22 (current_device_id() reads device via header)"
+      ],
+      "recommended_fix": "Remove the 'not linked to any persistent identifier' claim. Disclose the device cookie honestly: 'To recognize your device across a game and to keep your score, we set a signed device cookie (tr1via_device) containing a random identifier; it lasts up to one year and is stored with your player record.' Add it to the cookie table (see separate finding)."
+    },
+    {
+      "id": "no-automated-deletion-exists",
+      "lens": "accuracy-ftc",
+      "severity": "critical",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Multiple 'not retained' / 'deleted at session end' claims, but no deletion mechanism exists anywhere in the codebase",
+      "policy_quote": "This data is not retained after a game ends.",
+      "problem": "The policy repeats deletion/zero-retention promises (WebSocket metadata, answer timing, display names, session data) but there is no cron, no pg_cron, no vercel.json schedule, and no purge/anonymize/TTL/expire code in the entire repo. The only deletion routine touching personal data is the host-initiated reset_night_to_setup RPC ('reset and edit game'), which is NOT a session-end trigger and which explicitly counts players as KEPT — it never deletes display names and only wipes answers/reveals/adjustments for live/done games. So every 'not retained' representation is systemically false. This is the single most enforceable category: a pattern of deletion claims with zero implementation is exactly what triggers FTC/state-AG action and what a plaintiff's lawyer points to.",
+      "law": "FTC Act §5 (15 U.S.C. §45); In re Snapchat (FTC 2014, No. C-4501); CCPA §1798.130(a)(3)/§1798.100(c) (retention-limitation + accurate disclosure); Tex. DTPA §17.46",
+      "evidence": [
+        "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:71-95 (reset RPC; players counted as kept, not deleted)",
+        "app/api/nights/[id]/reset-to-setup/route.ts:27-30 (host-triggered, not session-end)",
+        "Verified repo-wide: no cron/pg_cron/vercel.json schedule/purge/anonymize/TTL code"
+      ],
+      "recommended_fix": "Pick one and align: (1) build a real scheduled deletion/anonymization job and keep the promises, or (2) rewrite every 'not retained' line to state actual retention periods. Until (1) ships, the policy must say data IS retained. Do not ship deletion language the code cannot honor."
+    },
+    {
+      "id": "false-honors-gpc",
+      "lens": "accuracy-ftc",
+      "severity": "critical",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy affirmatively states TR1VIA honors Global Privacy Control signals; no GPC code exists",
+      "policy_quote": "Global Privacy Control (GPC): TR1VIA honors GPC signals. If your browser sends a GPC signal, we treat it as a request to opt out of sharing your personal information with third-party analytics tools.",
+      "problem": "No code anywhere reads Sec-GPC or navigator.globalPrivacyControl, and no behavior changes on any privacy signal (verified — grep returned nothing). The policy makes this claim THREE times (analytics section, rights table 'opt out of sharing... via GPC', and the 'Do Not Sell or Share' section). Falsely claiming to honor GPC is the single most directly enforced privacy misrepresentation in the US right now: the California AG's $1.2M Sephora settlement (2022) and the Aug-2024 Honda CPPA action both rested on failure to process opt-out/GPC signals as represented. Because TR1VIA describes California rights and 'opt out of sharing,' this is a concrete, high-probability enforcement hook — and ironically there is no actual sharing to opt out of (the analytics it references are phantoms), so the entire mechanism is fictional in both directions.",
+      "law": "CCPA/CPRA §1798.135(b)(1) and §1798.185 regs (11 CCR §7025 — must process GPC as a valid opt-out); Cal. AG Sephora settlement (2022, $1.2M); CPPA Honda enforcement (2024); FTC Act §5 (false opt-out representation, cf. In re Nomi 2015)",
+      "evidence": [
+        "Verified: grep globalPrivacyControl / Sec-GPC / GPC across app, lib, middleware = zero matches",
+        "middleware.ts:29-86 (no privacy-signal handling)",
+        "lib/supabase/server.ts:40-76 (no GPC handling)"
+      ],
+      "recommended_fix": "Remove all three GPC claims unless GPC handling is actually implemented. If kept, add real code: read the Sec-GPC request header / navigator.globalPrivacyControl and document the concrete effect. Given the referenced analytics don't exist, the honest statement is: 'We do not sell or share personal information for cross-context behavioral advertising, so no opt-out is required; we currently do not process GPC signals.'"
+    },
+    {
+      "id": "missing-supabase-subprocessor",
+      "lens": "accuracy-ftc",
+      "severity": "critical",
+      "category": "missing-disclosure",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Supabase — the primary US datastore + auth + realtime holding all personal data — is named nowhere in the policy",
+      "policy_quote": "MISSING",
+      "problem": "Supabase is the single largest real sub-processor: a US-hosted Postgres database that holds hosts.email, player display_names, device-id UUIDs, answers, scores, and adjustments; Supabase Auth mints host sessions; and Supabase Realtime carries the live game WebSocket (so player IPs hit Supabase directly). It is absent from the sub-processor table and from the international-transfer section, even though the policy's own WebSocket section says connection data is 'visible to our servers' (it is actually visible to Supabase, a third party). Omitting the processor that holds ALL personal data is the most material disclosure gap in the document: CCPA requires disclosing the categories of third parties to whom PI is disclosed, and a policy that hides its core database while naming three phantom processors is both an omission and a misrepresentation under §5.",
+      "law": "CCPA §1798.130(a)(5)(C)/(D) (disclose third parties PI is shared/disclosed to); GDPR Art. 13(1)(e) and Art. 28 (recipients + processor disclosure, relevant on stated EU expansion); FTC Act §5 (15 U.S.C. §45)",
+      "evidence": [
+        "lib/supabase/admin.ts:1-33 (service-role client over user data)",
+        "supabase/migrations/0001_init.sql:113-122 (players: device_id, display_name persisted in Supabase)",
+        "lib/api/broadcast.ts:6-19,69-74 (Supabase Realtime carries the live WebSocket)",
+        "package.json: @supabase/ssr + @supabase/supabase-js present"
+      ],
+      "recommended_fix": "Add Supabase to the sub-processor table: 'Supabase (US) — database, authentication, and realtime processor — stores host emails, player display names and device IDs, answers and scores; carries the live game connection (player IP).' Add Supabase to the International Data Transfers section. Correct the WebSocket section to say the connection is handled by Supabase Realtime, a US sub-processor."
+    },
+    {
+      "id": "ccpa-gpc-claim-no-mechanism",
+      "lens": "ccpa-cpra",
+      "severity": "critical",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "\"TR1VIA honors GPC signals\" is an affirmative false statement — no GPC mechanism exists in code (Sephora-style violation)",
+      "policy_quote": "Global Privacy Control (GPC): TR1VIA honors GPC signals. If your browser sends a GPC signal, we treat it as a request to opt out of sharing your personal information with third-party analytics tools.",
+      "problem": "The policy states twice — affirmatively and unconditionally — that TR1VIA honors GPC. The code reads no GPC signal anywhere: a repo-wide search for navigator.globalPrivacyControl, the Sec-GPC request header, and any 'GPC' handling returns zero matches in app/, lib/, components/, and middleware.ts. Nothing changes behavior on any privacy signal. This is the exact fact pattern in the Cal. AG's Sephora enforcement (Aug. 2022, $1.2M): a posted privacy representation that GPC was honored, while the site silently ignored the signal, was charged as both an unlawful failure-to-honor opt-out and as an affirmative misrepresentation. Under CPRA, GPC honoring is mandatory for any business that 'sells' or 'shares' once that processing exists; but independently, the CCPA bars deceptive privacy statements. Saying you honor GPC when you have no code to detect it is a per se misrepresentation regulators treat as low-hanging, high-priority enforcement. The CPPA's first enforcement sweep (2023) and the Honda/Todd Snyder/DoorDash actions all targeted opt-out/GPC mechanics specifically.",
+      "law": "Cal. Civ. Code §1798.135(b)(1) & §1798.185(a)(19)(A) (CPRA opt-out-preference-signal/GPC duty); 11 CCR §7025(b)-(c) (business 'shall process' a GPC signal as a valid opt-out request); Cal. AG settlement, People v. Sephora (Aug. 24, 2022) — affirmative 'we honor GPC' claim while ignoring the signal charged as a §17200 misrepresentation + CCPA opt-out failure; CPPA Order, In re DoorDash (2024) and Todd Snyder consent order (2025) (opt-out-signal failures).",
+      "evidence": [
+        "Repo-wide grep for globalPrivacyControl|Sec-GPC|\\bGPC\\b|do-not-sell across app/ lib/ components/ middleware.ts returned zero matches",
+        "middleware.ts:29-86 (request handling reads cookies/auth only; no privacy-signal branch)",
+        "lib/supabase/server.ts:40-76 (no GPC read)",
+        "policy lines 92 and 202 both assert GPC is honored"
+      ],
+      "recommended_fix": "Either (a) delete every GPC claim from the policy AND remove the right-to-opt-out-via-GPC row from the rights table, since there is no sharing to opt out of and no mechanism — OR (b) actually implement GPC: read navigator.globalPrivacyControl / Sec-GPC and gate any future analytics/sharing on it, document it, and record honoring it. Until a mechanism ships, the only safe move is to remove the claim. Do not leave an unbacked 'we honor GPC' sentence live."
+    },
+    {
+      "id": "ccpa-retention-disclosure-false",
+      "lens": "ccpa-cpra",
+      "severity": "critical",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Stated retention periods (\"deleted when game session ends\" / \"not retained after game ends\") are false; data persists indefinitely with no deletion mechanism — violates CPRA §1798.100(a)(3) storage-limitation disclosure",
+      "policy_quote": "Player display names | Deleted when game session ends",
+      "problem": "CPRA added an affirmative requirement (Cal. Civ. Code §1798.100(a)(3)) that the at-collection notice state 'the length of time the business intends to retain each category of personal information, or if that is not possible, the criteria used to determine that period.' TR1VIA's retention table gives specific, favorable periods — display names 'Deleted when game session ends,' session data/answer timestamps 'Not retained after game ends,' WebSocket metadata 'Not retained after session ends.' The code does the opposite: closing a night (POST /api/nights/[id]/close) only stamps nights.closed_at and deletes nothing; there is no cron, pg_cron, vercel.json schedule, or any purge/anonymize/TTL logic in the entire repo; the host dashboard actively reads player rows from already-closed nights; and last_seen_at / app_switch_total_seconds connection metadata persist with the row. The only deletion that exists (reset_night_to_setup) is a host 'reset and edit' RPC, not a session-end event, and it explicitly KEEPS players. So every retention period in the table is materially false, and the storage-limitation disclosure CPRA mandates is not just wrong but inverted. Stating a deletion that never happens is the most directly provable CCPA misrepresentation here — the discrepancy is binary (the row is or isn't deleted) and the code shows it is not.",
+      "law": "Cal. Civ. Code §1798.100(a)(3) (CPRA storage-limitation: must disclose actual retention period or criteria); §1798.100(c) (cannot retain PI longer than reasonably necessary for the disclosed purpose); §1798.130(a)(5)(A) (notice must be accurate); §17200 (deceptive statement); cf. CPPA enforcement priority on data-minimization/retention (2024-2025 sweeps).",
+      "evidence": [
+        "app/api/nights/[id]/close/route.ts:26-30 (close only sets closed_at; no DELETE)",
+        "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:71-95 (reset explicitly counts players as KEPT; only wipes answers/reveals/adjustments for live/done games)",
+        "app/host/page.tsx:72-77,200-204 (dashboard reads players from CLOSED nights)",
+        "Repo-wide: no cron / pg_cron / vercel.json schedule / purge / TTL / anonymize logic exists",
+        "policy lines 63, 137-138, 141 (false retention claims)"
+      ],
+      "recommended_fix": "Rewrite the retention table to the truth: 'Player display names, answers, answer-timing, scores, and connection metadata are retained indefinitely in our database after a game ends.' Then either (a) build an actual deletion/anonymization job on night-close so the favorable disclosure becomes true, or (b) state a concrete retention period and honor it. Do not ship a retention table whose every player-data row contradicts the code."
+    },
+    {
+      "id": "coppa-persistent-identifier-from-children",
+      "lens": "coppa-minors",
+      "severity": "critical",
+      "category": "legal-gap",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Persistent 365-day device ID + IP collected from any child who joins — COPPA \"personal information\" with no parental consent",
+      "policy_quote": "TR1VIA is not directed at children under the age of 13. We do not knowingly collect personal information from anyone under 13.",
+      "problem": "Under COPPA (16 C.F.R. §312.2), \"personal information\" expressly includes a persistent identifier that can be used to recognize a user over time and across sites (e.g., a cookie/device number) AND geolocation/IP. TR1VIA mints a signed, httpOnly, 365-day `tr1via_device` cookie (a stable UUID written to `players.device_id`, reused across nights — app/api/session/init/route.ts) and collects IP from every player. A child who picks up a phone in a pizza place and joins gets BOTH collected automatically before typing anything. The 2013 COPPA Rule amendment made persistent identifiers standalone PI. Because the collection is automatic and the disclaimer does nothing to prevent it, the \"we do not knowingly collect PI from anyone under 13\" sentence is contradicted by the system's own default behavior in exactly the venues the policy admits minors frequent. Once the operator has actual knowledge a sub-13 child played (e.g., a parent emails per the policy's own invitation), continued retention of that device-ID/IP/display-name with no verifiable parental consent is a COPPA violation. FTC penalties run up to $53,088 per violation (per-child), and the FTC has repeatedly brought six- and seven-figure cases (Epic/Fortnite $275M 2022; Musical.ly/TikTok $5.7M 2019; HyperBeard 2020) including against \"general audience\" apps where the operator had actual knowledge of child users.",
+      "law": "Children's Online Privacy Protection Act, 15 U.S.C. §§6501–6506; FTC COPPA Rule, 16 C.F.R. §312.2 (definition of \"personal information\" incl. persistent identifier + geolocation), §312.3, §312.5 (verifiable parental consent); FTC v. Epic Games (2022, $275M); United States v. Musical.ly/TikTok (2019, $5.7M); FTC v. HyperBeard (2020)",
+      "evidence": [
+        "app/api/session/init/route.ts:25-53 (tr1via_device cookie: signed UUID, httpOnly, 365-day maxAge, set for every browser including a child's)",
+        "supabase/migrations/0001_init.sql:113-123 (players.device_id persisted, unique(night_id,device_id) — stable cross-night identifier)",
+        "supabase/migrations/0002_rls.sql:14-22 (current_device_id() resolves the player via the cookie — the persistent identifier is load-bearing, not incidental)",
+        "GROUND TRUTH: every players row carries a device_id UUID from a 365-day cookie; IP hits Supabase Realtime + Vercel for every player"
+      ],
+      "recommended_fix": "Stop relying on the disclaimer as a defense for collection that happens by default. Either (a) implement a neutral age screen at join (\"Enter your age\" with no default, persistent until answered, per FTC neutral age-gate guidance) and block/avoid PI collection for under-13 — i.e., no persistent device cookie, no display-name storage, ephemeral session only; OR (b) if no age gate, add a true actual-knowledge takedown pipeline (see separate finding) AND shorten/eliminate player-side persistent identifiers. Update the policy to accurately describe that a persistent device identifier and IP ARE collected from everyone, and to commit to deleting any sub-13 child's record (device_id, display_name, answers, IP-linked rows) on notice."
+    },
+    {
+      "id": "gdpr-retention-claims-false-storage-limitation-art5",
+      "lens": "gdpr-transfers",
+      "severity": "critical",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Every EU/UK-facing retention promise is false — data persists indefinitely, breaching the storage-limitation principle and the right to erasure",
+      "policy_quote": "Player display names | Deleted when game session ends",
+      "problem": "The retention table promises deletion of player display names, answer timestamps, session data, and WebSocket metadata when a game ends. Forensic ground truth: NONE of this is true. Closing a night (POST /api/nights/:id/close) only stamps closed_at and deletes nothing; there is no cron, no TTL, no purge logic anywhere; the host dashboard actively reads player rows from CLOSED nights; and every player is tied to a 365-day device_id. Under GDPR this is a triple breach: (1) Art. 5(1)(e) storage limitation — keeping identifiable data with no defined limit and no deletion mechanism, while telling data subjects it's deleted; (2) Art. 5(1)(b)/(a) purpose limitation + transparency — the stated 'deleted at session end' purpose is contradicted by indefinite retention used for the host leaderboard; (3) Art. 17 right to erasure becomes hollow because the policy's own deletion promise is the supposed safeguard, and no erasure tooling exists (the only deletion RPC explicitly PRESERVES players). An affirmative, false statement that personal data is deleted is among the most enforced categories of transparency violation — it is the kind of misrepresentation that converts a paperwork gap into a deception finding. For an EU/UK subject this is a direct, demonstrable Chapter II/III breach, hence critical.",
+      "law": "GDPR Art. 5(1)(a) lawfulness/transparency, Art. 5(1)(b) purpose limitation, Art. 5(1)(e) storage limitation, Art. 13(2)(a) (must state retention period or criteria), Art. 17 right to erasure; UK GDPR equivalents",
+      "evidence": [
+        "app/api/nights/[id]/close/route.ts:26-30 (close only stamps closed_at; no DELETE)",
+        "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:71-95 (only deletion RPC explicitly KEEPS players)",
+        "app/host/page.tsx:72-77,200-204 (dashboard reads player rows from CLOSED nights — proves indefinite retention)",
+        "app/api/session/init/route.ts:47-53 (365-day device_id ties retained rows to a persistent identifier)",
+        "supabase/migrations/0001_init.sql:141-153 (answers incl. ms_to_lock/locked_at persist; never purged)"
+      ],
+      "recommended_fix": "Either implement the promised deletion (a scheduled purge/anonymization at night-close) OR rewrite the retention table to state the true indefinite retention with defined criteria and a real maximum. Do not claim deletion that the code does not perform. Build an actual erasure path before promising Art. 17 rights."
+    },
+    {
+      "id": "no-terms-of-service-the-real-liability-shield-is-absent",
+      "lens": "structural-liability",
+      "severity": "critical",
+      "category": "legal-gap",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "No Terms of Service exists — a privacy policy is not a liability shield; the single largest 'get sued' gap",
+      "policy_quote": "MISSING",
+      "problem": "Brandon asked to be protected 'from getting sued in just about every way.' A privacy policy does the opposite of that — it is a set of affirmative promises about data handling that CREATE liability when breached (see every other finding here). It contains zero defensive contract terms. There is no document anywhere in the repo that (a) disclaims warranties (the app is sold AS-IS, no guarantee of uptime — directly relevant given the 2026-05-27 live-show host-laptop freeze that 'cost a section'); (b) caps/limits liability (so a venue that loses a paid trivia night to an outage, or a player who claims emotional/reputational harm, can pursue uncapped damages); (c) requires indemnification from hosts (so when a host uploads infringing/defamatory custom questions, or runs the game for minors in a bar, TR1VIA is not the sole defendant); (d) selects Texas governing law and Johnson County / Cleburne venue (without it, a CA or EU plaintiff can drag Vyntechs into their home forum under their consumer law); (e) compels arbitration with a class-action waiver (the difference between a $400 small-claims matter and a $4M class action over, e.g., the false GPC/CCPA representation). The privacy policy even imports contract-of-adhesion language — 'Continued use of TR1VIA after changes take effect means you accept the updated policy' — without any enforceable agreement for that acceptance to attach to. This is the biggest hole by an order of magnitude: it should be a SEPARATE document (Terms of Service / Terms of Use), surfaced and accepted before play, not folded into the privacy policy.",
+      "law": "AT&T Mobility LLC v. Concepcion, 563 U.S. 333 (2011) (FAA enforces arbitration + class-action waivers in consumer adhesion contracts); Epic Systems v. Lewis, 138 S. Ct. 1612 (2018); Tex. Civ. Prac. & Rem. Code §§ 16.070 (contractual limitations) & ch. 171 (Texas Arbitration Act); UCC warranty disclaimers (Tex. Bus. & Com. Code § 2.316); Specht v. Netscape, 306 F.3d 17 (2d Cir. 2002) and Berman v. Freedom Financial, 30 F.4th 849 (9th Cir. 2022) (browsewrap unenforceable without conspicuous notice + manifestation of assent — bears on HOW the ToS must be presented to account-less players).",
+      "evidence": [
+        "filesystem: docs/legal/ contains ONLY privacy-policy-ORIGINAL.md — no terms-of-service.md, no terms.md, no eula",
+        "find app -type f | grep -iE 'terms|tos|eula' → only false hit app/api/questions/[id]/photos/route.ts ('tos' inside 'photos'); no Terms route",
+        "policy lines 213: 'Continued use of TR1VIA after changes take effect means you accept the updated policy' — adhesion-acceptance language with no contract to bind to",
+        "MEMORY: project_first_live_show — host laptop froze ~3.5min and 'cost a section' at the first paid live show; uptime/availability is a live damages vector with no warranty disclaimer or liability cap"
+      ],
+      "recommended_fix": "Draft a separate Terms of Service (Terms of Use) document and publish it at tr1via.com/terms, linked in the footer and on the player join screen and host login. It must include, at minimum: (1) AS-IS / no-warranty disclaimer (incl. no uptime SLA for the free tier); (2) limitation of liability capping damages at fees paid in the prior 12 months (or a fixed small sum for free users) and excluding consequential/incidental damages; (3) host indemnification for host-supplied content and host conduct; (4) governing law = Texas, exclusive venue = Johnson County, TX; (5) binding arbitration + class-action waiver with a 30-day opt-out and a small-claims carve-out; (6) acceptable-use / content rules for host-generated questions; (7) a conspicuous click-to-accept (host) and clear browsewrap-plus-notice (player) acceptance mechanic. Keep it plain-English. This is the priority deliverable, above fixing the privacy policy."
+    },
+    {
+      "id": "policy-not-published-or-linked-no-legal-effect",
+      "lens": "structural-liability",
+      "severity": "critical",
+      "category": "structural",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "The policy is not published in the app or linked anywhere — it has effectively no legal force and disclosures aren't 'made'",
+      "policy_quote": "MISSING",
+      "problem": "The document's own header claims a corrected policy lives at 'docs/legal/privacy-policy.md + app/privacy/page.tsx' — but neither file exists, and there is no /privacy route, no footer link, and no link from the player join screen or host login anywhere in app/, components/, or lib/. A privacy disclosure that is never surfaced to the user is not 'provided' for legal purposes: CCPA, TDPSA, and the other state acts all require the notice to be made available to the consumer at or before collection, typically via a conspicuous link. So today TR1VIA is collecting player display names, device-id cookies, answers, and host emails with NO published privacy notice at all — a standalone statutory violation independent of the policy's accuracy. Separately, because there is no link/notice, the 'continued use = acceptance' clause (line 213) cannot bind anyone (no reasonable notice = no assent). The net effect is the worst of both worlds: the operator gets none of the protective benefit of a posted policy, but the draft still contains affirmative false statements that become liability the moment it IS posted.",
+      "law": "Cal. Civ. Code § 1798.130(a)(5) & CCPA Regs § 7011 (conspicuous posting / 'Privacy Policy' link required); Tex. Bus. & Com. Code § 541.102 (reasonably accessible privacy notice); Va. Code § 59.1-578(C), Colo. Rev. Stat. § 6-1-1308(1) (accessible privacy notice); Specht v. Netscape, 306 F.3d 17 (2d Cir. 2002) (terms not reasonably communicated are unenforceable).",
+      "evidence": [
+        "policy lines 4-5: header claims 'docs/legal/privacy-policy.md + app/privacy/page.tsx' — VERIFIED neither exists",
+        "ls docs/legal/ → only privacy-policy-ORIGINAL.md present",
+        "find app -type d named privacy*/terms*/legal* → none",
+        "grep -rliE 'privacy.policy|/privacy|/terms' app components lib → no in-app link to any policy"
+      ],
+      "recommended_fix": "Before go-live, publish the corrected policy at a real route (app/privacy/page.tsx → /privacy) and the ToS at /terms. Add a persistent footer link ('Privacy' / 'Terms') on every page, plus a visible 'By joining you agree to our Terms & Privacy Policy' line with links on the player join (room-code) screen and the host login. Without the published + linked policy, none of the other fixes have any legal effect."
+    },
+    {
+      "id": "phantom-google-analytics",
+      "lens": "accuracy-ftc",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy describes Google Analytics (GA4) collection, _ga cookies, and CCPA 'sharing' machinery for an analytics service that is not installed",
+      "policy_quote": "TR1VIA uses two analytics services: Vercel Analytics and Google Analytics (GA4).",
+      "problem": "GA4 is a phantom: no gtag, no G-XXXX measurement ID, no googletagmanager.com in source or built JS, no next-third-parties, and the root layout renders zero analytics scripts. An entire policy section (GA4 collection list, _ga/_ga_[ID] cookies, CCPA 'sharing' caveats, the Opt-Out Add-On instruction, the 'we share IP/device identifiers with Google' sub-processor row) describes data flows that never occur. Over-disclosing a non-existent tracker is still a deceptive/misleading statement under §5 (it misrepresents what the product does and could itself constitute a false 'we share with Google' admission), and it makes the whole policy non-credible — which is the first thing an investigator notices. It also creates phantom obligations (honoring GA opt-outs that do nothing).",
+      "law": "FTC Act §5 (15 U.S.C. §45 — misleading statements of material fact, even over-statements); Tex. DTPA §17.46",
+      "evidence": [
+        "package.json: no GA / gtag / next-third-parties dependency (verified — grep returned nothing)",
+        "app/layout.tsx:36-49 (no analytics script tags)",
+        ".next build: no googletagmanager.com / google-analytics.com / gtag( matches per forensic agent"
+      ],
+      "recommended_fix": "Delete the entire Google Analytics section, the _ga and _ga_[ID] cookie rows, the Google sub-processor row, the GA retention row, and the GA Opt-Out Add-On references. If GA is added later, re-add accurate disclosures at that time."
+    },
+    {
+      "id": "phantom-vercel-analytics",
+      "lens": "accuracy-ftc",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy lists Vercel Analytics as an active analytics service; @vercel/analytics is not installed",
+      "policy_quote": "Vercel Analytics collects performance and usage data. This includes: pages visited and navigation paths, page load times (Web Vitals)...",
+      "problem": "@vercel/analytics and @vercel/speed-insights are not in package.json and no <Analytics>/<SpeedInsights> component is rendered, so no /_vercel/insights instrumentation runs. The policy's Vercel Analytics collection list, its cookie-table row, and its retention row all describe a product that is not wired in. Like the GA phantom, this is a material misrepresentation of the product's data collection. (Note: Vercel as a HOST is real — see the half-right finding — but Vercel Analytics as a product is a phantom.)",
+      "law": "FTC Act §5 (15 U.S.C. §45); Tex. DTPA §17.46",
+      "evidence": [
+        "package.json: no @vercel/analytics / @vercel/speed-insights (verified)",
+        "app/layout.tsx:36-49 (no Analytics/SpeedInsights component)",
+        "grep <Analytics|<SpeedInsights|_vercel/insights = zero matches per forensic agent"
+      ],
+      "recommended_fix": "Delete the Vercel Analytics section, its cookie-table row, and its retention row. Keep Vercel only as the infrastructure/hosting + server-logs processor (which is accurate)."
+    },
+    {
+      "id": "phantom-resend-email",
+      "lens": "accuracy-ftc",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy says host emails are transmitted to Resend for magic-link delivery; no email send path or email library exists",
+      "policy_quote": "Host email addresses are transmitted to Resend for magic link delivery. | Resend | Email delivery processor | Host email address, magic link content |",
+      "problem": "There is no email-send library anywhere (no resend/sendgrid/postmark/nodemailer/smtp in package.json or code — verified). Host sign-in mints a session server-side; the 'magic link' that does exist is a URL returned to the founder to share manually (text/AirDrop), never emailed. So the policy names a sub-processor (Resend) that receives nothing, and represents a data transmission (host email + link content to Resend) that never happens. Naming a phantom sub-processor in the sharing table is a false 'who we share with' statement — a category regulators read closely — and it advertises a data flow that doesn't exist.",
+      "law": "FTC Act §5 (15 U.S.C. §45 — false statement about third-party data sharing); CCPA §1798.130(a)(5) (accurate disclosure of categories of third parties); Tex. DTPA §17.46",
+      "evidence": [
+        "package.json: no resend/sendgrid/postmark/nodemailer (verified)",
+        "app/api/admin/grant-magic-link/route.ts:97-119 (generateLink returns URL for manual handoff, no send)",
+        "app/api/auth/founder-login/route.ts:70-101 (generateLink + verifyOtp server-side, no email)"
+      ],
+      "recommended_fix": "Remove the Resend sub-processor row and the 'transmitted to Resend' sentence. Replace the host-email purpose text with the truth: 'We store the host email to identify the host account and mint a login session; we do not send authentication emails through a third-party email provider.'"
+    },
+    {
+      "id": "false-host-auth-magic-link",
+      "lens": "accuracy-ftc",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy describes host login as a magic link emailed to and clicked by the host; actual flow sends no email",
+      "policy_quote": "Hosts log in via a magic link sent to their email address.",
+      "problem": "False in two reinforcing places (also: 'When a host account is provisioned, we collect the host's email address to send magic link authentication emails' and 'When a host clicks a magic link, a session token is set'). The live flow: host types email at /login -> POST /api/auth/founder-login looks up the hosts row and mints a Supabase session directly on the response (admin.generateLink consumed server-side via verifyOtp) — no email is sent, no link is clicked. A separate /auth/grant?t= URL exists but is founder-shared out-of-band, never auto-emailed. Misdescribing the authentication mechanism is a factual inaccuracy that compounds the Resend phantom and signals the policy was never reconciled with the product — material to a §5 / UDAP read because security and data-flow descriptions are exactly what a regulator tests against reality.",
+      "law": "FTC Act §5 (15 U.S.C. §45); Tex. DTPA §17.46",
+      "evidence": [
+        "app/(host)/login/page.tsx:1-10,74-84 (states 'No magic link, no OTP, no email round-trip')",
+        "app/api/auth/founder-login/route.ts:1-21,70-101 (server-side session mint)",
+        "app/auth/grant/route.ts:1-26 (founder-shared grant URL, not emailed)"
+      ],
+      "recommended_fix": "Rewrite both the 'Who This Policy Covers' line and the Host Email section to: 'Hosts sign in by entering their email; our server verifies the account and creates a login session. We do not send a magic-link email. New hosts may be onboarded via a one-time sign-in link the operator shares directly.'"
+    },
+    {
+      "id": "cookie-table-all-wrong",
+      "lens": "accuracy-ftc",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Cookie table lists five cookies — three phantom, and omits every cookie the app actually sets",
+      "policy_quote": "| _ga | Google Analytics | Distinguishes unique users | 2 years | ... | CSRF token | TR1VIA | Prevents request forgery | Session | | Vercel Analytics | Vercel | Performance measurement (no persistent cookie) | N/A |",
+      "problem": "Every substantive entry in the cookie table is wrong. _ga and _ga_[ID] do not exist (no GA). 'Vercel Analytics' does not exist (no @vercel/analytics). 'CSRF token' does not exist (zero csrf/xsrf anywhere in code or deps — verified). Meanwhile the table OMITS the three cookies/identifiers the app actually sets: (1) tr1via_device — signed UUID, httpOnly, SameSite=lax, Secure in prod, 365-day persistent player identifier; (2) the Supabase sb-* auth-token cookies (host session, library defaults); (3) the tr1via_device_id localStorage mirror. A cookie disclosure table that names only phantom cookies and hides the one year-long tracking identifier is a direct ePrivacy/CCPA accuracy failure and a §5 deception — it tells users they are tracked by Google when in fact they are tracked by a first-party year-long device cookie that isn't disclosed at all.",
+      "law": "FTC Act §5 (15 U.S.C. §45); CCPA §1798.130(a)(5)(C) (disclose categories of PI / identifiers collected); EU ePrivacy Directive Art. 5(3) (cookie disclosure/consent — relevant if EU expansion as policy contemplates); Tex. DTPA §17.46",
+      "evidence": [
+        "app/api/session/init/route.ts:25-26,44-53 (tr1via_device cookie set, 365 days — verified)",
+        "middleware.ts:45-60 (Supabase sb-* auth cookies refreshed)",
+        "Verified: no csrf/xsrf in code or package.json; no _ga; no @vercel/analytics"
+      ],
+      "recommended_fix": "Replace the table entirely with the real cookies: tr1via_device (TR1VIA, recognizes player device + scoring, ~1 year, httpOnly); sb-<ref>-auth-token (Supabase, host login session, per Supabase defaults); plus a row for the tr1via_device_id localStorage value. Delete the _ga, _ga_[ID], CSRF, and Vercel Analytics rows."
+    },
+    {
+      "id": "missing-pexels-subprocessor",
+      "lens": "accuracy-ftc",
+      "severity": "high",
+      "category": "missing-disclosure",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Pexels receives image-search queries server-side and serves images directly to every player/TV browser (leaking viewer IP); never disclosed",
+      "policy_quote": "MISSING",
+      "problem": "Two undisclosed Pexels data flows: (1) AI-generated image-search query text is sent to Pexels' API server-side (logged at Pexels' edge per the code comment); (2) question images are rendered with a plain <img> pointing at images.pexels.com (no proxy), so every player phone and the TV browser fetch directly from Pexels' CDN, exposing each viewer's IP address and User-Agent to Pexels. The policy says 'We do not share your data with third parties except as described below,' then omits Pexels entirely — making that sentence false as to a third party that receives viewer IPs. Direct third-party CDN calls leaking IP/UA are precisely the kind of undisclosed sharing that draws wiretap/CIPA-style class claims and §5 attention.",
+      "law": "FTC Act §5 (15 U.S.C. §45 — false 'we don't share except as described'); CCPA §1798.130(a)(5) (disclose third parties); Cal. CIPA/Pen. Code §631 wiretap-theory pixel/IP suits (relevant to undisclosed third-party browser calls)",
+      "evidence": [
+        "lib/pexels/search.ts:14-18 (query 'logged by Pexels edge'; server-side search)",
+        "components/player/PlayerQuestion.tsx:158-159 ('URLs are external; no /api/image proxy' — direct <img>)",
+        "next.config.ts:9-10 (remotePatterns allows images.pexels.com browser loads)",
+        "package.json: pexels dependency present"
+      ],
+      "recommended_fix": "Add Pexels to the sub-processor table: 'Pexels (US) — image provider — receives image-search query text from our server, and serves question images directly to your browser, which exposes your IP address and browser type to Pexels.' Or proxy images through /api/image to stop the direct IP leak, then disclose only the server-side query flow."
+    },
+    {
+      "id": "websocket-our-servers-misrepresentation",
+      "lens": "accuracy-ftc",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "WebSocket section claims connection data is visible to 'our servers' and not retained; it goes to Supabase and liveness fields persist",
+      "policy_quote": "Live trivia games use a persistent WebSocket connection. During an active game session, the following are visible to our servers: Your IP address ... This data is not retained after a game ends.",
+      "problem": "Two falsehoods in one section. (1) The WebSocket layer is Supabase Realtime, a separate US sub-processor — player IPs and connection metadata are processed by Supabase, not first-party 'our servers'; calling it 'our servers' hides the third-party transfer (compounds the missing-Supabase finding). (2) Connection liveness IS retained: players.last_seen_at and players.app_switch_total_seconds are written to the DB player row and survive after the night closes alongside the rest of the record — contradicting 'not retained after a game ends.' So the section misstates both who sees the data and how long it is kept.",
+      "law": "FTC Act §5 (15 U.S.C. §45); CCPA §1798.130(a)(3) (accurate retention) and §1798.130(a)(5) (third-party disclosure)",
+      "evidence": [
+        "lib/api/broadcast.ts:6-19,69-74 (WebSocket is Supabase Realtime)",
+        "supabase/migrations/0001_init.sql:118-120 (last_seen_at, app_switch_total_seconds persisted)",
+        "app/api/players/route.ts:71-77 (these fields written to the player row)"
+      ],
+      "recommended_fix": "Rewrite: 'Live games use a persistent connection provided by Supabase Realtime (a US sub-processor), which receives your IP address and connection timing. Some connection-liveness data (e.g., last-seen time) is stored on your player record and is retained after the game ends along with that record.'"
+    },
+    {
+      "id": "right-to-delete-no-mechanism",
+      "lens": "accuracy-ftc",
+      "severity": "high",
+      "category": "overcommitment",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy promises a working right-to-delete (and a privacy-request form); no deletion endpoint, admin tooling, or form/route exists",
+      "policy_quote": "Right to delete | Everyone | Email support@vyntechs.com or use the privacy request form",
+      "problem": "The policy grants every user a right to delete and tells players to provide date/venue/time so data can be located and removed — but there is no deletion endpoint or admin tooling for player data anywhere (the only player-data deletion is the host reset RPC, which preserves players). It also routes users to a 'privacy request form' at /privacy-request that does not exist (verified — no privacy route under app/), and the contact section leaves the URL as a literal placeholder. Promising a legal right and a request channel the company cannot actually fulfill is both an FTC §5 deception and a substantive failure to honor CCPA/state deletion rights once a request arrives — the request itself becomes the violation, and the 45-day clock starts on a process that can't complete.",
+      "law": "CCPA §1798.105 (right to delete) + §1798.130 (must provide a working request method, including the 45-day timeline); Tex. Data Privacy & Security Act §541.051-.052 (consumer deletion rights + appeal, effective 2024); FTC Act §5 (15 U.S.C. §45)",
+      "evidence": [
+        "Verified: no privacy/privacy-request route under app/; no player-data deletion endpoint",
+        "app/api/nights/[id]/reset-to-setup/route.ts:1-33 (host reset, not a deletion mechanism)",
+        "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:71-75 (players kept, not deleted)"
+      ],
+      "recommended_fix": "Build the deletion capability before promising it: an admin tool/endpoint that locates player rows (by night/venue/date) and deletes display_name, answers, participations, scores, and adjustments. Either build the /privacy-request form/route or remove all references to it and route everything to support@vyntechs.com. Do not advertise a placeholder URL."
+    },
+    {
+      "id": "ccpa-ga-sharing-narrative-phantom",
+      "lens": "ccpa-cpra",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Entire CCPA \"sharing with Google Analytics\" narrative describes processing that does not exist (GA4 not installed)",
+      "policy_quote": "Under the CCPA, sharing data with Google Analytics may constitute \"sharing\" personal information. ... We have configured GA to limit data use for Google's own advertising purposes, but we cannot represent that no \"sharing\" occurs under CCPA's definition.",
+      "problem": "GA4 is not installed: package.json contains no GA/gtag/next-third-parties dependency, the root layout renders no analytics scripts, and built JS contains no googletagmanager/google-analytics/gtag matches. So the policy's CCPA 'sharing' analysis, the _ga/_ga_[ID] cookie rows, the GA opt-out add-on instruction, the 'we have configured GA to limit data use' representation, and the Google row in the sub-processor table all describe a data flow that never happens. This is doubly harmful under CCPA: (1) the notice is materially inaccurate (Cal. Civ. Code §1798.130(a)(5) requires the privacy notice to describe actual collection/sharing practices), and (2) the affirmative statement 'We have configured GA to limit data use for Google's own advertising purposes' is a representation about a control the business cannot have made because GA isn't wired in — a false statement of fact. A consumer or the CPPA reading this concludes data is going to Google when it is not; conversely the policy buries the real undisclosed processors (Supabase, Pexels). An inaccurate notice that overstates third-party sharing is still a defective notice and undercuts every other representation's credibility in an enforcement posture.",
+      "law": "Cal. Civ. Code §1798.130(a)(5)(C) (privacy policy must describe categories of personal information actually disclosed/sold/shared and the categories of third parties); §1798.140(ah) (definition of 'share'); §1798.100(a) notice-at-collection accuracy; Cal. Bus. & Prof. Code §17200 (unfair/deceptive practice — material misstatement about data handling, per Sephora theory).",
+      "evidence": [
+        "package.json dependencies (lines 10-21) — no GA / next-third-parties / @vercel/analytics",
+        "app/layout.tsx:36-49 (root layout renders no analytics scripts)",
+        ".next build grep: googletagmanager.com / google-analytics.com / gtag( = zero matches",
+        "policy lines 75-92, 110-116, 147-151 (GA4 section, _ga cookie rows, Google sub-processor row)"
+      ],
+      "recommended_fix": "Remove the entire 'Google Analytics (GA4)' section, the _ga/_ga_[ID] cookie table rows, the GA opt-out add-on instruction, the 'we configured GA' representation, and the Google sub-processor row. If/when analytics is genuinely added, write the section to match the installed product. Replace the phantom-processor table with the real ones (Supabase, Pexels, Anthropic, Vercel-as-host)."
+    },
+    {
+      "id": "ccpa-donotsell-mechanism-on-phantom",
+      "lens": "ccpa-cpra",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "\"Do Not Sell or Share\" mechanics are built entirely on the non-existent GA flow; opt-out instructions point to dead controls",
+      "policy_quote": "TR1VIA does not sell personal information. However, because Google Analytics involves transmitting data to Google, this may constitute \"sharing\" under CCPA. You can opt out by: Using the Google Analytics Opt-Out Browser Add-On; Enabling a Global Privacy Control (GPC) signal in your browser — TR1VIA honors GPC signals as opt-out requests; Emailing support@vyntechs.com to request opt-out.",
+      "problem": "The 'How We Handle Do Not Sell or Share Requests' section predicates the entire opt-out right on GA 'sharing' that does not occur, then offers three opt-out paths that are all non-functional or false: (1) the GA Opt-Out Add-On does nothing because there is no GA to opt out of; (2) 'GPC signals as opt-out requests' is unimplemented (see ccpa-gpc-claim-no-mechanism); (3) the email path has no backing process or privacy route. Under CPRA, if a business actually 'shares' it must provide a 'Do Not Sell or Share My Personal Information' link or an opt-out-preference-signal mechanism (§1798.135(a)-(b)); here the business claims a sharing-opt-out obligation it then fails to satisfy with any working mechanism. Worse, by voluntarily asserting CCPA applicability and describing a 'sharing' opt-out, TR1VIA creates an enforceable promise even if it falls below CCPA's business thresholds — regulators and plaintiffs hold companies to the standard they publicly claim. A consumer who emails to opt out, or toggles GPC, gets no actual effect, which is the actionable harm.",
+      "law": "Cal. Civ. Code §1798.135(a) (Do-Not-Sell/Share link requirement when sharing occurs); §1798.135(b) (opt-out-preference-signal alternative); 11 CCR §7026 (requests to opt-out — must be operational); §1798.120 (right to opt out of sharing); Sephora settlement (offering opt-out mechanisms that don't function); promissory-estoppel/§17200 exposure from voluntarily claimed compliance.",
+      "evidence": [
+        "policy lines 197-203 (Do-Not-Sell section built on GA 'sharing')",
+        "package.json — no GA dependency (no actual Google sharing to opt out of)",
+        "Repo-wide grep — no GPC handling, so the GPC opt-out path is inert",
+        "No /privacy-request route exists in app/ (find app -path '*privacy*' returns nothing) — the email/form path has no backing process"
+      ],
+      "recommended_fix": "Since no 'sale' or 'share' actually occurs (no GA, no ad tech), the honest position is: state plainly 'TR1VIA does not sell or share personal information as defined by the CCPA/CPRA,' and remove the GA-add-on and GPC opt-out instructions entirely. Do not advertise a Do-Not-Sell/Share mechanism the business neither needs nor has. If sharing is added later, implement a working link/signal first, then disclose it."
+    },
+    {
+      "id": "ccpa-player-anonymity-misrepresentation",
+      "lens": "ccpa-cpra",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy claims player data is anonymous and not linked to a persistent identifier, but a 365-day device cookie/UUID links names+answers across sessions (defeats CCPA de-identification)",
+      "policy_quote": "These are used only for scoring, are not linked to any persistent identifier for players, and are not retained after the game session ends.",
+      "problem": "The policy leans on player data being non-identifying and not linked to any persistent identifier to minimize CCPA exposure. In reality every players row carries device_id, a UUID sourced from the signed httpOnly 'tr1via_device' cookie set with maxAge = 60*60*24*365 (one year), and the same device returns the same row across different nights — a textbook persistent, unique identifier. Under CCPA, a 'unique identifier' and 'persistent identifier' (device id / probabilistic identifier that recurs across sessions) are expressly enumerated categories of personal information (Cal. Civ. Code §1798.140(v)(1)(A) and §1798.140(aj) 'unique identifier'). Because display names and answer timing are linked to that recurring device_id, the data is neither 'deidentified' (§1798.140(m), which requires the business to be unable to reasonably re-link) nor 'not linked to any persistent identifier.' The CCPA squarely covers this even with no email — the statute reaches data 'reasonably capable of being associated with a particular consumer or device.' So the policy's central minimization claim is false, which (a) misstates the categories of PI collected (notice defect) and (b) waives the de-identification safe harbor TR1VIA implicitly relies on.",
+      "law": "Cal. Civ. Code §1798.140(v)(1)(A) (PI includes unique personal identifiers, online identifiers, device identifiers, 'or other similar identifiers'); §1798.140(aj) ('unique identifier' incl. device identifier, cookie, probabilistic identifier recurring across devices/sessions); §1798.140(m) (strict 'deidentified' standard — cannot reasonably re-link); §1798.130(a)(5)(B)-(C) (must list categories of PI actually collected).",
+      "evidence": [
+        "app/api/session/init/route.ts:26,52 (ONE_YEAR_SECONDS = 60*60*24*365; cookie maxAge = ONE_YEAR_SECONDS)",
+        "supabase/migrations/0001_init.sql:113-123 (players.device_id uuid; unique(night_id,device_id))",
+        "app/api/players/route.ts:62-80 (same device returns existing player row)",
+        "supabase/migrations/0002_rls.sql:14-22 (current_device_id() resolves player by the cookie-derived header)",
+        "policy lines 59, 86 (claims no persistent identifier link)"
+      ],
+      "recommended_fix": "Disclose the tr1via_device cookie (signed UUID, httpOnly, 365-day) in the cookie table and the categories-collected section, and stop claiming player data is 'not linked to any persistent identifier.' List 'unique/device identifier' as a category of personal information collected from players. If true anonymity is the goal, shorten the cookie to a single session and sever the cross-night re-linkage — otherwise treat players as identifiable consumers under CCPA."
+    },
+    {
+      "id": "ccpa-undisclosed-real-processors",
+      "lens": "ccpa-cpra",
+      "severity": "high",
+      "category": "missing-disclosure",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Notice fails to disclose the actual third parties receiving personal information (Supabase, Pexels) — categories-of-third-parties defect",
+      "policy_quote": "We do not share your data with third parties except as described below.",
+      "problem": "CCPA §1798.130(a)(5)(C) requires the privacy notice to disclose the categories of third parties / service providers to whom the business discloses personal information. The policy's sub-processor table lists Vercel, Google, and Resend — but two of those (Google/GA and Resend) receive nothing because they aren't installed, while the two real recipients of personal data are omitted entirely: (1) Supabase — the US-hosted Postgres + Auth + Realtime backbone that physically holds player display names, the device_id cookie UUID, answers, scores, host emails, and carries the live WebSocket (so player IP/connection metadata flows to Supabase's realtime endpoint, not 'our servers'); and (2) Pexels — whose CDN (images.pexels.com) is loaded by a plain <img> on every player phone and the TV, so each viewer's IP and User-Agent are sent directly to Pexels with no proxy. Naming phantom recipients while omitting the actual ones is a categories-of-third-parties disclosure failure and makes the 'visible to our servers' WebSocket claim false (it's Supabase's servers). For California consumers this defeats the right to know who their PI is disclosed to.",
+      "law": "Cal. Civ. Code §1798.130(a)(5)(C) (must disclose categories of third parties/service providers to whom PI is disclosed); §1798.110(c)(4) (right to know categories of third parties); §1798.140(ag) (service provider) / (ai) (third party) definitions; §1798.100(a) notice-at-collection accuracy.",
+      "evidence": [
+        "lib/supabase/admin.ts:1-33 + supabase/migrations/0001_init.sql:113-122 (Supabase holds display_name + device_id + answers; never named in policy)",
+        "lib/api/broadcast.ts:6-19,69-74 (player WebSocket is Supabase Realtime, not first-party)",
+        "components/player/PlayerQuestion.tsx:158-159 + next.config.ts:9-10 (direct <img> to images.pexels.com → viewer IP/UA to Pexels)",
+        "policy lines 147-151 (sub-processor table lists only Vercel/Google/Resend; Supabase and Pexels absent)"
+      ],
+      "recommended_fix": "Rebuild the sub-processor table to the real flows: add Supabase (datastore + auth + realtime; receives display names, device IDs, answers, host email, player IPs via WebSocket), add Pexels (image CDN; receives viewer IP/User-Agent), add Anthropic (host-entered topic text only). Remove Google/Resend. Fix the WebSocket section to say connection metadata flows to Supabase, not 'our servers.' Optionally proxy Pexels images to avoid leaking viewer IPs."
+    },
+    {
+      "id": "gdpr-applies-on-eu-visitor-load-not-marketing-target",
+      "lens": "gdpr-transfers",
+      "severity": "high",
+      "category": "legal-gap",
+      "verdict": "needs-attorney",
+      "confidence": "high",
+      "title": "Policy assumes GDPR/UK GDPR don't apply because the app isn't \"marketed\" to the EU/UK — wrong test; serving an EU/UK visitor can trigger it now",
+      "policy_quote": "TR1VIA is currently marketed to US venues. If TR1VIA expands to serve EU or UK customers, this policy will be updated to include an EU/UK representative before that expansion takes place.",
+      "problem": "The policy defers every EU/UK obligation (Art. 27 representative, SCC detail, legal-basis rigor) on the theory that GDPR only bites once TR1VIA is 'marketed' to the EU/UK. That is the wrong trigger. GDPR/UK GDPR territorial scope (Art. 3(2)) does NOT turn on marketing intent alone — it turns on (a) offering goods/services to data subjects in the Union, or (b) monitoring their behaviour. tr1via.com is a public website with no geo-block; an EU/UK resident who travels to a US venue, or simply loads the page, has their IP, User-Agent, device cookie, display name, and answer-timing processed. The EDPB Guidelines 3/2018 confirm 'targeting' is assessed on the full factual picture, and 'monitoring' (Art. 3(2)(b)) — which the IP-derived geolocation and the 365-day persistent device cookie squarely resemble — has NO marketing-intent requirement at all. So the policy's central premise is legally unsound: the obligations it postpones may already attach. Worse, the underlying tech claims are false (no GA, no Resend, no SCC machinery, GPC not honored), so even the US-only posture rests on disclosures that don't match the code. If a single EU/UK data subject is processed, the absence of an Art. 27 representative, lawful transfer mechanism, and accurate basis table is a live exposure, not a future one.",
+      "law": "GDPR Art. 3(2)(a)-(b) and UK GDPR (DPA 2018) equivalent; EDPB Guidelines 3/2018 on territorial scope (targeting + monitoring criteria, esp. that monitoring needs no marketing intent); Recital 24 (behaviour monitoring incl. tracking/profiling via online identifiers)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:157-161 (international-transfers section defers all EU/UK obligations to a future 'expansion')",
+        "app/api/session/init/route.ts:25-26,47-53 (365-day persistent device cookie set on every player — a monitoring-style online identifier)",
+        "docs/legal/privacy-policy-ORIGINAL.md:40-44 (IP used to derive geographic location for every request)",
+        "grep app/ lib/ middleware.ts for geo-block/consent: none — site is globally reachable with no EU/UK gate"
+      ],
+      "recommended_fix": "Either (a) genuinely geo-block EU/UK traffic and state that explicitly, or (b) treat GDPR/UK GDPR as in-scope now: appoint an Art. 27 representative (or document why the Art. 27(2) exemption applies), name a lawful transfer mechanism with specifics, and make the legal-basis table accurate. Stop relying on 'marketed to US venues' as the scope test — replace with the Art. 3(2) offering/monitoring analysis."
+    },
+    {
+      "id": "gdpr-scc-where-applicable-vague-unverifiable",
+      "lens": "gdpr-transfers",
+      "severity": "high",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "International-transfer claim is vague (\"SCCs where applicable\") and rests on phantom processors — the transfer mechanism is unspecified and partly impossible to verify",
+      "policy_quote": "We rely on appropriate transfer mechanisms — including Standard Contractual Clauses (SCCs) — where applicable.",
+      "problem": "For a US controller exporting EU/UK personal data, GDPR Chapter V (Arts. 44-49) requires the policy to identify WHICH safeguard applies to WHICH transfer and let the data subject understand the mechanism and how to get a copy (Art. 13(1)(f) — reference to safeguards and means to obtain them). 'SCCs where applicable' names no specific transfer, no module, no UK Addendum/IDTA, and offers no way to obtain a copy. It is non-committal boilerplate. Two compounding problems: (1) the named processors it would cover are mostly fictional — Google Analytics and Resend do not exist in the code, so any SCC narrative built around 'Vercel and Google' (line 153) is partly meaningless. (2) The two LARGEST real exporters — Supabase (US-hosted Postgres + Auth + Realtime carrying player IPs and holding display names/answers/device-id) and Pexels (its CDN is hit directly by every player phone and TV, leaking viewer IP/User-Agent) — are NOT named in the transfer section at all, so no transfer mechanism is asserted for the data flows that actually leave the user's browser to a US third party. Post-Schrems II, a bare 'SCCs where applicable' with no Transfer Impact Assessment reference and no coverage of the real recipients is exactly the kind of inadequate Chapter V disclosure DPAs penalize.",
+      "law": "GDPR Arts. 44-46, Art. 13(1)(f) (identify safeguards + means to obtain a copy), Art. 49 derogations; UK GDPR equivalents + ICO IDTA / UK Addendum to EU SCCs; CJEU C-311/18 Schrems II (SCCs require supplementary-measures assessment)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:159 ('SCCs — where applicable', no specifics)",
+        "docs/legal/privacy-policy-ORIGINAL.md:153 (DPA/SCC narrative names only Vercel + Google; Google/GA4 is a phantom per code)",
+        "next.config.ts:9-11 (images.pexels.com + *.supabase.co loaded by user browsers — real US transfers undisclosed)",
+        "lib/api/broadcast.ts:6-19,69-74 (Supabase Realtime carries player IPs — a US transfer not covered by any named mechanism)",
+        "package.json:13-23 (no @vercel/analytics, no email/Resend lib — phantom processors the SCC claim is built around)"
+      ],
+      "recommended_fix": "Rewrite Chapter V disclosure to name each real US recipient (Vercel, Supabase, Pexels, Anthropic), state the specific mechanism per transfer (EU SCCs module + UK IDTA/Addendum), reference a Transfer Impact Assessment, and tell data subjects how to request a copy of the safeguards. Delete the Google/Resend transfer narrative."
+    },
+    {
+      "id": "gdpr-cookies-no-prior-consent-eprivacy-pecr",
+      "lens": "gdpr-transfers",
+      "severity": "high",
+      "category": "legal-gap",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Persistent device cookie + claimed analytics cookies are set with no prior consent and no consent banner — ePrivacy/PECR violation for any EU/UK visitor",
+      "policy_quote": "Global Privacy Control (GPC): TR1VIA honors GPC signals. If your browser sends a GPC signal, we treat it as a request to opt out of sharing your personal information with third-party analytics tools.",
+      "problem": "Two intertwined defects. (1) Non-essential cookies/identifiers require PRIOR opt-in consent for EU/UK visitors under the ePrivacy Directive Art. 5(3) (EU) and PECR reg. 6 (UK) — read with GDPR's consent standard (Art. 4(11), 7). TR1VIA sets a signed 365-day tr1via_device cookie on every player via POST /api/session/init with no consent gate and no banner anywhere in the codebase. A year-long persistent identifier is not plausibly 'strictly necessary' for the purposes a player explicitly requested in the lax sense ePrivacy requires; even if one argues a short session cookie is essential, a 365-day cross-night tracker is not, and the policy never asks consent. (2) The policy's GPC and analytics-opt-out machinery is an affirmative false statement: no code reads Sec-GPC/navigator.globalPrivacyControl, and GA/Vercel Analytics aren't installed — so 'TR1VIA honors GPC signals' and the whole opt-out section describe controls that don't exist. For EU/UK, telling a visitor they can object via GPC/opt-out when nothing implements it is a transparency breach layered on top of the consent breach. This is the issue California regulators fined Sephora for (unhonored GPC) and EU DPAs routinely fine for cookie-without-consent (CNIL's Google/Facebook cookie fines).",
+      "law": "ePrivacy Directive 2002/58/EC Art. 5(3) (prior consent for storage/access on terminal equipment); UK PECR reg. 6; GDPR Art. 4(11) & Art. 7 (consent standard); CNIL cookie enforcement (Google €150M, Facebook €60M, Dec 2021); Cal. AG Sephora settlement 2022 (unhonored GPC) for the parallel US exposure",
+      "evidence": [
+        "app/api/session/init/route.ts:25-26,47-53 (365-day httpOnly tr1via_device cookie set with no consent gate)",
+        "grep app/ components/ lib/ middleware.ts for consent/cookie-banner: zero matches (no consent mechanism exists)",
+        "middleware.ts:29-86 + lib/supabase/server.ts:40-76 (no Sec-GPC / globalPrivacyControl read anywhere)",
+        "package.json:13-23 (no GA / @vercel/analytics — the cookies the consent text governs are phantom)",
+        "docs/legal/privacy-policy-ORIGINAL.md:92,202 ('TR1VIA honors GPC signals' — unimplemented)"
+      ],
+      "recommended_fix": "Add a compliant consent mechanism (prior opt-in for non-essential storage) before setting any non-essential cookie for EU/UK visitors, or scope the device cookie to strictly-necessary session length and justify it. Delete the GPC-honoring and analytics-opt-out claims until actually implemented, or implement a Sec-GPC reader. Update the cookie table to list the real tr1via_device + sb-* cookies."
+    },
+    {
+      "id": "leftover-bracketed-placeholders",
+      "lens": "structural-liability",
+      "severity": "high",
+      "category": "placeholder",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Four leftover bracketed placeholders make the policy look unfinished and reference a form that doesn't exist",
+      "policy_quote": "Google Analytics data is retained for [X months — configure in GA4 Admin → Data Settings → Data Retention].",
+      "problem": "The as-delivered policy ships with raw editorial placeholders: '[X months — configure in GA4...]' (lines 88, 135), '[Y days — configure in Vercel dashboard]' (lines 73, 136), '[Z days — configure and enter here]' (line 140), and '[PRIVACY REQUEST FORM URL — build at tr1via.com/privacy-request]' (line 218). A policy that publicly says '[Z days — configure and enter here]' is visibly unfinished — it signals to a regulator (and to opposing counsel in discovery) that the operator never actually determined or honored its own retention periods, which is itself a CCPA/TDPSA disclosure defect (these laws require stating retention or the criteria used). Worse, two of the three retention placeholders describe analytics tools (GA4, Vercel Analytics) that do not exist in the code at all, and the fourth points players to a /privacy-request form that was never built — so a player who follows the policy's instructions hits a dead link, which is an unfair/deceptive act in itself.",
+      "law": "Cal. Civ. Code § 1798.130(a)(5)(C) / CCPA Regs (retention period or criteria must be disclosed); Tex. Bus. & Com. Code § 541.102 (TDPSA privacy-notice content requirement); FTC Act § 5 (15 U.S.C. § 45) — publishing a policy that points to a non-existent rights mechanism is a deceptive practice.",
+      "evidence": [
+        "policy lines 88, 135: '[X months — configure in GA4 Admin → Data Settings → Data Retention]'",
+        "policy lines 73, 136: '[Y days — configure in Vercel dashboard]'",
+        "policy line 140: '[Z days — configure and enter here]'",
+        "policy line 218: '[PRIVACY REQUEST FORM URL — build at tr1via.com/privacy-request]'",
+        "GROUND TRUTH: GA4 and Vercel Analytics are phantoms (not in package.json), so the GA4/Vercel retention rows should be deleted, not filled in; no /privacy-request route exists in app/"
+      ],
+      "recommended_fix": "Delete the GA4 and Vercel-Analytics retention rows entirely (those tools don't exist). For host dashboard activity logs, state a concrete number (e.g., 'up to 90 days') and make the code/infra match it, or state the criteria. Replace the [PRIVACY REQUEST FORM URL] placeholder either by building a real form at /privacy-request and linking it, or by removing every 'or use the privacy request form' reference and routing all rights requests to support@vyntechs.com only. Ship no bracketed text."
+    },
+    {
+      "id": "dba-entity-identity-unclear-cant-contract-or-limit-liability",
+      "lens": "structural-liability",
+      "severity": "high",
+      "category": "legal-gap",
+      "verdict": "needs-attorney",
+      "confidence": "high",
+      "title": "'Vyntechs (DBA)' names a trade name, not a clearly identified legal entity — undermines who is contracting and who is shielded",
+      "policy_quote": "TR1VIA is operated by Vyntechs (DBA), based in Texas, United States. Our mailing address is 1712 Raylene Dr, Cleburne, TX 76033.",
+      "problem": "A 'DBA' (assumed name) is not a legal person — it cannot sue, be sued, or enter contracts; only the underlying entity can. The policy never names that entity. If 'Vyntechs' is an assumed name of Brandon as a sole proprietor, then there is NO liability shield at all: a judgment over a data-breach or false-GPC claim reaches Brandon's personal assets (the Cleburne home address printed in the policy is presumably his). If it is meant to be an LLC, the policy fails to say 'Vyntechs LLC,' which (a) weakens the corporate veil (Texas requires the entity to hold itself out by its true name to preserve limited liability) and (b) means any ToS limitation-of-liability/arbitration clause is signed by a non-entity and is vulnerable to challenge. Printing a residential street address as the registered contact, with no entity wrapper, maximizes personal exposure. This must be resolved before the ToS is drafted, because every protective clause depends on a real contracting party.",
+      "law": "Tex. Bus. & Com. Code ch. 71 (Assumed Business or Professional Name Act — a DBA is not an entity; assumed-name certificate required); Tex. Bus. Orgs. Code § 5.051-5.053 (entity name use) & veil-piercing doctrine (Castleberry v. Branscum, 721 S.W.2d 270 (Tex. 1986)) — failure to operate under the true entity name supports alter-ego liability.",
+      "evidence": [
+        "policy lines 10, 15, 219: 'Vyntechs (DBA)' with residential address 1712 Raylene Dr, Cleburne, TX 76033 and no entity type (LLC/Inc) ever stated",
+        "MEMORY: user_brandon — solo dev, owns tr1via.com; founder email brandon@vyntechs.com — consistent with sole-proprietor/DBA, i.e. no liability shield",
+        "GROUND TRUTH: hosts.email and player data are held by 'Vyntechs (DBA)' as the named controller — controller liability attaches to whatever entity that resolves to"
+      ],
+      "recommended_fix": "Confirm the legal entity. If none exists, form a Texas LLC and operate TR1VIA under it BEFORE go-live; that is the actual liability shield. Then state the true name everywhere: 'TR1VIA is operated by [Vyntechs LLC], a Texas limited liability company doing business as Vyntechs.' File the assumed-name certificate for any DBA. Consider a registered-agent / P.O. box address instead of the home address. The ToS and privacy policy must both name the same true entity as controller/contracting party."
+    },
+    {
+      "id": "acceptance-mechanics-broken-for-account-less-players",
+      "lens": "structural-liability",
+      "severity": "high",
+      "category": "overcommitment",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "No click-through or account for players, but the policy asserts deemed acceptance — unenforceable and a deception risk",
+      "policy_quote": "Continued use of TR1VIA after changes take effect means you accept the updated policy. If you are a host and do not agree, contact us at support@vyntechs.com.",
+      "problem": "Players join by typing a 6-char code — no account, no checkbox, no terms screen (confirmed: no in-app policy link at all). The policy nonetheless relies on 'continued use = acceptance' and promises to 'Email hosts at least 30 days before changes' / 'Post a notice at tr1via.com.' For players there is no email and currently no posted notice, so the change-notification promise to players is impossible to keep, and the deemed-acceptance theory fails for lack of reasonable notice (pure browsewrap with no conspicuous link is routinely held unenforceable). This matters because the protective clauses Brandon actually needs — arbitration, class waiver, liability cap (which belong in the ToS) — are exactly the clauses courts refuse to enforce against users who were never shown them. Today the player flow gives users no opportunity to see or assent to anything, so every downstream protective term is at risk.",
+      "law": "Berman v. Freedom Financial Network, 30 F.4th 849 (9th Cir. 2022) & Nguyen v. Barnes & Noble, 763 F.3d 1171 (9th Cir. 2014) (browsewrap unenforceable without conspicuous notice + manifestation of assent); Sgouros v. TransUnion, 817 F.3d 1029 (7th Cir. 2016).",
+      "evidence": [
+        "policy line 21: 'No account required. We do not ask for your name or email address.' — no identifier to deliver change-notice to players",
+        "policy lines 207-213: change process promises email-to-hosts + notice-at-tr1via.com + deemed acceptance",
+        "GROUND TRUTH: no /privacy route and no in-app link — players are never shown the policy, so 'continued use = acceptance' has no notice predicate",
+        "app player join is a room-code entry screen with no terms gate (no privacy/terms link found in app/components)"
+      ],
+      "recommended_fix": "Add a conspicuous, persistent 'By joining, you agree to our Terms and Privacy Policy' line with working links directly on the player join screen and host login (sign-in-wrap). For material changes, since players have no email, rely on a dated in-app banner/notice and the updated 'Last Updated' date, and say so honestly in the Changes section instead of promising player email. Keep the host-email 30-day notice (hosts do have emails). Soften deemed-acceptance to apply only after the user has been given reasonable notice via the linked policy."
+    },
+    {
+      "id": "rls-no-access-cutoff-after-end",
+      "lens": "accuracy-ftc",
+      "severity": "medium",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy frames data as gone once the session ends, but RLS and read paths keep names/answers readable after night close",
+      "policy_quote": "Not retained after game ends",
+      "problem": "Beyond retention, there is no access cutoff: no RLS policy or read path gates the personal tables on closed_at. answers_post_resolve_read keeps answers readable to participants once a question finishes; players_self_select, participations_read, and the admin TV snapshot keep names and answers visible after the night closes. So the data is not only retained but remains actively accessible/served after the 'session ends' — deepening the falsity of every 'not retained / deleted at end' claim and meaning a player's name/answers can still be surfaced post-game.",
+      "law": "FTC Act §5 (15 U.S.C. §45); CCPA §1798.100(c)/§1798.130(a)(3) (retention + use limitation accuracy)",
+      "evidence": [
+        "supabase/migrations/0002_rls.sql:171-172 (answers_post_resolve_read — no closed_at gate)",
+        "app/api/tv/[code]/snapshot/route.ts:64-69,259-266 (names/answers served after close)"
+      ],
+      "recommended_fix": "Either add a closed_at-based access cutoff in RLS/read paths and document it, or remove all 'not retained / not accessible after the game ends' language and state that game data remains stored and viewable in recaps/leaderboards until deleted."
+    },
+    {
+      "id": "host-session-token-cookie-mismatch",
+      "lens": "accuracy-ftc",
+      "severity": "medium",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy describes a single 'session token cookie set when a host clicks a magic link, lasts until logout'; reality is Supabase sb-* cookies set on type-email sign-in",
+      "policy_quote": "When a host clicks a magic link, a session token is set in their browser. This token authenticates the host for subsequent requests, is stored as a browser cookie ... | Session token cookie | TR1VIA | Authenticates host login | Until logout |",
+      "problem": "The host session is not a single TR1VIA-set cookie triggered by clicking a magic link. It is the Supabase @supabase/ssr auth-token cookie set (sb-<project-ref>-auth-token, possibly chunked .0/.1), created when the host types their email and the server mints the session — and Supabase sessions expire/refresh on their own schedule, not strictly 'until logout.' Naming the wrong setter (TR1VIA vs Supabase), the wrong trigger (magic-link click vs type-email), and the wrong lifetime misdescribes the actual security/auth mechanism. Lower-probability standalone harm but it is a security-claim inaccuracy in the same document that makes false security representations, which regulators read together.",
+      "law": "FTC Act §5 (15 U.S.C. §45); CCPA §1798.130(a)(5)(C) (accurate identifier/cookie disclosure)",
+      "evidence": [
+        "middleware.ts:45-60 (Supabase sb-* auth cookies via @supabase/ssr)",
+        "app/api/auth/founder-login/route.ts:79-92 (session minted on type-email, not magic-link click)",
+        "lib/supabase/server.ts:48-74 (library-default cookie options)"
+      ],
+      "recommended_fix": "Rewrite: 'When a host signs in, Supabase (our auth provider) sets a session cookie (sb-…-auth-token) in the browser to keep the host logged in. It refreshes automatically and is cleared on logout.' Update the cookie table row accordingly and drop the 'CSRF token' row."
+    },
+    {
+      "id": "vercel-analytics-role-overstated",
+      "lens": "accuracy-ftc",
+      "severity": "medium",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Vercel sub-processor row claims an 'analytics' role and analytics data flow that is not implemented",
+      "policy_quote": "| Vercel | Infrastructure and analytics processor | IP address, User-Agent, page requests, performance data | vercel.com/legal/privacy-policy |",
+      "problem": "Vercel is real as the hosting/edge provider (server logs, IP, User-Agent — accurate), but the 'and analytics processor' role and 'performance data' sharing describe Vercel Analytics, which is not installed. So this row is half-true: correct as host, false as analytics. It overstates the data shared with Vercel and reinforces the phantom-analytics narrative. Because Vercel is the one correctly-named processor, leaving the analytics overstatement in keeps an otherwise-accurate row partly false.",
+      "law": "FTC Act §5 (15 U.S.C. §45); CCPA §1798.130(a)(5) (accurate scope of data shared)",
+      "evidence": [
+        "package.json: no @vercel/analytics (analytics role unsupported — verified)",
+        "docs/legal/privacy-policy-ORIGINAL.md:38-46 (server-logs claim — accurate for hosting)"
+      ],
+      "recommended_fix": "Trim the row to: 'Vercel — infrastructure/hosting processor — IP address, User-Agent, page requests (server logs). vercel.com/legal/privacy-policy.' Drop 'analytics' and 'performance data.'"
+    },
+    {
+      "id": "no-account-no-name-vs-display-name",
+      "lens": "accuracy-ftc",
+      "severity": "medium",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "'We do not ask for your name' framing conflicts with collecting, persisting, and showing player display names linked to a device ID",
+      "policy_quote": "Players — anyone who joins a trivia game using a 6-character room code on their phone browser. No account required. We do not ask for your name or email address.",
+      "problem": "The 'we do not ask for your name' line sets an anonymity expectation that the product contradicts: players DO enter a display name (the policy admits this later and concedes it 'is personal data if they identify you'), that name is stored indefinitely, and it is tied to a 365-day device_id. Read against the persistent-identifier and no-deletion findings, the up-front 'no name' framing is misleading about how identifiable and persistent player data actually is. Standalone it is soft, but it compounds the central anonymity misrepresentation regulators would read holistically.",
+      "law": "FTC Act §5 (15 U.S.C. §45 — net-impression deception); CCPA §1798.140(v) (display name + device ID = PI)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:21 (no-name framing) vs :63 (display names are personal data)",
+        "supabase/migrations/0001_init.sql:113-123 (display_name + device_id persisted together)"
+      ],
+      "recommended_fix": "Reconcile the framing: 'No account or email is required to play. You may enter a display name, which is shown to others and to the host and is stored with a device identifier we set on your browser.' Remove the unqualified 'we do not ask for your name.'"
+    },
+    {
+      "id": "published-policy-and-app-page-nonexistent",
+      "lens": "accuracy-ftc",
+      "severity": "medium",
+      "category": "placeholder",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Document header references a corrected published policy and an app/privacy page; neither exists, and there is no live privacy page",
+      "policy_quote": "the corrected, published policy lives in docs/legal/privacy-policy.md + app/privacy/page.tsx.",
+      "problem": "The header asserts a corrected, published policy exists at docs/legal/privacy-policy.md and app/privacy/page.tsx, but neither file exists — docs/legal/ contains only this ORIGINAL baseline, and there is no app/privacy route (verified). So (a) the inaccurate ORIGINAL is the only policy artifact, and (b) there is no privacy policy served anywhere in the live app at all. A live consumer product handling personal data with no published privacy policy is itself a CCPA notice-at-collection gap, independent of the content errors — and the header's claim that a corrected version is published is false.",
+      "law": "CCPA §1798.100(b)/§1798.130(a)(5) + §1798.135(c)(2) (notice at collection / policy must be posted and accessible); FTC Act §5 (failure to provide a posted accurate policy as represented)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:4-5 (claims corrected policy + app/privacy/page.tsx exist)",
+        "Verified: app/privacy does not exist; docs/legal/ holds only the ORIGINAL"
+      ],
+      "recommended_fix": "Produce the corrected policy, publish it at a real route (app/privacy/page.tsx) and link it from join/lobby and host pages so notice-at-collection is satisfied, then make the header's reference true. Until then, do not represent that a corrected/published version exists."
+    },
+    {
+      "id": "ccpa-no-privacy-request-mechanism",
+      "lens": "ccpa-cpra",
+      "severity": "medium",
+      "category": "placeholder",
+      "verdict": "adjusted",
+      "confidence": "high",
+      "title": "Rights table and contact section promise a privacy-request form/route that does not exist (no operational request method)",
+      "policy_quote": "Privacy request form: [PRIVACY REQUEST FORM URL — build at tr1via.com/privacy-request]",
+      "problem": "The rights table (right to know/access/delete/correct/portability) repeatedly instructs consumers to 'use the privacy request form,' and the contact block links to tr1via.com/privacy-request — but no such route exists anywhere in app/ (find app -path '*privacy*' returns nothing; there is no app/privacy or app/privacy-request). The CCPA requires a business to provide at least two designated methods for submitting verifiable consumer requests (and at minimum a toll-free number OR, for online-only businesses, an email address plus a web form is the regulatory expectation). Shipping a policy that names a request form that 404s — with a literal '[PRIVACY REQUEST FORM URL — build at ...]' placeholder left in the live text — means California consumers cannot actually exercise access/deletion, and the unedited placeholder is itself evidence the policy was published unfinished. A deletion or access request that has no working intake is a §1798.130 method-of-submission failure, and the dangling placeholder is the kind of obviously-broken artifact that escalates an audit from 'inaccurate' to 'reckless.'",
+      "law": "Cal. Civ. Code §1798.130(a)(1) (two or more designated methods for submitting requests; email address acceptable for online-only businesses); §1798.105 (right to delete) & §1798.110/§1798.100 (right to know/access) — must be operationally exercisable; 11 CCR §7020 (methods for submitting requests must be functional and easy to execute).",
+      "evidence": [
+        "policy line 218 (literal placeholder '[PRIVACY REQUEST FORM URL — build at tr1via.com/privacy-request]')",
+        "policy lines 180-185 ('use the privacy request form' for know/delete/correct/portability)",
+        "find app -path '*privacy*' returns nothing; app/privacy and app/privacy-request do not exist",
+        "ground-truth: no /privacy-request route and no privacy/legal route anywhere under app/"
+      ],
+      "recommended_fix": "Either build a working request intake (a /privacy-request form posting to a real handler, or at minimum honor support@vyntechs.com as the single email method and say so) BEFORE publishing, and delete every 'privacy request form' reference and the placeholder URL. Two methods are not strictly required for an exclusively-online business, but the one method you name must actually work. Remove the literal '[...build at...]' placeholder now."
+    },
+    {
+      "id": "ccpa-business-threshold-voluntary-promise",
+      "lens": "ccpa-cpra",
+      "severity": "medium",
+      "category": "overcommitment",
+      "verdict": "needs-attorney",
+      "confidence": "high",
+      "title": "Policy voluntarily asserts CCPA compliance and California-specific rights/timelines while almost certainly below CCPA's business thresholds — creating an enforceable promise it then breaks",
+      "policy_quote": "For California residents, we will acknowledge within 10 business days and complete within 45 calendar days. If we need more time, we will notify you.",
+      "problem": "A single-customer, pre-revenue trivia tool run by a Texas sole-DBA almost certainly does NOT meet any of CCPA's three §1798.140(d)(1) business thresholds: (A) $25M+ annual gross revenue, (B) buying/selling/sharing PI of 100,000+ CA consumers/households, or (C) deriving 50%+ of revenue from selling/sharing PI. If TR1VIA is not a 'business' under §1798.140(d), the CCPA does not apply by force of law. BUT the policy voluntarily and specifically claims CCPA applicability — citing CCPA 'sharing,' the 10-business-day acknowledgment / 45-calendar-day completion timeline (§1798.130(a)(2)/11 CCR §7021), right to non-discrimination, GPC honoring, and a CA-specific rights row. Voluntarily adopting a regulatory standard converts it into an enforceable representation under §17200 / FTC-style deception theory: a company is held to the privacy promises it publicly makes regardless of whether the statute independently bound it. So TR1VIA gets the worst of both worlds — it triggers no statutory exemption benefit (it claimed the burden) yet fails to deliver the very things it promised (working GPC, working request form, the 45-day pipeline, accurate retention). The exposure is the gap between promise and practice, not the statute's own reach.",
+      "law": "Cal. Civ. Code §1798.140(d)(1)(A)-(C) (the three business thresholds — likely none met); §1798.130(a)(2) & 11 CCR §7021 (the 10-day-ack / 45-day-completion timeline the policy adopts and must then honor); Cal. Bus. & Prof. Code §17200 (a voluntarily-made public privacy promise is enforceable as a deceptive practice if broken); FTC Act §5 analog.",
+      "evidence": [
+        "policy lines 186-188, 193 (CA opt-out/non-discrimination rights + 10-business-day/45-calendar-day timeline)",
+        "Business context: single paying customer (Heather), pre-scale, Vyntechs DBA — far below 100k CA consumers and $25M revenue (no facts suggesting any threshold met)",
+        "Ground-truth: no operational request pipeline, no GPC, no working form to actually meet the 45-day promise"
+      ],
+      "recommended_fix": "Decide deliberately: if you do not meet a CCPA business threshold and do not want the obligations, do not claim CCPA-specific machinery — state rights are offered 'as a matter of policy' on a best-efforts basis, drop the precise 10/45-day commitment, and remove unbacked CA mechanisms. If you DO want to claim CCPA compliance (good for trust), you must actually implement the request pipeline, GPC, and accurate notice to meet the promise. Pick one and align the policy to reality; the current half-claimed state is the liability."
+    },
+    {
+      "id": "ccpa-cookie-notice-incomplete",
+      "lens": "ccpa-cpra",
+      "severity": "medium",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Cookie/tracking table lists only phantom cookies and omits every cookie the app actually sets — defective notice-at-collection for trackers",
+      "policy_quote": "| _ga | Google Analytics | Distinguishes unique users | 2 years | ... | CSRF token | TR1VIA | Prevents request forgery | Session |",
+      "problem": "The cookie table lists _ga, _ga_[ID] (no GA installed), a 'Vercel Analytics' tracker (no @vercel/analytics installed), and a 'CSRF token' cookie (zero csrf/xsrf implementation in the codebase) — all four are phantoms. Meanwhile it omits every cookie the app actually sets: the tr1via_device player cookie (signed UUID, httpOnly, SameSite=lax, Secure in prod, 365-day) and the Supabase sb-* auth-token cookies (host session, @supabase/ssr defaults). Under CCPA the cookie disclosure is part of the at-collection notice of the categories of PI collected and the identifiers used; listing fictional trackers and hiding the real persistent player identifier means a California consumer cannot understand what is actually stored on their device or for how long. The 365-day player identifier is precisely the kind of persistent identifier the consumer has a right to know about, and the table's claim that player session data 'is not retained after a game ends' is contradicted by the very cookie that should be in this table.",
+      "law": "Cal. Civ. Code §1798.140(v)(1)(A) & (aj) (cookies/device identifiers are PI/unique identifiers requiring disclosure); §1798.100(a) / §1798.130(a)(5)(B) (notice-at-collection of categories collected, including identifiers); §1798.110(c) (right to know categories and specific pieces).",
+      "evidence": [
+        "app/api/session/init/route.ts:25-26,44-53 (tr1via_device — httpOnly, sameSite lax, secure prod, 365d — omitted from table)",
+        "middleware.ts:45-60 / lib/supabase/server.ts:48-74 (sb-* auth cookies — omitted)",
+        "Repo-wide: no csrf/xsrf code, no @vercel/analytics, no _ga — the four listed cookies are phantoms",
+        "policy lines 110-116 (cookie table)"
+      ],
+      "recommended_fix": "Replace the cookie table with the real cookies: tr1via_device (player; signed UUID; httpOnly; SameSite=lax; Secure in prod; 365 days; persistent device identifier) and sb-<ref>-auth-token (host session; @supabase/ssr defaults; until logout/expiry). Delete the _ga, _ga_[ID], Vercel Analytics, and CSRF-token rows. The 365-day duration on the player cookie must be stated accurately given the 'not retained after game' claim elsewhere."
+    },
+    {
+      "id": "ccpa-notice-at-collection-host-auth-false",
+      "lens": "ccpa-cpra",
+      "severity": "medium",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Host-authentication and Resend email disclosures misstate collection at the point of collection (magic-link email flow does not exist)",
+      "policy_quote": "When a host account is provisioned, we collect the host's email address to send magic link authentication emails. ... Host email addresses are transmitted to Resend for magic link delivery.",
+      "problem": "The notice-at-collection for the host's email states a specific purpose and recipient — 'to send magic link authentication emails' and 'transmitted to Resend for magic link delivery' — that the code does not do. There is no email-send library in package.json (no resend/sendgrid/postmark/nodemailer), and host login at /login posts the email to /api/auth/founder-login which mints a Supabase session server-side via generateLink + verifyOtp with no email round-trip; the login page itself states 'No magic link, no OTP, no email round-trip.' The only magic-link-style URL (admin grant) is generated and handed off manually by the founder, never emailed. Under CCPA §1798.100(a)/(b), the at-collection notice must accurately state the purpose for which each category of PI is collected; stating the host email is collected to transmit to Resend for email delivery — a transmission that never occurs — misdescribes both the purpose and the recipient. This is a notice-accuracy defect (lower CCPA stakes than the player-facing items because it concerns a tiny host population and no false data flow actually leaks, but it is still a false collection-purpose statement and it names a processor in the sharing table that receives nothing).",
+      "law": "Cal. Civ. Code §1798.100(a) & (b) (notice at or before collection of the purposes for which categories of PI are collected/used — must be accurate); §1798.130(a)(5)(B)-(C) (categories collected and third parties disclosed-to); §1798.140(ag) (service-provider designation — Resend is not one here).",
+      "evidence": [
+        "package.json dependencies — no resend/sendgrid/postmark/nodemailer (no send path)",
+        "app/api/auth/founder-login/route.ts:70-101 (server-side generateLink+verifyOtp; no email sent)",
+        "app/(host)/login/page.tsx:1-10 ('No magic link, no OTP, no email round-trip')",
+        "app/api/admin/grant-magic-link/route.ts:97-119 (grant URL returned for manual handoff, not emailed)",
+        "policy lines 96-98, 100-102, 151 (Resend/magic-link claims)"
+      ],
+      "recommended_fix": "Correct the host section to the real flow: 'Hosts sign in by entering their email at the login page; the server verifies the email against the host list and creates a session directly — no email is sent. Some hosts are onboarded via a one-time sign-in link the operator shares directly.' Remove the Resend sub-processor row and the 'transmitted to Resend' sentence. Keep host email disclosed as collected for account identification/authentication."
+    },
+    {
+      "id": "coppa-no-actual-knowledge-process",
+      "lens": "coppa-minors",
+      "severity": "medium",
+      "category": "overcommitment",
+      "verdict": "adjusted",
+      "confidence": "high",
+      "title": "No mechanism to act on \"actual knowledge\" of a child user — disclaimer promise to \"delete promptly\" is undeliverable",
+      "policy_quote": "If you are a parent or guardian and believe your child under 13 has submitted information through TR1VIA, contact us at support@vyntechs.com and we will delete it promptly.",
+      "problem": "The COPPA \"actual knowledge\" standard (16 C.F.R. §312.2/§312.3) attaches the operator's full obligations the moment it learns a specific user is under 13 — and the policy literally invites parents to provide that knowledge. But the ground truth shows there is NO deletion endpoint or admin tooling for player data anywhere in the codebase: the only deletion routine (`reset_night_to_setup`) explicitly PRESERVES players and never deletes display names, and even that is host-initiated, not founder/support-initiated. So when a parent emails support@vyntechs.com, the operator now has actual knowledge of a sub-13 child but no technical way to honor the \"delete it promptly\" promise. That converts a disclaimer into an affirmative, unkept commitment — both a COPPA compliance gap (failure to delete PI of a known child) and an FTC \"unfair/deceptive practice\" exposure (Section 5) for promising deletion the system can't perform. Because the data (device_id, display_name, answers, ms_to_lock timing, IP-linked logs) persists indefinitely, the child's PI remains live and re-identifiable across every future night that device joins.",
+      "law": "16 C.F.R. §312.2 (\"actual knowledge\"), §312.5 / §312.6 (parental right to review and delete), §312.10 (data retention/deletion); FTC Act §5, 15 U.S.C. §45 (deceptive failure to honor stated deletion commitment); cf. FTC v. Epic Games (2022) — failure to delete known child data",
+      "evidence": [
+        "GROUND TRUTH: no deletion endpoint or admin tooling for player data; only reset_night_to_setup exists and it counts players as KEPT",
+        "supabase/migrations/0009_reset_night_to_setup_adjustments.sql:71-95 (reset preserves players, only wipes answers/reveals for live/done games)",
+        "app/api/nights/[id]/close/route.ts:26-30 (closing a night stamps closed_at only; deletes nothing)",
+        "docs/legal/privacy-policy-ORIGINAL.md:218 (privacy request form URL is still a [PLACEHOLDER], so there is no working intake channel either)"
+      ],
+      "recommended_fix": "Build a real child-data deletion path before relying on the disclaimer: a support-triggered admin action that, given a date+venue+display name (or device hint), deletes the matching players row(s), answers, game_participations, game_scores, adjustments, and scrubs IP from logs where feasible, and confirms back to the parent. Document an internal SLA (e.g., 10 business days). Until that exists, do not promise \"delete it promptly\" — that is currently deceptive."
+    },
+    {
+      "id": "coppa-general-audience-defensibility",
+      "lens": "coppa-minors",
+      "severity": "medium",
+      "category": "legal-gap",
+      "verdict": "needs-attorney",
+      "confidence": "high",
+      "title": "\"Not directed to children\" / general-audience position is weak given family-venue deployment and frictionless anyone-can-join design",
+      "policy_quote": "TR1VIA is used in bars, restaurants, and venues that may admit minors, but the platform itself is not designed for, marketed to, or intended for children.",
+      "problem": "COPPA's \"directed to children\" analysis (16 C.F.R. §312.2) is a multi-factor totality test, not a self-declaration — it weighs subject matter, visual/audio content, animated characters, use of child-oriented activities/incentives (games), AND \"empirical evidence regarding audience composition\" and \"evidence regarding the intended audience.\" TR1VIA is a brightly-themed game (the codebase shows \"Endless Evening\" theming, animated water/ceremony effects, chimes, gold-glow stingers — child-appealing presentation) deliberately deployed in family venues like pizza places where the operator's OWN policy concedes minors are present, accessible to anyone with no account and no friction. The FTC has rejected the bar/restaurant-context defense before: an interactive game that any present child can join, that is visually playful, risks being deemed at least a \"mixed audience\" service. For a mixed-audience service the FTC's 2025 COPPA amendments and existing guidance require an age screen and child-directed-level protections for users who indicate they are under 13 — the disclaimer alone is not a safe harbor. Heather's go-live at Soul Fire Pizza (a pizza venue per project memory) is precisely the high-risk fact pattern.",
+      "law": "16 C.F.R. §312.2 (multi-factor \"directed to children\" / \"mixed audience\" definition, as amended eff. 2025); FTC COPPA FAQ §D (mixed audience, neutral age screen); FTC v. HyperBeard (2020) — playful game deemed child-directed despite operator's general-audience claim",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:28 (operator concedes use in venues that admit minors)",
+        "components/player/PlayerJoin.tsx + components/player/PlayerLobby.tsx (frictionless join: 6-char code + nickname, no account, no age step)",
+        "lib/theme/lockInCeremony.ts; components/system/TVTimerArc.tsx (animated, playful, game-show presentation — relevant to child-appeal factors)",
+        "MEMORY: first live show at Soul Fire Pizza (family/pizza venue)"
+      ],
+      "recommended_fix": "Treat TR1VIA as at least a mixed-audience service. Add a neutral age screen at join (no pre-filled value; remembered for the session). For any user who indicates under 13, do not collect persistent identifiers, do not store the display name, and run an ephemeral session — or block play. Keep the disclaimer but stop treating it as the whole compliance posture. Have counsel confirm the directed-to-children factor analysis before the next family-venue deployment."
+    },
+    {
+      "id": "coppa-display-name-freetext-no-filter",
+      "lens": "coppa-minors",
+      "severity": "medium",
+      "category": "legal-gap",
+      "verdict": "adjusted",
+      "confidence": "high",
+      "title": "Free-text display name (1–40 chars, no filter) invites a child to type real identifying info; stored and broadcast with no minimization",
+      "policy_quote": "If you enter a nickname or display name to join a game, that name is visible to others in the session and to the host.",
+      "problem": "The display-name field is `z.string().trim().min(1).max(40)` with zero content validation (lib/api/schemas.ts:71). A child will routinely type a real first name + last initial, a full name, a school, or a sports-team-plus-number — all child PI under COPPA when combined with the persistent device_id and IP the system already holds. That free-text PI is then upserted to Postgres (persists indefinitely), shown on the TV and to the host, and broadcast over Supabase Realtime (broadcastPlayerJoined). COPPA's data-minimization principle (§312.7) bars conditioning participation on more PI than reasonably necessary, and the FTC has flagged free-text fields that capture children's real names. Pairing an unfiltered real-name field with a 365-day identifier and indefinite retention is the opposite of minimization. The policy also falsely claims these names are \"deleted when game session ends,\" so a parent has no accurate notice of what actually persists.",
+      "law": "16 C.F.R. §312.2 (first/last name as PI; combination with persistent identifier), §312.7 (prohibition on conditioning participation on unnecessary collection / data minimization); FTC v. Musical.ly (2019) — collection of children's names/profiles",
+      "evidence": [
+        "lib/api/schemas.ts:69-72 (CreatePlayerSchema.displayName: z.string().trim().min(1).max(40) — no profanity/PII/age filter)",
+        "app/api/players/route.ts:62-80 (display_name upserted to Postgres, persists; broadcast to TV/host)",
+        "docs/legal/privacy-policy-ORIGINAL.md:63 (\"We do not retain player display names after a game ends\" — false per ground truth; names persist indefinitely)",
+        "GROUND TRUTH: player display names persist indefinitely; host dashboard reads them from CLOSED nights"
+      ],
+      "recommended_fix": "Add inline guidance/placeholder steering players to a nickname (\"Pick a fun nickname — don't use your real name\"), and consider light validation to discourage full real names. Make the retention statement TRUE (names persist) or actually delete names on game end. For users who indicate under 13 (per the age screen), do not store the typed name at all — use a generated handle. This both reduces child-PI exposure and fixes the false retention claim."
+    },
+    {
+      "id": "coppa-under-16-ccpa-share-optin-not-implemented",
+      "lens": "coppa-minors",
+      "severity": "medium",
+      "category": "missing-disclosure",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "No under-16 opt-in for sale/share and no working GPC — CCPA minors machinery is asserted but absent",
+      "policy_quote": "Enabling a Global Privacy Control (GPC) signal in your browser — TR1VIA honors GPC signals as opt-out requests",
+      "problem": "California's CCPA/CPRA (Cal. Civ. Code §1798.120(c)) flips the default for minors: a business may NOT sell or share the personal information of a consumer it has actual knowledge is under 16 without affirmative opt-IN (opt-in by a parent for under-13, by the minor for 13–15). The policy itself states GA4 transmission \"may constitute sharing under CCPA\" — yet (a) the ground truth shows GPC is not implemented at all (no Sec-GPC / navigator.globalPrivacyControl read anywhere), making \"TR1VIA honors GPC signals\" an affirmative false statement the California AG has specifically penalized (Sephora 2022, $1.2M, for misrepresenting GPC handling), and (b) there is no under-16 opt-in gate, so if any \"sharing\" did occur it would be unlawful by default for the minors who demonstrably use the product. Several other states (e.g., Connecticut CTDPA, Colorado CPA) also require opt-in consent to process/sell minors' data or to target them. The minor-specific layer is entirely unaddressed beyond boilerplate.",
+      "law": "Cal. Civ. Code §1798.120(c) (no sale/share of under-16 PI without opt-in) & §1798.135 (GPC honoring); Cal. AG settlement In re Sephora (2022, $1.2M — misrepresented GPC); Connecticut Data Privacy Act §6(a)(5) (opt-in for minors' targeted ads/sale, eff. 2024 amendments); Colorado Privacy Act minors provisions (SB 24-041)",
+      "evidence": [
+        "GROUND TRUTH: no code reads Sec-GPC or navigator.globalPrivacyControl anywhere; \"TR1VIA honors GPC\" is unimplemented (affirmative false statement)",
+        "middleware.ts:29-86 (request handling — no GPC signal read)",
+        "docs/legal/privacy-policy-ORIGINAL.md:86,92,202 (CCPA \"sharing\" + GPC claims)",
+        "GROUND TRUTH: GA4 is a phantom — but the minors opt-in obligation attaches to ANY future analytics/share, and the policy already asserts sharing may occur"
+      ],
+      "recommended_fix": "Either implement GPC honoring (read Sec-GPC header / navigator.globalPrivacyControl and actually change behavior) or delete every claim that TR1VIA honors GPC — the false claim alone is the Sephora liability. If any sale/share is ever wired in, gate it behind under-16 opt-in (parental for under-13). Given GA4 is currently a phantom, the cleanest fix is to remove the entire CCPA-sharing/GA4/GPC narrative until a real analytics flow with real minors-handling exists."
+    },
+    {
+      "id": "gdpr-no-art27-eu-uk-representative",
+      "lens": "gdpr-transfers",
+      "severity": "medium",
+      "category": "missing-disclosure",
+      "verdict": "needs-attorney",
+      "confidence": "high",
+      "title": "No EU/UK Article 27 representative appointed (and none in code/operations), despite globally reachable site processing EU/UK personal data",
+      "policy_quote": "If TR1VIA expands to serve EU or UK customers, this policy will be updated to include an EU/UK representative before that expansion takes place.",
+      "problem": "Art. 27 GDPR (and the standalone UK Art. 27) require a controller with no EU/UK establishment that is subject to Art. 3(2) to designate, in writing, a representative IN the Union (and separately in the UK) — and to publish that representative's identity so data subjects and supervisory authorities can contact it. TR1VIA names none. The policy promises to add one 'before expansion,' but as established above, scope can attach on visitor processing, not on a marketing decision the controller makes later. The Art. 27(2) exemptions are narrow (occasional processing, no large-scale special-category, low risk) and almost certainly unavailable here: processing is continuous (every page load, every game), involves persistent online identifiers (365-day device cookie) and IP-geolocation, so it is neither 'occasional' nor plainly low-risk. Absence of a representative is independently fineable and has been actively enforced.",
+      "law": "GDPR Art. 27 (EU representative) and UK GDPR Art. 27 (separate UK representative required post-Brexit); Art. 27(2) exemption criteria; ICO has issued reprimands/enforcement for missing UK representatives; supervisory authorities treat Art. 27 as a standalone infringement under Art. 83(4)(a)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:161 (representative deferred to future expansion)",
+        "grep app/ components/ lib/ middleware.ts for 'representative'/'Art 27'/'DPO': zero matches (not implemented or named anywhere)",
+        "app/api/session/init/route.ts:47-53 (continuous, identifier-based processing — undercuts any Art. 27(2) 'occasional' exemption)"
+      ],
+      "recommended_fix": "If EU/UK subjects are in scope, designate a written EU representative AND a UK representative and publish each entity's name + contact in the policy. If relying on the Art. 27(2) exemption, document the occasional/low-risk analysis (it likely fails given the persistent device cookie). Otherwise, hard geo-block EU/UK and say so."
+    },
+    {
+      "id": "gdpr-dpa-claim-unverifiable-and-phantom-processors",
+      "lens": "gdpr-transfers",
+      "severity": "medium",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "DPA-with-processor claims (\"confirmed or are confirming DPAs with Vercel and Google\") are unverifiable and cover a processor that isn't used",
+      "policy_quote": "Each provider acts as a data processor — processing data on our behalf, bound by data processing agreements (DPAs). We have confirmed or are confirming DPAs with Vercel and Google.",
+      "problem": "Art. 28(3) GDPR requires a written controller-processor contract (DPA) with binding terms for every processor of EU/UK personal data. The policy asserts DPAs with 'Vercel and Google,' but (a) Google/GA4 is not wired into the codebase at all, so a DPA 'with Google' protects no real data flow and signals the disclosure was drafted to a fictional architecture; (b) it omits the processors that actually handle EU/UK personal data — Supabase (display names, answers, device-id, player IPs via Realtime) and Pexels (viewer IP/User-Agent via direct CDN loads) — so no Art. 28 coverage is even claimed for the genuine processors. 'Confirmed or are confirming' is also a hedge that, if untrue when an EU/UK subject is processed, is a direct Art. 28(1) breach (controller must only use processors providing sufficient guarantees, under contract). This is medium rather than high because the Art. 28 gap is curable by paperwork and the immediate fine exposure is smaller than the missing-representative/transfer gaps — but it is still a real GDPR defect.",
+      "law": "GDPR Art. 28(1)-(3) (processor contracts + sufficient-guarantees obligation); UK GDPR Art. 28 equivalent",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:153 (DPA claim limited to Vercel + Google)",
+        "package.json:13-23 (no GA dependency — 'Google' is not a processor in this codebase)",
+        "lib/supabase/admin.ts:1-33 (Supabase service-role client over user data — a real processor, not DPA-named)",
+        "lib/pexels/search.ts:14-18 + components/player/PlayerQuestion.tsx:158-159 (Pexels receives query text + viewer IP — real processor, not DPA-named)"
+      ],
+      "recommended_fix": "Execute and reference Art. 28(3) DPAs with the REAL processors (Vercel, Supabase, Pexels, Anthropic). Remove the Google DPA reference. Replace 'confirmed or are confirming' with a definite, accurate statement; do not assert a DPA exists until it does."
+    },
+    {
+      "id": "gdpr-legal-basis-table-inaccurate-no-consent-basis",
+      "lens": "gdpr-transfers",
+      "severity": "medium",
+      "category": "legal-gap",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Legal-basis table omits the consent basis the cookies/analytics actually require and mislabels analytics as legitimate interest",
+      "policy_quote": "Analytics and performance | Legitimate interest | Disclosed use",
+      "problem": "Art. 6 GDPR requires the correct lawful basis per purpose, and Art. 13(1)(c)/(d) requires the policy to state it (and the legitimate-interest pursued, where that basis is used). Two problems for EU/UK subjects: (1) Where ePrivacy/PECR requires consent to set a non-essential cookie (the 365-day device identifier; any analytics), the GDPR basis for the subsequent processing is generally CONSENT, not legitimate interest — the EDPB (Opinion 5/2019 on ePrivacy/GDPR interplay) is clear you cannot launder a consent-required cookie into a 'legitimate interest' GDPR basis. The table lists 'Analytics and performance | Legitimate interest,' which is the wrong basis for cookie-based analytics in the EU/UK and includes no legitimate-interest balancing reference. (2) The table assigns bases to analytics that doesn't exist in the code, so the basis is asserted for a phantom purpose while the real consent-requiring identifier (device cookie) gets no basis row at all. The result is an inaccurate Art. 6 mapping that would not survive a DPA's legal-basis assessment. Medium because it is curable by rewriting the table and is downstream of the consent/retention defects, but it is a genuine GDPR transparency gap.",
+      "law": "GDPR Art. 6(1) (lawful basis), Art. 13(1)(c)-(d) (state basis + legitimate interests pursued); EDPB Opinion 5/2019 on the interplay of ePrivacy Directive and GDPR (consent-required processing cannot fall back on legitimate interest)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:120-128 (legal-basis table — analytics as legitimate interest; no consent row; no LI balancing)",
+        "app/api/session/init/route.ts:47-53 (365-day device identifier — a consent-requiring processing with no basis row in the table)",
+        "package.json:13-23 (analytics not installed — basis asserted for a non-existent purpose)"
+      ],
+      "recommended_fix": "Rebuild the Art. 6 table against real processing: state the actual basis for the device cookie (consent for EU/UK if non-essential, or strict-necessity if scoped down), set analytics to consent if/when installed, and add a legitimate-interest balancing summary where LI is genuinely relied on (e.g., security)."
+    },
+    {
+      "id": "gdpr-breach-72h-misframed-controller-to-dpa-duty",
+      "lens": "gdpr-transfers",
+      "severity": "medium",
+      "category": "accuracy-mismatch",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Breach-notification clause misapplies the GDPR 72-hour rule to host notification and silently drops the supervisory-authority and player duties",
+      "policy_quote": "If a security breach occurs that affects hosts' personal data, we will notify affected hosts within 72 hours of becoming aware of the breach, as required by applicable law.",
+      "problem": "The 72-hour deadline in GDPR Art. 33 is the controller's duty to notify the SUPERVISORY AUTHORITY, not data subjects. Notification to affected data subjects under Art. 34 has a different trigger ('without undue delay' when there is high risk), not a flat 72-hour rule. The policy (a) invents a 72-hour host-notification SLA that GDPR does not impose and that the controller may not be able to meet, then labels it 'as required by applicable law' — a misstatement of the legal duty; (b) limits breach notification to HOSTS only, ignoring PLAYERS, whose display names + answers + device-id are personal data that could be exposed in the same breach (and whose data, per the retention findings, is retained indefinitely and thus more exposed); and (c) omits the Art. 33 supervisory-authority notification entirely. For EU/UK subjects this both over-commits (a 72h subject-notification SLA the controller has bound itself to) and under-discloses (no SA notice, no player notice). Medium because it is a disclosure/contractual-promise defect rather than an immediate large fine, but the false 'as required by applicable law' framing is the kind of misstatement a regulator notes.",
+      "law": "GDPR Art. 33 (72h notification to supervisory authority) and Art. 34 (notification to data subjects without undue delay, high-risk trigger); UK GDPR Arts. 33-34 (notify ICO)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:172 (72h applied to host notification, labeled 'as required by applicable law'; players omitted)",
+        "supabase/migrations/0001_init.sql:113-122 (player display_name + device_id are personal data exposable in a breach)",
+        "app/api/nights/[id]/close/route.ts:26-30 + app/host/page.tsx:72-77 (player data retained indefinitely — higher breach exposure than the host-only clause admits)"
+      ],
+      "recommended_fix": "Separate the duties: state the Art. 33 supervisory-authority notification (72h to the relevant DPA/ICO), state Art. 34 data-subject notification ('without undue delay' on high risk) covering BOTH hosts and players, and stop labeling a self-imposed 72h host SLA as a legal requirement."
+    },
+    {
+      "id": "texas-tdpsa-applicability-and-content-gaps",
+      "lens": "structural-liability",
+      "severity": "medium",
+      "category": "missing-disclosure",
+      "verdict": "adjusted",
+      "confidence": "high",
+      "title": "Texas TDPSA (their home state) applicability and notice-content adequacy not squarely addressed",
+      "policy_quote": "Right to appeal | Virginia, Colorado, Texas | Email support@vyntechs.com within 30 days of our decision",
+      "problem": "TR1VIA is a Texas business processing Texas residents' data, so the Texas Data Privacy and Security Act (TDPSA, effective July 1, 2024) is the most likely state law to be enforced against them — and the Texas AG has been actively enforcing it. The TDPSA has NO revenue/volume threshold; it applies to any entity that conducts business in Texas and processes personal data, exempting only businesses that qualify as 'small businesses' under the SBA — and even small businesses must obtain consent before selling sensitive data. The policy mentions Texas only once (the appeal row) and never (a) identifies whether TR1VIA claims the small-business exemption, (b) provides the TDPSA-mandated notice content, or (c) includes the TDPSA's specific required sentence where applicable. The TDPSA also uniquely requires a conspicuous 'We may sell your sensitive/biometric personal data' notice IF that occurs (it doesn't here, so it can be omitted, but the determination must be made), and requires honoring opt-out preference signals (GPC) for sales/targeted-ads by Jan 1, 2025 — which ties directly to the false 'TR1VIA honors GPC' statement (no GPC code exists). The appeal mechanism (30 days) is named but the TDPSA's full consumer-rights set and the controller's 45-day response window (extendable 45 more) and the right to escalate a denied appeal to the Texas AG are not laid out.",
+      "law": "Tex. Bus. & Com. Code ch. 541 (TDPSA): § 541.002 (applicability — no revenue threshold; SBA small-business carve-out), § 541.051-.052 (consumer rights + 45-day response, 45-day extension), § 541.055 (appeal process + AG-complaint link), § 541.102 (privacy-notice content), § 541.055/§ 541.0555 (universal opt-out / GPC honoring by Jan 1, 2025). Texas AG TDPSA enforcement actions (2024-2025).",
+      "evidence": [
+        "policy line 188: Texas appears only in the appeal row; no TDPSA notice-content section",
+        "policy line 92, 202: 'TR1VIA honors GPC signals' — TDPSA requires honoring opt-out signals for sales/targeted ads, and GROUND TRUTH confirms zero GPC code exists, so this is a TDPSA-relevant false statement",
+        "MEMORY: business is Cleburne, TX (Johnson County) — Texas is the home forum and TDPSA the primary applicable state act",
+        "GROUND TRUTH: controller = Vyntechs (DBA), holds hosts.email + player display names + device-id — personal data triggering TDPSA"
+      ],
+      "recommended_fix": "Add a Texas-specific section: state the consumer rights set, the 45-day (+45) response window, the appeal process, and that a denied appeal may be submitted to the Texas Attorney General (with the AG complaint link). Make the express applicability determination (small-business exemption or not) and, if not selling sensitive data, simply omit the sensitive-data sale notice. Critically, only retain the GPC-honoring language AFTER GPC is actually implemented in middleware — otherwise delete it (it's a false statement under the very law most likely to be enforced here)."
+    },
+    {
+      "id": "missing-anthropic-subprocessor",
+      "lens": "accuracy-ftc",
+      "severity": "low",
+      "category": "missing-disclosure",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Anthropic generates trivia questions from host-entered prompt text; undisclosed sub-processor",
+      "policy_quote": "MISSING",
+      "problem": "Anthropic (@anthropic-ai/sdk) receives host-supplied topic/flavor/difficulty prompt text plus a static system prompt to generate questions — a US third party processing host-entered content. It receives no player or host personal data (no emails, names, IPs), so risk is lower than Supabase/Pexels, but the policy's blanket 'We do not share your data with third parties except as described below' is still incomplete: a sub-processor receiving host-entered content is undisclosed. Low severity because no personal data flows, but it should be listed for completeness and to make the 'except as described' sentence true.",
+      "law": "CCPA §1798.130(a)(5) (third-party disclosure completeness); FTC Act §5 (15 U.S.C. §45 — completeness of sharing disclosure)",
+      "evidence": [
+        "lib/ai/generate-questions.ts:42-46,180-184,216-269 (Anthropic client; sends prompt text, no PII)",
+        "package.json: @anthropic-ai/sdk present"
+      ],
+      "recommended_fix": "Add a row: 'Anthropic (US) — AI processor — receives the trivia topic/instructions a host types to generate questions; no player or host personal data is sent.'"
+    },
+    {
+      "id": "dpa-hedging-confirming",
+      "lens": "accuracy-ftc",
+      "severity": "low",
+      "category": "overcommitment",
+      "verdict": "adjusted",
+      "confidence": "high",
+      "title": "'We have confirmed or are confirming DPAs with Vercel and Google' — vague hedge plus a DPA with a phantom processor",
+      "policy_quote": "Each provider acts as a data processor — processing data on our behalf, bound by data processing agreements (DPAs). We have confirmed or are confirming DPAs with Vercel and Google.",
+      "problem": "Two problems. (1) 'confirmed OR are confirming' is a weasel hedge that asserts the protective fact (data is 'bound by DPAs') while admitting it may not be true yet — if a DPA is not actually in place, the flat statement that each provider is 'bound by data processing agreements' is a false assurance of contractual safeguards. (2) The named DPAs are with Vercel and Google, but Google (GA4) is a phantom processor and the actual processors holding personal data (Supabase, Pexels) are unnamed and presumably uncovered by this sentence. So the assurance covers the wrong parties. Stating contractual safeguards exist when they may not, and tying them to a non-existent processor, is a deceptive assurance.",
+      "law": "FTC Act §5 (15 U.S.C. §45 — false assurance of safeguards); GDPR Art. 28 (processor DPAs required, relevant on stated EU expansion); CCPA §1798.140(ag)/(ai) + §1798.100(d) (service-provider contracts required)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:153 (the hedged DPA sentence)",
+        "Google/GA4 is a phantom processor (no GA installed — verified)",
+        "Supabase/Pexels are the real processors and are unnamed"
+      ],
+      "recommended_fix": "State only what is true. After fixing the processor list to Supabase/Vercel/Pexels/Anthropic, write: 'We have data processing agreements in place with [the processors that actually have signed DPAs].' Do not assert 'bound by DPAs' for any processor without a signed DPA, and remove the Google reference."
+    },
+    {
+      "id": "coppa-claim-vs-no-age-controls",
+      "lens": "accuracy-ftc",
+      "severity": "low",
+      "category": "overcommitment",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "Policy states COPPA compliance for a product used in venues that admit minors, with no age gate or age-data controls in code",
+      "policy_quote": "We comply with the Children's Online Privacy Protection Act (COPPA).",
+      "problem": "The policy flatly asserts COPPA compliance and acknowledges the platform is used in venues that may admit minors, yet there is no age gate, no neutral age screen, and no special handling of under-13 data anywhere in the code — and a free-text display name from a child would be stored and persisted like any other (no deletion mechanism, per the deletion findings). A blanket 'we comply with COPPA' with no implementing controls is an overstated compliance claim; COPPA exposure here is genuinely low (not child-directed), but the unqualified compliance assertion is the kind of statement the FTC scrutinizes when controls are absent. Low severity given the not-directed-at-children posture, but the flat claim should be softened.",
+      "law": "Children's Online Privacy Protection Act, 15 U.S.C. §6501-6506 + 16 CFR Part 312; FTC Act §5 (overstated compliance claim)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:24-30 (COPPA compliance claim; venues admit minors)",
+        "Verified: no age gate / under-13 handling in app; no deletion path for any player data"
+      ],
+      "recommended_fix": "Soften to the accurate posture: 'TR1VIA is not directed to children under 13 and we do not knowingly collect their personal information; if we learn we have, we will delete it.' Drop the unqualified 'we comply with COPPA' unless implementing controls (and a working deletion path) are in place."
+    },
+    {
+      "id": "coppa-host-cannot-be-parent-consent-proxy",
+      "lens": "coppa-minors",
+      "severity": "low",
+      "category": "legal-gap",
+      "verdict": "needs-attorney",
+      "confidence": "high",
+      "title": "Host/venue is positioned as the de facto gatekeeper but cannot supply verifiable parental consent for children who join",
+      "policy_quote": "Hosts — venue staff or trivia organizers who log in to run games.",
+      "problem": "The design implicitly relies on the venue/host to control who plays, but a bar/restaurant host is not the parent and cannot give COPPA-verifiable parental consent (16 C.F.R. §312.5) on a child's behalf. COPPA's \"school/operator\" consent-by-proxy exception is narrow and applies to ed-tech in schools for educational purposes — it does not extend to a commercial trivia game in a restaurant. So there is no lawful consent path for any sub-13 child who joins: the parent isn't in the loop, the host can't consent, and the platform collects PI by default. This compounds the other findings (it's why the disclaimer carries all the weight). Lower severity standalone because it's a structural consequence rather than a separate violation, but it should inform the chosen remedy (the only safe paths are: don't collect PI from under-13s, or obtain real verifiable parental consent — the venue can't shortcut either).",
+      "law": "16 C.F.R. §312.5 (verifiable parental consent — required methods); FTC COPPA FAQ §N (school consent exception limited to educational context, not commercial)",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:22 (hosts are venue staff, not parents)",
+        "components/player/PlayerJoin.tsx (any present person, including a child, joins directly; host does not vet age)",
+        "GROUND TRUTH: no consent flow of any kind exists in code"
+      ],
+      "recommended_fix": "Do not lean on the host/venue as a consent proxy — it is not legally sufficient. Choose a path that does not require parental consent at all: a neutral age screen that routes under-13 users into a no-PI ephemeral mode (no device cookie, no stored name, IP not persisted). That is the only realistic compliance route for a walk-up restaurant game; obtaining verifiable parental consent at a pizza counter is impractical."
+    },
+    {
+      "id": "gdpr-controller-identity-dba-no-legal-entity-or-eu-contact",
+      "lens": "gdpr-transfers",
+      "severity": "low",
+      "category": "missing-disclosure",
+      "verdict": "needs-attorney",
+      "confidence": "medium",
+      "title": "Controller identity is a DBA with no legal entity, no DPO/representative contact, and a single shared support email — insufficient Art. 13 identification for EU/UK subjects",
+      "policy_quote": "TR1VIA is operated by Vyntechs (DBA), based in Texas, United States. Our mailing address is 1712 Raylene Dr, Cleburne, TX 76033. Questions: support@vyntechs.com",
+      "problem": "Art. 13(1)(a)-(b) requires the policy to give the controller's identity and contact details, and (where applicable) the DPO's and the Art. 27 representative's contact details. The policy identifies the controller only as 'Vyntechs (DBA)' — a doing-business-as, not a named legal entity (LLC/Inc.) — with a residential mailing address and a single shared support@ inbox that doubles as the privacy-rights channel, the security-report channel, and general questions. For a US-only audience this is thin but tolerable; for EU/UK subjects it falls short: no identifiable legal person to hold accountable, no DPO contact (Art. 37 assessment not evidenced), and no Art. 27 representative contact (covered separately). It also undermines the rights mechanism, since the only working channel is an email that the code shows leads to no /privacy-request route and no deletion tooling. Low severity on its own — it is a disclosure-completeness gap rather than a fine driver — but it compounds the representative and rights-mechanism findings.",
+      "law": "GDPR Art. 13(1)(a)-(b) (controller identity + contact, DPO contact where applicable), Art. 37 (DPO designation assessment); UK GDPR equivalents",
+      "evidence": [
+        "docs/legal/privacy-policy-ORIGINAL.md:10,15 ('Vyntechs (DBA)' — no registered legal entity named; residential address; single support@ inbox)",
+        "docs/legal/privacy-policy-ORIGINAL.md:218 (privacy request form URL is an unbuilt placeholder)",
+        "grep app/ for /privacy-request or privacy route: none exists — the only rights channel is the shared email"
+      ],
+      "recommended_fix": "State the full registered legal entity behind the DBA, give a dedicated privacy contact (and DPO/EU+UK representative if in scope), and either build the /privacy-request form or remove the reference so the only rights channel that works is honestly described."
+    },
+    {
+      "id": "gdpr-special-category-none-correct-but-state-it",
+      "lens": "gdpr-transfers",
+      "severity": "low",
+      "category": "missing-disclosure",
+      "verdict": "confirmed",
+      "confidence": "high",
+      "title": "No special-category data processed — the policy is correct by omission, but should affirmatively state it for EU/UK clarity",
+      "policy_quote": "MISSING",
+      "problem": "Assessed for completeness within the GDPR lens: the code processes display names, answer choices/timing, device-id, IP, and host email — none of which are Art. 9 special categories, and the AI/topic flow sends no PII to Anthropic. So the policy does NOT wrongly process special-category data, and its silence is not a false statement. However, the policy never affirmatively states 'we do not process special-category data,' which is the conventional EU/UK transparency assurance and would close the question for a supervisory authority. This is a genuine-low, near-informational item: there is no real exposure (no Art. 9 processing exists), but adding the explicit statement is cheap and expected. I flag it so the absence is on the record as assessed-and-clear rather than overlooked. The only adjacent risk worth noting is age: the COPPA section concedes venues may admit minors, and if an under-16 EU child plays, a display name could implicate Art. 8 (child consent / information-society services) — but that is an age-of-consent edge, not special-category processing.",
+      "law": "GDPR Art. 9 (special categories — none processed here); Art. 8 (children's consent for information-society services, EU member-state age 13-16) flagged only as an adjacent edge",
+      "evidence": [
+        "supabase/migrations/0001_init.sql:113-153 (player data = display_name, answers, timing, device_id — no Art. 9 categories)",
+        "lib/ai/generate-questions.ts:42-46,180-184 (Anthropic receives topic prompt text only — no PII, no special-category data)",
+        "docs/legal/privacy-policy-ORIGINAL.md:24-30 (COPPA section concedes minors may be present — Art. 8 edge, not Art. 9)"
+      ],
+      "recommended_fix": "Add an explicit 'We do not process special-category (Art. 9) data' line for EU/UK clarity. Separately, if EU children may play, address Art. 8 child-consent age thresholds rather than relying solely on COPPA's US under-13 framing."
+    },
+    {
+      "id": "multistate-vcdpa-cpa-ctdpa-ucpa-rights-and-appeal-coverage",
+      "lens": "structural-liability",
+      "severity": "low",
+      "category": "missing-disclosure",
+      "verdict": "adjusted",
+      "confidence": "high",
+      "title": "Virginia/Colorado/Connecticut/Utah obligations partially covered — appeal right and rights set incomplete for CT/UT",
+      "policy_quote": "Right to appeal | Virginia, Colorado, Texas | Email support@vyntechs.com within 30 days of our decision",
+      "problem": "The appeal row lists Virginia, Colorado, and Texas but omits Connecticut, which ALSO grants a statutory right to appeal a denied request (CTDPA). Utah's UCPA does not grant an appeal right, so omitting Utah there is correct — but the policy never addresses Utah's distinct rights set at all, and never names Connecticut as a covered state anywhere. More importantly, the consumer-facing appeal mechanic is stated backwards-incomplete: under VCDPA/CPA/CTDPA the controller must respond to the appeal within 60 days (VA) / 45 days (CO/CT) and must provide an online mechanism (or other means) to contact the relevant state AG if the appeal is denied — none of which is disclosed. The '30 days of our decision' window the policy gives the consumer to appeal is also not the operative deadline in these statutes (they don't impose a consumer 30-day appeal-filing cap the way the policy implies). Whether these laws even apply turns on processing thresholds (e.g., VCDPA: 100k consumers, or 25k + 50% revenue from sale) that a single-customer live-trivia app almost certainly does not meet — so the cleanest fix may be to scope the multi-state rights honestly rather than over-promise obligations TR1VIA isn't subject to.",
+      "law": "Va. Code § 59.1-577(C) (VCDPA appeal, 60-day controller response + AG-contact mechanism); Colo. Rev. Stat. § 6-1-1306(3) (CPA appeal, 45 days); Conn. Gen. Stat. § 42-520 (CTDPA appeal, 60 days + AG complaint link) — Connecticut OMITTED from policy; Utah Code § 13-61-101 et seq. (UCPA — no appeal right, narrower rights set).",
+      "evidence": [
+        "policy line 188: appeal row lists 'Virginia, Colorado, Texas' — Connecticut missing",
+        "policy lines 178-190: rights table is generic ('Everyone'/'EU/UK'/'California') and never names Connecticut or Utah specifically",
+        "policy line 188: consumer '30 days of our decision' framing does not match the statutory controller-response windows or the required AG-escalation mechanism",
+        "GROUND TRUTH: single paying customer (Heather) — processing volumes are far below VCDPA/CPA/CTDPA applicability thresholds; over-promising these obligations creates avoidable exposure"
+      ],
+      "recommended_fix": "Either (a) add Connecticut to the appeal row and add a short paragraph stating, for each appeal state, that TR1VIA will respond to appeals within the statutory window and provide a method to contact that state's Attorney General if denied; or (b) given the tiny processing footprint, state plainly that TR1VIA may not meet the applicability thresholds of these comprehensive state laws but will honor access/deletion/correction requests from any resident as a matter of policy, and route appeals to support@vyntechs.com with AG-escalation noted. Remove the misleading '30 days of our decision' consumer cap. Do not claim Utah grants an appeal right."
+    },
+    {
+      "id": "breach-notification-72h-overcommitment",
+      "lens": "structural-liability",
+      "severity": "low",
+      "category": "overcommitment",
+      "verdict": "adjusted",
+      "confidence": "high",
+      "title": "Self-imposed 72-hour breach-notification promise exceeds US-law requirements and manufactures contractual liability",
+      "policy_quote": "If a security breach occurs that affects hosts' personal data, we will notify affected hosts within 72 hours of becoming aware of the breach, as required by applicable law.",
+      "problem": "No US state breach-notification statute imposes a flat 72-hour deadline (that figure is GDPR's regulator-notice rule, which doesn't apply to a US-only venue business). Texas Bus. & Com. Code § 521.053 requires notice 'without unreasonable delay and not later than 60 days.' By promising 72 hours 'as required by applicable law,' the policy (a) misstates the applicable law and (b) converts a self-imposed deadline into a contractual/§5-FTC commitment the operator will almost certainly miss in a real incident (a solo operator cannot scope a breach, identify affected hosts, and notify in 72 hours) — turning a security incident into a SECOND, independent breach-of-promise claim. This is the classic 'the promise, not the breach, is what gets you sued' trap.",
+      "law": "Tex. Bus. & Com. Code § 521.053 (notice without unreasonable delay, ≤ 60 days; AG notice if ≥250 Texans); Cal. Civ. Code § 1798.82 (most expedient time / without unreasonable delay); FTC Act § 5 (failure to honor a published security promise is deceptive). 72-hour figure derives from GDPR Art. 33, inapplicable to US-only ops.",
+      "evidence": [
+        "policy line 172: 'notify affected hosts within 72 hours of becoming aware of the breach, as required by applicable law' — no US statute requires 72 hours; misstates 'applicable law'",
+        "GROUND TRUTH: solo operator (Brandon), no email-send library in the app at all — there is literally no built mechanism to mass-notify hosts within 72 hours",
+        "policy line 22 + GROUND TRUTH: host auth has no email-send path; breach-notice delivery capability is unproven"
+      ],
+      "recommended_fix": "Change to: 'we will notify affected hosts without unreasonable delay and within the time required by applicable law (in Texas, no later than 60 days).' Do not state a self-imposed 72-hour deadline. Ensure an actual notification channel exists (the app currently has no email-send library), or the promise is unkeepable regardless of the deadline."
+    }
+  ]
+}
