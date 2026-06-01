@@ -13,8 +13,15 @@ describe("lockInCeremonyFor", () => {
     expect(cfg.ceremony).toBe("lightning");
   });
 
-  it("returns the default config (20s, no marquee, no ceremony) for non-May themes", () => {
-    for (const k of ["house", "daylight", "january", "june", "december"] as const) {
+  it("gives June the 25s timer but no marquee/ceremony (longer-timer opt-in only)", () => {
+    const cfg = lockInCeremonyFor("june");
+    expect(cfg.duration).toBe(25);
+    expect(cfg.marquee).toBe(false);
+    expect(cfg.ceremony).toBeNull();
+  });
+
+  it("returns the default config (20s, no marquee, no ceremony) for non-opted-in themes", () => {
+    for (const k of ["house", "daylight", "january", "december"] as const) {
       const cfg = lockInCeremonyFor(k);
       expect(cfg.duration).toBe(20);
       expect(cfg.marquee).toBe(false);
@@ -32,8 +39,9 @@ describe("hasMarquee", () => {
 });
 
 describe("questionDurationFor", () => {
-  it("returns 25 for May, 20 for everything else", () => {
+  it("returns 25 for May and June, 20 for everything else", () => {
     expect(questionDurationFor("may")).toBe(25);
+    expect(questionDurationFor("june")).toBe(25);
     expect(questionDurationFor("house")).toBe(20);
     expect(questionDurationFor("january")).toBe(20);
   });

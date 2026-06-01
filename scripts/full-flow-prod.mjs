@@ -117,8 +117,8 @@ const THEME_PASSES = LOAD_MODE
 
 // Duration constants mirrored from lib/theme/lockInCeremony.ts.
 // These must stay in sync with the TypeScript source; no import possible
-// in a plain .mjs script.
-const DURATION_BY_THEME = { may: 25 };
+// in a plain .mjs script. (June opts into the 25s timer; marquee stays off.)
+const DURATION_BY_THEME = { may: 25, june: 25 };
 const DEFAULT_DURATION = 20;
 function questionDurationFor(themeKey) {
   if (!themeKey) return DEFAULT_DURATION;

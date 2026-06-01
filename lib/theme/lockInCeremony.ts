@@ -14,7 +14,7 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 export type CeremonyKind = "lightning" | null;
 
 export interface LockInCeremonyConfig {
-  /** Question timer length in seconds. May = 25, default = 20. */
+  /** Question timer length in seconds. May & June = 25, default = 20. */
   duration: number;
   /** True → bottom strip is the auto-scrolling marquee. False → existing lock-in pile. */
   marquee: boolean;
@@ -34,6 +34,13 @@ const REGISTRY: Partial<Record<ThemeKey, LockInCeremonyConfig>> = {
     duration: 25,
     marquee: true,
     ceremony: "lightning",
+  },
+  // June opts into the longer 25s timer only — no marquee, no lightning. Its
+  // atmosphere is the reactive water, not the storm.
+  june: {
+    duration: 25,
+    marquee: false,
+    ceremony: null,
   },
 };
 
