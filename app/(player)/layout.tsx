@@ -28,7 +28,9 @@ export default function PlayerLayout({ children }: { children: ReactNode }) {
       }}
     >
       <ConnectionRibbonProvider />
-      {children}
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
+        {children}
+      </div>
     </div>
   );
 }

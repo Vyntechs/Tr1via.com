@@ -16,8 +16,9 @@ export interface TVTimerArcProps {
 }
 
 export function TVTimerArc({ seconds, max, size = 160, accent, themeKey }: TVTimerArcProps) {
-  const resolvedMax = max ?? questionDurationFor(themeKey);
-  const { t } = useTheme();
+  const { t, themeKey: ctxThemeKey } = useTheme();
+  // Prop wins (tests / standalone), else the active theme. Never silently 20.
+  const resolvedMax = max ?? questionDurationFor(themeKey ?? ctxThemeKey);
   const stroke = 10;
   const r = (size - stroke) / 2;
   const C = 2 * Math.PI * r;

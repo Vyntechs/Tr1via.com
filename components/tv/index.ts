@@ -2,6 +2,7 @@
 
 export { TVLobby, DEMO_ROSTER } from "./TVLobby";
 export type { TVLobbyProps, TVLobbyWelcomeEvent } from "./TVLobby";
+export { TVLobbyTopics, DEMO_LOBBY_TOPICS } from "./TVLobbyTopics";
 export { TVGrid, DEMO_CATEGORIES, DEMO_VALUES } from "./TVGrid";
 export type { TVGridProps, TVGridCell, TVGridLeaderRow } from "./TVGrid";
 export { TVQuestion } from "./TVQuestion";

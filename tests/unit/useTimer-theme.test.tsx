@@ -12,13 +12,13 @@ describe("useTimer with themeKey", () => {
     expect(result.current.secondsRemaining).toBeLessThanOrEqual(25);
   });
 
-  it("uses 20s when themeKey is 'house' and durationS is omitted", () => {
+  it("uses the 25s default when themeKey is 'house' and durationS is omitted", () => {
     const revealedAtMs = Date.now();
     const { result } = renderHook(() =>
       useTimer({ revealedAtMs, themeKey: "house" })
     );
-    expect(result.current.secondsRemaining).toBeGreaterThan(19);
-    expect(result.current.secondsRemaining).toBeLessThanOrEqual(20);
+    expect(result.current.secondsRemaining).toBeGreaterThan(24);
+    expect(result.current.secondsRemaining).toBeLessThanOrEqual(25);
   });
 
   it("explicit durationS overrides the theme default", () => {
@@ -30,10 +30,10 @@ describe("useTimer with themeKey", () => {
     expect(result.current.secondsRemaining).toBeLessThanOrEqual(10);
   });
 
-  it("falls back to 20s when neither themeKey nor durationS provided", () => {
+  it("falls back to the 25s default when neither themeKey nor durationS provided", () => {
     const revealedAtMs = Date.now();
     const { result } = renderHook(() => useTimer({ revealedAtMs }));
-    expect(result.current.secondsRemaining).toBeGreaterThan(19);
-    expect(result.current.secondsRemaining).toBeLessThanOrEqual(20);
+    expect(result.current.secondsRemaining).toBeGreaterThan(24);
+    expect(result.current.secondsRemaining).toBeLessThanOrEqual(25);
   });
 });

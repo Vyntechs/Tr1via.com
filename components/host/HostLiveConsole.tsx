@@ -30,6 +30,15 @@ import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCel
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { RemovePlayerButton } from "./RemovePlayerButton";
 
+// The control strip sits over the console's hardcoded `#000` TV bezel in
+// EVERY theme, so its text/borders must use fixed light values — the
+// theme-relative `ink`/`line` tokens flip dark on light themes and go
+// invisible on the black bar. These mirror the app's cream ink family
+// (#F4E6C4 · rgb 244,230,196), matching the dark-theme ink tokens.
+const BAR_INK = "rgba(244,230,196,.9)"; // primary readable text (status line)
+const BAR_INK_MUTE = "rgba(244,230,196,.62)"; // muted captions
+const BAR_LINE = "rgba(244,230,196,.18)"; // dividers / button edges on black
+
 export interface HostLivePlayer {
   id: string;
   name: string;
@@ -349,7 +358,7 @@ function HostControlStrip({
         gap: 8,
         padding: "8px 14px",
         background: t.dark ? "rgba(14,8,5,.92)" : "rgba(20,19,15,.04)",
-        borderTop: `1px solid ${t.line}`,
+        borderTop: `1px solid ${BAR_LINE}`,
         minHeight: 52,
       }}
     >
@@ -389,7 +398,7 @@ function HostControlStrip({
           <span
             style={{
               fontSize: 12,
-              color: t.inkMute,
+              color: BAR_INK_MUTE,
               fontFamily: "var(--font-sans)",
               fontWeight: 500,
               letterSpacing: "0.02em",
@@ -404,7 +413,7 @@ function HostControlStrip({
           </PrimaryButton>
         )}
         {mode === "loading" && (
-          <span style={{ fontSize: 12, color: t.inkMute, fontStyle: "italic" }}>
+          <span style={{ fontSize: 12, color: BAR_INK_MUTE, fontStyle: "italic" }}>
             loading…
           </span>
         )}
@@ -415,10 +424,10 @@ function HostControlStrip({
         style={{
           fontFamily: "var(--font-mono)",
           fontSize: 12,
-          color: t.inkMid,
+          color: BAR_INK,
           padding: "0 12px",
-          borderLeft: `1px solid ${t.line}`,
-          borderRight: `1px solid ${t.line}`,
+          borderLeft: `1px solid ${BAR_LINE}`,
+          borderRight: `1px solid ${BAR_LINE}`,
         }}
       >
         {lockLine}
@@ -494,7 +503,6 @@ function SecondaryButton({
   onClick: () => void;
   testId: string;
 }) {
-  const { t } = useTheme();
   return (
     <button
       type="button"
@@ -504,8 +512,8 @@ function SecondaryButton({
         padding: "7px 14px",
         borderRadius: 8,
         background: "transparent",
-        color: t.ink,
-        border: `1px solid ${t.line}`,
+        color: BAR_INK,
+        border: `1px solid ${BAR_LINE}`,
         fontSize: 12,
         fontWeight: 500,
         fontFamily: "var(--font-sans)",

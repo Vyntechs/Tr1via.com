@@ -32,6 +32,7 @@ import {
   Display,
   Eyebrow,
   useTheme,
+  fireJuneBeat,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import {
@@ -46,6 +47,8 @@ import {
   type PlayerQuestionSlot,
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
+import { useLockInSync } from "@/lib/hooks/useLockInSync";
+import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
@@ -63,6 +66,7 @@ import {
 } from "@/lib/game/room-code";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
+import { readThemeSeed, writeThemeSeed } from "@/lib/theme/themeSeed";
 import { questionDurationFor, hasCeremony } from "@/lib/theme/lockInCeremony";
 import type {
   AnswerRow,
@@ -96,10 +100,23 @@ function PlayerRoomInner({ roomCode }: { roomCode: string }) {
   const { deviceId, isLoading: deviceLoading } = useDeviceSession();
   const snapshot = useRoom({ roomCode, deviceId });
 
-  const themeKey: ThemeKey = resolveTheme(
+  // Seed the first paint from the /join → /room hand-off so the room shows the
+  // night's real theme immediately instead of flashing resolveTheme's month/
+  // default fallback while useRoom fetches the night row. Read once on mount.
+  const [seededTheme] = useState<ThemeKey | null>(() => readThemeSeed(roomCode));
+
+  const resolvedTheme: ThemeKey = resolveTheme(
     snapshot.night,
     { default_theme_key: snapshot.hostDefaultThemeKey },
   );
+  // Until the night row loads, prefer the seed (correct) over the month/default
+  // fallback. Once the night is in hand, the resolved theme is authoritative.
+  const themeKey: ThemeKey = snapshot.night ? resolvedTheme : (seededTheme ?? resolvedTheme);
+
+  // Keep the seed fresh so a same-tab refresh of /room stays flash-free.
+  useEffect(() => {
+    if (snapshot.night) writeThemeSeed(roomCode, resolvedTheme);
+  }, [snapshot.night, roomCode, resolvedTheme]);
 
   return (
     <ThemeProvider themeKey={themeKey}>
@@ -262,6 +279,69 @@ function RoomStateMachine({
     }
     return merged.sort((a, b) => a.locked_at.localeCompare(b.locked_at));
   }, [realAnswers, optimisticAnswers]);
+
+  // June: the water reflects the reveal the moment this phone enters it. The
+  // snapshot clears currentQuestion when finished_at fires and holds the reveal
+  // via lastResolvedQuestion, so read whichever carries the just-resolved id.
+  // shouldFireReveal de-dups so it fires exactly once per resolved question.
+  const lastRevealFiredRef = useRef<string | null>(null);
+  const resolvedQId =
+    (currentQuestion && currentQuestion.finished_at !== null
+      ? currentQuestion.id
+      : snapshot.lastResolvedQuestion?.id) ?? null;
+  useEffect(() => {
+    if (themeKey !== "june") return;
+    if (shouldFireReveal(resolvedQId, lastRevealFiredRef.current)) {
+      lastRevealFiredRef.current = resolvedQId;
+      fireJuneBeat("reveal");
+    }
+  }, [themeKey, resolvedQId]);
+
+  // June: every lock-in ripples this phone's water — the room's pulse felt on
+  // your own screen. Own lock is known locally (instant); other players' locks
+  // ride the existing lock-sync poll (raw realtime is the weak spot on phones).
+  // de-dup by playerId so a lock ripples once; coalesce bursts to ~1/250ms so a
+  // full room reads as a living surface, not noise.
+  const rippledLocksRef = useRef<Set<string>>(new Set());
+  const lastRippleAtRef = useRef<number>(0);
+  const rippleForLocks = useCallback(
+    (playerIds: string[]) => {
+      if (themeKey !== "june") return;
+      const fresh = newLockIds(playerIds, rippledLocksRef.current);
+      if (fresh.length === 0) return;
+      for (const id of fresh) rippledLocksRef.current.add(id);
+      const now = Date.now();
+      if (now - lastRippleAtRef.current < 250) return; // coalesce bursts
+      lastRippleAtRef.current = now;
+      fireJuneBeat("lock");
+    },
+    [themeKey],
+  );
+
+  // Each question is a fresh round of locks. Clear the set IN PLACE (not a new
+  // Set) so the reference useLockInSync captured stays the same object and sees
+  // the cleared state immediately, without needing a re-render.
+  useEffect(() => {
+    rippledLocksRef.current.clear();
+  }, [currentQuestion?.id]);
+
+  // Own lock — the moment my answer for the live question exists (instant).
+  const myLiveLockId = useMemo(() => {
+    if (!currentQuestion) return null;
+    return myAnswers.some((a) => a.question_id === currentQuestion.id) ? me.id : null;
+  }, [currentQuestion, myAnswers, me.id]);
+  useEffect(() => {
+    if (myLiveLockId) rippleForLocks([myLiveLockId]);
+  }, [myLiveLockId, rippleForLocks]);
+
+  // Other players' locks — reliable server poll (/api/games/:id/locks, scoped
+  // to the current live question). Inactive for non-june themes (no polling).
+  useLockInSync({
+    gameId: currentGame?.id ?? "",
+    active: themeKey === "june" && !!currentGame?.id,
+    acknowledged: rippledLocksRef.current,
+    onMissed: (lock) => rippleForLocks([lock.playerId]),
+  });
 
   // ── load + subscribe to game_scores for the current game ───────────────
   // Same load+subscribe pattern HostLiveConsoleClient + the recap page use.
