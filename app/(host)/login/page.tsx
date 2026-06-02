@@ -248,6 +248,20 @@ function HostLoginInner() {
             <Eyebrow color={t.inkMute} size={10} style={{ display: "block", marginTop: 10 }}>
               NEW HERE? ASK BRANDON TO ADD YOU FROM THE FOUNDER DASHBOARD.
             </Eyebrow>
+            <a
+              href="/privacy"
+              style={{
+                display: "block",
+                marginTop: 14,
+                fontSize: 12,
+                fontWeight: 500,
+                color: t.inkMute,
+                textDecoration: "underline",
+                textUnderlineOffset: 3,
+              }}
+            >
+              Privacy Policy
+            </a>
           </form>
         )}
       </div>
