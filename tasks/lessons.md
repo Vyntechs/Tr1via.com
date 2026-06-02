@@ -56,3 +56,8 @@ Reason: A run "failed" with game 1 wiped; logs showed a host-UI `reset-to-setup`
 Trigger: A prior session's `tasks/todo.md` or `HANDOFF.md` lists a bug/blocker on a prod-facing surface.
 Rule: Re-verify against live prod before repeating it to Brandon as current state; never present a stale note as today's reality.
 Reason: Repeated a "/tv/[code] is crashing" blocker from the old Tonight's Topics todo without checking; Brandon confirmed prod was fully functional. Violates validate-don't-claim.
+
+### hoisting-a-side-effect-hook-changes-when-it-fires
+Trigger: Moving a `useEffect` (timers/subscriptions) above an `if (!x) return null` guard to fix a hook-count crash.
+Rule: Gate the effect BODY on the same condition AND add it to deps — else it fires against the empty render before the gated subtree mounts.
+Reason: TVFinaleWinner's hoisted finale-lightning timers ran with no winner → no Lightning mounted; it seeded its trigger ref past the strikes and the May finale played nothing.
