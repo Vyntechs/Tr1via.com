@@ -183,6 +183,28 @@ export function PlayerJoin({
             {error}
           </div>
         )}
+        {interactive && (
+          <div
+            style={{
+              marginTop: 12,
+              textAlign: "center",
+              fontSize: 11.5,
+              lineHeight: 1.4,
+              color: t.inkMute,
+            }}
+          >
+            By joining, you agree to our{" "}
+            <a
+              href="/privacy"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: t.inkMid, textDecoration: "underline", textUnderlineOffset: 2 }}
+            >
+              Privacy Policy
+            </a>
+            .
+          </div>
+        )}
       </form>
     </PhoneScreen>
   );
