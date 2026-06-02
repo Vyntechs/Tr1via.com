@@ -108,12 +108,23 @@ function TVFinaleWinnerInner({
   const { t, themeKey } = useTheme();
 
   // Finale lightning: for the May "storm" theme, fire 2-3 close strikes in
-  // quick succession on mount. This is the "WHOA" moment — the close of
-  // the night. Other themes ignore the prop. We stage three bumps spaced
-  // ~700ms apart so the room sees a flurry, not a single flash.
+  // quick succession once the winner paints. This is the "WHOA" moment — the
+  // close of the night. Other themes ignore the prop. We stage three bumps
+  // spaced ~700ms apart so the room sees a flurry, not a single flash.
+  //
+  // Gate on `winner`, NOT just `themeKey`: the effect sits above the
+  // `if (!winner) return null` guard (hoisted there to fix the React #310 hook-
+  // count crash — see the comment above). If it fired on the empty, scores-
+  // still-loading render, the three bumps would advance the count to 3 against
+  // a tree where no Weather/Lightning is mounted. `Lightning` seeds its "last
+  // seen" ref from the count present at mount and only strikes on a CHANGE, so
+  // when the winner finally arrived it would mount already at 3 and play
+  // nothing. Keying the effect on the winner restarts the timers the moment
+  // Lightning actually mounts. Regression: tests/unit/tv-finale-winner-hooks.test.tsx.
+  const hasWinner = Boolean(winner);
   const [lightningTriggerCount, setLightningTriggerCount] = useState(0);
   useEffect(() => {
-    if (themeKey !== "may") return;
+    if (themeKey !== "may" || !hasWinner) return;
     // First strike: ~250ms in so it lands once the name has rendered.
     const t1 = window.setTimeout(() => setLightningTriggerCount((n) => n + 1), 250);
     const t2 = window.setTimeout(() => setLightningTriggerCount((n) => n + 1), 950);
@@ -123,7 +134,7 @@ function TVFinaleWinnerInner({
       clearTimeout(t2);
       clearTimeout(t3);
     };
-  }, [themeKey]);
+  }, [themeKey, hasWinner]);
 
   // No winner data → render nothing rather than fake names. Production callers
   // MUST pass real data; the empty state prevents demo leakage. (After the
