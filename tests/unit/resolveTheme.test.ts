@@ -27,50 +27,55 @@ describe("resolveTheme", () => {
     });
 
     it("skips invalid night.theme_key and falls to host", () => {
+      // Host default uses a non-seasonal lock so this asserts the fall-through
+      // mechanic, not the seasonal-month behavior (covered in its own block).
       expect(
         resolveTheme(
           { theme_key: "midnight-jazz-vibes" },
-          { default_theme_key: "march" },
+          { default_theme_key: "daylight" },
         ),
-      ).toBe("march");
+      ).toBe("daylight");
     });
 
     it("treats null night.theme_key as 'no override'", () => {
       expect(
         resolveTheme(
           { theme_key: null },
-          { default_theme_key: "may" },
+          { default_theme_key: "house" },
         ),
-      ).toBe("may");
+      ).toBe("house");
     });
 
     it("treats undefined night.theme_key as 'no override'", () => {
       expect(
         resolveTheme(
           { theme_key: undefined },
-          { default_theme_key: "august" },
+          { default_theme_key: "daylight" },
         ),
-      ).toBe("august");
+      ).toBe("daylight");
     });
   });
 
-  describe("layer 2: host preference", () => {
+  describe("layer 2: host preference (non-seasonal locks only)", () => {
+    // Only deliberate, non-seasonal themes (house, daylight) act as a fixed
+    // host preference. Seasonal months in this slot follow the live calendar
+    // instead — see the dedicated block below.
     it("uses host.default_theme_key when night is null", () => {
       expect(
-        resolveTheme(null, { default_theme_key: "november" }),
-      ).toBe("november");
+        resolveTheme(null, { default_theme_key: "house" }),
+      ).toBe("house");
     });
 
     it("uses host.default_theme_key when night is undefined", () => {
       expect(
-        resolveTheme(undefined, { default_theme_key: "january" }),
-      ).toBe("january");
+        resolveTheme(undefined, { default_theme_key: "daylight" }),
+      ).toBe("daylight");
     });
 
     it("uses host.default_theme_key when night object exists but theme_key missing", () => {
       expect(
-        resolveTheme({}, { default_theme_key: "july" }),
-      ).toBe("july");
+        resolveTheme({}, { default_theme_key: "house" }),
+      ).toBe("house");
     });
 
     it("skips invalid host.default_theme_key and falls to the month layer", () => {
@@ -177,6 +182,78 @@ describe("resolveTheme", () => {
       // May sees the storm theme automatically.
       const may = new Date(2026, 4, 15);
       expect(resolveTheme({ theme_key: null }, undefined, may)).toBe("may");
+    });
+  });
+
+  // A host-level theme that is one of the 12 calendar months is NOT a fixed
+  // preference — the months ARE the auto-rotating season. So a month sitting
+  // in host.default_theme_key means "follow the season", and resolveTheme
+  // defers to the live calendar instead of honoring the literal stored month.
+  // Non-month themes (house, daylight) remain deliberate, honored locks.
+  //
+  // Why this matters: a stale `default_theme_key='may'` was frozen into prod
+  // by a one-time manual edit. Before this contract it shadowed the calendar
+  // forever — wrong every month. After it, the season is computed live and
+  // self-heals, with nothing stored to rot.
+  describe("host-level seasonal months follow the live calendar (never frozen)", () => {
+    it("ignores a stale host month and uses the current month instead", () => {
+      // The exact prod bug: host default frozen to 'may', but it's June.
+      const june = new Date(2026, 5, 3);
+      expect(
+        resolveTheme(null, { default_theme_key: "may" }, june),
+      ).toBe("june");
+    });
+
+    it("self-heals every month from the same frozen value", () => {
+      // Same stale 'may' on the host — one month later it must roll to July
+      // on its own, proving nothing is stored that can go stale.
+      const july = new Date(2026, 6, 10);
+      expect(
+        resolveTheme(null, { default_theme_key: "may" }, july),
+      ).toBe("july");
+      const december = new Date(2026, 11, 1);
+      expect(
+        resolveTheme(null, { default_theme_key: "may" }, december),
+      ).toBe("december");
+    });
+
+    it("a host month matching the current month still resolves to that month", () => {
+      // Belt-and-suspenders: when the frozen month happens to equal the live
+      // month, the result is the same either way — no surprise.
+      const may = new Date(2026, 4, 15);
+      expect(
+        resolveTheme(null, { default_theme_key: "may" }, may),
+      ).toBe("may");
+    });
+
+    it("still honors a non-seasonal host lock (house) regardless of month", () => {
+      // 'house' is a deliberate, non-seasonal brand lock — a host who wants
+      // pub-night year-round keeps it. Not a month, so it is honored.
+      const june = new Date(2026, 5, 3);
+      expect(
+        resolveTheme(null, { default_theme_key: "house" }, june),
+      ).toBe("house");
+    });
+
+    it("still honors a non-seasonal host lock (daylight) regardless of month", () => {
+      const october = new Date(2026, 9, 15);
+      expect(
+        resolveTheme(null, { default_theme_key: "daylight" }, october),
+      ).toBe("daylight");
+    });
+
+    it("a deliberately-picked per-night month override still wins", () => {
+      // Per-night theme is an explicit pick for THAT night (a Halloween
+      // night, a finale). It wins even when it's a month and even over a
+      // host default and the current calendar.
+      const june = new Date(2026, 5, 3);
+      expect(
+        resolveTheme(
+          { theme_key: "october" },
+          { default_theme_key: "may" },
+          june,
+        ),
+      ).toBe("october");
     });
   });
 });

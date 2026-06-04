@@ -11,7 +11,7 @@
 import { LaptopShell } from "@/components/shells";
 import { Eyebrow, Numeric, Rule, ThemeProvider, useTheme } from "@/components/system";
 import { formatRoomCode } from "@/lib/game/room-code";
-import type { ThemeKey } from "@/lib/theme/tokens";
+import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 import type { ResetPreview } from "@/lib/api/resetNightCounts";
 
 export interface HostDashboardPastNight {
@@ -36,6 +36,10 @@ export interface HostDashboardTonight {
    *  as a prominent subtitle under the venue. Optional — the venue
    *  stays standalone when missing. */
   dateLong?: string;
+  /** True only when this night's date is actually today. Gates the
+   *  "TONIGHT" word so a stale, never-closed leftover night doesn't claim
+   *  to be tonight. */
+  isToday: boolean;
   /** Persisted room code; rendered with formatRoomCode for the K9·PR4M look. */
   roomCode: string;
   themeKey: ThemeKey;
@@ -120,9 +124,14 @@ function HostDashboardInner({
   onResume,
   onResetGame,
 }: Omit<HostDashboardProps, "themeKey">) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
+  const themeName = TR1VIA_THEMES[themeKey].name;
+  // Only call it "TONIGHT" when the night is actually today; otherwise show
+  // the real date plainly so a stale leftover night can't fake being tonight.
   const tonightLabel = tonight
-    ? `TONIGHT · ${tonight.date.toUpperCase()}`
+    ? tonight.isToday
+      ? `TONIGHT · ${tonight.date.toUpperCase()}`
+      : tonight.date.toUpperCase()
     : "TONIGHT · WED MAY 27";
   const tonightVenue = tonight?.venue ?? "Soul Fire Pizza";
   const lifetimeLabel = lifetime
@@ -345,7 +354,7 @@ function HostDashboardInner({
                 <span
                   style={{ width: 10, height: 10, borderRadius: 99, background: t.accent }}
                 />
-                May · Storm
+                {themeName}
               </div>
             </div>
             <Rule color={t.ink} style={{ width: 1, height: "auto", alignSelf: "stretch" }} />
