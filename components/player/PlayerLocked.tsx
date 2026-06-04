@@ -17,6 +17,7 @@ import {
 import { PhoneScreen } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import type { StandingRow } from "@/lib/player/betweenGames";
 
 export interface PlayerLockedProps {
   themeKey?: ThemeKey;
@@ -34,6 +35,10 @@ export interface PlayerLockedProps {
   lockedSummary?: string;
   /** Question number within its game (1..N). */
   questionNumber?: number;
+  /** Live standings (as of the last reveal) so the player can see where they
+   *  stand while the timer runs. Omitted → the board is hidden (gallery/demo
+   *  keep the original locked screen). Mirrors the between-games board shape. */
+  standings?: { top: StandingRow[]; you: StandingRow | null };
 }
 
 export function PlayerLocked({
@@ -46,11 +51,37 @@ export function PlayerLocked({
   msToLock = 2300,
   lockedSummary = "21/32",
   questionNumber: _questionNumber,
+  standings,
 }: PlayerLockedProps = {}) {
   const { t } = useTheme();
   const catColor = categoryColor(category, t.accent);
   const secondsToLock = (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock < 5000;
+  const hasStandings = !!standings && standings.top.length > 0;
+
+  function StandingsRow({ row, pinned }: { row: StandingRow; pinned?: boolean }) {
+    return (
+      <div
+        data-testid={row.isYou ? "standings-you" : "standings-row"}
+        style={{
+          display: "grid",
+          gridTemplateColumns: "28px 1fr auto",
+          alignItems: "center",
+          gap: 10,
+          padding: "9px 12px",
+          borderRadius: 10,
+          background: row.isYou ? catColor : t.surface,
+          color: row.isYou ? "#0E0805" : t.ink,
+          border: pinned ? `1.5px dashed ${catColor}` : "none",
+          fontWeight: row.isYou ? 700 : 500,
+        }}
+      >
+        <Numeric size={15} weight={700} color="currentColor">{row.rank}</Numeric>
+        <span style={{ fontSize: 14, fontWeight: row.isYou ? 700 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</span>
+        <Numeric size={15} weight={700} color="currentColor">{row.score.toLocaleString()}</Numeric>
+      </div>
+    );
+  }
   return (
     <PhoneScreen data-testid="player-locked">
       <div
@@ -108,6 +139,16 @@ export function PlayerLocked({
           />
         ))}
       </div>
+
+      {hasStandings && (
+        <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 6 }}>
+          <Eyebrow color={t.inkMute} size={10}>WHERE YOU STAND</Eyebrow>
+          {standings!.top.map((row) => (
+            <StandingsRow key={`${row.rank}-${row.name}`} row={row} />
+          ))}
+          {standings!.you && <StandingsRow row={standings!.you} pinned />}
+        </div>
+      )}
 
       <div style={{ marginTop: "auto", paddingTop: 18, textAlign: "center", color: t.inkMid, fontSize: 13 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
