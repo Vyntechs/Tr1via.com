@@ -63,6 +63,22 @@ function themeKeyForMonth(month: number): ThemeKey | null {
   }
 }
 
+/** The 12 calendar-month themes — the auto-rotating season. Derived from
+ *  `themeKeyForMonth` so the two never drift apart.
+ *
+ *  A month is never a fixed *host* preference: the months rotate by design,
+ *  so a month sitting in `host.default_theme_key` means "follow the season",
+ *  not "lock May forever". When we see one there we defer to the live
+ *  calendar (layer 3) instead of honoring the literal stored month — that's
+ *  what makes a stale stored season self-heal every month with nothing
+ *  saved to rot. Per-night overrides are exempt: picking a month for one
+ *  specific night (a Halloween night, a finale) IS a deliberate choice. */
+const SEASONAL_MONTH_KEYS: ReadonlySet<ThemeKey> = new Set(
+  Array.from({ length: 12 }, (_, i) => themeKeyForMonth(i + 1)).filter(
+    (k): k is ThemeKey => k !== null,
+  ),
+);
+
 /** Subset of NightRow this helper reads — keeps the input loose so any
  *  shape (snapshot, raw DB row, hand-built test fixture) works. */
 export interface NightThemeInput {
@@ -81,13 +97,18 @@ export interface HostThemeInput {
  * Resolve which ThemeKey to render for a surface.
  *
  * Order:
- *   1. `night.theme_key` if present and valid (per-night override).
- *   2. `host.default_theme_key` if present and valid (host preference).
- *   3. Current month's theme (May → "may" storm, October → "october", etc).
+ *   1. `night.theme_key` if present and valid (per-night override — may be a
+ *      month; choosing a month for one night is a deliberate pick).
+ *   2. `host.default_theme_key` ONLY if it's a deliberate, non-seasonal lock
+ *      (house, daylight, …). A month here is treated as "follow the season"
+ *      and skipped — the months rotate by design, so a stored month is never
+ *      a fixed preference (see SEASONAL_MONTH_KEYS).
+ *   3. Current month's theme (June → "june", October → "october", etc).
  *   4. `SYSTEM_DEFAULT_THEME` ("daylight") — last resort.
  *
- * Layer 3 catches the brand-new-host case so the first night a customer
- * creates picks up the seasonal theme without anyone having to set it.
+ * Layer 3 is the real default: with no per-night override and no non-seasonal
+ * host lock, every surface follows the live calendar and rolls forward each
+ * month on its own. Nothing seasonal is ever stored, so nothing can go stale.
  *
  * Invalid theme strings at any layer are skipped (not coerced) — guards
  * against legacy values that have since been removed from the THEME_KEYS
@@ -102,8 +123,11 @@ export function resolveTheme(
 ): ThemeKey {
   const nightKey = night?.theme_key;
   if (isThemeKey(nightKey)) return nightKey;
+  // Host preference is honored only when it's a deliberate, non-seasonal lock
+  // (house, daylight, …). A month here means "follow the season" → fall
+  // through to the live calendar so it can never freeze on a stale month.
   const hostKey = host?.default_theme_key;
-  if (isThemeKey(hostKey)) return hostKey;
+  if (isThemeKey(hostKey) && !SEASONAL_MONTH_KEYS.has(hostKey)) return hostKey;
   const monthKey = themeKeyForMonth(now.getMonth() + 1);
   if (monthKey) return monthKey;
   return SYSTEM_DEFAULT_THEME;

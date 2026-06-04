@@ -23,6 +23,7 @@ import type {
 } from "@/lib/supabase/types";
 import { HostHomeClient } from "./HostHomeClient";
 import { fetchResetPreview } from "@/lib/api/resetNightCounts";
+import { isNightToday } from "@/lib/host/tonightDate";
 
 export const dynamic = "force-dynamic";
 
@@ -98,6 +99,10 @@ export default async function HostHomePage() {
         venue: tonightRow.venue_name,
         date: formatNightDate(tonightRow),
         dateLong: formatNightDateLong(tonightRow),
+        isToday: isNightToday(
+          tonightRow.scheduled_at ?? tonightRow.created_at,
+          new Date(),
+        ),
         roomCode: tonightRow.room_code,
         themeKey: (tonightRow.theme_key as unknown) as
           | "house"
