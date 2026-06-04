@@ -80,13 +80,32 @@ function PlayerBetweenGamesSample() {
   );
 }
 
+// ⚠️ Fixed-size preview only — validate the REAL /room/[code] route. Shows the
+// live standings now surfaced on the locked screen after a player answers.
+function PlayerLockedSample() {
+  return (
+    <PlayerLocked
+      standings={{
+        top: [
+          { rank: 1, name: "Alice", score: 12320, isYou: false },
+          { rank: 2, name: "You", score: 9160, isYou: true },
+          { rank: 3, name: "Carol", score: 8420, isYou: false },
+          { rank: 4, name: "Bob", score: 3080, isYou: false },
+          { rank: 5, name: "Dave", score: 2100, isYou: false },
+        ],
+        you: null,
+      }}
+    />
+  );
+}
+
 const SCREENS: ScreenEntry[] = [
   { key: "join",                title: "01 · Join",                       Component: PlayerJoin },
   { key: "lobby",               title: "02 · Lobby",                      Component: PlayerLobby },
   { key: "question-text-only",  title: "03 · Question · live (text)",     Component: PlayerQuestion },
   { key: "question-with-image", title: "03b · Question · live (w/ image)", Component: PlayerQuestionWithImage },
   { key: "question-long",       title: "03c · Question · live (long, 163ch)", Component: PlayerQuestionLong },
-  { key: "locked",              title: "04 · Locked",                     Component: PlayerLocked },
+  { key: "locked",              title: "04 · Locked · live standings",    Component: PlayerLockedSample },
   { key: "reveal-correct",      title: "05 · Reveal · correct",           Component: PlayerRevealCorrect },
   { key: "reveal-wrong",        title: "06 · Reveal · wrong",             Component: PlayerRevealWrong },
   { key: "join-game-2",         title: "07 · Join Game 2",                Component: PlayerJoinGame2 },
