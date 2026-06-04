@@ -57,7 +57,7 @@ import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { playerColorHex } from "@/lib/player/playerColor";
-import { selectBetweenGamesView, buildGame1Standings } from "@/lib/player/betweenGames";
+import { selectBetweenGamesView, buildGame1Standings, type StandingRow } from "@/lib/player/betweenGames";
 import { playWelcomeChime, triggerWelcomeHaptic } from "@/lib/audio/welcomeChime";
 import {
   formatRoomCode,
@@ -482,6 +482,7 @@ function RoomStateMachine({
             categories={snapshot.categories}
             game={currentGame}
             themeKey={themeKey}
+            standings={buildGame1Standings(scores ?? [], me.id)}
           />
         );
       } else {
@@ -900,6 +901,7 @@ function LockedView({
   categories,
   game: _game,
   themeKey,
+  standings,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -909,6 +911,7 @@ function LockedView({
   categories: CategoryRow[];
   game: GameRow;
   themeKey?: ThemeKey;
+  standings?: { top: StandingRow[]; you: StandingRow | null };
 }) {
   // Reuse the same scramble — same player + question = same permutation.
   const scramble = useMemo(
@@ -963,6 +966,7 @@ function LockedView({
       seconds={displaySeconds}
       msToLock={myAnswer.ms_to_lock}
       questionNumber={questionNumber}
+      standings={standings}
     />
   );
 }
