@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { it, expect } from "vitest";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import type { GeneratedQuestion } from "@/lib/ai/generate-questions";
 import type { AnswerVerdict } from "@/lib/ai/verify-answers";
