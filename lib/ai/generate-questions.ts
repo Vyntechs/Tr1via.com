@@ -176,8 +176,8 @@ export const DEFAULT_MODEL = "claude-sonnet-4-6";
 
 /** Default request timeout in ms. Bumped from 30s after observing repeated
  *  Anthropic `Request timed out` failures in prod logs. The route's
- *  `maxDuration` is 120s, so 60s here still leaves headroom for the
- *  sequential Pexels photo attach pass that follows. */
+ *  `maxDuration` is 300s, so 60s here leaves ample headroom for the
+ *  verification passes and the sequential Pexels photo attach that follow. */
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
 // ─── Public API ───────────────────────────────────────────────────────

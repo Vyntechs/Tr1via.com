@@ -60,3 +60,18 @@ it("stops early when generation dries up", async () => {
   expect(out).toHaveLength(1);
   expect(calls).toBe(2);                                    // round 2 returns empty → stop
 });
+
+it("requires ALL verify passes to agree — drops a question one pass flags (verifyPasses default 2)", async () => {
+  let call = 0;
+  const out = await collectVerifiedQuestions({
+    target: 10,
+    maxRounds: 1,
+    generate: async () => [q("agree"), q("split")],
+    // Two concurrent passes: one says both clean, the other flags "split" (index 1).
+    verify: async () => {
+      call++;
+      return call === 1 ? [ok(0), ok(1)] : [ok(0), wrong(1)];
+    },
+  });
+  expect(out.map((x) => x.prompt)).toEqual(["agree"]); // "split" dropped — passes disagreed
+});

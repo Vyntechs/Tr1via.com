@@ -184,14 +184,18 @@ async function runGenerationJob(opts: {
     reroll = { deleteIds: plan.deleteIds, avoidPrompts: plan.avoidPrompts };
   }
 
-  // Step 1: generate, then independently fact-check every answer on Opus.
-  // Only questions the verifier marks correct AND non-ambiguous survive;
-  // the rest are regenerated (avoiding repeats), bounded to a few rounds.
-  // Nothing is inserted or broadcast until it has passed — the category is
-  // still 'generating', so the host never sees an unverified question.
+  // Step 1: generate, then independently fact-check every answer on Opus —
+  // TWICE (verifyPasses: 2), keeping only questions both passes agree are
+  // correct AND unambiguous (a single check has wobble on borderline ones;
+  // measured ~5% -> ~2.5% slip). A wrong/ambiguous answer can't reach a live
+  // game. One round keeps the extra checks safely inside maxDuration, and the
+  // host gets fewer-but-clean rather than wrong. Nothing is inserted or
+  // broadcast until it has passed — the category is still 'generating', so the
+  // host never sees an unverified question.
   const generated = await collectVerifiedQuestions({
     target: 20,
-    maxRounds: 3,
+    maxRounds: 1,
+    verifyPasses: 2,
     generate: (avoid) =>
       generateQuestions({
         topic: opts.topic,
