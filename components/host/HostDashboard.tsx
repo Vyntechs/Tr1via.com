@@ -8,6 +8,8 @@
 
 "use client";
 
+import Link from "next/link";
+
 import { LaptopShell } from "@/components/shells";
 import { Eyebrow, Numeric, Rule, ThemeProvider, useTheme } from "@/components/system";
 import { formatRoomCode } from "@/lib/game/room-code";
@@ -15,6 +17,7 @@ import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 import type { ResetPreview } from "@/lib/api/resetNightCounts";
 
 export interface HostDashboardPastNight {
+  nightId: string;
   /** Formatted display label (e.g. "Wed May 21"). */
   date: string;
   venue: string;
@@ -22,8 +25,13 @@ export interface HostDashboardPastNight {
   cats: string[];
   /** Distinct players who joined the night. */
   players: number;
-  /** True if the night was actually run (vs created and abandoned). */
-  ran: boolean;
+}
+
+export interface HostDashboardSetupNight {
+  nightId: string;
+  date: string;
+  venue: string;
+  cats: string[];
 }
 
 export interface HostDashboardTonight {
@@ -56,8 +64,12 @@ export interface HostDashboardProps {
   hostName?: string;
   /** Quick subtitle under the host name. */
   hostSubtitle?: string;
-  /** Most-recent-first list of past nights, up to a handful surface. */
-  weeks?: HostDashboardPastNight[];
+  /** Most-recent-first list of nights that actually ran (opened_at != null) —
+   *  shown read-only under "Previous games". */
+  previousGames?: HostDashboardPastNight[];
+  /** Nights created but never run (opened_at == null) — shown under
+   *  "Still in setup" with a "Continue setup" link. */
+  inSetup?: HostDashboardSetupNight[];
   /** Lifetime totals shown on the right-hand eyebrow. */
   lifetime?: { nights: number; questions: number };
   /** If present, tonight is highlighted with a Set-up/Resume CTA. */
@@ -85,39 +97,40 @@ export function HostDashboard(props: HostDashboardProps) {
 
 const DEMO_WEEKS: HostDashboardPastNight[] = [
   {
+    nightId: "demo-1",
     date: "Wed May 21",
     venue: "Soul Fire Pizza",
     cats: ["Geography", "Music", "Animals", "Food", "Movies", "History"],
     players: 28,
-    ran: true,
   },
   {
+    nightId: "demo-2",
     date: "Wed May 14",
     venue: "Soul Fire Pizza",
     cats: ["Sports", "TV", "Science", "U.S. States", "90s", "Local"],
     players: 31,
-    ran: true,
   },
   {
+    nightId: "demo-3",
     date: "Mon May 12",
     venue: "Mill House Tap",
     cats: ["Beer", "Music", "Geography", "Food", "Movies", "Wild Cards"],
     players: 19,
-    ran: true,
   },
   {
+    nightId: "demo-4",
     date: "Wed May 7",
     venue: "Soul Fire Pizza",
     cats: ["Movies", "Music", "Animals", "Food", "History", "Sports"],
     players: 26,
-    ran: true,
   },
 ];
 
 function HostDashboardInner({
   hostName = "Linda Petrov",
   hostSubtitle = "Independent · 4 venues",
-  weeks = DEMO_WEEKS,
+  previousGames = DEMO_WEEKS,
+  inSetup = [],
   lifetime,
   tonight = null,
   onSetupTonight,
@@ -386,7 +399,7 @@ function HostDashboardInner({
             }}
           >
             <Eyebrow color={t.inkMute} size={10}>
-              YOUR LAST FEW NIGHTS
+              PREVIOUS GAMES
             </Eyebrow>
             <Eyebrow color={t.inkMute} size={10}>
               {lifetimeLabel}
@@ -406,7 +419,7 @@ function HostDashboardInner({
               padding: 1,
             }}
           >
-            {weeks.length === 0 ? (
+            {previousGames.length === 0 ? (
               <div
                 style={{
                   padding: "32px 18px",
@@ -420,7 +433,7 @@ function HostDashboardInner({
                 No nights yet — your first one will appear here.
               </div>
             ) : (
-              weeks.map((w, i) => (
+              previousGames.map((w, i) => (
                 <div
                   key={`${w.date}-${w.venue}-${i}`}
                   style={{
@@ -433,7 +446,7 @@ function HostDashboardInner({
                     borderRadius:
                       i === 0
                         ? "11px 11px 0 0"
-                        : i === weeks.length - 1
+                        : i === previousGames.length - 1
                           ? "0 0 11px 11px"
                           : 0,
                   }}
@@ -461,6 +474,62 @@ function HostDashboardInner({
               ))
             )}
           </div>
+
+          {inSetup.length > 0 && (
+            <>
+              <div style={{ marginTop: 28 }}>
+                <Eyebrow color={t.inkMute} size={10}>
+                  STILL IN SETUP
+                </Eyebrow>
+              </div>
+              <div
+                style={{
+                  marginTop: 14,
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
+                }}
+              >
+                {inSetup.map((s, i) => (
+                  <Link
+                    key={`${s.nightId}-${i}`}
+                    href={`/host/setup/${s.nightId}`}
+                    style={{ textDecoration: "none", color: "inherit" }}
+                  >
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: "120px 200px 1fr auto",
+                        alignItems: "center",
+                        gap: 18,
+                        padding: "16px 18px",
+                        background: t.paper,
+                        border: `1px dashed ${t.line}`,
+                        borderRadius: 12,
+                      }}
+                    >
+                      <Numeric size={13} color={t.inkMid}>
+                        {s.date}
+                      </Numeric>
+                      <span style={{ fontSize: 15, color: t.ink, fontWeight: 500 }}>
+                        {s.venue}
+                      </span>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
+                        {s.cats.map((c) => (
+                          <span key={c} style={{ fontSize: 12, color: t.inkMid }}>
+                            {c}
+                          </span>
+                        ))}
+                      </div>
+                      <span style={{ color: t.accent, fontSize: 13, fontWeight: 600 }}>
+                        Continue setup →
+                      </span>
+                    </div>
+                  </Link>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       </div>
     </LaptopShell>

@@ -24,6 +24,7 @@ import type {
 import { HostHomeClient } from "./HostHomeClient";
 import { fetchResetPreview } from "@/lib/api/resetNightCounts";
 import { isNightToday } from "@/lib/host/tonightDate";
+import { classifyNights } from "@/lib/host/classifyNights";
 
 export const dynamic = "force-dynamic";
 
@@ -62,27 +63,31 @@ export default async function HostHomePage() {
     .order("created_at", { ascending: false });
   const nights = (nightRows ?? []) as NightRow[];
 
-  // Find a "tonight" headliner — the most-recent night that isn't closed.
-  const tonightRow = nights.find((n) => !n.closed_at) ?? null;
+  // Classify nights by opened_at — the reliable "this night actually ran"
+  // signal (closed_at is never written in prod). tonightRow stays the
+  // most-recent night, exactly as the old .find(!closed_at) returned.
+  const { tonight: tonightRow, previousGames, inSetup } = classifyNights(nights);
 
-  // For the past-nights list we count distinct players + grab category
-  // names. Both come from the games + categories + players join. We bound
-  // the lookups to the most recent 8 nights so the dashboard query stays
-  // cheap.
-  const recentNights = nights
-    .filter((n) => !!n.closed_at || n.id === tonightRow?.id)
-    .filter((n) => n.id !== tonightRow?.id)
-    .slice(0, 8);
-  const recentNightIds = recentNights.map((n) => n.id);
-  const categoriesByNight = await fetchCategoriesByNight(recentNightIds);
-  const playersByNight = await fetchPlayerCountByNight(recentNightIds);
+  // Bound the per-night lookups to the most recent 8 of each bucket so the
+  // dashboard query stays cheap (same cap the old code used).
+  const previousNights = previousGames.slice(0, 8);
+  const inSetupNights = inSetup.slice(0, 8);
+  const lookupIds = [...previousNights, ...inSetupNights].map((n) => n.id);
+  const categoriesByNight = await fetchCategoriesByNight(lookupIds);
+  const playersByNight = await fetchPlayerCountByNight(lookupIds);
 
-  const weeks = recentNights.map((n) => ({
+  const previousRows = previousNights.map((n) => ({
+    nightId: n.id,
     date: formatNightDate(n),
     venue: n.venue_name,
     cats: categoriesByNight[n.id] ?? [],
     players: playersByNight[n.id] ?? 0,
-    ran: !!n.closed_at,
+  }));
+  const inSetupRows = inSetupNights.map((n) => ({
+    nightId: n.id,
+    date: formatNightDate(n),
+    venue: n.venue_name,
+    cats: categoriesByNight[n.id] ?? [],
   }));
 
   // Lifetime totals for the eyebrow on the right of the past-nights list.
@@ -133,7 +138,8 @@ export default async function HostHomePage() {
       defaultVenue={host.default_venue ?? "Soul Fire Pizza"}
       isFirstNightComplete={host.is_first_night_complete}
       isFounder={host.role === "founder"}
-      weeks={weeks}
+      previousGames={previousRows}
+      inSetup={inSetupRows}
       lifetime={lifetime}
       tonight={tonight}
     />
@@ -223,7 +229,7 @@ async function fetchLifetimeTotals(
     .from("nights")
     .select("id", { count: "exact", head: true })
     .eq("host_id", hostId)
-    .not("closed_at", "is", null);
+    .not("opened_at", "is", null);
   // Questions: rough estimate — pull all categories for this host's games
   // and use category_count + 7 ≈ questions per game. For now we count
   // actual questions in categories tied to games owned by the host.
