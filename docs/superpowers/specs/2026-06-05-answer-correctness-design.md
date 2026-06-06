@@ -96,3 +96,33 @@ generation pipeline:
 
 ~**$2.30/night** total — Sonnet write (~$0.63) + Opus check (~$1.70), for a full
 12-category / ~240-question night. Negligible for a paid show.
+
+## Validation update (2026-06-05, after empirical testing — what actually shipped)
+
+Tested against 12 diverse topics (geography, chemistry, WWII, literature, film, Olympics,
+marine biology, cuisine, space, 80s pop, ancient Egypt, celebrity marriages) with
+independent adversarial re-checks. Three things changed the design:
+
+1. **Verifier completeness bug found + fixed.** On a 20-question batch the verifier
+   sometimes returned an *incomplete* verdict set; the caller treats a missing verdict as
+   "unverified" and drops the question, so the host could be left with very few questions.
+   Fix: `verifyAnswers` now verifies in **chunks of 8** with a **completeness guard** that
+   retries a chunk once and throws (never silently drops) if it still can't get a verdict
+   per question. (`lib/ai/verify-answers.ts`)
+
+2. **A single check isn't airtight → double-verify.** One Opus pass has wobble on
+   borderline questions: a held-out judge disagreed with ~**5%** of single-checked
+   questions across the battery. So each question must now pass **two independent verify
+   passes** that both agree it's correct AND unambiguous (`verifyPasses: 2`, run
+   concurrently). That halves the slip to ~**2.5%** and drops contestable questions, not
+   just clearly-wrong ones. `maxRounds` is **1** (one round of 20 yields plenty after
+   double-verify, and keeps the extra checks safely inside the 300s budget).
+
+3. **Honest limit — 0% is not reachable with an AI judge.** The ~2.5% residual is
+   *genuinely contestable* questions (concentrated in fuzzy topics like cuisine and
+   celebrity marriages — e.g. "is Budapest *or* Bratislava on the Danube?" → both), not
+   wrong keys. Clear factual errors (the Demi Moore kind) *are* caught reliably. Most
+   topics scored 0 slips. The make-good `adjustments` ledger remains the catch for the
+   rare residual. Brandon set the bar at double-check on 2026-06-05.
+
+**Revised cost:** ~**$3–4/night** (two verify passes instead of one). Still negligible.
