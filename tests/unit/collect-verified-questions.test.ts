@@ -6,9 +6,9 @@ import type { AnswerVerdict } from "@/lib/ai/verify-answers";
 function q(prompt: string): GeneratedQuestion {
   return { prompt, options: ["a", "b", "c", "d"], correctIndex: 0, difficulty: 4, factBlurb: "blurb here", photoQuery: "q" };
 }
-const ok = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: true, ambiguous: false, trueAnswer: "a" });
-const wrong = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: false, ambiguous: false, trueAnswer: "b" });
-const ambig = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: true, ambiguous: true, trueAnswer: "a" });
+const ok = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: true, ambiguous: false });
+const wrong = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: false, ambiguous: false });
+const ambig = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: true, ambiguous: true });
 
 it("keeps only correct, non-ambiguous questions", async () => {
   const batch = [q("k1"), q("wrong"), q("amb"), q("k2")];

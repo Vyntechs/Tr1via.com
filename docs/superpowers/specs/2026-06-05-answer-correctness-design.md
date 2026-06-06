@@ -103,12 +103,17 @@ Tested against 12 diverse topics (geography, chemistry, WWII, literature, film, 
 marine biology, cuisine, space, 80s pop, ancient Egypt, celebrity marriages) with
 independent adversarial re-checks. Three things changed the design:
 
-1. **Verifier completeness bug found + fixed.** On a 20-question batch the verifier
-   sometimes returned an *incomplete* verdict set; the caller treats a missing verdict as
-   "unverified" and drops the question, so the host could be left with very few questions.
-   Fix: `verifyAnswers` now verifies in **chunks of 8** with a **completeness guard** that
-   retries a chunk once and throws (never silently drops) if it still can't get a verdict
-   per question. (`lib/ai/verify-answers.ts`)
+1. **Verifier reliability — found + fixed (and the end-to-end PR validation caught my
+   *first* attempt at it).** The verifier sometimes returns an *incomplete* verdict set on
+   a batch. My first fix made it **throw** on incompleteness — but driving a real
+   generation through the deployed route showed that turns one Opus hiccup into a **total
+   generation failure** (the category rolled back to draft, host gets nothing). Corrected
+   contract in `lib/ai/verify-answers.ts`: verify in **chunks of 6**, **retry up to 3× to
+   fill gaps**, keep verdicts minimal (dropped the free-text `trueAnswer` field so the
+   model reliably returns one per question), and **degrade gracefully** — return whatever
+   verdicts came back; the caller drops the unverified few (safe: never emits an unverified
+   question, never fails the whole job). Real SDK errors (429/network) still throw and fail
+   the job, which is correct.
 
 2. **A single check isn't airtight → double-verify.** One Opus pass has wobble on
    borderline questions: a held-out judge disagreed with ~**5%** of single-checked
