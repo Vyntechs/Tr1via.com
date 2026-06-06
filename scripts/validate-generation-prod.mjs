@@ -16,6 +16,8 @@ import { createClient } from "@supabase/supabase-js";
 import Anthropic from "@anthropic-ai/sdk";
 
 const BASE = process.env.SMOKE_BASE_URL ?? "https://tr1via.com";
+// Optional Vercel deployment-protection bypass (share URL) for protected previews.
+const SHARE_URL = process.env.VERCEL_SHARE_URL ?? null;
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
 const TOPIC = process.argv[2] ?? "world geography";
 const GEN_TIMEOUT_MS = Number(process.env.SMOKE_GEN_TIMEOUT_MS ?? 260_000);
@@ -44,6 +46,20 @@ async function call(jar, path, init = {}) {
   return res;
 }
 
+// Establish a Vercel deployment-protection bypass by following the share-URL
+// redirect chain, capturing every Set-Cookie into the jar along the way.
+async function bypassHandshake(jar, shareUrl) {
+  let url = shareUrl;
+  for (let i = 0; i < 6; i++) {
+    const res = await fetch(url, { redirect: "manual", headers: { Cookie: jar.header() } });
+    for (const sc of res.headers.getSetCookie?.() ?? []) jar.apply(sc);
+    const loc = res.headers.get("location");
+    if (res.status >= 300 && res.status < 400 && loc) { url = new URL(loc, url).toString(); continue; }
+    return res.status;
+  }
+  return null;
+}
+
 // ── Independent Opus re-verifier (mirrors lib/ai/verify-answers.ts; chunked; no temperature) ──
 const VERDICTS_TOOL = { name: "verdicts", description: "verdicts", input_schema: { type: "object", properties: { verdicts: { type: "array", items: { type: "object", properties: { index: { type: "integer" }, markedAnswerIsCorrect: { type: "boolean" }, ambiguous: { type: "boolean" }, trueAnswer: { type: "string" } }, required: ["index", "markedAnswerIsCorrect", "ambiguous", "trueAnswer"], additionalProperties: false } } }, required: ["verdicts"], additionalProperties: false } };
 const VSYS = "You are a meticulous, independent trivia fact-checker. For each question, work out the correct answer from your OWN knowledge. Do NOT assume the markedAnswer is right. markedAnswerIsCorrect=true only if the marked answer is unambiguously the single correct option. ambiguous=true if two or more options are defensibly correct, or there is no single defensible answer. Return exactly one verdict per index.";
@@ -70,6 +86,11 @@ let nightId = null;
 let failed = false;
 try {
   const jar = new Jar();
+  // 0. preview protection bypass (if a share URL is provided)
+  if (SHARE_URL) {
+    const st = await bypassHandshake(jar, SHARE_URL);
+    console.log(c.g(`  ✓ Vercel preview bypass established (status ${st})`));
+  }
   // 1. login
   const login = await call(jar, "/api/auth/founder-login", { method: "POST", body: JSON.stringify({ email: FOUNDER_EMAIL }) });
   if (!login.ok) throw new Error(`login ${login.status}: ${await login.text()}`);
