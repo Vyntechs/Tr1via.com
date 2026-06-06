@@ -28,10 +28,16 @@ export default async function HostLivePage({
   // would scroll the TV too. The shared HostLayout uses `minHeight: 100dvh`
   // (so dashboard / setup screens can scroll), but the live console has to
   // override that and clip instead.
+  //
+  // HostLayout reserves a top strip for the AccountChip (--host-chip-reserve).
+  // The chip itself is hidden on this mirrored surface (see AccountChip), and
+  // this negative margin cancels the leftover reserve padding so the console
+  // stays exactly full-viewport — no audience-visible band, no scroll.
   return (
     <div
       style={{
         height: "100dvh",
+        marginTop: "calc(-1 * var(--host-chip-reserve, 0px))",
         width: "100%",
         overflow: "hidden",
         display: "flex",
