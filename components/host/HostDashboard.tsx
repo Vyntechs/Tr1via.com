@@ -406,6 +406,9 @@ function HostDashboardInner({
             </Eyebrow>
           </div>
 
+          {/* One scroll region wraps BOTH lists so the in-setup rows can
+              never be clipped/unreachable under viewport pressure. The
+              grouped (t.line hairline) styling lives on the inner wrapper. */}
           <div
             style={{
               marginTop: 14,
@@ -413,123 +416,132 @@ function HostDashboardInner({
               overflow: "auto",
               display: "flex",
               flexDirection: "column",
-              gap: 1,
-              background: t.line,
-              borderRadius: 12,
-              padding: 1,
             }}
           >
-            {previousGames.length === 0 ? (
-              <div
-                style={{
-                  padding: "32px 18px",
-                  background: t.paper,
-                  borderRadius: 11,
-                  color: t.inkMute,
-                  fontSize: 13,
-                  textAlign: "center",
-                }}
-              >
-                No nights yet — your first one will appear here.
-              </div>
-            ) : (
-              previousGames.map((w, i) => (
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                gap: 1,
+                background: t.line,
+                borderRadius: 12,
+                padding: 1,
+              }}
+            >
+              {previousGames.length === 0 ? (
                 <div
-                  key={`${w.date}-${w.venue}-${i}`}
                   style={{
-                    display: "grid",
-                    gridTemplateColumns: "120px 200px 1fr 100px",
-                    alignItems: "center",
-                    gap: 18,
-                    padding: "16px 18px",
+                    padding: "32px 18px",
                     background: t.paper,
-                    borderRadius:
-                      i === 0
-                        ? "11px 11px 0 0"
-                        : i === previousGames.length - 1
-                          ? "0 0 11px 11px"
-                          : 0,
+                    borderRadius: 11,
+                    color: t.inkMute,
+                    fontSize: 13,
+                    textAlign: "center",
                   }}
                 >
-                  <Numeric size={13} color={t.inkMid}>
-                    {w.date}
-                  </Numeric>
-                  <span style={{ fontSize: 15, color: t.ink, fontWeight: 500 }}>
-                    {w.venue}
-                  </span>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
-                    {w.cats.map((c) => (
-                      <span key={c} style={{ fontSize: 12, color: t.inkMid }}>
-                        {c}
-                      </span>
-                    ))}
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <Numeric size={15} color={t.ink}>
-                      {w.players}
-                    </Numeric>
-                    <span style={{ color: t.inkMute, fontSize: 11 }}> players</span>
-                  </div>
+                  {inSetup.length > 0
+                    ? "No finished games yet — they'll appear here after your first night runs."
+                    : "No nights yet — your first one will appear here."}
                 </div>
-              ))
+              ) : (
+                previousGames.map((w, i) => (
+                  <div
+                    key={`${w.date}-${w.venue}-${i}`}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "120px 200px 1fr 100px",
+                      alignItems: "center",
+                      gap: 18,
+                      padding: "16px 18px",
+                      background: t.paper,
+                      borderRadius:
+                        i === 0
+                          ? "11px 11px 0 0"
+                          : i === previousGames.length - 1
+                            ? "0 0 11px 11px"
+                            : 0,
+                    }}
+                  >
+                    <Numeric size={13} color={t.inkMid}>
+                      {w.date}
+                    </Numeric>
+                    <span style={{ fontSize: 15, color: t.ink, fontWeight: 500 }}>
+                      {w.venue}
+                    </span>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
+                      {w.cats.map((c) => (
+                        <span key={c} style={{ fontSize: 12, color: t.inkMid }}>
+                          {c}
+                        </span>
+                      ))}
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <Numeric size={15} color={t.ink}>
+                        {w.players}
+                      </Numeric>
+                      <span style={{ color: t.inkMute, fontSize: 11 }}> players</span>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+
+            {inSetup.length > 0 && (
+              <>
+                <div style={{ marginTop: 28 }}>
+                  <Eyebrow color={t.inkMute} size={10}>
+                    STILL IN SETUP
+                  </Eyebrow>
+                </div>
+                <div
+                  style={{
+                    marginTop: 14,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 10,
+                  }}
+                >
+                  {inSetup.map((s, i) => (
+                    <Link
+                      key={`${s.nightId}-${i}`}
+                      href={`/host/setup/${s.nightId}`}
+                      style={{ textDecoration: "none", color: "inherit" }}
+                    >
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "120px 200px 1fr auto",
+                          alignItems: "center",
+                          gap: 18,
+                          padding: "16px 18px",
+                          background: t.paper,
+                          border: `1px dashed ${t.line}`,
+                          borderRadius: 12,
+                        }}
+                      >
+                        <Numeric size={13} color={t.inkMid}>
+                          {s.date}
+                        </Numeric>
+                        <span style={{ fontSize: 15, color: t.ink, fontWeight: 500 }}>
+                          {s.venue}
+                        </span>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
+                          {s.cats.map((c) => (
+                            <span key={c} style={{ fontSize: 12, color: t.inkMid }}>
+                              {c}
+                            </span>
+                          ))}
+                        </div>
+                        <span style={{ color: t.accent, fontSize: 13, fontWeight: 600 }}>
+                          Continue setup →
+                        </span>
+                      </div>
+                    </Link>
+                  ))}
+                </div>
+              </>
             )}
           </div>
-
-          {inSetup.length > 0 && (
-            <>
-              <div style={{ marginTop: 28 }}>
-                <Eyebrow color={t.inkMute} size={10}>
-                  STILL IN SETUP
-                </Eyebrow>
-              </div>
-              <div
-                style={{
-                  marginTop: 14,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 10,
-                }}
-              >
-                {inSetup.map((s, i) => (
-                  <Link
-                    key={`${s.nightId}-${i}`}
-                    href={`/host/setup/${s.nightId}`}
-                    style={{ textDecoration: "none", color: "inherit" }}
-                  >
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "120px 200px 1fr auto",
-                        alignItems: "center",
-                        gap: 18,
-                        padding: "16px 18px",
-                        background: t.paper,
-                        border: `1px dashed ${t.line}`,
-                        borderRadius: 12,
-                      }}
-                    >
-                      <Numeric size={13} color={t.inkMid}>
-                        {s.date}
-                      </Numeric>
-                      <span style={{ fontSize: 15, color: t.ink, fontWeight: 500 }}>
-                        {s.venue}
-                      </span>
-                      <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px" }}>
-                        {s.cats.map((c) => (
-                          <span key={c} style={{ fontSize: 12, color: t.inkMid }}>
-                            {c}
-                          </span>
-                        ))}
-                      </div>
-                      <span style={{ color: t.accent, fontSize: 13, fontWeight: 600 }}>
-                        Continue setup →
-                      </span>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </>
-          )}
         </div>
       </div>
     </LaptopShell>

@@ -64,8 +64,10 @@ export default async function HostHomePage() {
   const nights = (nightRows ?? []) as NightRow[];
 
   // Classify nights by opened_at — the reliable "this night actually ran"
-  // signal (closed_at is never written in prod). tonightRow stays the
-  // most-recent night, exactly as the old .find(!closed_at) returned.
+  // signal (closed_at is empty across all prod data today). tonightRow is the
+  // most-recent night; this matches the old .find(!closed_at) while closed_at
+  // is unset (true for every prod night now — a closed-night headliner is a
+  // Phase-2 follow-up).
   const { tonight: tonightRow, previousGames, inSetup } = classifyNights(nights);
 
   // Bound the per-night lookups to the most recent 8 of each bucket so the

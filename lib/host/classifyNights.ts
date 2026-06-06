@@ -3,9 +3,13 @@
 //
 // tonight       = the most-recent night (the headliner; its CTA adapts to
 //                 the night's state elsewhere). Shown in neither list.
+//                 NOTE: a finished/closed night (closed_at set by the finale
+//                 "Done" button) currently still becomes tonight — a
+//                 closed_at-aware headliner is a Phase-2 follow-up. Dormant
+//                 today: no prod night has closed_at set (0/55).
 // previousGames = older nights that were actually RUN (opened_at != null) →
 //                 read-only recap. opened_at is the reliable "ran" signal
-//                 (closed_at is never written in prod).
+//                 (closed_at is empty across all prod data today).
 // inSetup       = older nights never run (opened_at == null) → continue/delete.
 export interface ClassifiableNight {
   id: string;
