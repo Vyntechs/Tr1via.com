@@ -93,7 +93,10 @@ const TOPIC_BANK_G2 = [
   "famous bridges",
   "national parks",
 ];
-const GEN_TIMEOUT_MS = 90_000;
+// Env-configurable: question generation now runs Sonnet + two Opus verify
+// passes, which is slower than the old single Haiku call. Default 90s; bump
+// via SMOKE_GEN_TIMEOUT_MS for the verified pipeline (e.g. on a cold preview).
+const GEN_TIMEOUT_MS = Number(process.env.SMOKE_GEN_TIMEOUT_MS ?? 90_000);
 const POLL_MS = 2000;
 // Alice/Bob/Carol drive the strict assertions in 3-phone mode. Player04+
 // are pure load phones with a simple alternate-correct-wrong strategy.

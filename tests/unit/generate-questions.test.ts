@@ -261,4 +261,8 @@ describe("generateQuestions", () => {
       }),
     ).rejects.toThrow(/missing `questions` array/);
   });
+
+  it("defaults to Sonnet 4.6 as the writer model", () => {
+    expect(DEFAULT_MODEL).toBe("claude-sonnet-4-6");
+  });
 });
