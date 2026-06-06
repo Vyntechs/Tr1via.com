@@ -29,17 +29,18 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { autoAttachPhoto } from "@/lib/ai/auto-attach-photo";
 import { generateQuestions } from "@/lib/ai/generate-questions";
+import { verifyAnswers } from "@/lib/ai/verify-answers";
+import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import { rerollPlan } from "@/lib/host/rerollPlan";
 import { PexelsRateLimitError } from "@/lib/pexels/search";
 import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// The background `after()` job runs within the function's lifetime. Real
-// Anthropic (Haiku) is ~20s and Pexels photo attach across 20 questions
-// adds another ~30-40s — well over Vercel's default per-function ceiling.
-// 300s is Vercel's hard max on most plans; we use 120 for headroom.
-export const maxDuration = 120;
+// Generation now also runs an Opus verification pass (and may regenerate a
+// round), so the background job needs more headroom than the old Haiku-only
+// path. 300s is Vercel's hard max on most plans.
+export const maxDuration = 300;
 
 export async function POST(
   req: NextRequest,
@@ -183,17 +184,31 @@ async function runGenerationJob(opts: {
     reroll = { deleteIds: plan.deleteIds, avoidPrompts: plan.avoidPrompts };
   }
 
-  // Step 1: ask Claude for the batch. ~3-8s typical.
-  const generated = await generateQuestions({
-    topic: opts.topic,
-    flavor: opts.flavor,
-    difficulty: opts.difficulty,
-    count: 20,
-    themeKey: opts.themeKey,
-    avoidPrompts: reroll?.avoidPrompts,
+  // Step 1: generate, then independently fact-check every answer on Opus —
+  // TWICE (verifyPasses: 2), keeping only questions both passes agree are
+  // correct AND unambiguous (a single check has wobble on borderline ones;
+  // measured ~5% -> ~2.5% slip). A wrong/ambiguous answer can't reach a live
+  // game. One round keeps the extra checks safely inside maxDuration, and the
+  // host gets fewer-but-clean rather than wrong. Nothing is inserted or
+  // broadcast until it has passed — the category is still 'generating', so the
+  // host never sees an unverified question.
+  const generated = await collectVerifiedQuestions({
+    target: 20,
+    maxRounds: 1,
+    verifyPasses: 2,
+    generate: (avoid) =>
+      generateQuestions({
+        topic: opts.topic,
+        flavor: opts.flavor,
+        difficulty: opts.difficulty,
+        count: 20,
+        themeKey: opts.themeKey,
+        avoidPrompts: [...(reroll?.avoidPrompts ?? []), ...avoid],
+      }),
+    verify: (qs) => verifyAnswers(qs),
   });
   if (generated.length === 0) {
-    throw new Error("Claude returned zero valid questions");
+    throw new Error("no questions passed the answer check");
   }
 
   // Step 2: insert all rows up front so the UI can render them immediately.
