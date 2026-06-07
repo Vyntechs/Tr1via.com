@@ -32,6 +32,7 @@ export type RoomEventName =
   | "game-ended"
   | "player-joined";
 export type CategoryEventName =
+  | "progress"
   | "question_added"
   | "photo_attached"
   | "done"
@@ -49,6 +50,17 @@ export interface BroadcastPayload {
 export interface CategoryBroadcastPayload {
   serverNow: string;
   [extra: string]: unknown;
+}
+
+/**
+ * Phase of the background generation job, carried by `progress` heartbeats.
+ * Single source of truth so the server send site and the host UI can't drift.
+ */
+export type GenerationPhase = "writing" | "checking";
+
+/** Payload for the `progress` heartbeat event. */
+export interface CategoryProgressPayload extends CategoryBroadcastPayload {
+  phase: GenerationPhase;
 }
 
 interface BroadcastMessage {
@@ -165,6 +177,10 @@ export async function broadcastGameEnded(
  * Send a broadcast to `category:{categoryId}`. Used by the background
  * question-generation job to stream progressive updates to HostGenLoading /
  * HostGenPick:
+ *   - `progress`       — heartbeat while writing/fact-checking, before any
+ *                        question row exists; carries `phase` so the UI shows
+ *                        live status and the client safety timer stays armed
+ *                        off real activity instead of false-alarming
  *   - `question_added` — a candidate question row was just inserted
  *   - `photo_attached` — its Pexels photo finished attaching
  *   - `done`           — the batch is complete
