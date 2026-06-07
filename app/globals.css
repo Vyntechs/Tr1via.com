@@ -98,15 +98,13 @@ body {
 }
 
 /* Theme showcase ("the color year") — the gallery cards on /trivia-night and
-   /themes. Entrance reuses tr1via-rise, staggered by each card's --i; the
-   signature motif drifts with a gentle float. The reduced-motion block below
-   neutralizes both (it targets *), so no per-rule guard is needed here. */
-@keyframes tr1via-showcase-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+   /themes. Entrance reuses tr1via-rise, staggered by each card's --i; the live
+   ambient weather inside each card animates itself (ParticleField) and is
+   neutralized under reduced motion by that component + the block below. */
 .tns-card  { animation: tr1via-rise .6s cubic-bezier(.22,.61,.36,1) both;
              animation-delay: calc(var(--i, 0) * 55ms);
              transition: transform .35s cubic-bezier(.22,.61,.36,1), box-shadow .35s ease; }
 .tns-card:hover { transform: translateY(-6px) scale(1.012); }
-.tns-drift { display: inline-block; animation: tr1via-showcase-float 7s ease-in-out infinite; }
 .tns-strip { scrollbar-width: none; }
 .tns-strip::-webkit-scrollbar { display: none; }
 

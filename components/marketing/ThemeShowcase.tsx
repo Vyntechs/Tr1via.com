@@ -1,101 +1,46 @@
 // "The color year" — TR1VIA wears a different face every month.
 //
-// This renders the 12 monthly themes as a wall of tiny in-product screens, each
-// painted in that month's REAL palette (straight from the theme registry — the
-// single source of truth, zero duplicated colors) with its signature ambient
-// motif drifting behind it. One <ThemeCard>, two contexts:
+// Each of the 12 monthly themes is rendered as a tiny LIVE in-product screen:
+// the month's REAL palette (straight from the theme registry — single source of
+// truth, zero duplicated colors), its REAL ambient weather drifting behind a
+// mock question board (category banner + four answers, one correct). The eye
+// travels January → December and watches the room change personality.
+//
+// One <ThemeCard>, two contexts:
 //   - <ThemeShowcase variant="teaser" /> → a horizontal scroll-strip + a link to
 //     the full gallery, dropped into the /trivia-night marketing page.
 //   - <ThemeShowcase variant="full" />   → the dedicated /themes gallery grid.
 //
-// Server component end-to-end (no client JS): indexable, fast, share-previewable.
-// Motion is CSS-only (drift + staggered entrance), injected once via <Keyframes/>
-// and disabled under prefers-reduced-motion. Palettes come from resolveTheme();
-// the only thing this file adds is presentation.
+// The card is a server component (month name, palette, category, answers all in
+// the initial HTML → indexable). The weather is a client island (ParticleField),
+// deterministic + reduced-motion-aware, so it adds life without breaking SSR.
+//
+// Weather fidelity: the 10 particle months use the SAME <Weather> the product
+// runs. May (canvas lightning + procedural thunder AUDIO) and June (canvas sky)
+// are "TV-only by construction" and would be wrong on a marketing page, so they
+// get a light, silent particle stand-in (drifting bolts / suns) instead.
 
 import Link from "next/link";
 import type { CSSProperties } from "react";
 import { Display, Eyebrow } from "@/components/system";
-import {
-  Snowflake,
-  Heart,
-  Clover,
-  Leaf,
-  Pumpkin,
-  Firework,
-  Pine,
-  Rain,
-  Wheat,
-} from "@/components/system/motifs";
 import { weatherLabel } from "@/components/system/Weather";
 import { resolveTheme } from "@/lib/theme/resolve";
+import { TR1VIA_CATEGORIES } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
-
-type Motif = (props: { size?: number; color?: string }) => React.JSX.Element;
-
-// Two months whose ambient effect isn't a drifting particle get a local glyph
-// so every card still carries its own signature mark: May's storm → a bolt,
-// June's endless evening → a low sun.
-function Bolt({ size = 12, color = "#fff" }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" style={{ display: "block" }}>
-      <path d="M7 1 L2.5 7 H5.4 L4.5 11 L9.5 5 H6.6 Z" fill={color} />
-    </svg>
-  );
-}
-function Sun({ size = 12, color = "#fff" }: { size?: number; color?: string }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 12 12" style={{ display: "block" }}>
-      <circle cx="6" cy="6" r="2.6" fill={color} />
-      <g stroke={color} strokeWidth="1" strokeLinecap="round">
-        <line x1="6" y1="0.5" x2="6" y2="1.8" />
-        <line x1="6" y1="10.2" x2="6" y2="11.5" />
-        <line x1="0.5" y1="6" x2="1.8" y2="6" />
-        <line x1="10.2" y1="6" x2="11.5" y2="6" />
-      </g>
-    </svg>
-  );
-}
-
-interface MonthSpec {
-  key: ThemeKey;
-  Motif: Motif;
-}
+import { CardWeather } from "./CardWeather";
 
 // Calendar order — the eye should travel Jan → Dec and watch the palette turn.
-const MONTHS: MonthSpec[] = [
-  { key: "january", Motif: Snowflake },
-  { key: "february", Motif: Heart },
-  { key: "march", Motif: Clover },
-  { key: "april", Motif: Rain },
-  { key: "may", Motif: Bolt },
-  { key: "june", Motif: Sun },
-  { key: "july", Motif: Firework },
-  { key: "august", Motif: Leaf },
-  { key: "september", Motif: Leaf },
-  { key: "october", Motif: Pumpkin },
-  { key: "november", Motif: Wheat },
-  { key: "december", Motif: Pine },
+const MONTHS: ThemeKey[] = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
 ];
 
-// Fixed constellation for the drifting motifs — deterministic (NOT Math.random)
-// so server and client render byte-identical. Reused per card; the palette is
-// what makes each one feel different.
-const DRIFT = [
-  { top: "14%", left: "9%", s: 1.0, d: "0s", big: false },
-  { top: "30%", left: "80%", s: 1.4, d: "1.1s", big: false },
-  { top: "64%", left: "14%", s: 1.2, d: "2.3s", big: false },
-  { top: "78%", left: "82%", s: 0.95, d: "0.6s", big: false },
-  { top: "46%", left: "52%", s: 2.0, d: "1.7s", big: true },
-] as const;
-
-function ThemeCard({ spec, index, size }: { spec: MonthSpec; index: number; size: "sm" | "lg" }) {
-  const t = resolveTheme(spec.key);
-  const { Motif } = spec;
+function ThemeCard({ themeKey, index, size }: { themeKey: ThemeKey; index: number; size: "sm" | "lg" }) {
+  const t = resolveTheme(themeKey);
   const [monthName, tag] = t.name.split("·").map((s) => s.trim());
+  const cat = TR1VIA_CATEGORIES[index % TR1VIA_CATEGORIES.length];
+  const correctIdx = index % 4;
   const lg = size === "lg";
-
-  const glyphBase = lg ? 14 : 11;
 
   return (
     <article
@@ -106,48 +51,34 @@ function ThemeCard({ spec, index, size }: { spec: MonthSpec; index: number; size
           position: "relative",
           overflow: "hidden",
           flex: lg ? undefined : "0 0 auto",
-          width: lg ? "100%" : "min(72vw, 244px)",
-          aspectRatio: "5 / 4",
-          borderRadius: lg ? 22 : 18,
+          width: lg ? "100%" : "min(82vw, 308px)",
+          aspectRatio: lg ? "1 / 1" : "4 / 3",
+          borderRadius: lg ? 26 : 20,
           background: t.paper,
           border: `1px solid ${t.line}`,
           boxShadow: t.dark
-            ? "0 20px 50px -28px rgba(0,0,0,0.8)"
-            : "0 20px 50px -30px rgba(27,19,12,0.4)",
+            ? "0 26px 60px -30px rgba(0,0,0,0.85)"
+            : "0 26px 60px -32px rgba(27,19,12,0.45)",
           scrollSnapAlign: lg ? undefined : "start",
         } as CSSProperties
       }
     >
-      {/* Depth: a soft accent bloom in the upper-right, like the in-product glow */}
+      {/* LIVE ambient weather — the room's real motion, drifting behind */}
+      <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none", opacity: 0.55 }}>
+        <CardWeather themeKey={themeKey} seed={index + 1} />
+      </div>
+      {/* Accent bloom for depth (matches the in-product glow) */}
       <div
         aria-hidden
         style={{
           position: "absolute",
           inset: 0,
-          background: `radial-gradient(115% 80% at 78% 12%, ${t.accent}26, transparent 56%)`,
+          background: `radial-gradient(120% 85% at 80% 8%, ${t.accent}2E, transparent 58%)`,
           pointerEvents: "none",
         }}
       />
-      {/* Drifting signature motif — the ambient weather, frozen into a still */}
-      <div aria-hidden style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
-        {DRIFT.map((p, i) => (
-          <span
-            key={i}
-            className="tns-drift"
-            style={{
-              position: "absolute",
-              top: p.top,
-              left: p.left,
-              animationDelay: p.d,
-              opacity: p.big ? 0.16 : 0.34,
-            }}
-          >
-            <Motif size={glyphBase * p.s} color={p.big ? t.accent : t.pop} />
-          </span>
-        ))}
-      </div>
 
-      {/* Foreground */}
+      {/* Foreground: a mock question board */}
       <div
         style={{
           position: "relative",
@@ -155,11 +86,12 @@ function ThemeCard({ spec, index, size }: { spec: MonthSpec; index: number; size
           display: "flex",
           flexDirection: "column",
           justifyContent: "space-between",
-          padding: lg ? "20px 22px" : "15px 16px",
+          padding: lg ? "22px 24px" : "16px 17px",
           boxSizing: "border-box",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        {/* Top bar: wordmark + category banner */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
           <span
             style={{
               fontFamily: "var(--font-sans)",
@@ -169,66 +101,79 @@ function ThemeCard({ spec, index, size }: { spec: MonthSpec; index: number; size
               color: t.ink,
             }}
           >
-            TR
-            <span style={{ fontFamily: "var(--font-mono)", color: t.accent }}>1</span>
-            VIA
+            TR<span style={{ fontFamily: "var(--font-mono)", color: t.accent }}>1</span>VIA
           </span>
           <span
             style={{
               fontFamily: "var(--font-mono)",
-              fontSize: lg ? 9.5 : 8.5,
-              letterSpacing: "0.18em",
+              fontSize: lg ? 10 : 9,
+              fontWeight: 700,
+              letterSpacing: "0.14em",
               textTransform: "uppercase",
-              color: t.inkMute,
+              color: "#15100A",
+              background: cat.color,
+              padding: lg ? "4px 10px" : "3px 8px",
+              borderRadius: 999,
             }}
           >
-            {t.dark ? "Dark" : "Light"}
+            {cat.name}
           </span>
         </div>
 
+        {/* The "question" headline = the month */}
         <div>
           <Display
-            size={lg ? "clamp(30px, 3.2vw, 40px)" : 23}
+            size={lg ? "clamp(34px, 3.4vw, 48px)" : 26}
             color={t.ink}
             tracking={-0.035}
-            style={{ display: "block", lineHeight: 0.92 }}
+            style={{ display: "block", lineHeight: 0.9 }}
           >
             {monthName}
           </Display>
-          {tag ? (
-            <Eyebrow color={t.accent} size={lg ? 11 : 9.5} style={{ marginTop: lg ? 8 : 6 }}>
-              {tag}
-            </Eyebrow>
-          ) : null}
+          <Eyebrow color={t.accent} size={lg ? 11 : 9.5} style={{ marginTop: lg ? 9 : 6 }}>
+            {tag ? `${tag} · ${weatherLabel(themeKey)}` : weatherLabel(themeKey)}
+          </Eyebrow>
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          {/* Palette dots — accent / pop / correct / wrong, the four working colors */}
-          <div style={{ display: "flex", gap: lg ? 7 : 5 }}>
-            {[t.accent, t.pop, t.correct, t.wrong].map((c, i) => (
-              <span
+        {/* Four answers — one is correct (the unmistakable trivia tell) */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: lg ? 8 : 6 }}>
+          {[0, 1, 2, 3].map((i) => {
+            const correct = i === correctIdx;
+            return (
+              <div
                 key={i}
                 style={{
-                  width: lg ? 13 : 10,
-                  height: lg ? 13 : 10,
-                  borderRadius: 999,
-                  background: c,
-                  boxShadow: `0 0 0 1px ${t.line}`,
+                  height: lg ? 26 : 20,
+                  borderRadius: lg ? 9 : 7,
+                  background: correct ? t.correct : t.surfaceH,
+                  border: `1px solid ${correct ? "transparent" : t.line}`,
+                  display: "flex",
+                  alignItems: "center",
+                  paddingLeft: lg ? 10 : 8,
+                  gap: 7,
                 }}
-              />
-            ))}
-          </div>
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: lg ? 10.5 : 9,
-              letterSpacing: "0.04em",
-              color: t.inkMid,
-              textAlign: "right",
-            }}
-          >
-            {weatherLabel(spec.key)}
-          </span>
+              >
+                <span
+                  style={{
+                    width: lg ? 7 : 6,
+                    height: lg ? 7 : 6,
+                    borderRadius: 999,
+                    background: correct ? (t.dark ? "#0C0A06" : "#FFFFFF") : t.inkMute,
+                    flex: "0 0 auto",
+                  }}
+                />
+                <span
+                  style={{
+                    height: lg ? 5 : 4,
+                    width: `${[58, 42, 50, 38][i]}%`,
+                    borderRadius: 999,
+                    background: correct ? (t.dark ? "rgba(12,10,6,.55)" : "rgba(255,255,255,.7)") : t.inkMute,
+                    opacity: correct ? 1 : 0.5,
+                  }}
+                />
+              </div>
+            );
+          })}
         </div>
       </div>
     </article>
@@ -260,11 +205,11 @@ function Teaser() {
       </p>
 
       <div
-        className="tns-strip mt-9 flex gap-4 overflow-x-auto pb-3"
+        className="tns-strip mt-9 flex gap-5 overflow-x-auto pb-3"
         style={{ scrollSnapType: "x mandatory", WebkitOverflowScrolling: "touch" }}
       >
-        {MONTHS.map((spec, i) => (
-          <ThemeCard key={spec.key} spec={spec} index={i} size="sm" />
+        {MONTHS.map((key, i) => (
+          <ThemeCard key={key} themeKey={key} index={i} size="sm" />
         ))}
       </div>
     </section>
@@ -274,15 +219,13 @@ function Teaser() {
 /** The full grid used by the dedicated /themes gallery page. */
 function Gallery() {
   return (
-    <div>
-      <div
-        className="grid gap-5"
-        style={{ gridTemplateColumns: "repeat(auto-fill, minmax(248px, 1fr))" }}
-      >
-        {MONTHS.map((spec, i) => (
-          <ThemeCard key={spec.key} spec={spec} index={i} size="lg" />
-        ))}
-      </div>
+    <div
+      className="grid gap-6"
+      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(min(100%, 332px), 1fr))" }}
+    >
+      {MONTHS.map((key, i) => (
+        <ThemeCard key={key} themeKey={key} index={i} size="lg" />
+      ))}
     </div>
   );
 }
@@ -292,4 +235,4 @@ export function ThemeShowcase({ variant }: { variant: "teaser" | "full" }) {
 }
 
 // Exported for tests: the canonical ordered month list the showcase renders.
-export const SHOWCASE_MONTHS = MONTHS.map((m) => m.key);
+export const SHOWCASE_MONTHS = MONTHS;
