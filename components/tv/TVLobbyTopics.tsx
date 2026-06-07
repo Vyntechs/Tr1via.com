@@ -26,14 +26,14 @@ export function TVLobbyTopics({ topics }: { topics: LobbyTopic[] }) {
   if (topics.length === 0) return null;
 
   return (
-    <div data-testid="tv-lobby-topics" style={{ marginTop: "clamp(16px, 3vh, 40px)", maxWidth: 580 }}>
+    <div data-testid="tv-lobby-topics" style={{ marginTop: "clamp(12px, 2vh, 40px)", maxWidth: 580 }}>
       <Eyebrow color={t.inkMute} size={11}>TONIGHT&apos;S TOPICS</Eyebrow>
       <div
         style={{
-          marginTop: 14,
+          marginTop: "clamp(8px, 1.4vh, 14px)",
           display: "flex",
           flexDirection: "column",
-          gap: "clamp(6px, 1.2vh, 12px)",
+          gap: "clamp(4px, 0.9vh, 12px)",
         }}
       >
         {topics.map((topic, i) => {

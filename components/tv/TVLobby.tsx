@@ -121,13 +121,24 @@ function TVLobbyInner({
       <div
         style={{
           flex: 1,
+          // minHeight:0 + a 1fr row bound the grid to the panel so the row
+          // can't balloon to its tallest column and spill the bottom topics
+          // off-screen (the laptop-console clip Brandon hit 2026-06-07). The
+          // venue TV has the height to show everything; the host laptop +
+          // control strip do not, so the content has to fit, not overflow.
+          minHeight: 0,
           // Padding scales with viewport so a 13" laptop doesn't lose 80px
           // of vertical to fixed top/bottom gutters.
-          padding: "clamp(8px, 2vh, 28px) 56px clamp(4px, 1vh, 12px)",
+          padding: "clamp(4px, 1vh, 28px) 56px clamp(4px, 1vh, 12px)",
           display: "grid",
           gridTemplateColumns: "1.25fr 1fr",
+          gridTemplateRows: "minmax(0, 1fr)",
           gap: 56,
-          alignItems: "center",
+          // `safe center` keeps the balanced vertical centering on a tall
+          // venue TV, but falls back to top-anchored when the column is
+          // taller than the panel — so a tight laptop clips the *last* topic
+          // at worst, never the headline or the first topics.
+          alignItems: "safe center",
           position: "relative",
           zIndex: 1,
         }}
@@ -137,13 +148,13 @@ function TVLobbyInner({
             // Headline scales with viewport height. The 3-line stack at
             // lineHeight 0.92 multiplies the font size by ~2.76, so the
             // viewport-relative term has to leave room for the rest of the
-            // column (instructional text + tr1via.com/room-code block) AND
-            // the host control strip + LaptopShell chrome that consume the
-            // viewport outside TVStage. 14vh keeps the 3 lines comfortably
-            // above the fold down to ~700px usable height. Original 188px
-            // is preserved as the ceiling for ≥1340px viewports (real TVs
-            // and external displays the venue would normally use).
-            size="clamp(72px, 14vh, 188px)"
+            // column (instructional text + tr1via.com/room-code block + the
+            // "Tonight's Topics" list) AND the host control strip + LaptopShell
+            // chrome that consume the viewport outside TVStage. 10vh keeps the
+            // 3 lines + a full 6-topic list above the fold at ~590px usable
+            // height (the host laptop console); on a true venue TV the hero is
+            // still ~270px tall. 180px ceiling caps it on huge displays.
+            size="clamp(60px, 9vh, 180px)"
             color={t.ink}
             weight={700}
             tracking={-0.05}
@@ -153,11 +164,11 @@ function TVLobbyInner({
             <span style={{ color: t.pop }}>win.</span>
           </Display>
 
-          <div style={{ marginTop: "clamp(10px, 2vh, 28px)", fontSize: 22, color: t.inkMid, lineHeight: 1.4, maxWidth: 580 }}>
+          <div style={{ marginTop: "clamp(8px, 1.4vh, 28px)", fontSize: "clamp(16px, 2vh, 22px)", color: t.inkMid, lineHeight: 1.4, maxWidth: 580 }}>
             Open your camera, point at the code, pick a name. You&apos;re in the room in under ten seconds.
           </div>
 
-          <div style={{ marginTop: "clamp(16px, 3vh, 44px)", display: "flex", gap: 36, alignItems: "flex-start" }}>
+          <div style={{ marginTop: "clamp(12px, 2vh, 44px)", display: "flex", gap: 36, alignItems: "flex-start" }}>
             <div>
               <Eyebrow color={t.inkMute} size={11}>OR ON YOUR PHONE</Eyebrow>
               <div

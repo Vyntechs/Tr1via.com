@@ -62,6 +62,25 @@ function PlayerQuestionLong() {
   );
 }
 
+// Lobby with the "Tonight's Topics" panel — 6 long natural-language topics
+// (the worst case the AI generates) so the gallery previews the dense list.
+function PlayerLobbyWithTopics() {
+  return (
+    <PlayerLobby
+      playerName="Maya"
+      inRoomCount={12}
+      topics={[
+        { name: "Games",     topic: "classic and modern video games",        color: "#E64A8C", position: 0 },
+        { name: "Sports",    topic: "legendary athletes across major sports", color: "#5AA8E0", position: 1 },
+        { name: "Mythology", topic: "Greek, Roman, and Norse mythology",      color: "#9B7BD8", position: 2 },
+        { name: "Science",   topic: "space exploration milestones",           color: "#7AC4A8", position: 3 },
+        { name: "Music",     topic: "one-hit wonders of the 1980s",           color: "#4ECDC4", position: 4 },
+        { name: "Film",      topic: "blockbuster movie quotes",               color: "#F0A35E", position: 5 },
+      ]}
+    />
+  );
+}
+
 // ⚠️ Fixed-size preview only — validate the REAL /room/[code] route (dev frames
 // hide the flex/grid behavior that fires in production layouts).
 function PlayerBetweenGamesSample() {
@@ -102,6 +121,7 @@ function PlayerLockedSample() {
 const SCREENS: ScreenEntry[] = [
   { key: "join",                title: "01 · Join",                       Component: PlayerJoin },
   { key: "lobby",               title: "02 · Lobby",                      Component: PlayerLobby },
+  { key: "lobby-topics",        title: "02a · Lobby · tonight's topics",  Component: PlayerLobbyWithTopics },
   { key: "question-text-only",  title: "03 · Question · live (text)",     Component: PlayerQuestion },
   { key: "question-with-image", title: "03b · Question · live (w/ image)", Component: PlayerQuestionWithImage },
   { key: "question-long",       title: "03c · Question · live (long, 163ch)", Component: PlayerQuestionLong },
