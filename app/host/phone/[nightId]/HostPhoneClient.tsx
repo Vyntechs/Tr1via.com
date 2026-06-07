@@ -309,10 +309,16 @@ function PhoneCenter({ children }: { children: React.ReactNode }) {
   // The host's phone view should fill the device. We don't add a faux
   // phone chrome here — this isn't the dev gallery — and just lean on the
   // PhoneScreen component's inner padding.
+  //
+  // The AccountChip is hidden on this in-hand surface (see AccountChip), but
+  // HostLayout still reserves its top strip (--host-chip-reserve). The
+  // negative margin cancels that leftover padding so the phone keeps filling
+  // the device with no extra scroll.
   return (
     <div
       style={{
         minHeight: "100dvh",
+        marginTop: "calc(-1 * var(--host-chip-reserve, 0px))",
         display: "flex",
         flexDirection: "column",
         background: "var(--paper)",

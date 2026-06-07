@@ -1,14 +1,22 @@
-// HOST · ACCOUNT CHIP. Persistent top-right affordance on every /host/*
-// route. Shows the signed-in email + a Sign Out button. Solves the
+// HOST · ACCOUNT CHIP. Top-right affordance on the host's prep/admin
+// screens. Shows the signed-in email + a Sign Out button. Solves the
 // "I never get asked to log in, it just put me in someone else's account"
 // problem — once you can see who you're signed in as, switching is
 // obvious.
+//
+// Deliberately hidden on the in-show surfaces: the live console is mirrored
+// to the venue TV (guests would see the host's email + Sign Out), and the
+// host phone is an in-hand control during the show. The chip adds no value
+// there and is clutter / a privacy leak, so it only renders on prep screens.
 
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "@/components/system";
+
+// Route prefixes where the chip is suppressed (mirrored TV / in-hand phone).
+const IN_SHOW_PREFIXES = ["/host/live", "/host/phone"];
 
 export interface AccountChipProps {
   /** The signed-in user's email — shown in the chip so the host always
@@ -19,7 +27,11 @@ export interface AccountChipProps {
 export function AccountChip({ email }: AccountChipProps) {
   const { t } = useTheme();
   const router = useRouter();
+  const pathname = usePathname();
   const [signingOut, setSigningOut] = useState(false);
+
+  // Suppress on the live console (mirrored to the TV) and the host phone.
+  const hidden = IN_SHOW_PREFIXES.some((p) => pathname?.startsWith(p));
 
   async function handleSignOut() {
     if (signingOut) return;
@@ -36,6 +48,8 @@ export function AccountChip({ email }: AccountChipProps) {
     router.replace("/login");
     router.refresh();
   }
+
+  if (hidden) return null;
 
   return (
     <div
