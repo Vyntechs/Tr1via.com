@@ -86,8 +86,8 @@ export interface TVStateMachineProps {
    *  broadcast, then unmounts by passing null). */
   welcomeEvent?: TVLobbyWelcomeEvent | null;
   /** The resolved theme for this night — drives the question timer duration
-   *  (20s default, 25s for "may"). When omitted, useTimer falls back to the
-   *  registry default (20s). */
+   *  (30s for every theme). When omitted, useTimer falls back to the
+   *  registry default (30s). */
   themeKey?: ThemeKey;
 }
 

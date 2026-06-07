@@ -31,7 +31,7 @@
 //   into SYSTEM_PROMPT.
 //
 // Duration:
-//   The question timer is theme-dependent (20s default, 25s for May/Storm).
+//   The question timer is 30s for every theme (the registry default).
 //   SYSTEM_PROMPT must stay static for caching, so the per-generation
 //   duration is injected into the user prompt via userPromptFor's
 //   `themeKey` option. questionDurationFor() from lockInCeremony is the

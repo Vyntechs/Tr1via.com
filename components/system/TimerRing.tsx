@@ -2,7 +2,7 @@
 // and an arc that depletes around the perimeter. The first 5 seconds of the
 // timer carry a brighter outer arc segment (the speed-bonus window); when
 // seconds <= 5 the whole ring flips to the "wrong" color to signal urgency.
-// Timer length is theme-derived (20 default, 25 on may/june) — resolved from
+// Timer length is theme-derived (30 for every theme) — resolved from
 // the active theme so the arc always matches the countdown, never lapping.
 
 "use client";
@@ -21,7 +21,7 @@ export interface TimerRingProps {
 
 export function TimerRing({ seconds, max, size = 48, accent, themeKey }: TimerRingProps) {
   const { t, themeKey: ctxThemeKey } = useTheme();
-  // Prop wins (tests / standalone), else the active theme. Never silently 20.
+  // Prop wins (tests / standalone), else the active theme. Never a silent default.
   const resolvedMax = max ?? questionDurationFor(themeKey ?? ctxThemeKey);
   const a = accent ?? t.accent;
   const stroke = 3.5;
