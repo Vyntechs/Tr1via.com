@@ -168,6 +168,11 @@ export const GenerateCategoryBodySchema = z
     // the rest, and avoid repeating questions already shown. Absent ⇒ first
     // generation from draft (nothing to keep or delete).
     keptIds: z.array(UuidSchema).optional(),
+    // Opt-in: when true, after generation completes the background job
+    // auto-picks 7 questions (spread across difficulty) and flips the category
+    // straight to 'ready' instead of stopping at 'review'. Used by the founder
+    // "Build a full game" tool. Default (undefined) preserves manual review.
+    autoPick: z.boolean().optional(),
   })
   .strict();
 

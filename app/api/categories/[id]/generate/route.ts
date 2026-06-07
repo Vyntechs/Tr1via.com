@@ -32,6 +32,10 @@ import { generateQuestions } from "@/lib/ai/generate-questions";
 import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import { rerollPlan } from "@/lib/host/rerollPlan";
+import {
+  pickQuestionsForCategory,
+  selectSpreadQuestionIds,
+} from "@/lib/host/pickQuestions";
 import { PexelsRateLimitError } from "@/lib/pexels/search";
 import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
 
@@ -104,6 +108,7 @@ export async function POST(
       difficulty: parsed.data.difficulty,
       themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,
       keptIds: parsed.data.keptIds,
+      autoPick: parsed.data.autoPick,
     }).catch(async (err) => {
       // Rollback + broadcast on any unexpected failure inside the job.
       // (Per-question failures are handled inside runGenerationJob.)
@@ -162,6 +167,9 @@ async function runGenerationJob(opts: {
   // the fresh batch is in. Absent ⇒ first generation (append-only, nothing to
   // keep or delete).
   keptIds?: string[];
+  // When true: after photos, auto-pick 7 (spread across difficulty) and flip
+  // to 'ready' instead of 'review'. Founder build-a-full-game path.
+  autoPick?: boolean;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
 
@@ -257,13 +265,34 @@ async function runGenerationJob(opts: {
     }).catch(() => undefined);
   }
 
-  // Step 3: attach photos. We do these sequentially because Pexels' free
-  // tier is 200 req/hr — bursting 20 in parallel risks brittleness without
-  // measurable user-side latency benefit (the UI is already populated).
-  for (let i = 0; i < inserted.length; i++) {
-    const row = inserted[i];
-    const q = generated[i];
-    if (!row || !q) continue;
+  // Pick BEFORE photos on the auto-build path. The founder "build a full game"
+  // tool keeps only 7 of the 20 generated questions, so photographing all 20
+  // then discarding 13 does ~3x the Pexels work for nothing — and 12 categories
+  // doing that at once overruns the rate limit (photos silently drop). Picking
+  // first lets us fetch photos for just the 7 keepers: ~3x fewer lookups, under
+  // the limit, and FASTER (less work, no added wait). Manual review still
+  // photographs all 20 so the host's swap UI has the full pool.
+  let photoTargets = inserted.map((row, i) => ({ id: row.id, q: generated[i]! }));
+  if (opts.autoPick) {
+    const ids = selectSpreadQuestionIds(
+      inserted.map((row, i) => ({
+        id: row.id,
+        difficulty: generated[i]!.difficulty,
+      })),
+      7,
+    );
+    const result = await pickQuestionsForCategory(opts.categoryId, ids);
+    if (!result.ok) {
+      throw new Error(`auto-pick failed: ${result.error}`);
+    }
+    const keep = new Set(ids);
+    photoTargets = photoTargets.filter((t) => keep.has(t.id));
+  }
+
+  // Step 3: attach photos. Sequential within a category because Pexels' free
+  // tier is 200 req/hr — bursting risks brittleness without measurable
+  // user-side latency benefit (the UI is already populated).
+  for (const { id, q } of photoTargets) {
     try {
       const photo = await autoAttachPhoto(q, { topic: opts.topic });
       if (photo.imageUrl) {
@@ -274,11 +303,11 @@ async function runGenerationJob(opts: {
             image_attribution: photo.attribution,
             image_source: "pexels",
           })
-          .eq("id", row.id);
+          .eq("id", id);
       }
       await broadcastToCategory(opts.categoryId, "photo_attached", {
         serverNow: new Date().toISOString(),
-        questionId: row.id,
+        questionId: id,
         imageUrl: photo.imageUrl,
         attribution: photo.attribution,
       }).catch(() => undefined);
@@ -296,11 +325,14 @@ async function runGenerationJob(opts: {
     }
   }
 
-  // Step 4: flip the category to review and announce done.
-  await admin
-    .from("categories")
-    .update({ state: "review" })
-    .eq("id", opts.categoryId);
+  // Step 4: finalize state. The auto-build is already 'ready' (picked above);
+  // manual review stops at 'review' for the host to curate.
+  if (!opts.autoPick) {
+    await admin
+      .from("categories")
+      .update({ state: "review" })
+      .eq("id", opts.categoryId);
+  }
   await broadcastToCategory(opts.categoryId, "done", {
     serverNow: new Date().toISOString(),
     count: inserted.length,
