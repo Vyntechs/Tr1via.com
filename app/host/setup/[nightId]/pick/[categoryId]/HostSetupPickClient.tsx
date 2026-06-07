@@ -33,6 +33,7 @@ import {
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { QuestionRow, CategoryRow } from "@/lib/supabase/types";
 import { useGenerationStatus } from "@/lib/hooks/useGenerationStatus";
+import type { GenerationPhase } from "@/lib/api/broadcast";
 import {
   deriveInitialGenerationMessage,
   explainGenerationFailure,
@@ -105,7 +106,7 @@ export function HostSetupPickClient({
   // minutes) instead of from a fixed 60s after start, which false-alarmed.
   const [lastActivityAt, setLastActivityAt] = useState<number>(() => Date.now());
   // Current job phase, surfaced as a live status line on the loading screen.
-  const [genPhase, setGenPhase] = useState<"writing" | "checking" | null>(null);
+  const [genPhase, setGenPhase] = useState<GenerationPhase | null>(null);
   // Seed the failure message from the server-rendered state so a refresh
   // into a rolled-back category surfaces the retry / manual-entry UI
   // instead of stranding on the loading spinner. Without this seed the
@@ -131,7 +132,7 @@ export function HostSetupPickClient({
         // Heartbeat while writing / fact-checking, before any row exists.
         // Records activity (keeps the safety timer armed) and drives the live
         // status line so the longer run never looks frozen or "timed out".
-        const payload = msg.payload as { phase?: "writing" | "checking" };
+        const payload = msg.payload as { phase?: GenerationPhase };
         setLastActivityAt(Date.now());
         if (payload.phase) setGenPhase(payload.phase);
       })

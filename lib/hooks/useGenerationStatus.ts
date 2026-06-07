@@ -8,7 +8,7 @@
 //      ack itself failed, or the worker died mid-flight).
 //   2. Anthropic is very slow / a deploy interrupted the worker, so the
 //      job is technically still alive but the host has been staring at
-//      the spinner for over a minute with nothing landing.
+//      the spinner with no heartbeat and nothing landing.
 //
 // This hook layers a simple safety net on top of the broadcast:
 //   * After `timeoutMs` of IDLE (no heartbeat and no question landed) with the
@@ -50,8 +50,9 @@ export interface UseGenerationStatusOptions {
   /**
    * Timestamp (ms, e.g. `Date.now()`) of the most recent sign of life from the
    * job — a `progress` heartbeat or an inserted question. The idle timeout is
-   * measured from this rather than from the start of generation, so a slow run
-   * that keeps heartbeating never false-alarms. Omit/0 → measured from start.
+   * measured from `max(window start, this)`, so a slow run that keeps
+   * heartbeating never false-alarms and a stale value can never shorten the
+   * window. Omit/0 → measured from window start.
    */
   lastActivityAt?: number;
   /** Override the idle safety timeout. Default 45 000ms of silence. */

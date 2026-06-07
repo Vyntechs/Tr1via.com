@@ -52,6 +52,17 @@ export interface CategoryBroadcastPayload {
   [extra: string]: unknown;
 }
 
+/**
+ * Phase of the background generation job, carried by `progress` heartbeats.
+ * Single source of truth so the server send site and the host UI can't drift.
+ */
+export type GenerationPhase = "writing" | "checking";
+
+/** Payload for the `progress` heartbeat event. */
+export interface CategoryProgressPayload extends CategoryBroadcastPayload {
+  phase: GenerationPhase;
+}
+
 interface BroadcastMessage {
   topic: string;
   event: string;

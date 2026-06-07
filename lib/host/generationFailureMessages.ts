@@ -45,7 +45,7 @@ export function explainGenerationFailure(
     return "The generator gave up partway through. A retry usually works.";
   }
   if (input.fromTimeout) {
-    return "The question builder went quiet and stopped sending progress. That usually means a brief hiccup on our end — give it another go, or type your seven by hand.";
+    return "The question builder stopped responding. Give it another go, or type your seven by hand.";
   }
   return "Something went sideways while pulling your questions.";
 }

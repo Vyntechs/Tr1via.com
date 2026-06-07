@@ -3,9 +3,12 @@
 // Kicks off the question-generation pipeline for a category:
 //   1. Mark category.state = 'generating'
 //   2. Return 202 immediately to the host UI
-//   3. Schedule the background job via Next 16's `after()` — Claude
-//      generates 20 questions, each row gets a Pexels photo, progress is
-//      broadcast on `category:{id}` for the HostGenLoading screen.
+//   3. Schedule the background job via Next 16's `after()` — Claude writes
+//      questions, every answer is fact-checked twice, and any rejected
+//      question is refilled (up to 4 rounds) until 20 verified questions
+//      exist; then each row gets a Pexels photo. A `progress` heartbeat is
+//      broadcast on `category:{id}` every ~12s while writing/checking, then
+//      `question_added` / `photo_attached` as rows land — for HostGenLoading.
 //   4. On completion: category.state = 'review'. On failure: rolled back
 //      to 'draft' and an `error` broadcast is sent.
 //
@@ -15,7 +18,11 @@ import { type NextRequest } from "next/server";
 import { after } from "next/server";
 
 import { requireOwnedCategory } from "@/lib/api/auth";
-import { broadcastToCategory } from "@/lib/api/broadcast";
+import {
+  broadcastToCategory,
+  type CategoryProgressPayload,
+  type GenerationPhase,
+} from "@/lib/api/broadcast";
 import { GenerateCategoryBodySchema } from "@/lib/api/schemas";
 import {
   badRequest,
@@ -217,12 +224,16 @@ async function runGenerationJob(opts: {
   // ("took too long") even though the job is healthy. We tick a `progress`
   // broadcast every HEARTBEAT_MS carrying the current phase; the client arms
   // its timeout off the last heartbeat, so only a truly dead worker trips it.
-  let phase: "writing" | "checking" = "writing";
-  const emitProgress = () =>
-    broadcastToCategory(opts.categoryId, "progress", {
+  let phase: GenerationPhase = "writing";
+  const emitProgress = () => {
+    const payload: CategoryProgressPayload = {
       serverNow: new Date().toISOString(),
       phase,
-    }).catch(() => undefined);
+    };
+    return broadcastToCategory(opts.categoryId, "progress", payload).catch(
+      () => undefined,
+    );
+  };
   void emitProgress();
   const heartbeat = setInterval(() => {
     void emitProgress();
