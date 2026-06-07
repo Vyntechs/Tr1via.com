@@ -1,6 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { selectUpcomingGameId, selectLobbyTopics } from "@/lib/tv/lobbyTopics";
+import {
+  selectUpcomingGameId,
+  selectLobbyTopics,
+  selectLobbyTopicsFromRoom,
+} from "@/lib/tv/lobbyTopics";
 import type { TVSnapshot, TVGame, TVCategory } from "@/lib/hooks/useTVRoom";
+import type { RoomSnapshot } from "@/lib/hooks/useRoom";
+import type { GameRow, CategoryRow } from "@/lib/supabase/types";
 
 function game(id: string, gameNo: 1 | 2, state: TVGame["state"]): TVGame {
   return { id, gameNo, state, startedAt: null, endedAt: null, categoryCount: 0, questionCount: 0 };
@@ -96,5 +102,78 @@ describe("selectLobbyTopics", () => {
     const s = snap({ games, currentGameId: "g1",
       categories: [cat("c1", "g1", 0, "ready", "Mystery", "Unknownland", null)] });
     expect(selectLobbyTopics(s)[0].color).toBeNull();
+  });
+});
+
+// ── Player surface (room snapshot, raw snake_case rows) ──────────────────
+function rGame(id: string, gameNo: 1 | 2, state: GameRow["state"]): GameRow {
+  return { id, game_no: gameNo, state, night_id: "n1", created_at: "" } as unknown as GameRow;
+}
+function rCat(
+  id: string,
+  gameId: string,
+  position: number,
+  state: CategoryRow["state"],
+  topic: string,
+  name = "Movies",
+  color: string | null = "#E64A8C",
+): CategoryRow {
+  return { id, game_id: gameId, name, topic, position, color, state, created_at: "", flavor: null } as unknown as CategoryRow;
+}
+function rSnap(partial: Partial<RoomSnapshot>): RoomSnapshot {
+  return {
+    night: null, hostDefaultThemeKey: null, games: [], categories: [], players: [],
+    currentGame: null, currentQuestion: null, lastResolvedQuestion: null,
+    currentReveal: null, lastBroadcast: null, isLoading: false,
+    ...partial,
+  } as RoomSnapshot;
+}
+
+describe("selectLobbyTopicsFromRoom", () => {
+  it("in the pre-game lobby (no currentGame) returns game 1's ready topics", () => {
+    const s = rSnap({
+      games: [rGame("g1", 1, "ready"), rGame("g2", 2, "draft")],
+      currentGame: null,
+      categories: [
+        rCat("c2", "g1", 1, "ready", "80s One-Hit Wonders", "Music", "#9B7BD8"),
+        rCat("c1", "g1", 0, "ready", "Disney Pixar Movies", "Movies", "#E64A8C"),
+        rCat("c3", "g1", 2, "draft", "Not Ready Yet", "Food", null),
+        rCat("c9", "g2", 0, "ready", "Other Game Topic", "Sports", "#5AA8E0"),
+      ],
+    });
+    expect(selectLobbyTopicsFromRoom(s)).toEqual([
+      { name: "Movies", topic: "Disney Pixar Movies", color: "#E64A8C", position: 0 },
+      { name: "Music", topic: "80s One-Hit Wonders", color: "#9B7BD8", position: 1 },
+    ]);
+  });
+
+  it("follows the live currentGame when one is set", () => {
+    const g2 = rGame("g2", 2, "live");
+    const s = rSnap({
+      games: [rGame("g1", 1, "done"), g2],
+      currentGame: g2,
+      categories: [
+        rCat("c1", "g1", 0, "ready", "Old Game", "Movies"),
+        rCat("c2", "g2", 0, "ready", "Live Game Topic", "Sports", "#5AA8E0"),
+      ],
+    });
+    expect(selectLobbyTopicsFromRoom(s)).toEqual([
+      { name: "Sports", topic: "Live Game Topic", color: "#5AA8E0", position: 0 },
+    ]);
+  });
+
+  it("excludes not-ready categories and returns [] when none are ready", () => {
+    const s = rSnap({
+      games: [rGame("g1", 1, "ready")],
+      categories: [
+        rCat("c1", "g1", 0, "generating", "Gen"),
+        rCat("c2", "g1", 1, "review", "Review", "Music"),
+      ],
+    });
+    expect(selectLobbyTopicsFromRoom(s)).toEqual([]);
+  });
+
+  it("returns [] when there are no games", () => {
+    expect(selectLobbyTopicsFromRoom(rSnap({}))).toEqual([]);
   });
 });

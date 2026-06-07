@@ -7,6 +7,8 @@
 
 import { useTheme, Display, Eyebrow } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
+import { categoryColor } from "@/lib/theme/categories";
+import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface PlayerLobbyProps {
@@ -24,6 +26,11 @@ export interface PlayerLobbyProps {
   hostName?: string;
   /** Venue name (currently unused inline but kept for parity / future copy). */
   venueName?: string;
+  /** Upcoming game's ready topics — the same "Tonight's Topics" the venue TV
+   *  shows. Renders a panel in the otherwise-empty waiting space so a player
+   *  who just joined can see what tonight is about. Empty/omitted → no panel
+   *  (the screen looks as it did before). */
+  topics?: LobbyTopic[];
 }
 
 export function PlayerLobby({
@@ -33,6 +40,7 @@ export function PlayerLobby({
   newestNames = ["Maya · you", "Cole", "Theo", "Devon", "Marcus"],
   hostName = "Linda",
   venueName: _venueName,
+  topics = [],
 }: PlayerLobbyProps = {}) {
   const { t } = useTheme();
   return (
@@ -96,6 +104,65 @@ export function PlayerLobby({
             </div>
           </div>
         </div>
+
+        {topics.length > 0 && (
+          <div
+            data-testid="player-lobby-topics"
+            style={{
+              // Sits in the previously-empty waiting space. flexShrink + a
+              // scrollable inner list means a small phone with many topics
+              // scrolls this panel instead of clipping the roster or pushing
+              // the "setting up" pill off-screen; a tall phone just shows the
+              // list at its natural height.
+              marginTop: 28,
+              minHeight: 0,
+              flexShrink: 1,
+              overflowY: "auto",
+            }}
+          >
+            <Eyebrow color={t.inkMid} size={10}>TONIGHT&apos;S TOPICS</Eyebrow>
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              {topics.map((topic, i) => {
+                const bar = topic.color ?? categoryColor(topic.name);
+                return (
+                  <div
+                    key={`${topic.position}-${topic.topic}`}
+                    data-testid="player-lobby-topic"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      // Staggered fade-in only — no infinite loop, so the
+                      // phone stays calm and easy on the battery.
+                      animation: `tr1via-rise .5s cubic-bezier(.2,.7,.3,1) ${i * 0.06}s both`,
+                    }}
+                  >
+                    <span
+                      aria-hidden
+                      style={{ flex: "none", width: 6, height: 22, borderRadius: 99, background: bar }}
+                    />
+                    <span
+                      style={{
+                        // minWidth:0 lets a long topic ellipsize instead of
+                        // bullying the row wider than the phone column.
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: 16,
+                        fontWeight: 600,
+                        letterSpacing: "-0.01em",
+                        color: t.ink,
+                      }}
+                    >
+                      {topic.topic}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div
           style={{
