@@ -58,6 +58,7 @@ import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { selectBetweenGamesView, buildGame1Standings, type StandingRow } from "@/lib/player/betweenGames";
+import { selectLobbyTopicsFromRoom } from "@/lib/tv/lobbyTopics";
 import { playWelcomeChime, triggerWelcomeHaptic } from "@/lib/audio/welcomeChime";
 import {
   formatRoomCode,
@@ -586,6 +587,11 @@ function LobbyView({
   // surface "the host" generically until we wire host pull-through.
   const hostName = "the host";
 
+  // The same "Tonight's Topics" the venue TV shows — the upcoming game's
+  // ready categories — surfaced on the phone so a just-joined player sees
+  // what tonight is about while waiting for the host to start.
+  const topics = useMemo(() => selectLobbyTopicsFromRoom(snapshot), [snapshot]);
+
   // Magic-Welcome moment for THIS player on THEIR phone — color flash
   // + chime + (Android) haptic, fired exactly once per join.
   const showOwnWelcome = useOwnWelcomeMoment(me, snapshot.night?.id ?? null);
@@ -598,6 +604,7 @@ function LobbyView({
         newestNames={newest}
         hostName={hostName}
         venueName={snapshot.night?.venue_name ?? ""}
+        topics={topics}
       />
       {showOwnWelcome ? <OwnWelcomeFlash playerId={me.id} /> : null}
     </>
