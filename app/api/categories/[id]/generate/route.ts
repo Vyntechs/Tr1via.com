@@ -32,6 +32,10 @@ import { generateQuestions } from "@/lib/ai/generate-questions";
 import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import { rerollPlan } from "@/lib/host/rerollPlan";
+import {
+  pickQuestionsForCategory,
+  selectSpreadQuestionIds,
+} from "@/lib/host/pickQuestions";
 import { PexelsRateLimitError } from "@/lib/pexels/search";
 import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
 
@@ -104,6 +108,7 @@ export async function POST(
       difficulty: parsed.data.difficulty,
       themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,
       keptIds: parsed.data.keptIds,
+      autoPick: parsed.data.autoPick,
     }).catch(async (err) => {
       // Rollback + broadcast on any unexpected failure inside the job.
       // (Per-question failures are handled inside runGenerationJob.)
@@ -162,6 +167,9 @@ async function runGenerationJob(opts: {
   // the fresh batch is in. Absent ⇒ first generation (append-only, nothing to
   // keep or delete).
   keptIds?: string[];
+  // When true: after photos, auto-pick 7 (spread across difficulty) and flip
+  // to 'ready' instead of 'review'. Founder build-a-full-game path.
+  autoPick?: boolean;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
 
@@ -296,11 +304,31 @@ async function runGenerationJob(opts: {
     }
   }
 
-  // Step 4: flip the category to review and announce done.
-  await admin
-    .from("categories")
-    .update({ state: "review" })
-    .eq("id", opts.categoryId);
+  // Step 4: finish. Founder "build a full game" passes autoPick so the
+  // category auto-picks + locks to 'ready' here using the exact same write
+  // path as a human pick; otherwise we stop at 'review' for manual curation.
+  if (opts.autoPick) {
+    const { data: pool, error: poolError } = await admin
+      .from("questions")
+      .select("id, difficulty")
+      .eq("category_id", opts.categoryId);
+    if (poolError) {
+      throw new Error(`auto-pick: failed to load pool: ${poolError.message}`);
+    }
+    const ids = selectSpreadQuestionIds(
+      (pool ?? []).map((q) => ({ id: q.id, difficulty: q.difficulty })),
+      7,
+    );
+    const result = await pickQuestionsForCategory(opts.categoryId, ids);
+    if (!result.ok) {
+      throw new Error(`auto-pick failed: ${result.error}`);
+    }
+  } else {
+    await admin
+      .from("categories")
+      .update({ state: "review" })
+      .eq("id", opts.categoryId);
+  }
   await broadcastToCategory(opts.categoryId, "done", {
     serverNow: new Date().toISOString(),
     count: inserted.length,
