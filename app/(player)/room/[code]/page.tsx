@@ -48,6 +48,7 @@ import {
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
+import { useLockCount } from "@/lib/hooks/useLockCount";
 import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
@@ -484,6 +485,7 @@ function RoomStateMachine({
             game={currentGame}
             themeKey={themeKey}
             standings={buildGame1Standings(scores ?? [], me.id)}
+            totalPlayers={scores && scores.length > 0 ? scores.length : snapshot.players.length}
           />
         );
       } else {
@@ -906,9 +908,10 @@ function LockedView({
   roomCode: _roomCode,
   allAnswers: _allAnswers,
   categories,
-  game: _game,
+  game,
   themeKey,
   standings,
+  totalPlayers,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -919,6 +922,8 @@ function LockedView({
   game: GameRow;
   themeKey?: ThemeKey;
   standings?: { top: StandingRow[]; you: StandingRow | null };
+  /** Players who can answer this question — denominator for the live bar. */
+  totalPlayers: number;
 }) {
   // Reuse the same scramble — same player + question = same permutation.
   const scramble = useMemo(
@@ -964,6 +969,10 @@ function LockedView({
 
   const questionNumber = computeQuestionNumber(question, categories);
 
+  // Live "X of Y locked in" — poll the canonical locks list while this screen
+  // is mounted (the player has locked and is watching the room catch up).
+  const lockedCount = useLockCount({ gameId: game.id, active: true });
+
   return (
     <PlayerLocked
       category={category.name}
@@ -973,6 +982,8 @@ function LockedView({
       seconds={displaySeconds}
       msToLock={myAnswer.ms_to_lock}
       questionNumber={questionNumber}
+      lockedCount={lockedCount}
+      totalPlayers={totalPlayers}
       standings={standings}
     />
   );

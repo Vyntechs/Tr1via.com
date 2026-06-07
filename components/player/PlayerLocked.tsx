@@ -35,6 +35,13 @@ export interface PlayerLockedProps {
   lockedSummary?: string;
   /** Question number within its game (1..N). */
   questionNumber?: number;
+  /** Live count of players locked in for THIS question (numerator). When this
+   *  and totalPlayers are set, a live "X of Y locked in" bar replaces the
+   *  static count — it fills as the room answers, so the wait feels alive.
+   *  Omitted → bar hidden (gallery/demo keep the original screen). */
+  lockedCount?: number;
+  /** Players who can answer this question (denominator for the live bar). */
+  totalPlayers?: number;
   /** Live standings (as of the last reveal) so the player can see where they
    *  stand while the timer runs. Omitted → the board is hidden (gallery/demo
    *  keep the original locked screen). Mirrors the between-games board shape. */
@@ -51,6 +58,8 @@ export function PlayerLocked({
   msToLock = 2300,
   lockedSummary = "21/32",
   questionNumber: _questionNumber,
+  lockedCount,
+  totalPlayers,
   standings,
 }: PlayerLockedProps = {}) {
   const { t } = useTheme();
@@ -58,6 +67,15 @@ export function PlayerLocked({
   const secondsToLock = (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock < 5000;
   const hasStandings = !!standings && standings.top.length > 0;
+
+  // Live "X of Y locked in" — the one thing on this screen that actually moves
+  // while the timer runs. Only when real numbers are supplied (the room feed);
+  // gallery/demo omit them and keep the original static count.
+  const hasLiveCount =
+    typeof lockedCount === "number" && typeof totalPlayers === "number" && totalPlayers > 0;
+  const lockPct = hasLiveCount
+    ? Math.round(Math.min(1, Math.max(0, lockedCount! / totalPlayers!)) * 100)
+    : 0;
 
   function StandingsRow({ row, pinned }: { row: StandingRow; pinned?: boolean }) {
     return (
@@ -125,8 +143,39 @@ export function PlayerLocked({
             </span>
           </div>
         </div>
-        <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>
+        {!hasLiveCount && <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>}
       </div>
+
+      {hasLiveCount && (
+        <div data-testid="lockin-progress" style={{ marginBottom: 16 }} role="status" aria-live="polite">
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: 99,
+                background: catColor,
+                animation: "tr1via-pulse 1.4s ease-in-out infinite",
+              }}
+            />
+            <Eyebrow color={t.inkMid} size={10}>
+              {lockedCount} of {totalPlayers} locked in
+            </Eyebrow>
+          </div>
+          <div style={{ height: 8, borderRadius: 99, background: t.line, overflow: "hidden" }}>
+            <div
+              data-testid="lockin-fill"
+              style={{
+                width: `${lockPct}%`,
+                height: "100%",
+                borderRadius: 99,
+                background: catColor,
+                transition: "width .4s cubic-bezier(.2,.7,.3,1)",
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {([1, 2, 3, 4] as const).map((slot, i) => (
