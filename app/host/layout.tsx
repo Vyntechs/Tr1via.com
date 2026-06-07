@@ -25,12 +25,20 @@
 // untyped theme. The root layout's <ThemeProvider> at the document level
 // is what handles the truly-pre-auth surfaces (/login, /).
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { ThemeProvider } from "@/components/system";
 import { AccountChip } from "@/components/host/AccountChip";
 import { getAuthedHost } from "@/lib/api/auth";
 import { getSupabaseServer } from "@/lib/supabase/server";
 import { resolveTheme, SYSTEM_DEFAULT_THEME } from "@/lib/theme/resolveTheme";
+
+// Height of the top strip kept clear for the fixed AccountChip. The chip sits
+// at top:12 and is ~33px tall, so 52 clears it with a small breathing gap.
+// Tracks AccountChip's `top` + height — bump together if the chip grows.
+// Exposed to descendants as the `--host-chip-reserve` CSS var so a fixed-
+// viewport page (the live console pins height:100dvh, no scroll) can subtract
+// the same amount instead of overflowing under the reserve.
+const CHIP_RESERVE = 52;
 
 export default async function HostLayout({ children }: { children: ReactNode }) {
   const auth = await getAuthedHost();
@@ -60,7 +68,17 @@ export default async function HostLayout({ children }: { children: ReactNode }) 
           display: "flex",
           flexDirection: "column",
           overflowX: "hidden",
-        }}
+          // Reserve a top strip for the fixed AccountChip so it never sits on
+          // top of a page's own top-right controls (the setup "Pick" header's
+          // flavor pills + "Another 20" button were getting covered). Only
+          // when the chip actually renders. border-box keeps the padding
+          // inside 100dvh so scrolling pages gain no scrollbar; the reserve is
+          // published as --host-chip-reserve so the fixed-height live console
+          // can subtract it (page.tsx) instead of overflowing.
+          ["--host-chip-reserve" as string]: email ? `${CHIP_RESERVE}px` : "0px",
+          boxSizing: "border-box",
+          paddingTop: "var(--host-chip-reserve)",
+        } as CSSProperties}
       >
         {children}
         {email && <AccountChip email={email} />}
