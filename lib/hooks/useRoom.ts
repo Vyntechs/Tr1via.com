@@ -118,6 +118,22 @@ export interface UseRoomArgs {
   deviceId?: string | null;
 }
 
+// Every `questions` column EXCEPT correct_index. The phone fetches the live
+// question with this list so the correct answer never reaches a player's device
+// while the question is open — a joined player could otherwise read it straight
+// out of the network response and lock in the right option every time. Once a
+// question is FINISHED its answer is public (it's the reveal), so correct_index
+// is fetched separately at that point (see refreshLiveState) and on the
+// resolved-question bootstrap query.
+//
+// NOTE: this is the app-layer half. A hand-written anon query, or the realtime
+// questions feed, can still reach correct_index for a live question at the DB
+// layer (RLS gates question reads on played_at, not finished_at) — closing that
+// requires the deferred DB-level change. Doing this exploit takes browser
+// devtools on every question, so the app-layer trim covers the realistic case.
+const PLAYER_QUESTION_COLUMNS =
+  "id, category_id, difficulty, fact_blurb, finished_at, image_attribution, image_source, image_url, is_picked, options, played_at, point_value, prompt, source";
+
 export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(EMPTY);
   // Player call sites pass `deviceId`. Until it's a real value we hold off so
@@ -243,7 +259,14 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
      * read access. Called as a fallback whenever a broadcast event arrives,
      * since postgres_changes can drop events for device-authed players.
      */
-    async function refreshLiveState(nightId: string, questionId?: string): Promise<void> {
+    async function refreshLiveState(
+      nightId: string,
+      questionId?: string,
+      // The answer for `questionId`, when the caller already has it — the
+      // resolve broadcast carries `correctIndex`, so the common resolve path
+      // needs no follow-up DB read and never blanks the reveal on a blip.
+      correctIndexHint?: number,
+    ): Promise<void> {
       if (cancelled) return;
       const [gamesRes, qRes] = await Promise.all([
         supa
@@ -252,12 +275,39 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           .eq("night_id", nightId)
           .order("game_no", { ascending: true }),
         questionId
-          ? supa.from("questions").select("*").eq("id", questionId).maybeSingle()
+          ? supa
+              .from("questions")
+              .select(PLAYER_QUESTION_COLUMNS)
+              .eq("id", questionId)
+              .maybeSingle()
           : Promise.resolve({ data: null, error: null }),
       ]);
       if (cancelled) return;
       const nextGames = (gamesRes.data ?? null) as GameRow[] | null;
-      const nextQ = (qRes.data ?? null) as QuestionRow | null;
+      let nextQ = (qRes.data ?? null) as QuestionRow | null;
+      // The fetch above omits correct_index. Once the question is FINISHED the
+      // answer is public (the reveal is showing), so RevealView needs it back.
+      // Prefer the broadcast's value; otherwise (end-early, heartbeat) fetch it.
+      if (nextQ?.finished_at) {
+        let ci = correctIndexHint;
+        if (typeof ci !== "number") {
+          const { data: ans, error: ansErr } = await supa
+            .from("questions")
+            .select("correct_index")
+            .eq("id", nextQ.id)
+            .maybeSingle();
+          if (cancelled) return;
+          if (ansErr) {
+            // Don't blank the reveal silently — surface it. The 15s heartbeat
+            // re-bootstrap (resolved query keeps select('*')) heals the row.
+            console.warn("reveal correct_index fetch failed; healing on re-bootstrap", ansErr);
+          }
+          ci = (ans as { correct_index: number } | null)?.correct_index;
+        }
+        if (typeof ci === "number") {
+          nextQ = { ...nextQ, correct_index: ci as 0 | 1 | 2 | 3 };
+        }
+      }
       setSnapshot((prev) => {
         const games = nextGames ?? prev.games;
         // When the refetch returns a row whose finished_at is set AND it
@@ -357,7 +407,9 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           .order("joined_at", { ascending: true }),
         supa
           .from("questions")
-          .select("*, categories!inner(games!inner(night_id))")
+          // Live question: omit correct_index — the answer must not reach the
+          // phone while the answer window is open (see PLAYER_QUESTION_COLUMNS).
+          .select(`${PLAYER_QUESTION_COLUMNS}, categories!inner(games!inner(night_id))`)
           .eq("categories.games.night_id", nightId)
           .not("played_at", "is", null)
           .is("finished_at", null)
@@ -495,8 +547,13 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           // Same fallback as reveal: pull current state over HTTP so the
           // finished_at stamp + any answer rows propagate even when
           // postgres_changes doesn't land. Flips the room state machine
-          // into RevealView.
-          void refreshLiveState(nightId, String(p.questionId));
+          // into RevealView. Pass the broadcast's correctIndex so the reveal
+          // gets the answer straight from this message — no follow-up read.
+          void refreshLiveState(
+            nightId,
+            String(p.questionId),
+            typeof p.correctIndex === "number" ? p.correctIndex : undefined,
+          );
         })
         .on("broadcast", { event: "end-early" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;
