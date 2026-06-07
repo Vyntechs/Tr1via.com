@@ -602,11 +602,16 @@ function TVRevealView({
   const stumper = correctAnswers.length <= STUMPER_THRESHOLD;
 
   const headerEyebrow = `GAME ${game?.gameNo ?? 1} · ${category.toUpperCase()} · ${question.pointValue ?? 100} PTS`;
-  const correctText = question.options[question.correctIndex];
+  // The reveal only renders for a RESOLVED question, so correctIndex is set by
+  // now (the public feed withholds it until finished — see serializeBoardQuestion).
+  // Guard defensively in case a not-yet-finished row ever reaches here.
+  const correctText =
+    question.correctIndex !== null ? question.options[question.correctIndex] : "";
   // Canonical 1-based number on the TV (scramble is per-phone; on the TV we
   // show the canonical position so the reveal lines up with TVQuestion's
   // option cards).
-  const correctNumber = question.correctIndex + 1;
+  const correctNumber =
+    question.correctIndex !== null ? question.correctIndex + 1 : 0;
 
   if (stumper) {
     const nailed: TVStumperFastest[] = correctAnswers
