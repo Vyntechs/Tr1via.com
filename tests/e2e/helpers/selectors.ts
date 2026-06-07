@@ -3,8 +3,8 @@
 // Modify in lockstep with the corresponding component change.
 
 export const TID = {
-  // Landing
-  home: { root: "home", roomCodeInput: "home-room-code-input", findRoomBtn: "home-find-room-btn", hostSignInLink: "home-host-signin" },
+  // Landing: root `/` now 307-redirects to /trivia-night (marketing); the
+  // room-code form moved to /join (see playerJoinCodeEntry below).
 
   // Host login
   login: { submit: "login-submit" },

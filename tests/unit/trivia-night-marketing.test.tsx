@@ -7,7 +7,8 @@
 // would silently kill the page's purpose:
 //   1. the differentiator hook headline is actually rendered (not lost in a refactor)
 //   2. the primary CTA points to /login (start hosting)
-//   3. the secondary CTA points to / (join a game)
+//   3. the secondary CTA points to /join (enter a code) — NOT "/", which now
+//      redirects to this very page, so a "/" join button would loop the player.
 // It also asserts the page exports SEO metadata (title + description), since a
 // landing page with no <title>/description is invisible to the search traffic
 // it exists to capture.
@@ -30,10 +31,10 @@ describe("/trivia-night marketing landing", () => {
     expect(within(start).getByText(/host/i)).toBeTruthy();
   });
 
-  it("secondary CTA joins a game (links to /)", () => {
+  it("secondary CTA joins a game (links to /join, not / — / now redirects here)", () => {
     render(<TriviaNightPage />);
     const join = screen.getByTestId("marketing-cta-join");
-    expect(join.getAttribute("href")).toBe("/");
+    expect(join.getAttribute("href")).toBe("/join");
   });
 
   it("exports SEO metadata (title + description) for search traffic", () => {
