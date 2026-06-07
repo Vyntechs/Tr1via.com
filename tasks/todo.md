@@ -31,3 +31,40 @@ Replace June's flat static gradient with a living, sky-led summer-evening atmosp
 - Context cleared here on purpose; resume from the plan.
 
 **Skipped/Failed:** None.
+
+---
+
+# TASK: Marketing polish — root→marketing redirect, player entry, monthly-theme showcase
+
+Branch `worktree-marketing-root-themes` off `origin/main` d3d7709. Re-plans: 0/3. Brandon-approved 2026-06-07.
+
+## What shipped
+- [x] **Root redirect.** `app/page.tsx` (was a 207-line client room-code form) → server component
+      `redirect("/trivia-night")` (307). Verified live: `GET / → 307 → /trivia-night`.
+- [x] **Player entry preserved.** Did NOT migrate the old root form (Simplicity First): the existing
+      `/join` no-code screen is already phone-native + has a scan-QR hint, so it's the better home. Repointed
+      marketing's "Got a code? Join a game" CTA `/` → `/join` (was an infinite-loop after the redirect) and
+      the logo `/` → `/trivia-night`.
+- [x] **Theme showcase (one component, two contexts).** `components/marketing/ThemeShowcase.tsx` — server
+      component, renders the 12 monthly themes as mini in-product cards painted from the registry via
+      `resolveTheme(key)` (zero duplicated colors), each with its signature SVG motif. `variant="teaser"`
+      (horizontal strip on /trivia-night) + `variant="full"` (grid). CSS-only motion in globals.css.
+- [x] **`/themes` gallery page** — `app/(marketing)/themes/page.tsx`, server-rendered, SEO metadata, links
+      back to the pitch.
+- [x] **Tests:** updated `trivia-night-marketing` (join CTA → /join); added `root-redirect`,
+      `theme-showcase` (all 12 months render in their OWN palettes, not daylight's), `themes-page`.
+- [x] **Critic pass (fixed):** caught a keyframe-name collision — my `tr1via-float` was overriding the
+      existing one used by `TVLobbyTopics` (−4px→−7px). Renamed mine to `tr1via-showcase-float`. Also fixed a
+      stale header comment + removed the now-dead `home` e2e selector.
+
+## Review
+- Verified by: full unit suite **585 passed / 8 skipped / 0 failed** (92 files); changed files tsc + eslint
+  clean; Playwright screenshots of `/` (redirects), `/join`, `/trivia-night` teaser, `/themes` all HTTP 200
+  and visually confirmed (sent to Brandon).
+- Engineering calls: Figma skipped for code-first (design system lives in code → higher fidelity; can mirror
+  to Figma after). No parallel subagents — remaining steps were sequential (card → teaser/gallery). Root
+  redirect is 307 (temporary) to keep the apex flexible.
+
+## Skipped/Failed
+- Pre-existing tsc error in `tests/unit/HostHomeClient-founder-build.test.tsx` (stale props from #80, NOT
+  this diff, passes at runtime) — left untouched (out of scope). Flagged to Brandon.
