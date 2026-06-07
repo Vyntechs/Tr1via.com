@@ -265,13 +265,34 @@ async function runGenerationJob(opts: {
     }).catch(() => undefined);
   }
 
-  // Step 3: attach photos. We do these sequentially because Pexels' free
-  // tier is 200 req/hr — bursting 20 in parallel risks brittleness without
-  // measurable user-side latency benefit (the UI is already populated).
-  for (let i = 0; i < inserted.length; i++) {
-    const row = inserted[i];
-    const q = generated[i];
-    if (!row || !q) continue;
+  // Pick BEFORE photos on the auto-build path. The founder "build a full game"
+  // tool keeps only 7 of the 20 generated questions, so photographing all 20
+  // then discarding 13 does ~3x the Pexels work for nothing — and 12 categories
+  // doing that at once overruns the rate limit (photos silently drop). Picking
+  // first lets us fetch photos for just the 7 keepers: ~3x fewer lookups, under
+  // the limit, and FASTER (less work, no added wait). Manual review still
+  // photographs all 20 so the host's swap UI has the full pool.
+  let photoTargets = inserted.map((row, i) => ({ id: row.id, q: generated[i]! }));
+  if (opts.autoPick) {
+    const ids = selectSpreadQuestionIds(
+      inserted.map((row, i) => ({
+        id: row.id,
+        difficulty: generated[i]!.difficulty,
+      })),
+      7,
+    );
+    const result = await pickQuestionsForCategory(opts.categoryId, ids);
+    if (!result.ok) {
+      throw new Error(`auto-pick failed: ${result.error}`);
+    }
+    const keep = new Set(ids);
+    photoTargets = photoTargets.filter((t) => keep.has(t.id));
+  }
+
+  // Step 3: attach photos. Sequential within a category because Pexels' free
+  // tier is 200 req/hr — bursting risks brittleness without measurable
+  // user-side latency benefit (the UI is already populated).
+  for (const { id, q } of photoTargets) {
     try {
       const photo = await autoAttachPhoto(q, { topic: opts.topic });
       if (photo.imageUrl) {
@@ -282,11 +303,11 @@ async function runGenerationJob(opts: {
             image_attribution: photo.attribution,
             image_source: "pexels",
           })
-          .eq("id", row.id);
+          .eq("id", id);
       }
       await broadcastToCategory(opts.categoryId, "photo_attached", {
         serverNow: new Date().toISOString(),
-        questionId: row.id,
+        questionId: id,
         imageUrl: photo.imageUrl,
         attribution: photo.attribution,
       }).catch(() => undefined);
@@ -304,26 +325,9 @@ async function runGenerationJob(opts: {
     }
   }
 
-  // Step 4: finish. Founder "build a full game" passes autoPick so the
-  // category auto-picks + locks to 'ready' here using the exact same write
-  // path as a human pick; otherwise we stop at 'review' for manual curation.
-  if (opts.autoPick) {
-    const { data: pool, error: poolError } = await admin
-      .from("questions")
-      .select("id, difficulty")
-      .eq("category_id", opts.categoryId);
-    if (poolError) {
-      throw new Error(`auto-pick: failed to load pool: ${poolError.message}`);
-    }
-    const ids = selectSpreadQuestionIds(
-      (pool ?? []).map((q) => ({ id: q.id, difficulty: q.difficulty })),
-      7,
-    );
-    const result = await pickQuestionsForCategory(opts.categoryId, ids);
-    if (!result.ok) {
-      throw new Error(`auto-pick failed: ${result.error}`);
-    }
-  } else {
+  // Step 4: finalize state. The auto-build is already 'ready' (picked above);
+  // manual review stops at 'review' for the host to curate.
+  if (!opts.autoPick) {
     await admin
       .from("categories")
       .update({ state: "review" })
