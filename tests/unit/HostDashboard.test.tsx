@@ -51,3 +51,28 @@ describe("HostDashboard headliner truthfulness", () => {
     expect(screen.queryByText(/^TONIGHT ·/)).toBeNull();
   });
 });
+
+describe("HostDashboard still-in-setup section", () => {
+  const setupNight = {
+    nightId: "abc",
+    date: "Wed Jun 4",
+    venue: "Soul Fire Pizza",
+    cats: ["Music"],
+  };
+
+  it("links each in-setup night to its (writable) setup page", () => {
+    render(
+      <HostDashboard themeKey="june" tonight={tonight()} inSetup={[setupNight]} />,
+    );
+    expect(screen.getByText("STILL IN SETUP")).toBeDefined();
+    // The href is a hand-built template string — lock it so a route rename
+    // can't silently strand the host with no way back into a half-built game.
+    const link = screen.getByText("Continue setup →").closest("a");
+    expect(link?.getAttribute("href")).toBe("/host/setup/abc");
+  });
+
+  it("hides the section entirely when there are no in-setup nights", () => {
+    render(<HostDashboard themeKey="june" tonight={tonight()} inSetup={[]} />);
+    expect(screen.queryByText("STILL IN SETUP")).toBeNull();
+  });
+});

@@ -11,6 +11,7 @@ import {
   HostDashboard,
   ResetGameConfirmModal,
   type HostDashboardPastNight,
+  type HostDashboardSetupNight,
   type HostDashboardTonight,
 } from "@/components/host";
 import { OnboardingFirstDashboard } from "@/components/onboarding";
@@ -21,7 +22,8 @@ export interface HostHomeClientProps {
   defaultVenue: string;
   isFirstNightComplete: boolean;
   isFounder?: boolean;
-  weeks: HostDashboardPastNight[];
+  previousGames: HostDashboardPastNight[];
+  inSetup: HostDashboardSetupNight[];
   lifetime: { nights: number; questions: number };
   tonight: HostDashboardTonight | null;
 }
@@ -32,7 +34,8 @@ export function HostHomeClient({
   defaultVenue,
   isFirstNightComplete,
   isFounder = false,
-  weeks,
+  previousGames,
+  inSetup,
   lifetime,
   tonight,
 }: HostHomeClientProps) {
@@ -126,7 +129,8 @@ export function HostHomeClient({
       <HostDashboard
         hostName={hostName}
         hostSubtitle={hostSubtitle}
-        weeks={weeks}
+        previousGames={previousGames}
+        inSetup={inSetup}
         lifetime={lifetime}
         tonight={tonight}
         onSetupTonight={createNightAndGo}

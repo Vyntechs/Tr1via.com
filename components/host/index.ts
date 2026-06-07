@@ -8,6 +8,7 @@ export { HostDashboard } from "./HostDashboard";
 export type {
   HostDashboardProps,
   HostDashboardPastNight,
+  HostDashboardSetupNight,
   HostDashboardTonight,
 } from "./HostDashboard";
 export { HostSetupCategories } from "./HostSetupCategories";
