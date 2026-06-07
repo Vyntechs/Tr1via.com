@@ -45,7 +45,7 @@ export function explainGenerationFailure(
     return "The generator gave up partway through. A retry usually works.";
   }
   if (input.fromTimeout) {
-    return "Anthropic took longer than 60 seconds without sending back a single question. That's almost always a slow upstream — retry, or type your seven by hand.";
+    return "The question builder stopped responding. Give it another go, or type your seven by hand.";
   }
   return "Something went sideways while pulling your questions.";
 }

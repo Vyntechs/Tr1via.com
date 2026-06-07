@@ -22,7 +22,12 @@ export interface CollectVerifiedOptions {
   maxRounds: number;
   /** Independent verify passes that must ALL agree a question is clean. Default 2. */
   verifyPasses?: number;
-  generate: (avoidPrompts: string[]) => Promise<GeneratedQuestion[]>;
+  /**
+   * Produce a fresh batch. `avoidPrompts` are prompts already shown (skip them);
+   * `need` is how many MORE clean questions are still required, so a refill round
+   * can request just the shortfall instead of a whole new batch.
+   */
+  generate: (avoidPrompts: string[], need: number) => Promise<GeneratedQuestion[]>;
   verify: (questions: GeneratedQuestion[]) => Promise<AnswerVerdict[]>;
 }
 
@@ -34,7 +39,10 @@ export async function collectVerifiedQuestions(
   const seenPrompts: string[] = [];
 
   for (let round = 0; round < opts.maxRounds && clean.length < opts.target; round++) {
-    const batch = await opts.generate([...seenPrompts]);
+    // Refill rounds only ask for the remaining gap, so topping 19 -> 20 costs
+    // one extra question + its verify passes, not a whole fresh batch.
+    const need = opts.target - clean.length;
+    const batch = await opts.generate([...seenPrompts], need);
     if (batch.length === 0) break;
     for (const q of batch) seenPrompts.push(q.prompt);
 

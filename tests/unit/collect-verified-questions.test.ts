@@ -61,6 +61,45 @@ it("stops early when generation dries up", async () => {
   expect(calls).toBe(2);                                    // round 2 returns empty → stop
 });
 
+it("refills only the shortfall — `need` shrinks to the remaining gap each round", async () => {
+  // Each round returns `need` questions, exactly ONE of which is good. So the
+  // gap closes by 1 per round and `need` should shrink: target → target-1 → …
+  const needByRound: number[] = [];
+  const out = await collectVerifiedQuestions({
+    target: 4,
+    maxRounds: 3,
+    generate: async (_avoid, need) => {
+      needByRound.push(need);
+      const n = needByRound.length;
+      const items: GeneratedQuestion[] = [q(`r${n}-good`)];
+      for (let i = 1; i < need; i++) items.push(q(`r${n}-bad${i}`));
+      return items;
+    },
+    verify: async (qs) =>
+      qs.map((qq, i) => (qq.prompt.includes("-bad") ? wrong(i) : ok(i))),
+  });
+  expect(needByRound).toEqual([4, 3, 2]); // asks only the remaining gap, not a full batch
+  expect(out.map((x) => x.prompt)).toEqual(["r1-good", "r2-good", "r3-good"]);
+});
+
+it("tops a verified-but-short batch back up to the full target", async () => {
+  // Round 1: 4 questions, 1 rejected → 3 clean. Round 2 should refill the 1 gap.
+  let round = 0;
+  const out = await collectVerifiedQuestions({
+    target: 4,
+    maxRounds: 3,
+    generate: async (_avoid, need) => {
+      round++;
+      if (round === 1) return [q("a"), q("b"), q("c"), q("bad")];
+      return Array.from({ length: need }, (_, i) => q(`fill${i}`));
+    },
+    verify: async (qs) =>
+      qs.map((qq, i) => (qq.prompt === "bad" ? wrong(i) : ok(i))),
+  });
+  expect(out).toHaveLength(4); // refilled to the full target
+  expect(out.map((x) => x.prompt)).toEqual(["a", "b", "c", "fill0"]);
+});
+
 it("requires ALL verify passes to agree — drops a question one pass flags (verifyPasses default 2)", async () => {
   let call = 0;
   const out = await collectVerifiedQuestions({

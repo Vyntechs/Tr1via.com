@@ -121,6 +121,55 @@ describe("useGenerationStatus", () => {
     });
   });
 
+  it("stays 'ok' across the idle window while heartbeats keep lastActivityAt fresh", async () => {
+    // The server emits progress heartbeats during the long write+verify run.
+    // Each refresh of lastActivityAt re-arms the idle timer, so a healthy but
+    // slow job (loadedCount stays 0 the whole time) never false-times-out.
+    const { result, rerender } = renderHook(
+      ({ activity }: { activity: number }) =>
+        useGenerationStatus({
+          categoryId: "cat-1",
+          state: "generating",
+          loadedCount: 0,
+          lastActivityAt: activity,
+          timeoutMs: 1_000,
+          pollIntervalMs: 200,
+        }),
+      { initialProps: { activity: Date.now() } },
+    );
+    // Advance well past the idle window in sub-window steps, sending a fresh
+    // heartbeat (lastActivityAt = now) after each step.
+    for (let i = 0; i < 4; i++) {
+      await act(async () => {
+        vi.advanceTimersByTime(600);
+        await Promise.resolve();
+      });
+      rerender({ activity: Date.now() });
+    }
+    expect(result.current.kind).toBe("ok");
+  });
+
+  it("escalates to 'timeout' when heartbeats stop (lastActivityAt goes stale)", async () => {
+    const stale = Date.now();
+    const { result } = renderHook(() =>
+      useGenerationStatus({
+        categoryId: "cat-1",
+        state: "generating",
+        loadedCount: 0,
+        lastActivityAt: stale, // never refreshed → the worker went silent
+        timeoutMs: 1_000,
+        pollIntervalMs: 200,
+      }),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(1_500);
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.kind).toBe("timeout");
+    });
+  });
+
   it("is a no-op when disabled", async () => {
     const { result } = renderHook(() =>
       useGenerationStatus({

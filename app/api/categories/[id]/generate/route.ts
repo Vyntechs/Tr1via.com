@@ -3,9 +3,12 @@
 // Kicks off the question-generation pipeline for a category:
 //   1. Mark category.state = 'generating'
 //   2. Return 202 immediately to the host UI
-//   3. Schedule the background job via Next 16's `after()` — Claude
-//      generates 20 questions, each row gets a Pexels photo, progress is
-//      broadcast on `category:{id}` for the HostGenLoading screen.
+//   3. Schedule the background job via Next 16's `after()` — Claude writes
+//      questions, every answer is fact-checked twice, and any rejected
+//      question is refilled (up to 4 rounds) until 20 verified questions
+//      exist; then each row gets a Pexels photo. A `progress` heartbeat is
+//      broadcast on `category:{id}` every ~12s while writing/checking, then
+//      `question_added` / `photo_attached` as rows land — for HostGenLoading.
 //   4. On completion: category.state = 'review'. On failure: rolled back
 //      to 'draft' and an `error` broadcast is sent.
 //
@@ -15,7 +18,11 @@ import { type NextRequest } from "next/server";
 import { after } from "next/server";
 
 import { requireOwnedCategory } from "@/lib/api/auth";
-import { broadcastToCategory } from "@/lib/api/broadcast";
+import {
+  broadcastToCategory,
+  type CategoryProgressPayload,
+  type GenerationPhase,
+} from "@/lib/api/broadcast";
 import { GenerateCategoryBodySchema } from "@/lib/api/schemas";
 import {
   badRequest,
@@ -28,7 +35,7 @@ import {
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { autoAttachPhoto } from "@/lib/ai/auto-attach-photo";
-import { generateQuestions } from "@/lib/ai/generate-questions";
+import { generateQuestions, type GeneratedQuestion } from "@/lib/ai/generate-questions";
 import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import { rerollPlan } from "@/lib/host/rerollPlan";
@@ -45,6 +52,12 @@ export const dynamic = "force-dynamic";
 // round), so the background job needs more headroom than the old Haiku-only
 // path. 300s is Vercel's hard max on most plans.
 export const maxDuration = 300;
+
+// How often the background job emits a `progress` heartbeat while writing and
+// fact-checking (before any question row exists). Comfortably under the
+// client's idle timeout so a healthy-but-slow run never false-alarms, while a
+// dead worker (no heartbeat) still trips it.
+const GENERATION_HEARTBEAT_MS = 12_000;
 
 export async function POST(
   req: NextRequest,
@@ -196,25 +209,68 @@ async function runGenerationJob(opts: {
   // TWICE (verifyPasses: 2), keeping only questions both passes agree are
   // correct AND unambiguous (a single check has wobble on borderline ones;
   // measured ~5% -> ~2.5% slip). A wrong/ambiguous answer can't reach a live
-  // game. One round keeps the extra checks safely inside maxDuration, and the
-  // host gets fewer-but-clean rather than wrong. Nothing is inserted or
-  // broadcast until it has passed — the category is still 'generating', so the
-  // host never sees an unverified question.
-  const generated = await collectVerifiedQuestions({
-    target: 20,
-    maxRounds: 1,
-    verifyPasses: 2,
-    generate: (avoid) =>
-      generateQuestions({
-        topic: opts.topic,
-        flavor: opts.flavor,
-        difficulty: opts.difficulty,
-        count: 20,
-        themeKey: opts.themeKey,
-        avoidPrompts: [...(reroll?.avoidPrompts ?? []), ...avoid],
-      }),
-    verify: (qs) => verifyAnswers(qs),
-  });
+  // game. When the check rejects a question we REFILL it (maxRounds > 1): each
+  // extra round asks only for the shortfall (`need`), avoiding prompts already
+  // shown, until a full 20 verified questions exist — the host always gets a
+  // complete, correct deck rather than a short one. Refill rounds are cheap
+  // (top 19 -> 20 = one more question + its verify passes), so this stays well
+  // inside maxDuration. Nothing is inserted or broadcast until it has passed —
+  // the category is still 'generating', so the host never sees an unverified
+  // question.
+  //
+  // Heartbeat: the generate -> verify -> refill run legitimately exceeds a
+  // minute, and NOTHING is inserted (no question_added) until it finishes — so
+  // without a steady signal the host's client-side safety timer false-alarms
+  // ("took too long") even though the job is healthy. We tick a `progress`
+  // broadcast every HEARTBEAT_MS carrying the current phase; the client arms
+  // its timeout off the last heartbeat, so only a truly dead worker trips it.
+  let phase: GenerationPhase = "writing";
+  const emitProgress = () => {
+    const payload: CategoryProgressPayload = {
+      serverNow: new Date().toISOString(),
+      phase,
+    };
+    return broadcastToCategory(opts.categoryId, "progress", payload).catch(
+      () => undefined,
+    );
+  };
+  void emitProgress();
+  const heartbeat = setInterval(() => {
+    void emitProgress();
+  }, GENERATION_HEARTBEAT_MS);
+
+  let generated: GeneratedQuestion[];
+  try {
+    generated = await collectVerifiedQuestions({
+      target: 20,
+      // Up to 4 rounds to top back up to 20. Almost always 1; an occasional
+      // rejected question takes a cheap 2nd round. The bound caps worst-case
+      // latency if the model keeps producing borderline answers.
+      maxRounds: 4,
+      verifyPasses: 2,
+      generate: (avoid, need) => {
+        phase = "writing";
+        void emitProgress();
+        return generateQuestions({
+          topic: opts.topic,
+          flavor: opts.flavor,
+          difficulty: opts.difficulty,
+          // Refill rounds request just the gap (+1 buffer to absorb a re-reject
+          // without forcing yet another round), capped at the full target.
+          count: Math.min(20, need + 1),
+          themeKey: opts.themeKey,
+          avoidPrompts: [...(reroll?.avoidPrompts ?? []), ...avoid],
+        });
+      },
+      verify: (qs) => {
+        phase = "checking";
+        void emitProgress();
+        return verifyAnswers(qs);
+      },
+    });
+  } finally {
+    clearInterval(heartbeat);
+  }
   if (generated.length === 0) {
     throw new Error("no questions passed the answer check");
   }
