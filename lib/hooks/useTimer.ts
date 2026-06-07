@@ -7,9 +7,9 @@
 //     was sent. We use this to compute a per-device clock offset so the
 //     countdown is precisely aligned across phones / TV.
 //   - durationS: seconds the question is live for. When omitted, defaults
-//     come from the theme registry (20 for most themes, 25 for "may").
+//     come from the theme registry (30 for every theme).
 //   - onZero: called exactly once when the timer first crosses 0. Used by
-//     phones to fire `/api/questions/:id/resolve` for the T+20 path.
+//     phones to fire `/api/questions/:id/resolve` on the timer-zero path.
 //
 // Internally we tick on a 100ms interval — fast enough that the visible
 // number never appears to skip, cheap enough that battery isn't a worry.
@@ -30,7 +30,7 @@ export interface UseTimerOpts {
   serverNowMs?: number | null;
   /**
    * Total question duration in seconds. When omitted, the default comes
-   * from the theme registry — 20 for most themes, 25 for "may".
+   * from the theme registry — 30 for every theme.
    */
   durationS?: number;
   /** When set, default duration is derived from this theme's registry entry. */

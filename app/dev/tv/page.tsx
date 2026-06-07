@@ -155,7 +155,7 @@ export default function TVGallery() {
           <Frame label="03 · Question">
             <TVQuestion />
           </Frame>
-          <Frame label="03a · Question · May/Storm — marquee + 25s timer">
+          <Frame label="03a · Question · May/Storm — marquee + 30s timer">
             <TVQuestion
               themeKey="may"
               seconds={18}
