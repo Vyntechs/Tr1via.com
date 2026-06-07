@@ -67,7 +67,14 @@ export interface TVQuestion {
   pointValue: 100 | 200 | 300 | 400 | 500 | 600 | 700 | null;
   prompt: string;
   options: [string, string, string, string];
-  correctIndex: 0 | 1 | 2 | 3;
+  /**
+   * The correct answer. `null` until the question is RESOLVED (`finishedAt`
+   * set) — the public TV feed withholds it from unrevealed questions so a
+   * player can't read upcoming answers off the snapshot (security, see
+   * `serializeBoardQuestion`). Only the reveal screen reads it, by which
+   * point the question is finished.
+   */
+  correctIndex: 0 | 1 | 2 | 3 | null;
   imageUrl: string | null;
   factBlurb: string | null;
   playedAt: string | null;
