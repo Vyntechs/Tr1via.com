@@ -18,12 +18,14 @@
 //    here exactly as the privacy page does.
 //
 // Scope guard: this page MARKETS the product, it does not modify it. It links only
-// to existing routes (/login to host, / to join). No gameplay, host, API, or data
-// code is touched. Billing/signup plumbing is the separate free/paid pivot.
+// to existing routes (/login to host, /join to enter a code, /themes for the theme
+// gallery). No gameplay, host, API, or data code is touched. Billing/signup
+// plumbing is the separate free/paid pivot.
 
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Display, Eyebrow } from "@/components/system";
+import { ThemeShowcase } from "@/components/marketing/ThemeShowcase";
 
 // Bare title — the root layout's metadata template appends " · TR1VIA", so the
 // browser tab reads "Host a live trivia night — free · TR1VIA" (brand once, not twice).
@@ -134,7 +136,7 @@ export default function TriviaNightPage() {
 
       {/* Header — wordmark + the host sign-in chip (hand-set; Wordmark is client-only) */}
       <header className="mx-auto flex max-w-[1040px] items-center justify-between py-6">
-        <Link href="/" className="no-underline" aria-label="TR1VIA home">
+        <Link href="/trivia-night" className="no-underline" aria-label="TR1VIA home">
           <span className="font-[family-name:var(--font-sans)] text-[22px] font-bold tracking-tight text-ink">
             TR<span className="font-[family-name:var(--font-mono)] text-accent">1</span>VIA
           </span>
@@ -182,7 +184,7 @@ export default function TriviaNightPage() {
             Start hosting — free →
           </Link>
           <Link
-            href="/"
+            href="/join"
             data-testid="marketing-cta-join"
             className="rounded-2xl px-7 py-4 text-[16px] font-semibold text-ink no-underline"
             style={{ border: `1px solid ${LINE}`, background: SURFACE }}
@@ -245,6 +247,9 @@ export default function TriviaNightPage() {
           />
         </div>
       </section>
+
+      {/* A new look every month — the theme showcase teaser → full /themes gallery */}
+      <ThemeShowcase variant="teaser" />
 
       {/* Free vs AI upsell */}
       <section className="mx-auto mt-24 max-w-[1040px]">

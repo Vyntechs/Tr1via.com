@@ -97,6 +97,17 @@ body {
   100% { opacity: 0;   transform: translateX(-50%) translateY(0)    scaleY(1.05); }
 }
 
+/* Theme showcase ("the color year") — the gallery cards on /trivia-night and
+   /themes. Entrance reuses tr1via-rise, staggered by each card's --i; the live
+   ambient weather inside each card animates itself (ParticleField) and is
+   neutralized under reduced motion by that component + the block below. */
+.tns-card  { animation: tr1via-rise .6s cubic-bezier(.22,.61,.36,1) both;
+             animation-delay: calc(var(--i, 0) * 55ms);
+             transition: transform .35s cubic-bezier(.22,.61,.36,1), box-shadow .35s ease; }
+.tns-card:hover { transform: translateY(-6px) scale(1.012); }
+.tns-strip { scrollbar-width: none; }
+.tns-strip::-webkit-scrollbar { display: none; }
+
 /* Respect user preference for reduced motion */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
