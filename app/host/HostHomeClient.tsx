@@ -38,7 +38,31 @@ export function HostHomeClient({
 }: HostHomeClientProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
+  const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Founder-only: build a complete real game in one tap (real generation +
+  // photos, auto topics + auto-pick) so we can stand up a genuine night to
+  // fact-check without manual setup.
+  async function buildFullGameAndGo() {
+    setBuilding(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/founder/build-game", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `build failed (${res.status})`);
+      }
+      const data = (await res.json()) as { nightId: string };
+      router.push(`/host/setup/${data.nightId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not build the game.");
+      setBuilding(false);
+    }
+  }
 
   async function createNightAndGo() {
     setSubmitting(true);
@@ -144,6 +168,9 @@ export function HostHomeClient({
         />
       )}
       {isFounder && <FounderChip />}
+      {isFounder && (
+        <FounderBuildGameButton onClick={buildFullGameAndGo} busy={building} />
+      )}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
       {successMessage && (
         <SuccessToast
@@ -152,6 +179,42 @@ export function HostHomeClient({
         />
       )}
     </>
+  );
+}
+
+function FounderBuildGameButton({
+  onClick,
+  busy,
+}: {
+  onClick: () => void;
+  busy: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      style={{
+        position: "fixed",
+        left: 20,
+        bottom: 20,
+        zIndex: 40,
+        padding: "10px 16px",
+        borderRadius: 999,
+        background: busy ? "rgba(0,0,0,.4)" : "var(--accent)",
+        color: "#FFF",
+        border: "none",
+        fontFamily: "var(--font-mono)",
+        fontSize: 11,
+        letterSpacing: "0.14em",
+        textTransform: "uppercase",
+        fontWeight: 700,
+        cursor: busy ? "default" : "pointer",
+        boxShadow: "0 12px 28px -10px rgba(0,0,0,.5)",
+      }}
+    >
+      {busy ? "Building…" : "⚡ Build a full game"}
+    </button>
   );
 }
 
