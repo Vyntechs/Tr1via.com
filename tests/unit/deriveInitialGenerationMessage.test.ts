@@ -75,3 +75,18 @@ describe("deriveInitialGenerationMessage", () => {
     expect(msg).toBeNull();
   });
 });
+
+describe("explainGenerationFailure (timeout copy)", () => {
+  it("does not claim a fixed '60 seconds' — the timer is now idle-based", () => {
+    // Regression guard: the old copy hard-coded "longer than 60 seconds", which
+    // is misleading now that the safety timer measures silence (no heartbeat),
+    // not a fixed window. The new copy must not reintroduce that number.
+    const msg = explainGenerationFailure({
+      broadcastMessage: null,
+      fromTimeout: true,
+      fromRollback: false,
+    });
+    expect(msg.length).toBeGreaterThan(0);
+    expect(msg).not.toMatch(/60 seconds/);
+  });
+});

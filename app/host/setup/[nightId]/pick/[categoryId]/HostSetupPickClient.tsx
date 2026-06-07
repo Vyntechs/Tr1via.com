@@ -99,6 +99,13 @@ export function HostSetupPickClient({
   const [photoCandidates, setPhotoCandidates] = useState<HostGenPhotoCandidate[]>([]);
   const [photoLookupError, setPhotoLookupError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Last sign of life from the background job — a `progress` heartbeat or an
+  // inserted/updated question. Feeds useGenerationStatus so the safety timer is
+  // measured from real activity (the write+verify run legitimately takes
+  // minutes) instead of from a fixed 60s after start, which false-alarmed.
+  const [lastActivityAt, setLastActivityAt] = useState<number>(() => Date.now());
+  // Current job phase, surfaced as a live status line on the loading screen.
+  const [genPhase, setGenPhase] = useState<"writing" | "checking" | null>(null);
   // Seed the failure message from the server-rendered state so a refresh
   // into a rolled-back category surfaces the retry / manual-entry UI
   // instead of stranding on the loading spinner. Without this seed the
@@ -119,13 +126,24 @@ export function HostSetupPickClient({
     let cancelled = false;
     const channel = supa
       .channel(`category:${categoryId}`)
+      .on("broadcast", { event: "progress" }, (msg) => {
+        if (cancelled) return;
+        // Heartbeat while writing / fact-checking, before any row exists.
+        // Records activity (keeps the safety timer armed) and drives the live
+        // status line so the longer run never looks frozen or "timed out".
+        const payload = msg.payload as { phase?: "writing" | "checking" };
+        setLastActivityAt(Date.now());
+        if (payload.phase) setGenPhase(payload.phase);
+      })
       .on("broadcast", { event: "question_added" }, () => {
         if (cancelled) return;
+        setLastActivityAt(Date.now());
         // Refetch the question list to absorb the new row.
         void refetchQuestions();
       })
       .on("broadcast", { event: "photo_attached" }, (msg) => {
         if (cancelled) return;
+        setLastActivityAt(Date.now());
         const payload = msg.payload as { questionId?: string; imageUrl?: string };
         if (!payload.questionId) return;
         setQuestions((prev) =>
@@ -138,6 +156,7 @@ export function HostSetupPickClient({
       })
       .on("broadcast", { event: "done" }, () => {
         if (cancelled) return;
+        setGenPhase(null);
         setState("review");
         setRegenerating(false);
         void refetchQuestions();
@@ -216,7 +235,11 @@ export function HostSetupPickClient({
     categoryId,
     state,
     loadedCount: questions.length,
-    timeoutMs: 60_000,
+    // Idle-based: only fires after this many ms with no heartbeat AND no
+    // question landed. The server heartbeats every ~12s while writing/checking,
+    // so a healthy slow run stays armed; a dead worker still surfaces.
+    lastActivityAt,
+    timeoutMs: 45_000,
     pollIntervalMs: 5_000,
   });
 
@@ -687,6 +710,13 @@ export function HostSetupPickClient({
           topic={categoryName}
           loaded={loadingList}
           total={20}
+          statusLine={
+            genPhase === "checking"
+              ? "Fact-checking every answer for accuracy — this part takes a moment."
+              : genPhase === "writing"
+                ? "Writing your questions…"
+                : undefined
+          }
           onCancel={() => router.push(`/host/setup/${nightId}`)}
           onBack={() => router.push(`/host/setup/${nightId}`)}
         />

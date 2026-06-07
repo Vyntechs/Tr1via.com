@@ -11,8 +11,13 @@
 //      the spinner for over a minute with nothing landing.
 //
 // This hook layers a simple safety net on top of the broadcast:
-//   * After `timeoutMs` (default 60s) with the category still in
-//     'generating' AND zero questions landed → flip to 'timeout'.
+//   * After `timeoutMs` of IDLE (no heartbeat and no question landed) with the
+//     category still in 'generating' AND zero questions landed → flip to
+//     'timeout'. The clock is measured from the last sign of life
+//     (`lastActivityAt`), NOT from when generation started — the server now
+//     emits `progress` heartbeats while it writes and fact-checks (a run that
+//     legitimately takes minutes), so a healthy-but-slow job keeps the timer
+//     armed and never false-alarms; only a genuinely silent worker trips it.
 //   * Every `pollIntervalMs` (default 5s) re-check the category state
 //     via Supabase directly. If the DB says state='review' or 'ready'
 //     we surface that. If state='draft' (the generation job rolled it
@@ -42,7 +47,14 @@ export interface UseGenerationStatusOptions {
   state: CategoryRow["state"];
   /** Number of question rows the parent currently has loaded. */
   loadedCount: number;
-  /** Override the safety timeout. Default 60 000ms. */
+  /**
+   * Timestamp (ms, e.g. `Date.now()`) of the most recent sign of life from the
+   * job — a `progress` heartbeat or an inserted question. The idle timeout is
+   * measured from this rather than from the start of generation, so a slow run
+   * that keeps heartbeating never false-alarms. Omit/0 → measured from start.
+   */
+  lastActivityAt?: number;
+  /** Override the idle safety timeout. Default 45 000ms of silence. */
   timeoutMs?: number;
   /** Override the polling interval. Default 5 000ms. */
   pollIntervalMs?: number;
@@ -54,7 +66,8 @@ export function useGenerationStatus({
   categoryId,
   state,
   loadedCount,
-  timeoutMs = 60_000,
+  lastActivityAt,
+  timeoutMs = 45_000,
   pollIntervalMs = 5_000,
   disabled = false,
 }: UseGenerationStatusOptions): GenerationStatus {
@@ -87,7 +100,15 @@ export function useGenerationStatus({
 
     const tick = async () => {
       if (cancelled) return;
-      const since = Date.now() - (startedAtRef.current ?? Date.now());
+      // Idle time = now minus the latest sign of life. A heartbeat or an
+      // inserted question (lastActivityAt) keeps this small; only true silence
+      // lets it grow past timeoutMs. Falls back to the window start when no
+      // activity has arrived yet.
+      const lastSignal = Math.max(
+        startedAtRef.current ?? Date.now(),
+        lastActivityAt ?? 0,
+      );
+      const since = Date.now() - lastSignal;
 
       // Re-check the category in the DB. The broadcast might've missed
       // landing — the DB is authoritative.
@@ -137,7 +158,7 @@ export function useGenerationStatus({
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [categoryId, state, loadedCount, timeoutMs, pollIntervalMs, disabled]);
+  }, [categoryId, state, loadedCount, lastActivityAt, timeoutMs, pollIntervalMs, disabled]);
 
   return status;
 }

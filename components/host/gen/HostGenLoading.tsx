@@ -44,6 +44,13 @@ export interface HostGenLoadingProps {
   total?: number;
   /** Count of questions whose photo has landed. */
   photosLoaded?: number;
+  /**
+   * Live status subline reflecting the current phase of the background job
+   * ("Writing your questions…", "Fact-checking every answer…"). Keeps the
+   * screen feeling alive during the longer write+verify run. Falls back to the
+   * default copy when omitted.
+   */
+  statusLine?: string;
   /** Called when the host taps "Cancel". */
   onCancel?: () => void;
   /** Called when the host taps the "← back" button to return to the
@@ -85,6 +92,7 @@ function HostGenLoadingInner({
   loaded = DEMO_LOADED,
   total = 20,
   photosLoaded,
+  statusLine,
   onCancel,
   onBack,
 }: Omit<HostGenLoadingProps, "themeKey">) {
@@ -128,7 +136,7 @@ function HostGenLoadingInner({
           <div>
             <Eyebrow color={t.accent} size={11}>PULLING {total} ON</Eyebrow>
             <div style={{ marginTop: 4, fontSize: 28, fontWeight: 700, color: t.ink, letterSpacing: "-0.02em" }}>{topic}</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>Writing the questions, then matching a photo to each.</div>
+            <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>{statusLine ?? "Writing the questions, then matching a photo to each."}</div>
           </div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
