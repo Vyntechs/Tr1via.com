@@ -19,7 +19,10 @@
 import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { serializeBoardQuestion } from "@/lib/tv/serializeBoardQuestion";
+import {
+  serializeBoardQuestion,
+  type TVBoardQuestionRow,
+} from "@/lib/tv/serializeBoardQuestion";
 
 export async function GET(
   _req: Request,
@@ -242,7 +245,9 @@ export async function GET(
       color: c.color,
       state: c.state,
     })),
-    questions: questions.map(serializeBoardQuestion),
+    questions: questions.map((q) =>
+      serializeBoardQuestion(q as TVBoardQuestionRow),
+    ),
     liveQuestionId: liveQuestion?.id ?? null,
     targetQuestionId,
     players: (playersRes.data ?? []).map((p) => ({

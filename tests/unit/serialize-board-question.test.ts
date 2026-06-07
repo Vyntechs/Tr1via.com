@@ -45,6 +45,20 @@ describe("serializeBoardQuestion — public TV feed answer gating", () => {
     expect(out.correctIndex).toBe(2);
   });
 
+  it("EXPOSES a resolved answer of 0 (guards against a falsy-zero bug)", () => {
+    // A `q.correct_index || null` style gate would wrongly turn answer-0 into
+    // null. The gate must key on `finished_at`, never on the truthiness of the
+    // index itself.
+    const out = serializeBoardQuestion(
+      row({
+        correct_index: 0,
+        played_at: "2026-06-07T00:00:00Z",
+        finished_at: "2026-06-07T00:00:20Z",
+      }),
+    );
+    expect(out.correctIndex).toBe(0);
+  });
+
   it("never leaks correct_index in the payload for an unresolved question", () => {
     const out = serializeBoardQuestion(
       row({ correct_index: 3, played_at: "2026-06-07T00:00:00Z" }),
