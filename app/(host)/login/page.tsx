@@ -71,24 +71,17 @@ function HostLoginInner() {
 
     setState({ kind: "sending" });
     try {
-      // The server looks up the email against the hosts table and mints
-      // that host's session on the response. No magic link, no email
-      // round-trip — sign-in completes in one request.
-      const res = await fetch("/api/auth/founder-login", {
+      // One unified door. The server signs in a known host or creates a
+      // brand-new trial account on the spot, then mints the session on the
+      // response. No magic link, no email round-trip, no "we don't
+      // recognize you" dead-end — first-timers land on /host/onboarding.
+      const res = await fetch("/api/auth/host-access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: trimmed }),
       });
       if (res.ok) {
         router.replace("/host");
-        return;
-      }
-      if (res.status === 404) {
-        setState({
-          kind: "error",
-          message:
-            "We don't recognize that email. Ask Brandon to add you on the founder dashboard, then try again.",
-        });
         return;
       }
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -121,7 +114,7 @@ function HostLoginInner() {
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <Wordmark size={26} />
         <Eyebrow color={t.accent} size={11} style={{ marginTop: 28, display: "block" }}>
-          HOST · SIGN IN
+          HOST · SIGN IN OR START FREE
         </Eyebrow>
         <Display
           size={84}
@@ -144,8 +137,8 @@ function HostLoginInner() {
             fontWeight: 500,
           }}
         >
-          One click to sign in. No password, no email check &mdash; just
-          type the email Brandon set up for you.
+          Type your email to sign in &mdash; or to start a free 30-day
+          trial if you&apos;re new. No password, no email check, no waiting.
         </p>
       </div>
 
@@ -224,7 +217,7 @@ function HostLoginInner() {
                 letterSpacing: "-0.005em",
               }}
             >
-              {isSending ? "Signing in…" : "Sign in  →"}
+              {isSending ? "Signing in…" : "Sign in or start free  →"}
             </button>
 
             {state.kind === "error" && (
@@ -246,7 +239,7 @@ function HostLoginInner() {
             )}
 
             <Eyebrow color={t.inkMute} size={10} style={{ display: "block", marginTop: 10 }}>
-              NEW HERE? ASK BRANDON TO ADD YOU FROM THE FOUNDER DASHBOARD.
+              NEW HERE? JUST TYPE YOUR EMAIL — YOUR FREE TRIAL STARTS INSTANTLY.
             </Eyebrow>
             <a
               href="/privacy"
