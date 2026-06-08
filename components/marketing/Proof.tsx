@@ -1,0 +1,57 @@
+// Proof — honest social proof. The product has exactly one real host, so this
+// section NEVER fabricates a testimonial. With no quote it shows only signal
+// that is true today (live weekly nights, the cheat-proof guarantee, free to
+// host). When a real quote is supplied it renders with ANONYMOUS attribution
+// (the host's real name is never used).
+//
+// Server component; reads theme vars from the wrapping ThemedSection.
+import { Display, Eyebrow } from "@/components/system";
+
+export interface ProofQuote {
+  /** The host's real words. */
+  text: string;
+  /** Anonymous attribution, e.g. "a host running TR1VIA weekly" — never a name. */
+  attribution: string;
+}
+
+const SIGNALS = [
+  "Live trivia nights running weekly",
+  "Unlimited players · $0 to host",
+  "Per-phone answers · cheat-proof",
+];
+
+export function Proof({ quote }: { quote: ProofQuote | null }) {
+  return (
+    <div className="mx-auto max-w-[900px] px-6 py-24 text-center sm:py-28">
+      <Eyebrow color="var(--accent)" size={13}>
+        Real nights, running now
+      </Eyebrow>
+
+      {quote && (
+        <figure data-testid="proof-quote" className="mt-6">
+          <Display
+            size="clamp(24px, 3.4vw, 36px)"
+            style={{ display: "block", lineHeight: 1.28 }}
+          >
+            &ldquo;{quote.text}&rdquo;
+          </Display>
+          <figcaption className="mt-4 text-[16px] font-semibold" style={{ color: "var(--ink-mid)" }}>
+            &mdash; {quote.attribution}
+          </figcaption>
+        </figure>
+      )}
+
+      <div className="mt-8 flex flex-wrap justify-center gap-3">
+        {SIGNALS.map((s) => (
+          <span
+            key={s}
+            className="rounded-full px-5 py-3 text-[15px] font-semibold text-[color:var(--ink)]"
+            style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
+          >
+            {s}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
