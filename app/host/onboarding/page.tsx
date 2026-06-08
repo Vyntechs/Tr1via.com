@@ -10,6 +10,7 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { LaptopShell } from "@/components/shells";
 import { Display, Eyebrow, useTheme } from "@/components/system";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 
 export default function OnboardingPage() {
   return (
@@ -22,6 +23,9 @@ export default function OnboardingPage() {
 function OnboardingInner() {
   const { t } = useTheme();
   const router = useRouter();
+  // Below ~640px the "heading | form" two-column split stacks into one column
+  // so the heading isn't clipped and the inputs/button sit fully on-screen.
+  const compact = useMediaQuery("(max-width: 640px)");
   const [displayName, setDisplayName] = useState("");
   const [defaultVenue, setDefaultVenue] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -55,18 +59,18 @@ function OnboardingInner() {
   return (
     <div
       style={{
-        flex: 1,
+        flex: compact ? "none" : 1,
         display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: 56,
-        padding: "40px 56px",
+        gridTemplateColumns: compact ? "1fr" : "1fr 1fr",
+        gap: compact ? 24 : 56,
+        padding: compact ? "32px 20px" : "40px 56px",
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <Eyebrow color={t.accent} size={11}>
           ONE-TIME SETUP
         </Eyebrow>
-        <Display size={72} color={t.ink} weight={700} tracking={-0.04} style={{ marginTop: 14, display: "block", lineHeight: 0.95 }}>
+        <Display size={compact ? 44 : 72} color={t.ink} weight={700} tracking={-0.04} style={{ marginTop: 14, display: "block", lineHeight: 0.95 }}>
           What should we
           <br />
           <span style={{ color: t.accent }}>call you?</span>

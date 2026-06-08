@@ -12,6 +12,7 @@ import Link from "next/link";
 
 import { LaptopShell } from "@/components/shells";
 import { Eyebrow, Numeric, Rule, ThemeProvider, useTheme } from "@/components/system";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { formatRoomCode } from "@/lib/game/room-code";
 import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 import type { ResetPreview } from "@/lib/api/resetNightCounts";
@@ -138,6 +139,11 @@ function HostDashboardInner({
   onResetGame,
 }: Omit<HostDashboardProps, "themeKey">) {
   const { t, themeKey } = useTheme();
+  // Below ~860px the fixed 240px sidebar + main column collapses to a single
+  // stacked column, the headline/CTA row stacks, the info card stacks, and the
+  // fixed-column night rows become stacked blocks — so nothing is clipped
+  // off-screen on a phone. Desktop keeps the exact two-column dashboard.
+  const compact = useMediaQuery("(max-width: 860px)");
   const themeName = TR1VIA_THEMES[themeKey].name;
   // Only call it "TONIGHT" when the night is actually today; otherwise show
   // the real date plainly so a stale leftover night can't fake being tonight.
@@ -171,12 +177,12 @@ function HostDashboardInner({
       <div
         data-testid="host-dashboard"
         style={{
-          padding: "40px 56px",
+          padding: compact ? "24px 20px" : "40px 56px",
           display: "grid",
-          gridTemplateColumns: "240px 1fr",
-          gap: 56,
+          gridTemplateColumns: compact ? "1fr" : "240px 1fr",
+          gap: compact ? 24 : 56,
           flex: 1,
-          overflow: "hidden",
+          overflow: compact ? "visible" : "hidden",
         }}
       >
         <div>
@@ -199,12 +205,14 @@ function HostDashboardInner({
           </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ display: "flex", flexDirection: "column", overflow: compact ? "visible" : "hidden" }}>
           <div
             style={{
               display: "flex",
-              alignItems: "flex-end",
+              flexDirection: compact ? "column" : "row",
+              alignItems: compact ? "flex-start" : "flex-end",
               justifyContent: "space-between",
+              gap: compact ? 18 : 0,
             }}
           >
             <div>
@@ -214,7 +222,7 @@ function HostDashboardInner({
               <div
                 style={{
                   marginTop: 8,
-                  fontSize: 44,
+                  fontSize: compact ? 32 : 44,
                   fontWeight: 500,
                   letterSpacing: "-0.025em",
                   color: t.ink,
@@ -242,7 +250,7 @@ function HostDashboardInner({
               style={{
                 display: "flex",
                 flexDirection: "column",
-                alignItems: "flex-end",
+                alignItems: compact ? "flex-start" : "flex-end",
                 gap: 10,
               }}
             >
@@ -337,7 +345,8 @@ function HostDashboardInner({
               borderRadius: 14,
               border: `1px solid ${t.line}`,
               display: "flex",
-              gap: 36,
+              flexDirection: compact ? "column" : "row",
+              gap: compact ? 16 : 36,
             }}
           >
             <div>
@@ -348,7 +357,7 @@ function HostDashboardInner({
                 Each ~50 min · 6 categories × 7 questions
               </div>
             </div>
-            <Rule color={t.ink} style={{ width: 1, height: "auto", alignSelf: "stretch" }} />
+            {!compact && <Rule color={t.ink} style={{ width: 1, height: "auto", alignSelf: "stretch" }} />}
             <div>
               <Eyebrow color={t.inkMute} size={10}>
                 THEME
@@ -370,7 +379,7 @@ function HostDashboardInner({
                 {themeName}
               </div>
             </div>
-            <Rule color={t.ink} style={{ width: 1, height: "auto", alignSelf: "stretch" }} />
+            {!compact && <Rule color={t.ink} style={{ width: 1, height: "auto", alignSelf: "stretch" }} />}
             <div>
               <Eyebrow color={t.inkMute} size={10}>
                 ROOM
@@ -412,8 +421,8 @@ function HostDashboardInner({
           <div
             style={{
               marginTop: 14,
-              flex: 1,
-              overflow: "auto",
+              flex: compact ? "none" : 1,
+              overflow: compact ? "visible" : "auto",
               display: "flex",
               flexDirection: "column",
             }}
@@ -449,9 +458,9 @@ function HostDashboardInner({
                     key={`${w.date}-${w.venue}-${i}`}
                     style={{
                       display: "grid",
-                      gridTemplateColumns: "120px 200px 1fr 100px",
-                      alignItems: "center",
-                      gap: 18,
+                      gridTemplateColumns: compact ? "1fr" : "120px 200px 1fr 100px",
+                      alignItems: compact ? "start" : "center",
+                      gap: compact ? 6 : 18,
                       padding: "16px 18px",
                       background: t.paper,
                       borderRadius:
@@ -510,9 +519,9 @@ function HostDashboardInner({
                       <div
                         style={{
                           display: "grid",
-                          gridTemplateColumns: "120px 200px 1fr auto",
-                          alignItems: "center",
-                          gap: 18,
+                          gridTemplateColumns: compact ? "1fr" : "120px 200px 1fr auto",
+                          alignItems: compact ? "start" : "center",
+                          gap: compact ? 6 : 18,
                           padding: "16px 18px",
                           background: t.paper,
                           border: `1px dashed ${t.line}`,

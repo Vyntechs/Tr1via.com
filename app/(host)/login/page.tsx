@@ -15,6 +15,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { LaptopShell } from "@/components/shells";
 import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 
 type FormState =
@@ -33,6 +34,9 @@ export default function HostLoginPage() {
 function HostLoginInner() {
   const { t } = useTheme();
   const router = useRouter();
+  // Below ~640px the two-column "pitch | form" splits into a single stacked
+  // column so the email field + submit button are fully on-screen and tappable.
+  const compact = useMediaQuery("(max-width: 640px)");
   const [email, setEmail] = useState("");
   const [state, setState] = useState<FormState>({ kind: "idle" });
   // If the visitor already has a session, show "signed in as X" with a
@@ -102,12 +106,14 @@ function HostLoginInner() {
   return (
     <div
       style={{
-        flex: 1,
+        // Natural height when stacked so the single column sits top-aligned
+        // instead of the two rows centering apart with a gap between them.
+        flex: compact ? "none" : 1,
         display: "grid",
-        gridTemplateColumns: "1fr 1fr",
-        gap: 56,
-        padding: "40px 56px",
-        overflow: "hidden",
+        gridTemplateColumns: compact ? "1fr" : "1fr 1fr",
+        gap: compact ? 28 : 56,
+        padding: compact ? "32px 20px" : "40px 56px",
+        overflow: compact ? "visible" : "hidden",
       }}
     >
       {/* Left — brand + pitch */}
@@ -117,7 +123,7 @@ function HostLoginInner() {
           HOST · SIGN IN OR START FREE
         </Eyebrow>
         <Display
-          size={84}
+          size={compact ? 48 : 84}
           color={t.ink}
           weight={700}
           tracking={-0.04}
