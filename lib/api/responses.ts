@@ -43,6 +43,17 @@ export function forbidden(reason = "forbidden"): NextResponse {
   return NextResponse.json({ error: reason }, { status: 403 });
 }
 
+// 402 Payment Required — the host is authenticated and owns the resource, but
+// their AI entitlement has lapsed (trial ended / not comped). `upgradeRequired`
+// lets the client branch to an upgrade prompt; `error` is the human message
+// existing generate call sites already surface.
+export function paymentRequired(reason: string): NextResponse {
+  return NextResponse.json(
+    { error: reason, upgradeRequired: true },
+    { status: 402 },
+  );
+}
+
 export function notFound(what = "not found"): NextResponse {
   return NextResponse.json({ error: what }, { status: 404 });
 }
