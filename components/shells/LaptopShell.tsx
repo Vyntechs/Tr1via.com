@@ -17,6 +17,7 @@
 
 import type { ReactNode } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { Weather } from "@/components/system/Weather";
 
 export interface LaptopShellProps {
@@ -28,18 +29,23 @@ export interface LaptopShellProps {
 
 export function LaptopShell({ children, weather = false }: LaptopShellProps) {
   const { t, themeKey } = useTheme();
+  // On phones the host screens stack into a single tall column. Let the shell
+  // grow with its content (height:auto) and stop clipping so the page can
+  // scroll instead of hiding overflow off-screen. Desktop is untouched.
+  const compact = useMediaQuery("(max-width: 860px)");
   return (
     <div
       style={{
         width: "100%",
-        height: "100%",
+        height: compact ? "auto" : "100%",
+        minHeight: compact ? "100%" : undefined,
         background: t.paper,
         color: t.ink,
         fontFamily: "var(--font-sans)",
         display: "flex",
         flexDirection: "column",
         position: "relative",
-        overflow: "hidden",
+        overflow: compact ? "visible" : "hidden",
       }}
     >
       {weather && (
@@ -50,7 +56,7 @@ export function LaptopShell({ children, weather = false }: LaptopShellProps) {
           <Weather themeKey={themeKey} intensity={0.5} />
         </div>
       )}
-      <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", position: "relative", zIndex: 1 }}>
+      <div style={{ flex: 1, overflow: compact ? "visible" : "hidden", display: "flex", flexDirection: "column", position: "relative", zIndex: 1 }}>
         {children}
       </div>
     </div>
