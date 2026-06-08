@@ -15,6 +15,7 @@ import {
   type HostDashboardTonight,
 } from "@/components/host";
 import { OnboardingFirstDashboard } from "@/components/onboarding";
+import { BillingUpgrade } from "@/components/host/BillingUpgrade";
 
 export interface HostHomeClientProps {
   hostName: string;
@@ -22,6 +23,8 @@ export interface HostHomeClientProps {
   defaultVenue: string;
   isFirstNightComplete: boolean;
   isFounder?: boolean;
+  isPaywallBypassed?: boolean;
+  subscriptionStatus?: string | null;
   previousGames: HostDashboardPastNight[];
   inSetup: HostDashboardSetupNight[];
   lifetime: { nights: number; questions: number };
@@ -34,6 +37,8 @@ export function HostHomeClient({
   defaultVenue,
   isFirstNightComplete,
   isFounder = false,
+  isPaywallBypassed = false,
+  subscriptionStatus = null,
   previousGames,
   inSetup,
   lifetime,
@@ -175,6 +180,11 @@ export function HostHomeClient({
       {isFounder && (
         <FounderBuildGameButton onClick={buildFullGameAndGo} busy={building} />
       )}
+      <BillingUpgrade
+        isFounder={isFounder}
+        isPaywallBypassed={isPaywallBypassed}
+        subscriptionStatus={subscriptionStatus}
+      />
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
       {successMessage && (
         <SuccessToast

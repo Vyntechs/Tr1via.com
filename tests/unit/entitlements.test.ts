@@ -16,6 +16,7 @@ type Host = Parameters<typeof hostAIAccess>[0];
 const host = (over: Partial<Host>): Host => ({
   role: "host",
   is_paywall_bypassed: false,
+  subscription_status: null,
   trial_ends_at: null,
   ...over,
 });
@@ -55,6 +56,35 @@ describe("hostAIAccess", () => {
   it("treats the exact trial expiry instant as ended (boundary)", () => {
     expect(
       hostAIAccess(host({ trial_ends_at: NOW.toISOString() }), NOW),
+    ).toEqual({ allowed: false, reason: "not_entitled" });
+  });
+
+  // --- Paid Stripe subscription: the pay-to-continue layer ---
+
+  it("allows an active paid subscription even after the trial ended", () => {
+    expect(
+      hostAIAccess(
+        host({ subscription_status: "active", trial_ends_at: PAST }),
+        NOW,
+      ),
+    ).toEqual({ allowed: true });
+  });
+
+  it("keeps AI on for a past_due subscription (Stripe dunning grace)", () => {
+    expect(
+      hostAIAccess(
+        host({ subscription_status: "past_due", trial_ends_at: PAST }),
+        NOW,
+      ),
+    ).toEqual({ allowed: true });
+  });
+
+  it("blocks a canceled subscription once the trial is also gone", () => {
+    expect(
+      hostAIAccess(
+        host({ subscription_status: "canceled", trial_ends_at: PAST }),
+        NOW,
+      ),
     ).toEqual({ allowed: false, reason: "not_entitled" });
   });
 });

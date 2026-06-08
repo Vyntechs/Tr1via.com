@@ -80,4 +80,18 @@ describe("POST /api/categories/[id]/generate · paywall gate", () => {
 
     expect(res.status).toBe(409);
   });
+
+  it("lets a paid (active subscription) host past the gate even after the trial ended", async () => {
+    // Active sub + state 'generating' → clears the 402 gate, hits the 409.
+    authMock.requireOwnedCategory.mockResolvedValue(
+      owned(
+        { subscription_status: "active", trial_ends_at: "2020-01-01T00:00:00.000Z" },
+        "generating",
+      ),
+    );
+
+    const res = await POST(makeRequest(), ctx);
+
+    expect(res.status).toBe(409);
+  });
 });

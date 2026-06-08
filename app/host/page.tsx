@@ -140,6 +140,8 @@ export default async function HostHomePage() {
       defaultVenue={host.default_venue ?? "Soul Fire Pizza"}
       isFirstNightComplete={host.is_first_night_complete}
       isFounder={host.role === "founder"}
+      isPaywallBypassed={host.is_paywall_bypassed}
+      subscriptionStatus={host.subscription_status}
       previousGames={previousRows}
       inSetup={inSetupRows}
       lifetime={lifetime}
