@@ -316,6 +316,7 @@ export type Database = {
           is_first_night_complete: boolean
           is_paywall_bypassed: boolean
           role: string
+          trial_ends_at: string | null
           user_id: string
         }
         Insert: {
@@ -329,6 +330,7 @@ export type Database = {
           is_first_night_complete?: boolean
           is_paywall_bypassed?: boolean
           role?: string
+          trial_ends_at?: string | null
           user_id: string
         }
         Update: {
@@ -342,6 +344,7 @@ export type Database = {
           is_first_night_complete?: boolean
           is_paywall_bypassed?: boolean
           role?: string
+          trial_ends_at?: string | null
           user_id?: string
         }
         Relationships: [

@@ -50,12 +50,23 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ host: existing });
   }
 
+  // First-time host → start their 30-day free trial here. This insert path
+  // is only reached by self-serve signups (came in via /api/auth/host-access
+  // with no hosts row yet); founder + comped hosts already have a row from
+  // /api/admin/hosts and short-circuit at the `existing` check above, so
+  // their trial_ends_at correctly stays NULL. See migration 0010.
+  const TRIAL_DAYS = 30;
+  const trialEndsAt = new Date(
+    Date.now() + TRIAL_DAYS * 24 * 60 * 60 * 1000,
+  ).toISOString();
+
   const { data: inserted, error: insertError } = await supabase
     .from("hosts")
     .insert({
       user_id: userData.user.id,
       display_name: parsed.displayName,
       default_venue: parsed.defaultVenue ?? null,
+      trial_ends_at: trialEndsAt,
     })
     .select("*")
     .single();
