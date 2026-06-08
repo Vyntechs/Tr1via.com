@@ -30,8 +30,10 @@ import {
   forbidden,
   notFound,
   ok,
+  paymentRequired,
   unauthorized,
 } from "@/lib/api/responses";
+import { hostAIAccess } from "@/lib/api/entitlements";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { autoAttachPhoto } from "@/lib/ai/auto-attach-photo";
@@ -72,6 +74,18 @@ export async function POST(
     return notFound(owned.error);
   }
   const { category } = owned;
+
+  // AI paywall gate — the single enforcement point for every lib/ai service,
+  // since this route is the only server path into the generation pipeline.
+  // Founder + comped (e.g. the founding customer's lifetime access) + active
+  // free trial pass through; an ended/absent trial is blocked BEFORE we mark
+  // the category generating or spend any AI/Pexels budget. 402 so the host UI
+  // surfaces an upgrade message instead of a silent stall.
+  if (!hostAIAccess(owned.host).allowed) {
+    return paymentRequired(
+      "Your free trial has ended. Upgrade to keep generating trivia with AI.",
+    );
+  }
 
   // Idempotency / race guard: refuse if the category is mid-generation or
   // already complete. Host can re-run from 'draft' or 'review' (regenerate).
