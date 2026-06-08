@@ -97,3 +97,8 @@ UPDATE (host-mobile pass): the scope-guard `describe` was RETIRED — its job en
 Trigger: Making a host-laptop screen (login, onboarding, dashboards, LaptopShell) responsive for mobile.
 Rule: These screens are pure inline styles — CSS media queries can't reach them. Gate layout props on `useMediaQuery(...)` from `@/components/system/useMediaQuery` (defaults false→desktop on SSR). Keep the desktop branch's literal values so desktop stays byte-identical (verify via before/after 1280px screenshot SHA match).
 Reason: Host flow was laptop-only; on phones the fixed grids (`240px 1fr`, `1fr 1fr`) clipped sign-in + dashboard off-screen. Desktop-default SSR + per-prop compact branch fixed mobile with zero desktop drift (4/4 desktop SHAs identical).
+
+### research-the-remote-not-the-local-branch
+Trigger: Dispatching researchers (or reading code) to scope a feature/bug while the local working tree is a long-lived scratch branch.
+Rule: Point research at `origin/main` (fetch + a worktree off it), not the working checkout — a stale branch hides shipped features and inverts the plan.
+Reason: Researchers read the stale `june-reactive-water` tree and missed the trial+entitlement foundation already on main; the Stripe brief's "greenfield" premise was false until a worktree off origin/main surfaced it.
