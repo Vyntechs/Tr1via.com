@@ -9,11 +9,15 @@
 //                                founding customer). Checked BEFORE the trial
 //                                clock so a comped host is allowed even with no
 //                                trial window (trial_ends_at NULL).
-//   3. trial_ends_at in future — a self-serve host still inside their 30-day
+//   3. paid subscription       — subscription_status in {active, trialing,
+//                                past_due}: a host who upgraded via Stripe.
+//                                past_due stays on through Stripe's dunning
+//                                grace window; canceled/unpaid/NULL do not.
+//   4. trial_ends_at in future — a self-serve host still inside their 30-day
 //                                free trial (stamped at onboarding-complete).
 //
-// Otherwise — an ended trial, or (defensively) any host with no trial window
-// who is neither founder nor comped — AI is denied. Deny-by-default is the
+// Otherwise — an ended trial, a lapsed/canceled subscription, or (defensively)
+// any host with none of the above — AI is denied. Deny-by-default is the
 // correct billing posture: we only spend AI/Pexels budget for an entitled host.
 //
 // Pure + synchronous: the caller already holds the HostRow (requireOwned*
@@ -27,12 +31,22 @@ export type AIAccess =
   | { allowed: true }
   | { allowed: false; reason: "not_entitled" };
 
+/** Stripe subscription statuses that keep AI on. `past_due` stays on through
+ *  the dunning grace window; `canceled`/`unpaid`/`incomplete`/NULL do not. */
+const PAID_STATUSES = new Set(["active", "trialing", "past_due"]);
+
 /** Fields the gate reads — a HostRow always satisfies this. */
-type Entitlement = Pick<HostRow, "role" | "is_paywall_bypassed" | "trial_ends_at">;
+type Entitlement = Pick<
+  HostRow,
+  "role" | "is_paywall_bypassed" | "subscription_status" | "trial_ends_at"
+>;
 
 export function hostAIAccess(host: Entitlement, now: Date = new Date()): AIAccess {
   if (host.role === "founder") return { allowed: true };
   if (host.is_paywall_bypassed) return { allowed: true };
+  if (host.subscription_status && PAID_STATUSES.has(host.subscription_status)) {
+    return { allowed: true };
+  }
   if (host.trial_ends_at && new Date(host.trial_ends_at).getTime() > now.getTime()) {
     return { allowed: true };
   }
