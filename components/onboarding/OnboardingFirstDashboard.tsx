@@ -11,6 +11,7 @@ import {
   ThemeProvider,
   useTheme,
 } from "@/components/system";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface OnboardingFirstDashboardProps {
@@ -66,17 +67,21 @@ function OnboardingFirstDashboardInner({
   isSettingUp = false,
 }: OnboardingFirstDashboardInnerProps) {
   const { t } = useTheme();
+  // Below ~860px the fixed 240px sidebar + main column collapses to a single
+  // stacked column so the "Welcome" hero and "Set up" CTA aren't pushed
+  // off-screen. Desktop keeps the two-column layout.
+  const compact = useMediaQuery("(max-width: 860px)");
   return (
     <LaptopShell>
       <div
         data-testid="host-onboarding-first"
         style={{
-          padding: "40px 56px",
+          padding: compact ? "28px 20px" : "40px 56px",
           display: "grid",
-          gridTemplateColumns: "240px 1fr",
-          gap: 56,
+          gridTemplateColumns: compact ? "1fr" : "240px 1fr",
+          gap: compact ? 28 : 56,
           flex: 1,
-          overflow: "hidden",
+          overflow: compact ? "visible" : "hidden",
         }}
       >
         {/* Sidebar — same as the regular dashboard, but no past nights */}
@@ -118,7 +123,7 @@ function OnboardingFirstDashboardInner({
             YOUR FIRST NIGHT
           </Eyebrow>
           <Display
-            size={88}
+            size={compact ? 46 : 88}
             color={t.ink}
             weight={700}
             tracking={-0.04}
@@ -182,9 +187,9 @@ function OnboardingFirstDashboardInner({
           {/* Three small expectations cards — never preachy */}
           <div
             style={{
-              marginTop: 56,
+              marginTop: compact ? 40 : 56,
               display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
+              gridTemplateColumns: compact ? "1fr" : "repeat(3, 1fr)",
               gap: 16,
             }}
           >

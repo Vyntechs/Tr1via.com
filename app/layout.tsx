@@ -29,7 +29,9 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  // No maximumScale: blocking pinch-zoom is a WCAG 1.4.4 failure and, on the
+  // host screens, removes the user's only escape hatch when content is tight.
+  // Users may zoom; this changes nothing about the default-scale desktop view.
   themeColor: "#1B130C",
 };
 

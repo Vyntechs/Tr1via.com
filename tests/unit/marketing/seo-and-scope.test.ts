@@ -1,68 +1,17 @@
-// the first host-safe scope guard for the marketing pass.
+// Marketing SEO regression guard.
 //
-// The marketing redesign must never touch the live host / player / TV / API /
-// theme-engine / DB surface — a real host runs a real game on production, and
-// this work is purely additive marketing pages. This test fails loudly if any
-// file changed by the marketing build lands inside a PROTECTED runtime path.
-//
-// Design choice: a DENY-list (protected runtime paths), not an allow-list.
-//   - Robust: it can't be defeated by forgetting to allow a new safe file, and
-//     it doesn't false-positive on bookkeeping files (HANDOFF.md, tasks/…).
-//   - Precise about intent: the constraint is "don't touch what the first host's game
-//     uses," which is exactly these directories.
-//
-// Baseline: changes are measured against the `marketing-base` git tag, set to
-// the commit the build started from. If the tag is absent (e.g. a fresh CI
-// checkout), we fall back to the working-tree diff vs HEAD — which still
-// catches any uncommitted edit into a protected path. This is a development
-// guard; a permanent CI/deploy gate is tracked separately (lesson
-// `merge-is-not-migrated`).
+// NOTE: This file also used to hold a "the first host-safe scope guard" that failed if
+// any host/player/TV/API/lib/component file changed (measured vs the
+// `marketing-base` git tag, or the working tree when the tag was absent). That
+// guard existed only to keep the *marketing pass* from touching the first host's live
+// runtime surface. The marketing pass has since merged, and follow-up work now
+// intentionally edits the host surface (e.g. the host-flow mobile-responsive
+// pass), so the deny-list guard was retired — it flagged exactly the work it
+// was no longer meant to police (see lesson
+// `marketing-scope-guard-tag-blocks-backend-work`). The SEO checks below are
+// the durable part and stay.
 
-import { execFileSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
-
-// Paths the first host's live game depends on — NONE may be modified by this pass.
-const PROTECTED: RegExp[] = [
-  /^app\/host\//,
-  /^app\/\(host\)\//,
-  /^app\/\(player\)\//,
-  /^app\/tv\//,
-  /^app\/api\//,
-  /^app\/dev\//,
-  /^lib\//, // theme engine + runtime helpers — consumed read-only, never edited
-  /^supabase\//,
-  /^app\/globals\.css$/, // app-wide stylesheet
-  /^app\/themes\.generated\.css$/, // generated theme CSS (changing it = theme change)
-  /^app\/layout\.tsx$/, // root layout (shared by every surface)
-  /^components\/(?!marketing\/)/, // any shared component outside components/marketing
-];
-
-function changedFiles(): string[] {
-  // No shell: execFileSync passes args directly to git (no interpolation risk).
-  const baseline = (() => {
-    try {
-      execFileSync("git", ["rev-parse", "--verify", "--quiet", "marketing-base"], {
-        stdio: ["ignore", "pipe", "ignore"],
-      });
-      return "marketing-base";
-    } catch {
-      return "HEAD";
-    }
-  })();
-  const out = execFileSync("git", ["diff", "--name-only", baseline], { encoding: "utf8" });
-  return out.split("\n").map((s) => s.trim()).filter(Boolean);
-}
-
-describe("marketing pass · the first host-safe scope guard", () => {
-  it("changes no file the live host/player/TV/API/theme/DB surface depends on", () => {
-    const changed = changedFiles();
-    const violations = changed.filter((f) => PROTECTED.some((re) => re.test(f)));
-    expect(
-      violations,
-      `Marketing pass touched PROTECTED runtime files (the first host's live game depends on these):\n  ${violations.join("\n  ")}`,
-    ).toEqual([]);
-  });
-});
 
 describe("marketing pass · SEO must not regress", () => {
   it("the hub keeps its canonical URL, title, description, and keyword targeting", async () => {
