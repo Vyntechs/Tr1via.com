@@ -1,36 +1,37 @@
-// /trivia-night — the PUBLIC marketing landing.
+// /trivia-night — the PUBLIC marketing landing ("The Year Scroll").
 //
 // Audience: a stranger who found TR1VIA through Google ("trivia night app for
 // bars", "live trivia hosting software", "TriviaMaker alternative"). The root
-// page `/` is NOT this — it's the player room-code entry (90% of traffic, host
-// points at the TV). So discovery traffic needs its own indexable home: here.
+// page `/` redirects here; players who land here tap "Got a code? Join a game".
 //
-// Positioning (locked = "A"): sell FREE, live, in-person trivia HOSTING. The
-// differentiator hook is "everybody plays solo — and nobody can cheat" (per-phone
-// scrambled answers). Free hosting is the wedge; AI question writing is the upsell.
+// Positioning (locked = "A"): sell FREE, live, in-person trivia HOSTING. Hook =
+// "everybody plays solo — and nobody can cheat" (per-phone scrambled answers).
 //
-// Why a hand-written SERVER component (mirrors app/privacy/page.tsx):
-//  - Statically rendered + fully in the HTML → indexable, fast, share-previewable.
-//  - Zero new deps, zero client JS. Inherits daylight theme tokens (paper/ink/
-//    accent) from the root layout's ThemeProvider.
-//  - Uses the design-system <Display>/<Eyebrow> (both server-safe). The <Wordmark>
-//    component is "use client" (reads theme via context), so the mark is hand-set
-//    here exactly as the privacy page does.
+// THE YEAR SCROLL: the product wears a different theme every month, so the page
+// doesn't *describe* that — it *is* that. Each section is a <ThemedSection> that
+// paints itself in one month's real palette (inline CSS vars, server-rendered),
+// so scrolling tours the calendar. It stays readable with ZERO client JS because
+// every section rides its own theme's ink-on-paper (contrast designed-in). The
+// <YearScroll> island only adds cross-fades + ambient motion on top.
 //
-// Scope guard: this page MARKETS the product, it does not modify it. It links only
-// to existing routes (/login to host, /join to enter a code, /themes for the theme
-// gallery). No gameplay, host, API, or data code is touched. Billing/signup
-// plumbing is the separate free/paid pivot.
+// Scope guard: this page MARKETS the product, it does not modify it. It links
+// only to existing routes (/login to host, /join to enter a code, /themes,
+// /pricing). No gameplay/host/API/data/theme-engine code is touched — the live
+// host's game is untouched. (Enforced by tests/unit/marketing/seo-and-scope.)
 
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Display, Eyebrow } from "@/components/system";
 import { ThemeShowcase } from "@/components/marketing/ThemeShowcase";
+import { ThemedSection } from "@/components/marketing/ThemedSection";
+import { YearScroll } from "@/components/marketing/YearScroll";
+import { TheMoment } from "@/components/marketing/TheMoment";
+import { SegmentCues } from "@/components/marketing/SegmentCues";
+import { Pricing } from "@/components/marketing/Pricing";
+import { Proof } from "@/components/marketing/Proof";
 
-// Bare title — the root layout's metadata template appends " · TR1VIA", so the
-// browser tab reads "Host a live trivia night — free · TR1VIA" (brand once, not twice).
+// Bare title — the root layout's metadata template appends " · TR1VIA".
 const TITLE = "Host a live trivia night — free";
-// OG/Twitter/JSON-LD don't go through the layout template, so they carry the brand explicitly.
 const SOCIAL_TITLE = `${TITLE} · TR1VIA`;
 const DESCRIPTION =
   "Run a live trivia night where everyone plays solo on their own phone and nobody can cheat. Free to host, unlimited players, no per-night fee. You pick the categories; TR1VIA runs the room.";
@@ -62,8 +63,7 @@ export const metadata: Metadata = {
   },
 };
 
-// Structured data so Google/socials understand what this is: a free trivia-night
-// hosting app with a paid AI add-on. Claims here mirror the page copy exactly.
+// Structured data — claims mirror the page copy exactly.
 const JSON_LD = {
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
@@ -90,11 +90,156 @@ const JSON_LD = {
   ],
 };
 
-// Daylight theme tokens that aren't part of Tailwind's --color-* set are read
-// straight from CSS vars (set by the root layout for data-theme="daylight").
-const INK_MID = "var(--ink-mid)";
-const LINE = "var(--line)";
-const SURFACE = "var(--surface)";
+// The 12 months' accent colors — the hero's bottom strip makes the year-tour
+// obvious before you even scroll. (Display-only; the real palettes live in
+// lib/theme/tokens.ts and are applied per-section by ThemedSection.)
+const STRIP: { m: string; a: string }[] = [
+  { m: "JAN", a: "#5AA8E0" }, { m: "FEB", a: "#FF4673" }, { m: "MAR", a: "#3FAE56" },
+  { m: "APR", a: "#7A4FCC" }, { m: "MAY", a: "#E8C46A" }, { m: "JUN", a: "#E04A6B" },
+  { m: "JUL", a: "#E63946" }, { m: "AUG", a: "#F08C2A" }, { m: "SEP", a: "#C84A2C" },
+  { m: "OCT", a: "#F08C2A" }, { m: "NOV", a: "#C25E22" }, { m: "DEC", a: "#E63946" },
+];
+
+const SCREEN = "#0b0b12";
+const HERO_PHONES: string[][] = [
+  ["Paris", "Lyon", "Rome"],
+  ["Rome", "Paris", "Nice"],
+  ["Lyon", "Nice", "Paris"],
+];
+
+function HeroProduct() {
+  return (
+    <div
+      className="relative w-full max-w-[560px] rounded-3xl p-6"
+      style={{ background: "var(--ink)" }}
+    >
+      <div className="rounded-2xl p-5" style={{ background: SCREEN }}>
+        <Eyebrow color="var(--pop)" size={10}>
+          Question 4 · Geography
+        </Eyebrow>
+        <Display size={26} color="#fff" style={{ display: "block", marginTop: 6 }}>
+          Which city is the capital of France?
+        </Display>
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-3">
+        {HERO_PHONES.map((opts, i) => (
+          <div key={i} className="flex flex-col gap-2 rounded-xl p-2.5" style={{ background: SCREEN }}>
+            {opts.map((o, j) => {
+              const correct = o === "Paris";
+              return (
+                <div
+                  key={j}
+                  className="rounded-md px-2 py-1.5 text-[11px] font-semibold"
+                  style={
+                    correct
+                      ? { background: "var(--correct)", color: "#0b0b12" }
+                      : { background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.8)" }
+                  }
+                >
+                  {o}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+      </div>
+      <p className="mt-3 text-center text-[12px] font-semibold" style={{ color: "rgba(255,255,255,0.6)" }}>
+        Same answer, different spot on every phone.
+      </p>
+    </div>
+  );
+}
+
+function Header() {
+  return (
+    <header className="mx-auto flex max-w-[1140px] items-center justify-between px-6 py-6">
+      <Link href="/trivia-night" className="no-underline" aria-label="TR1VIA home">
+        <span className="font-[family-name:var(--font-sans)] text-[22px] font-bold tracking-tight text-[color:var(--ink)]">
+          TR<span className="font-[family-name:var(--font-mono)] text-accent">1</span>VIA
+        </span>
+      </Link>
+      <Link
+        href="/login"
+        className="rounded-full px-4 py-2 font-[family-name:var(--font-mono)] text-[11px] font-semibold uppercase tracking-[0.16em] text-[color:var(--ink)] no-underline"
+        style={{ border: "1px solid var(--line)", background: "var(--surface)" }}
+      >
+        Host · Sign in →
+      </Link>
+    </header>
+  );
+}
+
+function Hero() {
+  return (
+    <>
+      <Header />
+      <div className="mx-auto grid max-w-[1140px] items-center gap-12 px-6 pb-16 pt-8 sm:pt-14 lg:grid-cols-[1.05fr_0.95fr]">
+        <div>
+          <Eyebrow color="var(--accent)" size={12}>
+            Free to host · unlimited players
+          </Eyebrow>
+          <Display
+            size="clamp(44px, 7vw, 84px)"
+            tracking={-0.04}
+            style={{ display: "block", marginTop: 18 }}
+          >
+            Everybody plays solo.
+            <br />
+            <span style={{ color: "var(--accent)" }}>Nobody can cheat.</span>
+          </Display>
+          <p className="mt-7 max-w-[560px] text-[18px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
+            One question on the big screen. Every phone shuffles the four answers
+            into its own order &mdash; so shouting &ldquo;it&rsquo;s number three!&rdquo;
+            means nothing. You run the show; we handle the rest.
+          </p>
+          <div className="mt-9 flex flex-wrap items-center gap-3">
+            <Link
+              href="/login"
+              data-testid="marketing-cta-host"
+              className="rounded-2xl bg-accent px-7 py-4 text-[16px] font-bold text-white no-underline"
+              style={{ boxShadow: "0 14px 30px -10px var(--accent)" }}
+            >
+              Start hosting — free →
+            </Link>
+            <Link
+              href="/join"
+              data-testid="marketing-cta-join"
+              className="rounded-2xl px-7 py-4 text-[16px] font-semibold text-[color:var(--ink)] no-underline"
+              style={{ border: "1px solid var(--line)", background: "var(--surface)" }}
+            >
+              Got a code? Join a game
+            </Link>
+          </div>
+        </div>
+        <div className="flex justify-center lg:justify-end">
+          <HeroProduct />
+        </div>
+      </div>
+
+      {/* 12-theme strip — the year-tour, made obvious before you scroll. */}
+      <div className="mx-auto mb-2 max-w-[1140px] px-6">
+        <Eyebrow color="var(--ink-mid)" size={11}>
+          One game · a new look every month · ↓ scroll the year
+        </Eyebrow>
+      </div>
+      <div className="flex w-full overflow-hidden rounded-none">
+        {STRIP.map(({ m, a }) => {
+          const here = m === "JUN";
+          return (
+            <div
+              key={m}
+              className="flex flex-1 flex-col items-center justify-center py-4 text-white"
+              style={{ background: a }}
+            >
+              <span className={`text-[11px] font-bold tracking-wide ${here ? "" : "opacity-80"}`}>{m}</span>
+              {here && <span className="text-[9px]">you&rsquo;re here</span>}
+            </div>
+          );
+        })}
+      </div>
+    </>
+  );
+}
 
 function Step({ n, title, body }: { n: string; title: string; body: string }) {
   return (
@@ -103,8 +248,8 @@ function Step({ n, title, body }: { n: string; title: string; body: string }) {
         {n}
       </Eyebrow>
       <div>
-        <h3 className="text-[17px] font-semibold leading-snug text-ink">{title}</h3>
-        <p className="mt-1 text-[15px] leading-relaxed" style={{ color: INK_MID }}>
+        <h3 className="text-[18px] font-semibold leading-snug text-[color:var(--ink)]">{title}</h3>
+        <p className="mt-1 text-[15px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
           {body}
         </p>
       </div>
@@ -112,166 +257,54 @@ function Step({ n, title, body }: { n: string; title: string; body: string }) {
   );
 }
 
-function Differentiator({ title, body }: { title: string; body: string }) {
+function HowItWorks() {
   return (
-    <div
-      className="rounded-2xl p-6"
-      style={{ background: SURFACE, border: `1px solid ${LINE}` }}
-    >
-      <h3 className="text-[18px] font-bold leading-snug text-ink">{title}</h3>
-      <p className="mt-2 text-[15px] leading-relaxed" style={{ color: INK_MID }}>
+    <div className="mx-auto max-w-[1100px] px-6 py-24 sm:py-28">
+      <Eyebrow color="var(--accent)" size={12}>
+        How it works in one night
+      </Eyebrow>
+      <ol className="mt-8 grid gap-x-12 gap-y-10 sm:grid-cols-2">
+        <Step n="01" title="Pick your categories" body="Type your own questions, or let TR1VIA write a whole category for you in seconds. Any topic, fully yours." />
+        <Step n="02" title="Players join from their seats" body="They scan a code on the screen — no app to download, no sign-up. They're in within seconds." />
+        <Step n="03" title="You run the board off the TV" body="Tap a question. The whole room sees it at once and a 20-second timer starts. You set the pace." />
+        <Step n="04" title="Everyone answers alone" body="The four answers are shuffled on every single phone, so shouting “it’s number three!” means nothing." />
+      </ol>
+    </div>
+  );
+}
+
+function Diff({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="rounded-2xl p-6" style={{ background: "var(--surface)", border: "1px solid var(--line)" }}>
+      <h3 className="text-[18px] font-bold leading-snug text-[color:var(--ink)]">{title}</h3>
+      <p className="mt-2 text-[15px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
         {body}
       </p>
     </div>
   );
 }
 
-export default function TriviaNightPage() {
+function WhyDifferent() {
   return (
-    <main className="min-h-[100dvh] bg-paper px-6 pb-24 text-ink sm:px-8">
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
-      />
+    <div className="mx-auto max-w-[1100px] px-6 py-24 sm:py-28">
+      <Eyebrow color="var(--accent)" size={12}>
+        Why it&rsquo;s different
+      </Eyebrow>
+      <div className="mt-8 grid gap-5 sm:grid-cols-2">
+        <Diff title="Solo, never teams" body="Even a table of nine each plays for themselves. No shared answer sheets, no one strong player carrying the table." />
+        <Diff title="Cheating doesn’t work" body="Every phone shows the four answers in a different order. Calling out a number helps no one — you read your own screen." />
+        <Diff title="Built for a real room" body="Your laptop drives the venue TV; players use the phones already in their pockets. No buzzers, no gear to haul in." />
+        <Diff title="It looks the part" body="Real-time, fast, and genuinely beautiful on the big screen — a long way from a slideshow of questions." />
+      </div>
+    </div>
+  );
+}
 
-      {/* Header — wordmark + the host sign-in chip (hand-set; Wordmark is client-only) */}
-      <header className="mx-auto flex max-w-[1040px] items-center justify-between py-6">
-        <Link href="/trivia-night" className="no-underline" aria-label="TR1VIA home">
-          <span className="font-[family-name:var(--font-sans)] text-[22px] font-bold tracking-tight text-ink">
-            TR<span className="font-[family-name:var(--font-mono)] text-accent">1</span>VIA
-          </span>
-        </Link>
-        <Link
-          href="/login"
-          className="rounded-full px-4 py-2 font-[family-name:var(--font-mono)] text-[11px] font-semibold uppercase tracking-[0.16em] text-ink no-underline"
-          style={{ border: `1px solid ${LINE}`, background: SURFACE }}
-        >
-          Host · Sign in →
-        </Link>
-      </header>
-
-      {/* Hero */}
-      <section className="mx-auto max-w-[1040px] pt-10 sm:pt-20">
-        <Eyebrow color="var(--accent)" size={12}>
-          FREE TO HOST · UNLIMITED PLAYERS
-        </Eyebrow>
-        <Display
-          size="clamp(48px, 9vw, 104px)"
-          color="var(--ink)"
-          tracking={-0.04}
-          style={{ display: "block", marginTop: 18, maxWidth: 920 }}
-        >
-          Everybody plays solo.
-          <br />
-          <span style={{ color: "var(--accent)" }}>Nobody can cheat.</span>
-        </Display>
-        <p
-          className="mt-7 max-w-[620px] text-[18px] leading-relaxed"
-          style={{ color: INK_MID }}
-        >
-          TR1VIA is a live trivia night where every person plays on their own
-          phone, reads off one big screen, and literally can&apos;t copy the
-          table next to them. You run the show — we handle the rest.
-        </p>
-
-        <div className="mt-9 flex flex-wrap items-center gap-3">
-          <Link
-            href="/login"
-            data-testid="marketing-cta-host"
-            className="rounded-2xl bg-accent px-7 py-4 text-[16px] font-bold text-white no-underline"
-            style={{ boxShadow: "0 14px 30px -10px var(--accent)" }}
-          >
-            Start hosting — free →
-          </Link>
-          <Link
-            href="/join"
-            data-testid="marketing-cta-join"
-            className="rounded-2xl px-7 py-4 text-[16px] font-semibold text-ink no-underline"
-            style={{ border: `1px solid ${LINE}`, background: SURFACE }}
-          >
-            Got a code? Join a game
-          </Link>
-        </div>
-      </section>
-
-      {/* How it works in one night */}
-      <section className="mx-auto mt-24 max-w-[1040px]">
-        <Eyebrow color={INK_MID} size={12}>
-          HOW IT WORKS IN ONE NIGHT
-        </Eyebrow>
-        <ol className="mt-8 grid gap-7 sm:grid-cols-2">
-          <Step
-            n="01"
-            title="Pick your categories"
-            body="Type your own questions, or let TR1VIA write a whole category for you in seconds. Any topic, fully yours."
-          />
-          <Step
-            n="02"
-            title="Players join from their seats"
-            body="They scan a code on the screen — no app to download, no sign-up. They're in within seconds."
-          />
-          <Step
-            n="03"
-            title="You run the board off the TV"
-            body="Tap a question. The whole room sees it at once and a 20-second timer starts. You set the pace."
-          />
-          <Step
-            n="04"
-            title="Everyone answers alone"
-            body="The four answers are shuffled on every single phone, so shouting “it's number three!” means nothing. Right and wrong reveal for the whole room at the same moment."
-          />
-        </ol>
-      </section>
-
-      {/* Why it's different */}
-      <section className="mx-auto mt-24 max-w-[1040px]">
-        <Eyebrow color={INK_MID} size={12}>
-          WHY IT&apos;S DIFFERENT
-        </Eyebrow>
-        <div className="mt-8 grid gap-5 sm:grid-cols-2">
-          <Differentiator
-            title="Solo, never teams"
-            body="Even a table of nine each plays for themselves. No shared answer sheets, no one strong player carrying the table."
-          />
-          <Differentiator
-            title="Cheating doesn't work"
-            body="Every phone shows the four answers in a different order. Calling out a number helps no one — you have to actually read your own screen."
-          />
-          <Differentiator
-            title="Built for a real room"
-            body="Your laptop drives the venue TV; players use the phones already in their pockets. No buzzers, no extra gear to haul in."
-          />
-          <Differentiator
-            title="It looks the part"
-            body="Real-time, fast, and genuinely beautiful on the big screen — a long way from a slideshow of questions."
-          />
-        </div>
-      </section>
-
-      {/* A new look every month — the theme showcase teaser → full /themes gallery */}
-      <ThemeShowcase variant="teaser" />
-
-      {/* Free vs AI upsell */}
-      <section className="mx-auto mt-24 max-w-[1040px]">
-        <div
-          className="rounded-3xl p-8 sm:p-12"
-          style={{ background: SURFACE, border: `1px solid ${LINE}` }}
-        >
-          <Display size="clamp(28px, 4vw, 40px)" color="var(--ink)" style={{ display: "block" }}>
-            Free forever to host.
-          </Display>
-          <p className="mt-4 max-w-[640px] text-[17px] leading-relaxed" style={{ color: INK_MID }}>
-            Unlimited games, unlimited players, no per-night fee — hosting never
-            costs you anything. Want TR1VIA to write the questions for you? Add AI
-            category generation for <span className="font-semibold text-ink">$4.99/month</span>,
-            cancel anytime. That&apos;s the only thing we ever charge for.
-          </p>
-        </div>
-      </section>
-
-      {/* Final CTA */}
-      <section className="mx-auto mt-24 max-w-[1040px] text-center">
-        <Display size="clamp(34px, 6vw, 64px)" color="var(--ink)" style={{ display: "block" }}>
+function FinalCTA() {
+  return (
+    <div className="mx-auto max-w-[1140px] px-6">
+      <div className="py-28 text-center">
+        <Display size="clamp(34px, 6vw, 64px)" style={{ display: "block" }}>
           Your next trivia night starts here.
         </Display>
         <div className="mt-9 flex justify-center">
@@ -283,18 +316,68 @@ export default function TriviaNightPage() {
             Start hosting — free →
           </Link>
         </div>
-      </section>
-
-      {/* Footer */}
+      </div>
       <footer
-        className="mx-auto mt-24 flex max-w-[1040px] items-center justify-between border-t pt-8 font-[family-name:var(--font-mono)] text-[11px] uppercase tracking-[0.14em]"
-        style={{ borderColor: LINE, color: "var(--ink-mute)" }}
+        className="flex items-center justify-between border-t py-8 font-[family-name:var(--font-mono)] text-[11px] uppercase tracking-[0.14em]"
+        style={{ borderColor: "var(--line)", color: "var(--ink-mute)" }}
       >
         <span>tr1via.com · Live trivia</span>
-        <Link href="/privacy" className="text-inherit no-underline hover:underline">
-          Privacy
-        </Link>
+        <span className="flex gap-6">
+          <Link href="/pricing" className="text-inherit no-underline hover:underline">Pricing</Link>
+          <Link href="/themes" className="text-inherit no-underline hover:underline">Themes</Link>
+          <Link href="/privacy" className="text-inherit no-underline hover:underline">Privacy</Link>
+        </span>
       </footer>
+    </div>
+  );
+}
+
+export default function TriviaNightPage() {
+  return (
+    <main className="min-h-[100dvh]">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(JSON_LD) }}
+      />
+      <YearScroll />
+
+      <ThemedSection themeKey="june">
+        <Hero />
+      </ThemedSection>
+
+      <ThemedSection themeKey="july">
+        <TheMoment />
+      </ThemedSection>
+
+      <ThemedSection themeKey="august">
+        <HowItWorks />
+      </ThemedSection>
+
+      <ThemedSection themeKey="october">
+        <SegmentCues />
+      </ThemedSection>
+
+      <ThemedSection themeKey="december">
+        <WhyDifferent />
+      </ThemedSection>
+
+      <ThemedSection themeKey="january">
+        <div className="mx-auto max-w-[1100px] px-6 py-20">
+          <ThemeShowcase variant="teaser" />
+        </div>
+      </ThemedSection>
+
+      <ThemedSection themeKey="april">
+        <Proof quote={null} />
+      </ThemedSection>
+
+      <ThemedSection themeKey="june">
+        <Pricing />
+      </ThemedSection>
+
+      <ThemedSection themeKey="june">
+        <FinalCTA />
+      </ThemedSection>
     </main>
   );
 }
