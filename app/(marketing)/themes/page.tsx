@@ -128,9 +128,17 @@ export default function ThemesPage() {
         style={{ borderColor: LINE, color: "var(--ink-mute)" }}
       >
         <span>tr1via.com · Live trivia</span>
-        <Link href="/privacy" className="text-inherit no-underline hover:underline">
-          Privacy
-        </Link>
+        <span className="flex gap-6">
+          <Link href="/trivia-night" className="text-inherit no-underline hover:underline">
+            Home
+          </Link>
+          <Link href="/pricing" className="text-inherit no-underline hover:underline">
+            Pricing
+          </Link>
+          <Link href="/privacy" className="text-inherit no-underline hover:underline">
+            Privacy
+          </Link>
+        </span>
       </footer>
     </main>
   );
