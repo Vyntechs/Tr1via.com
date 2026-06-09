@@ -90,6 +90,13 @@ export function HostSetupPickClient({
     regeneratingRef.current = regenerating;
   }, [regenerating]);
   const [modal, setModal] = useState<ModalState>({ kind: "none" });
+  // Mirror modal in a ref so refetchQuestions (a stable useCallback) can
+  // read the current value without adding `modal` to its deps and
+  // re-subscribing the broadcast channel on every modal state change.
+  const modalRef = useRef<ModalState>({ kind: "none" });
+  useEffect(() => {
+    modalRef.current = modal;
+  }, [modal]);
   const [difficulty, setDifficulty] = useState<DifficultyTarget>("normal");
   const [flavor, setFlavor] = useState<string[]>([]);
   const [locking, setLocking] = useState(false);
@@ -218,6 +225,14 @@ export function HostSetupPickClient({
       // host's in-progress picks every time `question_added` fired during
       // an "↻ Another 20" — that was bug A.
       setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
+      // If the host had an edit/swap/upload panel open for a question that was
+      // just deleted by the reroll, close the modal and surface a recoverable
+      // message — otherwise she'd hit Save and get a confusing 404.
+      const openModal = modalRef.current;
+      if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
+        setModal({ kind: "none" });
+        setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
+      }
     }
   }, [categoryId]);
 
@@ -375,6 +390,11 @@ export function HostSetupPickClient({
           pointValue: values.pointValue,
         }),
       });
+      if (res.status === 404) {
+        throw new Error(
+          "This question was replaced by a regeneration — close this panel and pick a fresh one.",
+        );
+      }
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "could not save edit");
