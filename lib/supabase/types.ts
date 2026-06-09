@@ -658,6 +658,10 @@ export type Database = {
       is_night_host: { Args: { p_night_id: string }; Returns: boolean }
       reset_night_to_setup: { Args: { p_night_id: string }; Returns: Json }
       resolve_question: { Args: { p_question_id: string }; Returns: undefined }
+      swap_point_value: {
+        Args: { p_question_id: string; p_point_value: number }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
