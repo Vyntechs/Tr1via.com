@@ -135,6 +135,52 @@ describe("verifyAnswers", () => {
     expect(out[0]?.markedAnswerIsCorrect).toBe(true);
   });
 
+  it("verifies all chunks concurrently — wall-clock collapses to the slowest chunk", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const DELAY = 40; // ms each mocked verify call "takes"
+    const client = {
+      messages: {
+        create: vi.fn(async (params: Record<string, unknown>) => {
+          inFlight += 1;
+          peak = Math.max(peak, inFlight);
+          await new Promise((r) => setTimeout(r, DELAY));
+          inFlight -= 1;
+          const n = chunkSize(params);
+          return {
+            content: [
+              {
+                type: "tool_use",
+                name: "verdicts",
+                id: "t",
+                input: { verdicts: Array.from({ length: n }, (_, i) => verdict(i)) },
+              },
+            ],
+          };
+        }),
+      },
+    };
+
+    const twenty = Array.from({ length: 20 }, (_, i) => q({ prompt: `Q${i}` }));
+    const t0 = performance.now();
+    // @ts-expect-error — narrowing
+    const out = await verifyAnswers(twenty, { client });
+    const elapsed = performance.now() - t0;
+
+    // 20 / VERIFY_CHUNK_SIZE(6) = 4 chunks — all in flight simultaneously.
+    expect(peak).toBe(4);
+    expect(out).toHaveLength(20);
+    expect(out.map((v) => v.index)).toEqual(
+      Array.from({ length: 20 }, (_, i) => i),
+    );
+    // Parallel ≈ one chunk-delay; the old sequential walk would be ~4×.
+    // Generous ceiling so this isn't flaky on a loaded CI box.
+    expect(elapsed).toBeLessThan(DELAY * 3);
+    console.log(
+      `[verify-perf] 20q → 4 chunks: peak concurrency ${peak}, wall-clock ${elapsed.toFixed(0)}ms (sequential would be ~${DELAY * 4}ms)`,
+    );
+  });
+
   it("handles Opus double-encoded output — {verdicts:[...]} object as JSON string", async () => {
     const doubleEncoded = {
       messages: {
