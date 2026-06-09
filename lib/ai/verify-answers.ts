@@ -67,13 +67,29 @@ function getEnv(name: string): string {
   return v;
 }
 
-function isVerdicts(value: unknown): value is { verdicts: AnswerVerdict[] } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "verdicts" in value &&
-    Array.isArray((value as { verdicts: unknown }).verdicts)
-  );
+function extractVerdicts(value: unknown): AnswerVerdict[] | null {
+  if (typeof value !== "object" || value === null || !("verdicts" in value)) return null;
+  const raw = (value as { verdicts: unknown }).verdicts;
+  if (Array.isArray(raw)) return raw as AnswerVerdict[];
+  // Opus occasionally double-encodes the output as a JSON string inside the
+  // tool input. The string may be the array itself or { verdicts: [...] }.
+  if (typeof raw === "string") {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as AnswerVerdict[];
+      if (
+        typeof parsed === "object" &&
+        parsed !== null &&
+        "verdicts" in parsed &&
+        Array.isArray((parsed as { verdicts: unknown }).verdicts)
+      ) {
+        return (parsed as { verdicts: AnswerVerdict[] }).verdicts;
+      }
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 export async function verifyAnswers(
@@ -120,8 +136,9 @@ export async function verifyAnswers(
     (b): b is Extract<typeof b, { type: "tool_use" }> =>
       b.type === "tool_use" && b.name === VERDICTS_TOOL_NAME,
   );
-  if (!block || !isVerdicts(block.input)) {
+  const verdicts = block ? extractVerdicts(block.input) : null;
+  if (!verdicts) {
     throw new Error("verifyAnswers: no verdicts returned");
   }
-  return block.input.verdicts;
+  return verdicts;
 }

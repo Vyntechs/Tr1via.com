@@ -68,4 +68,25 @@ describe("verifyAnswers", () => {
     expect(out).toEqual([]);
     expect(capture).toHaveLength(0);
   });
+
+  it("handles Opus double-encoded string output ({verdicts:[...]} as JSON string)", async () => {
+    const capture: Call[] = [];
+    const verdict = [{ index: 0, markedAnswerIsCorrect: true, ambiguous: false, trueAnswer: "Bruce Willis" }];
+    // Opus sometimes outputs the verdicts wrapped in another JSON string
+    const client = mockClient(JSON.stringify({ verdicts: verdict }), capture);
+    // @ts-expect-error — narrowing
+    const out = await verifyAnswers([q()], { client });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.markedAnswerIsCorrect).toBe(true);
+  });
+
+  it("handles Opus double-encoded string output (array directly as JSON string)", async () => {
+    const capture: Call[] = [];
+    const verdict = [{ index: 0, markedAnswerIsCorrect: false, ambiguous: false, trueAnswer: "Actual answer" }];
+    const client = mockClient(JSON.stringify(verdict), capture);
+    // @ts-expect-error — narrowing
+    const out = await verifyAnswers([q()], { client });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.markedAnswerIsCorrect).toBe(false);
+  });
 });
