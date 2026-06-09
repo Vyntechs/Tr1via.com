@@ -287,15 +287,25 @@ export function HostSetupPickClient({
 
   // ── pick toggling ────────────────────────────────────────────────────
   function togglePick(questionId: string) {
+    const wasPicked = pickedIds.has(questionId);
+    // Enforce the 7-pick cap before touching state so we only persist
+    // toggles that actually happen (avoids a PATCH for a blocked add).
+    if (!wasPicked && pickedIds.size >= 7) return;
     setPickedIds((prev) => {
       const next = new Set(prev);
-      if (next.has(questionId)) {
+      if (wasPicked) {
         next.delete(questionId);
       } else {
-        if (next.size >= 7) return prev; // hard cap at 7
         next.add(questionId);
       }
       return next;
+    });
+    // Persist the pick so it survives a page refresh. Fire-and-forget —
+    // the UI updates immediately above; a failed write is non-critical.
+    void fetch(`/api/questions/${questionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isPicked: !wasPicked }),
     });
   }
 

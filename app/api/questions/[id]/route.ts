@@ -52,7 +52,16 @@ export async function PATCH(
   const patch = parsed.data;
   const admin = getSupabaseAdmin();
 
-  const update: Partial<QuestionInsert> = { source: "host-edit" };
+  const update: Partial<QuestionInsert> = {};
+  // Only mark source as 'host-edit' when content fields change.
+  // A pick-only toggle (isPicked) must not flip the source flag.
+  const isContentEdit =
+    patch.prompt !== undefined ||
+    patch.options !== undefined ||
+    patch.correctIndex !== undefined ||
+    patch.difficulty !== undefined ||
+    patch.factBlurb !== undefined;
+  if (isContentEdit) update.source = "host-edit";
   if (patch.prompt !== undefined) update.prompt = patch.prompt;
   if (patch.options !== undefined)
     update.options = patch.options as [string, string, string, string];
@@ -64,6 +73,7 @@ export async function PATCH(
     update.point_value = patch.pointValue as
       | 100 | 200 | 300 | 400 | 500 | 600 | 700 | null;
   }
+  if (patch.isPicked !== undefined) update.is_picked = patch.isPicked;
 
   // Atomic swap: if this question is already PICKED and the host is
   // moving it to a slot held by ANOTHER picked question in the same
