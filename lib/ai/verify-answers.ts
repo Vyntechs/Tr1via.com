@@ -181,14 +181,33 @@ export async function verifyAnswers(
     opts.client ?? new Anthropic({ apiKey: getEnv("ANTHROPIC_API_KEY") });
   const model = opts.model ?? VERIFIER_MODEL;
 
-  const out: AnswerVerdict[] = [];
+  // Split into fixed-size chunks, each tagged with its global offset.
+  const chunks: { start: number; items: GeneratedQuestion[] }[] = [];
   for (let start = 0; start < questions.length; start += VERIFY_CHUNK_SIZE) {
-    const chunk = questions.slice(start, start + VERIFY_CHUNK_SIZE);
-    const byIndex = await verifyChunk(client, model, chunk);
-    // Re-index from chunk-local back to the caller's global indices.
+    chunks.push({
+      start,
+      items: questions.slice(start, start + VERIFY_CHUNK_SIZE),
+    });
+  }
+
+  // Verify every chunk CONCURRENTLY. Chunks are independent — their verdicts
+  // re-map to global indices below — so the deck's verify wall-clock collapses
+  // from sum-of-chunks to the slowest single chunk (a 20-question deck goes
+  // from ~4 sequential Opus calls to ~1). This matches the concurrency the
+  // caller already relies on to run the verify PASSES in parallel, and the
+  // SDK's built-in retry absorbs a transient rate-limit blip. Promise.all
+  // preserves chunk order, so the merged global indices are identical to the
+  // old sequential walk.
+  const chunkResults = await Promise.all(
+    chunks.map((chunk) => verifyChunk(client, model, chunk.items)),
+  );
+
+  const out: AnswerVerdict[] = [];
+  chunkResults.forEach((byIndex, chunkIdx) => {
+    const start = chunks[chunkIdx]!.start;
     for (const [localIndex, v] of byIndex) {
       out.push({ ...v, index: start + localIndex });
     }
-  }
+  });
   return out;
 }
