@@ -69,56 +69,66 @@ export async function PATCH(
     update.correct_index = patch.correctIndex;
   if (patch.difficulty !== undefined) update.difficulty = patch.difficulty;
   if (patch.factBlurb !== undefined) update.fact_blurb = patch.factBlurb;
-  if (patch.pointValue !== undefined) {
-    update.point_value = patch.pointValue as
-      | 100 | 200 | 300 | 400 | 500 | 600 | 700 | null;
-  }
   if (patch.isPicked !== undefined) update.is_picked = patch.isPicked;
 
-  // Atomic swap: if this question is already PICKED and the host is
-  // moving it to a slot held by ANOTHER picked question in the same
-  // category, vacate the current slot, hand it to the displaced question,
-  // then fall through to the main update which lands the new value.
-  // Three writes, never overlapping, so the deferrable unique
-  // (category_id, point_value) partial index never fires.
-  if (
-    patch.pointValue !== undefined &&
-    patch.pointValue !== null &&
-    owned.question.is_picked === true
-  ) {
-    const { data: occupant } = await admin
-      .from("questions")
-      .select("id, point_value")
-      .eq("category_id", owned.question.category_id)
-      .eq("is_picked", true)
-      .eq("point_value", patch.pointValue)
-      .neq("id", questionId)
-      .maybeSingle();
+  // Un-picking frees the board slot. Without this an un-picked row keeps its
+  // point_value and silently occupies the slot — the stale orphan that makes
+  // a later save collide on the unique (category_id, point_value) index.
+  if (patch.isPicked === false) update.point_value = null;
+  // Clearing the slot explicitly never collides — let the main update do it.
+  if (patch.pointValue === null) update.point_value = null;
 
-    if (occupant && occupant.point_value !== null) {
-      const previousValue = owned.question.point_value;
-      await admin
-        .from("questions")
-        .update({ point_value: null })
-        .eq("id", questionId);
-      await admin
-        .from("questions")
-        .update({ point_value: previousValue })
-        .eq("id", occupant.id);
-      // Falls through to the main update which sets this question's
-      // point_value to patch.pointValue.
-    }
+  // Assigning a point value goes through the atomic swap_point_value RPC
+  // (migration 0012), never the main UPDATE below. The unique index is
+  // DEFERRABLE INITIALLY DEFERRED, so the vacate-then-place must happen in a
+  // single transaction; the RPC also frees whatever currently holds the slot
+  // (picked or not) so a stale row can't collide.
+  if (patch.pointValue !== undefined && patch.pointValue !== null) {
+    const { error: swapError } = await admin.rpc("swap_point_value", {
+      p_question_id: questionId,
+      p_point_value: patch.pointValue,
+    });
+    if (swapError) return slotUpdateError(swapError);
   }
 
-  const { data: updated, error } = await admin
-    .from("questions")
-    .update(update)
-    .eq("id", questionId)
-    .select("*")
-    .single();
-  if (error || !updated) {
-    return badRequest(`failed to update: ${error?.message ?? "unknown"}`);
+  // The main UPDATE carries every field EXCEPT a non-null point_value (the
+  // RPC already landed that). It may be empty when the host only re-slotted
+  // a question — in that case re-read the row to return the current state.
+  let updated;
+  if (Object.keys(update).length > 0) {
+    const result = await admin
+      .from("questions")
+      .update(update)
+      .eq("id", questionId)
+      .select("*")
+      .single();
+    if (result.error || !result.data) return slotUpdateError(result.error);
+    updated = result.data;
+  } else {
+    const result = await admin
+      .from("questions")
+      .select("*")
+      .eq("id", questionId)
+      .single();
+    if (result.error || !result.data) return slotUpdateError(result.error);
+    updated = result.data;
   }
 
   return ok({ question: updated });
+}
+
+// A point-value collision should never reach the host as a raw Postgres
+// string. Translate the unique-violation (SQLSTATE 23505 / the slot index)
+// into a recoverable instruction; surface anything else as a generic save
+// failure.
+function slotUpdateError(error: { code?: string; message?: string } | null) {
+  if (
+    error?.code === "23505" ||
+    error?.message?.includes("questions_category_id_point_value_key")
+  ) {
+    return badRequest(
+      "That point value is already used in this category — pick a different value or clear the other one first.",
+    );
+  }
+  return badRequest(`failed to update: ${error?.message ?? "unknown"}`);
 }
