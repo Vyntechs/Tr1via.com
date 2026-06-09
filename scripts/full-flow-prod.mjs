@@ -93,7 +93,7 @@ const TOPIC_BANK_G2 = [
   "famous bridges",
   "national parks",
 ];
-const GEN_TIMEOUT_MS = 90_000;
+const GEN_TIMEOUT_MS = 240_000; // Sonnet write (~70s) + Opus verify (~40s) + headroom
 const POLL_MS = 2000;
 // Alice/Bob/Carol drive the strict assertions in 3-phone mode. Player04+
 // are pure load phones with a simple alternate-correct-wrong strategy.
