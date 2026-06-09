@@ -184,10 +184,12 @@ export function HostSetupPickClient({
               : "Couldn't fetch another 20. Try again or keep picking from what's here.",
           );
           setRegenerating(false);
-          // The server rolled the category back to 'draft'; bump it back
-          // to 'review' locally so the pick view stays mounted. The next
-          // refresh re-reads from the DB and will sync correctly.
+          // The server rolled the category back to 'review'; bump it back
+          // locally so the pick view stays mounted. Refetch so any questions
+          // the job deleted before failing are purged from the client list —
+          // without this, stale IDs stay visible and PATCH them → 404.
           setState("review");
+          void refetchQuestions();
           return;
         }
         // First-time generation failed — show the persistent failure UI.
@@ -245,6 +247,34 @@ export function HostSetupPickClient({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Safety net for in-place regenerates: if the `done` broadcast is missed
+  // (Realtime flakiness), poll the DB every 5 s while `regenerating` is true.
+  // useGenerationStatus only watches state==='generating', which never fires
+  // for rerolls — this fills that gap. Once the DB confirms 'review'/'ready',
+  // refetch so stale (possibly deleted) question IDs are purged from the list.
+  useEffect(() => {
+    if (!regenerating) return;
+    const supa = getSupabaseBrowser();
+    let cancelled = false;
+    const interval = window.setInterval(async () => {
+      const { data } = await supa
+        .from("categories")
+        .select("state")
+        .eq("id", categoryId)
+        .maybeSingle();
+      if (cancelled) return;
+      const dbState = (data as { state?: string } | null)?.state;
+      if (dbState === "review" || dbState === "ready") {
+        void refetchQuestions();
+        setRegenerating(false);
+      }
+    }, 5_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [regenerating, categoryId, refetchQuestions]);
 
   // ── safety net: timeout + DB-polling fallback for the broadcast ──────
   const watchStatus = useGenerationStatus({
