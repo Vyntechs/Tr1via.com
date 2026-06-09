@@ -195,6 +195,15 @@ export function PlayerJoin({
           >
             By joining, you agree to our{" "}
             <a
+              href="/terms"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: t.inkMid, textDecoration: "underline", textUnderlineOffset: 2 }}
+            >
+              Terms
+            </a>{" "}
+            and{" "}
+            <a
               href="/privacy"
               target="_blank"
               rel="noopener noreferrer"

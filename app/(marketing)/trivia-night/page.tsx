@@ -325,6 +325,7 @@ function FinalCTA() {
         <span className="flex gap-6">
           <Link href="/pricing" className="text-inherit no-underline hover:underline">Pricing</Link>
           <Link href="/themes" className="text-inherit no-underline hover:underline">Themes</Link>
+          <Link href="/terms" className="text-inherit no-underline hover:underline">Terms</Link>
           <Link href="/privacy" className="text-inherit no-underline hover:underline">Privacy</Link>
         </span>
       </footer>

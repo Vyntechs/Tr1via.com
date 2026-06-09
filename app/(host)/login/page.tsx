@@ -247,20 +247,29 @@ function HostLoginInner() {
             <Eyebrow color={t.inkMute} size={10} style={{ display: "block", marginTop: 10 }}>
               NEW HERE? JUST TYPE YOUR EMAIL — YOUR FREE TRIAL STARTS INSTANTLY.
             </Eyebrow>
-            <a
-              href="/privacy"
+            <div
               style={{
                 display: "block",
                 marginTop: 14,
                 fontSize: 12,
                 fontWeight: 500,
                 color: t.inkMute,
-                textDecoration: "underline",
-                textUnderlineOffset: 3,
               }}
             >
-              Privacy Policy
-            </a>
+              <a
+                href="/terms"
+                style={{ color: t.inkMute, textDecoration: "underline", textUnderlineOffset: 3 }}
+              >
+                Terms of Service
+              </a>
+              {" · "}
+              <a
+                href="/privacy"
+                style={{ color: t.inkMute, textDecoration: "underline", textUnderlineOffset: 3 }}
+              >
+                Privacy Policy
+              </a>
+            </div>
           </form>
         )}
       </div>
