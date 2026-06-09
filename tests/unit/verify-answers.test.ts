@@ -120,4 +120,32 @@ describe("verifyAnswers", () => {
     expect(out).toHaveLength(2); // one question never got a verdict — dropped, not thrown
     expect(capture).toHaveLength(3); // exhausted the retry attempts
   });
+
+  it("handles Opus double-encoded output — verdicts array as JSON string", async () => {
+    const doubleEncoded = {
+      messages: {
+        create: vi.fn(async () => ({
+          content: [{ type: "tool_use", name: "verdicts", id: "t", input: { verdicts: JSON.stringify([verdict(0)]) } }],
+        })),
+      },
+    };
+    // @ts-expect-error — narrowing
+    const out = await verifyAnswers([q()], { client: doubleEncoded });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.markedAnswerIsCorrect).toBe(true);
+  });
+
+  it("handles Opus double-encoded output — {verdicts:[...]} object as JSON string", async () => {
+    const doubleEncoded = {
+      messages: {
+        create: vi.fn(async () => ({
+          content: [{ type: "tool_use", name: "verdicts", id: "t", input: { verdicts: JSON.stringify({ verdicts: [verdict(0)] }) } }],
+        })),
+      },
+    };
+    // @ts-expect-error — narrowing
+    const out = await verifyAnswers([q()], { client: doubleEncoded });
+    expect(out).toHaveLength(1);
+    expect(out[0]?.markedAnswerIsCorrect).toBe(true);
+  });
 });

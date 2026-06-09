@@ -84,13 +84,23 @@ function getEnv(name: string): string {
 }
 
 interface RawVerdict { index: number; markedAnswerIsCorrect: boolean; ambiguous: boolean }
-function isVerdicts(value: unknown): value is { verdicts: RawVerdict[] } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "verdicts" in value &&
-    Array.isArray((value as { verdicts: unknown }).verdicts)
-  );
+// Opus 4.8 occasionally double-encodes the tool output — the verdicts array
+// arrives as a JSON string inside block.input instead of a native array.
+function extractVerdicts(value: unknown): RawVerdict[] | null {
+  if (typeof value !== "object" || value === null || !("verdicts" in value)) return null;
+  const raw = (value as { verdicts: unknown }).verdicts;
+  if (Array.isArray(raw)) return raw as RawVerdict[];
+  if (typeof raw === "string") {
+    try {
+      const parsed: unknown = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed as RawVerdict[];
+      if (typeof parsed === "object" && parsed !== null && "verdicts" in parsed &&
+          Array.isArray((parsed as { verdicts: unknown }).verdicts)) {
+        return (parsed as { verdicts: RawVerdict[] }).verdicts;
+      }
+    } catch { return null; }
+  }
+  return null;
 }
 
 /** Best-effort verify of one chunk (LOCAL indices 0..n-1). Retries to fill
@@ -137,8 +147,9 @@ async function verifyChunk(
       (b): b is Extract<typeof b, { type: "tool_use" }> =>
         b.type === "tool_use" && b.name === VERDICTS_TOOL_NAME,
     );
-    if (block && isVerdicts(block.input)) {
-      for (const v of block.input.verdicts) {
+    const verdicts = block ? extractVerdicts(block.input) : null;
+    if (verdicts) {
+      for (const v of verdicts) {
         if (v.index >= 0 && v.index < chunk.length && !byIndex.has(v.index)) {
           byIndex.set(v.index, {
             index: v.index,
