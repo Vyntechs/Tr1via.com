@@ -39,6 +39,12 @@ import {
   explainGenerationFailure,
 } from "@/lib/host/generationFailureMessages";
 import { mergePickedAfterRefetch } from "@/lib/host/mergePickedAfterRefetch";
+import {
+  explainLockFailure,
+  explainPhotoSaveFailure,
+  explainUploadFailure,
+  pointValueChanged,
+} from "@/lib/host/pickFlowMessages";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostSetupPickClientProps {
@@ -330,13 +336,22 @@ export function HostSetupPickClient({
       }
       return next;
     });
-    // Persist the pick so it survives a page refresh. Fire-and-forget —
-    // the UI updates immediately above; a failed write is non-critical.
+    // Persist the pick so it survives a page refresh. The UI updated
+    // optimistically above; on a failed write (e.g. the row was rerolled away
+    // → 404) silently resync rather than swallow it — refetchQuestions keeps
+    // the host's still-valid picks (mergePickedAfterRefetch) and drops the
+    // dead one, so the board can't drift out of sync with the DB.
     void fetch(`/api/questions/${questionId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ isPicked: !wasPicked }),
-    });
+    })
+      .then((res) => {
+        if (!res.ok) void refetchQuestions();
+      })
+      .catch(() => {
+        void refetchQuestions();
+      });
   }
 
   // ── lock category (POST /api/categories/[id]/pick) ───────────────────
@@ -352,7 +367,12 @@ export function HostSetupPickClient({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "could not lock the category");
+        // A stale picked id — a pick a reroll deleted before the client
+        // refetched — makes the server reject the whole set with a raw count
+        // ("found 6"). Resync so the dead id is purged from the board, and
+        // show a re-pick instruction instead of the Postgres-adjacent string.
+        void refetchQuestions();
+        throw new Error(explainLockFailure(res.status, body.error));
       }
       router.push(`/host/setup/${nightId}`);
     } catch (err) {
@@ -419,6 +439,12 @@ export function HostSetupPickClient({
   ): Promise<QuestionRow | null> {
     setSavingEdit(true);
     setError(null);
+    // Snapshot the slot before the save: if it changes, the server's
+    // swap_point_value RPC may have displaced whatever row held the target
+    // slot (a second row we never saw change), so we must refetch to keep the
+    // board preview from drifting (two cards rendered at the same value).
+    const previousPointValue =
+      questions.find((q) => q.id === questionId)?.point_value ?? null;
     try {
       const res = await fetch(`/api/questions/${questionId}`, {
         method: "PATCH",
@@ -441,6 +467,9 @@ export function HostSetupPickClient({
       }
       const { question } = (await res.json()) as { question: QuestionRow };
       setQuestions((prev) => prev.map((q) => (q.id === question.id ? question : q)));
+      if (pointValueChanged(previousPointValue, question.point_value)) {
+        void refetchQuestions();
+      }
       return question;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save.");
@@ -541,8 +570,14 @@ export function HostSetupPickClient({
         }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "could not swap photo");
+        // The question may have been rerolled away while this panel was open
+        // (→ 404). Close the panel and resync so the host picks from the new
+        // batch; never surface the route's raw "failed to update photo: <pg>".
+        if (res.status === 404) {
+          setModal({ kind: "none" });
+          void refetchQuestions();
+        }
+        throw new Error(explainPhotoSaveFailure(res.status));
       }
       const { question } = (await res.json()) as { question: Partial<QuestionRow> };
       setQuestions((prev) =>
@@ -557,32 +592,8 @@ export function HostSetupPickClient({
   }
 
   // ── photo upload (POST /api/images/upload) ───────────────────────────
-  /**
-   * Map a server upload error to a host-actionable message. The host
-   * doesn't care about Supabase Storage error codes — she cares whether
-   * to pick a different file, shrink it, or retry.
-   */
-  function explainUploadFailure(rawMessage: string | undefined, status: number) {
-    const msg = (rawMessage ?? "").toLowerCase();
-    if (msg.includes("too large")) {
-      return "That file is over 10 MB. Try a smaller export or compress it first.";
-    }
-    if (msg.includes("supported image") || msg.includes("not a supported")) {
-      return "That file isn't a PNG, JPEG, WEBP, or GIF. Pick a different image.";
-    }
-    if (msg.includes("empty file")) {
-      return "That file came through empty. Try saving and uploading again.";
-    }
-    if (status === 401 || status === 403) {
-      return "Your sign-in expired. Refresh the page and try again.";
-    }
-    if (status === 0 || status >= 500) {
-      return "Storage didn't accept the upload. Try again in a moment.";
-    }
-    return rawMessage?.trim()
-      ? rawMessage
-      : "The upload didn't go through. Try a different file or retry.";
-  }
+  // The upload error→message mapping (Storage codes + a deleted-question 404)
+  // lives in lib/host/pickFlowMessages so it's unit-tested.
 
   async function handleUploadFile(file: File) {
     if (modal.kind !== "upload") return;
@@ -608,6 +619,15 @@ export function HostSetupPickClient({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
+        // Rerolled away mid-upload (→ 404): the upload panel's own error slot
+        // would vanish with the question, so close it and surface the recovery
+        // message on the top-level toast instead.
+        if (res.status === 404) {
+          setModal({ kind: "none" });
+          void refetchQuestions();
+          setError(explainUploadFailure(body.error, res.status));
+          return;
+        }
         setUploadError(explainUploadFailure(body.error, res.status));
         return;
       }
