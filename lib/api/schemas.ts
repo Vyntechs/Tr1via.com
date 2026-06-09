@@ -247,6 +247,11 @@ export const PatchQuestionBodySchema = z
         z.null(),
       ])
       .optional(),
+    /** Persists the host's in-progress pick selection so it survives a
+     *  page refresh. The full lock (POST /api/categories/[id]/pick) is
+     *  still required to finalise the 7-pick set and mark the category
+     *  ready — this just prevents data loss between sessions. */
+    isPicked: z.boolean().optional(),
   })
   .strict()
   .refine(
@@ -256,7 +261,8 @@ export const PatchQuestionBodySchema = z
       body.correctIndex !== undefined ||
       body.difficulty !== undefined ||
       body.factBlurb !== undefined ||
-      body.pointValue !== undefined,
+      body.pointValue !== undefined ||
+      body.isPicked !== undefined,
     { message: "PATCH body must include at least one field to update" },
   );
 
