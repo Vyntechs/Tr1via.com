@@ -232,9 +232,9 @@ export const PatchQuestionBodySchema = z
     difficulty: z.number().int().min(1).max(7).optional(),
     factBlurb: z.string().trim().min(1).max(280).optional(),
     /** Host-placed slot on the board. `null` clears any host override
-     *  (lock-time auto-assign refills it). When the question is already
-     *  picked AND another picked question in the same category holds
-     *  that slot, the PATCH performs an atomic swap. */
+     *  (lock-time auto-assign refills it). When another question in the
+     *  same category already holds that slot — picked or not — the PATCH
+     *  performs an atomic swap via the swap_point_value RPC. */
     pointValue: z
       .union([
         z.literal(100),
