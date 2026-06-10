@@ -73,10 +73,17 @@ export default function HostGenGallery() {
     {
       step: "4",
       title: "Pick 7 of 20",
-      note: "Picking the seven for the board; sidebar fills as she picks. Click × on a sidebar slot to unpick.",
-      // Empty noop wires the unpick × button in the sidebar preview.
-      // Real callers pass the real onTogglePick handler.
-      render: () => <HostGenPick onTogglePick={() => {}} />,
+      note: "Picking the seven for the board; sidebar fills as she picks. Drag the grip to reorder a slot, pencil to edit, × to unpick.",
+      // Empty noops wire the sidebar affordances in the preview: × unpick,
+      // the grip drag handle, and the per-card edit pencil. Real callers pass
+      // the real onTogglePick / onReorder / onEdit handlers.
+      render: () => (
+        <HostGenPick
+          onTogglePick={() => {}}
+          onReorder={() => {}}
+          onEdit={() => {}}
+        />
+      ),
     },
     {
       step: "5",

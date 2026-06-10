@@ -381,6 +381,46 @@ export function HostSetupPickClient({
     }
   }
 
+  // ── reorder board (POST /api/categories/[id]/reorder) ────────────────
+  // The host dragged the YOUR BOARD sidebar. Optimistically stamp the new
+  // point_values onto local state so the board re-renders in the new order
+  // immediately, then persist. On failure, revert to the pre-drag snapshot
+  // and refetch so the UI reconciles with the DB. No broadcast: picks/edits
+  // during setup aren't pushed to players — the board isn't shown until the
+  // game runs.
+  async function handleReorder(
+    assignments: Array<{ id: string; pointValue: number }>,
+  ) {
+    const snapshot = questions;
+    const byId = new Map(assignments.map((a) => [a.id, a.pointValue]));
+    setQuestions((cur) =>
+      cur.map((q) => {
+        const pv = byId.get(q.id);
+        return pv === undefined
+          ? q
+          : { ...q, point_value: pv as QuestionRow["point_value"] };
+      }),
+    );
+    setError(null);
+    try {
+      const res = await fetch(`/api/categories/${categoryId}/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assignments }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "could not save the new order");
+      }
+    } catch (err) {
+      setQuestions(snapshot);
+      setError(
+        err instanceof Error ? err.message : "Could not save the new order.",
+      );
+      void refetchQuestions();
+    }
+  }
+
   // ── regenerate / flavor tweaks ───────────────────────────────────────
   // When the host already has 20 candidates loaded and taps "↻ Another 20",
   // we stay on the pick screen — the server just appends 20 fresh rows to
@@ -813,6 +853,7 @@ export function HostSetupPickClient({
           onTogglePick={togglePick}
           onEdit={(id) => setModal({ kind: "edit", questionId: id })}
           onSwapImage={(id) => void openSwap(id)}
+          onReorder={handleReorder}
           onLock={handleLock}
           onRegenerate={handleRegenerate}
           onRename={handleRename}

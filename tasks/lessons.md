@@ -17,6 +17,11 @@ Trigger: A merged/deployed PR includes a new `supabase/migrations/NNNN_*.sql` th
 Rule: Deploying code does NOT apply the migration. Apply it separately (Supabase MCP `apply_migration` / `db push`) and confirm the column exists before declaring the feature live.
 Reason: PR #88 shipped to prod but `trial_ends_at` was never applied — new-host onboarding-complete 500'd in production until the migration was applied by hand post-merge.
 
+### audit-subagents-read-the-working-tree
+Trigger: Dispatching read-only audit/review subagents at a file a recently-merged PR changed.
+Rule: Subagents read the current working tree. On a branch predating the merge, their findings describe the OLD code — verify branch state or run them off updated main first.
+Reason: Three audit agents flagged questions/[id]/route.ts as buggy, but this worktree predated #99; the bug was already fixed on main and proven on prod.
+
 ### realtime-zombie-after-sleep
 Trigger: Host/player screen frozen on a stale view; F5 doesn't fix it; fully quitting the browser does.
 Rule: Chrome's WebSocket can zombie (connected but silent) after laptop sleep. Our 3 safety nets trust socket status, not data freshness. Add a "received-anything-recently?" watchdog.
@@ -102,3 +107,18 @@ Reason: Host flow was laptop-only; on phones the fixed grids (`240px 1fr`, `1fr 
 Trigger: Dispatching researchers (or reading code) to scope a feature/bug while the local working tree is a long-lived scratch branch.
 Rule: Point research at `origin/main` (fetch + a worktree off it), not the working checkout — a stale branch hides shipped features and inverts the plan.
 Reason: Researchers read the stale `june-reactive-water` tree and missed the trial+entitlement foundation already on main; the Stripe brief's "greenfield" premise was false until a worktree off origin/main surfaced it.
+
+### dba-is-not-a-separate-legal-entity
+Trigger: Setting the legal party on a Stripe account, Terms of Service, or any contract when the business operates under a DBA / assumed name (e.g. "Vyntechs").
+Rule: A DBA is a trade name, not an entity. The legal party is the individual (or LLC) **doing business as** that name — use the person's legal name + the trade name, not the DBA alone.
+Reason: Brandon's "Vyntechs" is a Texas DBA, so the ToS names him as a sole proprietor d/b/a Vyntechs and Stripe activation needs his legal name — getting this wrong misstates who is liable.
+
+### dnd-kit-ssr-needs-stable-context-id
+Trigger: Rendering `@dnd-kit` `DndContext` inside a `"use client"` component that still server-renders (e.g. the host pick screen) on its first paint.
+Rule: Pass a fixed `id` to `DndContext` (`id="pick-board-reorder"`). Without it, dnd-kit's `aria-describedby` ("DndDescribedBy-N") counter differs server vs client → React hydration mismatch warning.
+Reason: Caught only by a real-browser console check (jsdom + HTTP 200 both stayed silent); the live Playwright drag surfaced `DndDescribedBy-0` vs `-2`, and the stable id made both deterministic.
+
+### reorder-pointvalue-clear-first-not-swap
+Trigger: Writing a multi-row reassignment of `questions.point_value` (board reorder) given the `unique(category_id, point_value) deferrable initially deferred` index.
+Rule: supabase-js auto-commits each `.update()`, so "deferrable" doesn't save you — a transient A→200 while B holds 200 still trips. NULL every target value first (NULLs are exempt), THEN set each. Mirror `lib/host/pickQuestions.ts`.
+Reason: A naive per-row swap 500s on the unique index; clear-first is the established codebase idiom and needs no migration (reuses point_value, dodging this project's apply-on-deploy footgun).
