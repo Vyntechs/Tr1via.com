@@ -20,6 +20,22 @@ import {
   type KeyboardEvent,
 } from "react";
 import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import {
   Eyebrow,
   Numeric,
   ThemeProvider,
@@ -28,6 +44,7 @@ import {
 import { LaptopShell } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { computeReorderAssignments } from "@/lib/host/boardReorder";
 import { DifficultyBar, StockImage } from "./_shared";
 
 export type DifficultyTarget = "easy" | "normal" | "hard";
@@ -68,10 +85,17 @@ export interface HostGenPickProps {
   flavor?: string[];
   /** Called when the host toggles a candidate's pick state. */
   onTogglePick?: (questionId: string) => void;
-  /** Open the edit panel for a specific question. */
+  /** Open the edit panel for a specific question. Also wired to the edit
+   *  affordance on each YOUR BOARD sidebar card (same modal, different
+   *  entry point). */
   onEdit?: (questionId: string) => void;
   /** Open the image swap UI for a specific question. */
   onSwapImage?: (questionId: string) => void;
+  /** Persist a drag-to-reorder of the YOUR BOARD sidebar. Receives the new
+   *  {id, pointValue} assignment for every filled slot, in top→bottom order.
+   *  When omitted (e.g. the /dev gallery) the board renders static — no drag
+   *  handles. */
+  onReorder?: (assignments: Array<{ id: string; pointValue: number }>) => void;
   /** Called when the host saves a renamed category label. Returns a
    *  promise so the inline editor can keep the input open + restore
    *  focus on failure. When omitted the pencil affordance is hidden
@@ -141,6 +165,7 @@ function HostGenPickInner({
   onTogglePick,
   onEdit,
   onSwapImage,
+  onReorder,
   onRename,
   isRenaming = false,
   onLock,
@@ -350,6 +375,8 @@ function HostGenPickInner({
           picked={pickedQs}
           tierByPickId={tierByPickId}
           onUnpick={onTogglePick}
+          onEdit={onEdit}
+          onReorder={onReorder}
           onLock={onLock}
           isLocking={isLocking}
         />
@@ -474,6 +501,8 @@ function PickSidebar({
   picked,
   tierByPickId,
   onUnpick,
+  onEdit,
+  onReorder,
   onLock,
   isLocking,
 }: {
@@ -484,6 +513,12 @@ function PickSidebar({
    *  doesn't want to scroll the 20-card grid to find + unclick). When
    *  omitted, the × button is hidden. */
   onUnpick?: (questionId: string) => void;
+  /** Open the edit modal for a board card — same modal as the left grid's
+   *  Edit button, different entry point. When omitted, the pencil is hidden. */
+  onEdit?: (questionId: string) => void;
+  /** Persist a drag-to-reorder. When omitted (or <2 filled slots) the board
+   *  renders static — no drag handles. */
+  onReorder?: (assignments: Array<{ id: string; pointValue: number }>) => void;
   onLock?: () => void;
   isLocking: boolean;
 }) {
@@ -497,7 +532,57 @@ function PickSidebar({
     const tier = tierByPickId.get(p.id);
     if (tier !== undefined) byTier[tier] = p;
   });
+
+  // Filled slots in ascending point-value order. This is both the render
+  // order (top→bottom) and the sortable list. `occupiedValues` stays pinned
+  // to slot positions; reordering only changes which card sits in each.
+  const filledSlots = slots.filter((v) => byTier[v]);
+  const orderedIds = filledSlots.map((v) => byTier[v]!.id);
+  const occupiedValues = filledSlots.slice();
+  // Drag is only meaningful with ≥2 filled cards AND a persistence handler.
+  const dndEnabled = !!onReorder && orderedIds.length >= 2;
+
+  // Hooks must run unconditionally — sensors are cheap even when DnD is off.
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over) return;
+    const assignments = computeReorderAssignments(
+      orderedIds,
+      occupiedValues,
+      String(active.id),
+      String(over.id),
+    );
+    if (assignments) onReorder?.(assignments);
+  }
+
   const ready = picked.length === 7;
+
+  const rows = slots.map((v) => {
+    const filled = byTier[v];
+    if (!filled) {
+      return <EmptyBoardSlotRow key={v} slot={v} reserveGrip={dndEnabled} />;
+    }
+    const common = {
+      slot: v,
+      q: filled,
+      cc,
+      onEdit,
+      onUnpick,
+    };
+    return dndEnabled ? (
+      <SortableBoardSlotRow key={filled.id} {...common} />
+    ) : (
+      <StaticBoardSlotRow key={filled.id} {...common} />
+    );
+  });
+
   return (
     <div style={{ borderLeft: `1px solid ${t.line}`, padding: "20px 24px 24px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
@@ -508,62 +593,19 @@ function PickSidebar({
         </div>
       </div>
 
-      <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1, overflow: "auto" }}>
-        {slots.map((v) => {
-          const filled = byTier[v];
-          // Three-column when the unpick button can render (filled + handler);
-          // two-column otherwise so the empty-slot row keeps its existing
-          // alignment.
-          const showUnpick = !!filled && !!onUnpick;
-          return (
-            <div key={v} style={{
-              display: "grid",
-              gridTemplateColumns: showUnpick ? "52px 1fr 24px" : "52px 1fr",
-              alignItems: "center", gap: 12,
-              padding: "10px 12px", borderRadius: 10,
-              background: filled ? (t.dark ? `${cc}10` : `${cc}06`) : "transparent",
-              border: `1px ${filled ? "solid" : "dashed"} ${filled ? cc : t.line}`,
-            }}>
-              <Numeric size={18} color={filled ? cc : t.inkMute} weight={700}>{v}</Numeric>
-              {filled ? (
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontSize: 12, color: t.ink, fontWeight: 600, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{filled.prompt}</div>
-                  <div style={{ marginTop: 2, fontSize: 10, color: t.inkMute, fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>{filled.options[filled.correctIndex]}</div>
-                </div>
-              ) : (
-                <span style={{ fontSize: 12, color: t.inkMute, fontWeight: 500 }}>open · pick a {v === 100 ? "easy" : v === 700 ? "hard" : ""} one</span>
-              )}
-              {showUnpick && (
-                <button
-                  type="button"
-                  onClick={() => onUnpick(filled.id)}
-                  aria-label={`Remove from slot ${v}`}
-                  title={`Remove (slot ${v} opens up)`}
-                  data-testid={`pick-sidebar-unpick-${v}`}
-                  style={{
-                    width: 24,
-                    height: 24,
-                    borderRadius: 99,
-                    border: `1px solid ${t.line}`,
-                    background: "transparent",
-                    color: t.inkMid,
-                    fontSize: 14,
-                    fontWeight: 600,
-                    fontFamily: "var(--font-sans)",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    padding: 0,
-                    lineHeight: 1,
-                  }}
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          );
-        })}
+      <div
+        data-testid="pick-sidebar-board"
+        style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1, overflow: "auto" }}
+      >
+        {dndEnabled ? (
+          <DndContext id="pick-board-reorder" sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={orderedIds} strategy={verticalListSortingStrategy}>
+              {rows}
+            </SortableContext>
+          </DndContext>
+        ) : (
+          rows
+        )}
       </div>
 
       <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -583,9 +625,246 @@ function PickSidebar({
         >
           {isLocking ? "Locking…" : ready ? "Lock the category  →" : `Pick ${7 - picked.length} more to lock`}
         </button>
-        <Eyebrow color={t.inkMute} size={9} style={{ textAlign: "center" }}>YOU CAN STILL EDIT AFTER LOCKING</Eyebrow>
+        <Eyebrow color={t.inkMute} size={9} style={{ textAlign: "center" }}>
+          {dndEnabled ? "DRAG TO REORDER · EDIT FROM ANY CARD" : "YOU CAN STILL EDIT AFTER LOCKING"}
+        </Eyebrow>
       </div>
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Board slot rows — the YOUR BOARD sidebar cards.
+//
+// A filled slot can be reordered (drag the grip handle) and edited (the
+// pencil opens the same modal the left grid's Edit button does). Drag
+// listeners live ONLY on the grip so clicking the pencil / × never starts a
+// drag. Sortable + static variants share BoardSlotContent so the markup can't
+// drift between them; the empty-slot row reserves the grip column so filled
+// and empty rows stay column-aligned while dragging is enabled.
+// ─────────────────────────────────────────────────────────────────────────
+
+const SLOT_GRIP_COL = "18px";
+const SLOT_VALUE_COL = "44px";
+
+function BoardSlotContent({
+  slot,
+  q,
+  cc,
+  grip,
+  onEdit,
+  onUnpick,
+}: {
+  slot: number;
+  q: HostGenPickQuestion;
+  cc: string;
+  /** The drag handle element, or null when DnD is off (no grip column). */
+  grip: React.ReactNode | null;
+  onEdit?: (questionId: string) => void;
+  onUnpick?: (questionId: string) => void;
+}) {
+  const { t } = useTheme();
+  const cols = [
+    grip !== null ? SLOT_GRIP_COL : null,
+    SLOT_VALUE_COL,
+    "1fr",
+    onEdit || onUnpick ? "auto" : null,
+  ]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: cols,
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 12px",
+        borderRadius: 10,
+        background: t.dark ? `${cc}10` : `${cc}06`,
+        border: `1px solid ${cc}`,
+      }}
+    >
+      {grip !== null && grip}
+      <Numeric size={18} color={cc} weight={700}>{slot}</Numeric>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 12, color: t.ink, fontWeight: 600, lineHeight: 1.3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{q.prompt}</div>
+        <div style={{ marginTop: 2, fontSize: 10, color: t.inkMute, fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>{q.options[q.correctIndex]}</div>
+      </div>
+      {(onEdit || onUnpick) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(q.id)}
+              aria-label={`Edit the ${slot}-point question`}
+              title="Edit this question"
+              data-testid={`pick-sidebar-edit-${slot}`}
+              style={slotIconButtonStyle(t.line, t.inkMid)}
+            >
+              <PencilGlyph />
+            </button>
+          )}
+          {onUnpick && (
+            <button
+              type="button"
+              onClick={() => onUnpick(q.id)}
+              aria-label={`Remove from slot ${slot}`}
+              title={`Remove (slot ${slot} opens up)`}
+              data-testid={`pick-sidebar-unpick-${slot}`}
+              style={{ ...slotIconButtonStyle(t.line, t.inkMid), fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StaticBoardSlotRow(props: {
+  slot: number;
+  q: HostGenPickQuestion;
+  cc: string;
+  onEdit?: (questionId: string) => void;
+  onUnpick?: (questionId: string) => void;
+}) {
+  return <BoardSlotContent {...props} grip={null} />;
+}
+
+function SortableBoardSlotRow({
+  slot,
+  q,
+  cc,
+  onEdit,
+  onUnpick,
+}: {
+  slot: number;
+  q: HostGenPickQuestion;
+  cc: string;
+  onEdit?: (questionId: string) => void;
+  onUnpick?: (questionId: string) => void;
+}) {
+  const { t } = useTheme();
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: q.id });
+
+  const grip = (
+    <button
+      type="button"
+      aria-label={`Drag to reorder the ${slot}-point question`}
+      title="Drag to reorder"
+      data-testid={`pick-sidebar-drag-${slot}`}
+      {...attributes}
+      {...listeners}
+      style={{
+        width: 18,
+        height: 24,
+        border: "none",
+        background: "transparent",
+        color: t.inkMute,
+        cursor: "grab",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 0,
+        touchAction: "none",
+      }}
+    >
+      <GripGlyph />
+    </button>
+  );
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        opacity: isDragging ? 0.65 : 1,
+        position: "relative",
+        zIndex: isDragging ? 2 : undefined,
+      }}
+    >
+      <BoardSlotContent
+        slot={slot}
+        q={q}
+        cc={cc}
+        grip={grip}
+        onEdit={onEdit}
+        onUnpick={onUnpick}
+      />
+    </div>
+  );
+}
+
+function EmptyBoardSlotRow({
+  slot,
+  reserveGrip,
+}: {
+  slot: number;
+  /** Render an empty grip-width gutter so columns line up with filled rows
+   *  while dragging is enabled. */
+  reserveGrip: boolean;
+}) {
+  const { t } = useTheme();
+  const cols = [reserveGrip ? SLOT_GRIP_COL : null, SLOT_VALUE_COL, "1fr"]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: cols,
+        alignItems: "center",
+        gap: 10,
+        padding: "10px 12px",
+        borderRadius: 10,
+        background: "transparent",
+        border: `1px dashed ${t.line}`,
+      }}
+    >
+      {reserveGrip && <span aria-hidden="true" />}
+      <Numeric size={18} color={t.inkMute} weight={700}>{slot}</Numeric>
+      <span style={{ fontSize: 12, color: t.inkMute, fontWeight: 500 }}>open · pick a {slot === 100 ? "easy" : slot === 700 ? "hard" : ""} one</span>
+    </div>
+  );
+}
+
+function slotIconButtonStyle(border: string, color: string): React.CSSProperties {
+  return {
+    width: 24,
+    height: 24,
+    borderRadius: 99,
+    border: `1px solid ${border}`,
+    background: "transparent",
+    color,
+    cursor: "pointer",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 0,
+    lineHeight: 1,
+  };
+}
+
+function GripGlyph() {
+  return (
+    <svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true">
+      <circle cx="2.5" cy="3" r="1.3" />
+      <circle cx="7.5" cy="3" r="1.3" />
+      <circle cx="2.5" cy="8" r="1.3" />
+      <circle cx="7.5" cy="8" r="1.3" />
+      <circle cx="2.5" cy="13" r="1.3" />
+      <circle cx="7.5" cy="13" r="1.3" />
+    </svg>
   );
 }
 
