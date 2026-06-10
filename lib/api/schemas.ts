@@ -188,6 +188,45 @@ export const PickCategoryBodySchema = z
   })
   .strict();
 
+/** A non-null board slot value (100..700). */
+const PointSlotSchema = z.union([
+  z.literal(100),
+  z.literal(200),
+  z.literal(300),
+  z.literal(400),
+  z.literal(500),
+  z.literal(600),
+  z.literal(700),
+]);
+
+/**
+ * POST /api/categories/[id]/reorder body — the new board order after a
+ * drag-to-reorder of the "YOUR BOARD" sidebar. Each entry pins a picked
+ * question to a slot value; ids and slot values must each be distinct, and
+ * there must be at least 2 (you can't reorder fewer). At most 7 — the board
+ * never holds more.
+ */
+export const ReorderBoardBodySchema = z
+  .object({
+    assignments: z
+      .array(
+        z
+          .object({ id: UuidSchema, pointValue: PointSlotSchema })
+          .strict(),
+      )
+      .min(2)
+      .max(7)
+      .refine(
+        (a) => new Set(a.map((x) => x.id)).size === a.length,
+        { message: "assignments must reference distinct question ids" },
+      )
+      .refine(
+        (a) => new Set(a.map((x) => x.pointValue)).size === a.length,
+        { message: "assignments must use distinct point values" },
+      ),
+  })
+  .strict();
+
 /**
  * One row in a manual-entry submission. Same invariants as a generated
  * question — 4 distinct options, correct_index 0..3, a non-trivial
@@ -303,6 +342,7 @@ export type CreateCategoryInput = z.infer<typeof CreateCategoryBodySchema>;
 export type PatchCategoryInput = z.infer<typeof PatchCategoryBodySchema>;
 export type GenerateCategoryInput = z.infer<typeof GenerateCategoryBodySchema>;
 export type PickCategoryInput = z.infer<typeof PickCategoryBodySchema>;
+export type ReorderBoardInput = z.infer<typeof ReorderBoardBodySchema>;
 export type ManualCategoryInput = z.infer<typeof ManualCategoryBodySchema>;
 export type PatchQuestionInput = z.infer<typeof PatchQuestionBodySchema>;
 export type PatchQuestionPhotoInput = z.infer<typeof PatchQuestionPhotoBodySchema>;
