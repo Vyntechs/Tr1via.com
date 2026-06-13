@@ -184,13 +184,29 @@ export async function GET(
     targetQuestionId = resolveReveal?.question_id ?? null;
   }
 
+  // SECURITY (anti-cheat): the target is either the LIVE (unresolved) question
+  // or a fallback to the most-recently-resolved one. Per-player picks
+  // (chosen_index) and correctness (is_correct) are WITHHELD until the target
+  // is RESOLVED (finished_at set) — the live answer window is the exact exploit
+  // window. This feed is keyed only on the room code and served via the admin
+  // client (RLS bypassed), so without this any player could read every
+  // opponent's pick mid-question straight off /api/tv/:code/snapshot
+  // (pentest 2026-06-13, CRITICAL — same class as the correct_index leak
+  // serializeBoardQuestion already closes). The TV's live "locked in" display
+  // only needs the player name + ms_to_lock, which we keep.
+  const targetQuestionRow =
+    liveQuestion && liveQuestion.id === targetQuestionId
+      ? liveQuestion
+      : questions.find((q) => q.id === targetQuestionId) ?? null;
+  const targetResolved = targetQuestionRow?.finished_at != null;
+
   let liveAnswers: Array<{
     id: string;
     player_id: string;
     player_name: string;
     ms_to_lock: number;
     is_correct: boolean | null;
-    chosen_index: 0 | 1 | 2 | 3;
+    chosen_index: 0 | 1 | 2 | 3 | null;
   }> = [];
   if (targetQuestionId) {
     const { data: ans } = await admin
@@ -206,9 +222,11 @@ export async function GET(
         player_id: a.player_id,
         player_name: playerMap.get(a.player_id) ?? "—",
         ms_to_lock: Number(a.ms_to_lock ?? 0),
-        is_correct: a.is_correct,
-        // DB CHECK constraint enforces 0-3; narrow for the consumer.
-        chosen_index: a.chosen_index as 0 | 1 | 2 | 3,
+        // Withheld until the target question is resolved (see SECURITY note above).
+        is_correct: targetResolved ? a.is_correct : null,
+        // DB CHECK constraint enforces 0-3; null until resolved so the live
+        // answer window never ships the actual pick to this public feed.
+        chosen_index: (targetResolved ? a.chosen_index : null) as 0 | 1 | 2 | 3 | null,
       }));
       liveAnswers.sort((a, b) => a.ms_to_lock - b.ms_to_lock);
     }
