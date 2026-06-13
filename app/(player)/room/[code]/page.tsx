@@ -47,6 +47,8 @@ import {
   type PlayerQuestionSlot,
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
+import { useReachability } from "@/lib/realtime/reachability";
+import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { useLockCount } from "@/lib/hooks/useLockCount";
 import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
@@ -59,7 +61,7 @@ import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { selectBetweenGamesView, buildGame1Standings, type StandingRow } from "@/lib/player/betweenGames";
-import { selectLobbyTopicsFromRoom } from "@/lib/tv/lobbyTopics";
+import { selectLobbyTopicsFromRoom, type LobbyTopic } from "@/lib/tv/lobbyTopics";
 import { playWelcomeChime, triggerWelcomeHaptic } from "@/lib/audio/welcomeChime";
 import {
   formatRoomCode,
@@ -186,6 +188,16 @@ function RoomBody({
       cancelled = true;
     };
   }, [snapshot.night?.closed_at, me, finalGame, roomCode, router]);
+
+  // ── Unreachable: the browser→Supabase reads are blocked (restrictive venue
+  //    WiFi). Show an actionable "switch to a hotspot" screen instead of an
+  //    endless "Catching up…" spinner or the misleading "isn't open" screen.
+  //    Checked BEFORE loading/night-null because those would mask it. Clears on
+  //    its own when useRoom's self-healing retry reconnects (no refresh). ──
+  const reachability = useReachability();
+  if (reachability === "unreachable") {
+    return <UnreachableScreen roomCode={roomCode} />;
+  }
 
   // ── Loading / not-joined screens ──
   if (snapshot.isLoading || deviceLoading) {
@@ -351,11 +363,15 @@ function RoomStateMachine({
   // surfaces render an unnumbered "in the mix" tag instead of "#0" while
   // the initial REST query is in flight, or when the player is missing from
   // the view (no game_participations row → silently absent forever).
-  const [scores, setScores] = useState<GameScoreRow[] | null>(null);
+  const [directScores, setDirectScores] = useState<GameScoreRow[] | null>(null);
   const currentGameId = currentGame?.id ?? null;
+  // Degraded network: prefer the server-route scores over the direct
+  // subscription. The subscription stays mounted so it's warm on recovery.
+  const { backupMode: scoresBackupMode, payload: scoresPayload } = useRoomFallback();
+  const scores = scoresBackupMode && scoresPayload ? scoresPayload.scores : directScores;
   useEffect(() => {
     if (!currentGameId) {
-      setScores(null);
+      setDirectScores(null);
       return;
     }
     const gameId = currentGameId;
@@ -368,7 +384,7 @@ function RoomStateMachine({
         .eq("game_id", gameId)
         .order("score", { ascending: false });
       if (cancelled) return;
-      setScores((data as GameScoreRow[] | null) ?? []);
+      setDirectScores((data as GameScoreRow[] | null) ?? []);
     }
     void load();
     const channel = supa
@@ -457,6 +473,10 @@ function RoomStateMachine({
         categories={snapshot.categories}
         joined={betweenView === "waiting"}
         onJoinSuccess={() => setOptimisticInGame2(true)}
+        // The same "Tonight's Topics" the TV/lobby show — here it resolves to the
+        // UPCOMING game 2's ready categories (selectLobbyTopicsFromRoom skips the
+        // done game 1) so both between-games looks can preview what's next.
+        topics={selectLobbyTopicsFromRoom(snapshot)}
       />
     );
   } else if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
@@ -1142,6 +1162,7 @@ function PlayerBetweenGamesWired({
   categories,
   joined,
   onJoinSuccess,
+  topics,
 }: {
   roomCode: string;
   me: PlayerRow;
@@ -1156,6 +1177,8 @@ function PlayerBetweenGamesWired({
   /** Called once the join API returns OK so the parent can flip
    *  optimistic state and stop rendering this screen. */
   onJoinSuccess?: () => void;
+  /** Upcoming game 2's ready topics — previewed on both looks. */
+  topics: LobbyTopic[];
 }) {
   const [submitting, setSubmitting] = useState(false);
 
@@ -1278,6 +1301,7 @@ function PlayerBetweenGamesWired({
         playerName={playerName}
         top={standings.top}
         you={standings.you}
+        topics={topics}
       />
     );
   }
@@ -1292,6 +1316,7 @@ function PlayerBetweenGamesWired({
       fastestSeconds={stats.fastestSeconds}
       onJoin={handleJoin}
       submitting={submitting}
+      topics={topics}
     />
   );
 }
@@ -1310,6 +1335,59 @@ function LoadingScreen({ roomCode }: { roomCode: string }) {
           <br />
           <span style={{ color: t.accent }}>up…</span>
         </Display>
+      </div>
+    </PhoneScreen>
+  );
+}
+
+function UnreachableScreen({ roomCode }: { roomCode: string }) {
+  const { t } = useTheme();
+  return (
+    <PhoneScreen>
+      <PhoneHeader eyebrow={`ROOM · ${formatRoomCode(roomCode)}`} />
+      <div
+        data-testid="player-unreachable"
+        role="status"
+        aria-live="polite"
+        style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 24 }}
+      >
+        <Eyebrow color={t.wrong} size={11}>
+          CAN&apos;T REACH THE SERVER
+        </Eyebrow>
+        <Display size={48} color={t.ink}>
+          Switch to a
+          <br />
+          <span style={{ color: t.accent }}>hotspot.</span>
+        </Display>
+        <div style={{ marginTop: 16, color: t.inkMid, fontSize: 15, lineHeight: 1.45 }}>
+          This Wi-Fi is blocking the game. Switch this phone to a personal
+          hotspot or cellular data — you&apos;ll reconnect automatically, no
+          refresh needed.
+        </div>
+        <div
+          style={{
+            marginTop: "auto",
+            padding: "16px 20px",
+            borderRadius: 14,
+            background: t.surface,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <span
+            style={{
+              width: 8,
+              height: 8,
+              borderRadius: 99,
+              background: t.pop,
+              animation: "tr1via-pulse 1.8s ease-in-out infinite",
+            }}
+          />
+          <span style={{ color: t.ink, fontSize: 14, fontWeight: 500 }}>
+            Trying to reconnect…
+          </span>
+        </div>
       </div>
     </PhoneScreen>
   );
@@ -1484,6 +1562,10 @@ function useAppSwitchTracking(playerId: string | null) {
  */
 function useMyAnswers(playerId: string | null, refreshKey: string | null): AnswerRow[] {
   const [rows, setRows] = useState<AnswerRow[]>([]);
+  // Degraded network: prefer the server-route payload (this player's answers)
+  // over the direct subscription, which is stalling. The subscription keeps
+  // running so it's warm when realtime recovers.
+  const { backupMode, payload } = useRoomFallback();
   useEffect(() => {
     if (!playerId) {
       setRows([]);
@@ -1527,12 +1609,13 @@ function useMyAnswers(playerId: string | null, refreshKey: string | null): Answe
       void supa.removeChannel(channel);
     };
   }, [playerId, refreshKey]);
-  return rows;
+  return backupMode && payload ? payload.myAnswers : rows;
 }
 
 /** Subscribes to this player's game_participations rows (which games they joined). */
 function useMyParticipations(playerId: string | null): ParticipationRow[] {
   const [rows, setRows] = useState<ParticipationRow[]>([]);
+  const { backupMode, payload } = useRoomFallback();
   useEffect(() => {
     if (!playerId) {
       setRows([]);
@@ -1574,7 +1657,7 @@ function useMyParticipations(playerId: string | null): ParticipationRow[] {
       void supa.removeChannel(channel);
     };
   }, [playerId]);
-  return rows;
+  return backupMode && payload ? payload.myParticipations : rows;
 }
 
 interface ChangePayload<T> {

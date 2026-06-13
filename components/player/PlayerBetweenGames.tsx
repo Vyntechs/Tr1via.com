@@ -8,7 +8,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme, Display, Eyebrow, Numeric } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
+import { categoryColor } from "@/lib/theme/categories";
 import type { StandingRow } from "@/lib/player/betweenGames";
+import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 
 const CHEERS = ["🔥", "👏", "🎉"] as const;
 
@@ -18,12 +20,17 @@ export interface PlayerBetweenGamesProps {
   top?: StandingRow[];
   /** The player's own row, pinned below the list when they rank past the cutoff. */
   you?: StandingRow | null;
+  /** Upcoming Game-2 ready topics — the same "Tonight's Topics" the venue TV and
+   *  lobby show. Renders a preview panel so a waiting player sees what Game 2 is
+   *  about. Empty/omitted → no panel (matches the lobby's empty-state). */
+  topics?: LobbyTopic[];
 }
 
 export function PlayerBetweenGames({
   playerName = "You",
   top = [],
   you = null,
+  topics = [],
 }: PlayerBetweenGamesProps = {}) {
   const { t } = useTheme();
   const [floats, setFloats] = useState<{ id: number; emoji: string }[]>([]);
@@ -85,6 +92,55 @@ export function PlayerBetweenGames({
           {top.map((row) => <Row key={`${row.rank}-${row.name}`} row={row} />)}
           {you && <Row row={you} pinned />}
         </div>
+
+        {topics.length > 0 && (
+          <div
+            data-testid="player-between-games-topics"
+            // flexShrink + scrollable inner list so a small phone with many
+            // topics scrolls this panel instead of clipping the cheer strip.
+            style={{ marginTop: 22, minHeight: 0, flexShrink: 1, overflowY: "auto" }}
+          >
+            <Eyebrow color={t.inkMute} size={10}>GAME 2 TOPICS</Eyebrow>
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
+              {topics.map((topic, i) => {
+                const bar = topic.color ?? categoryColor(topic.name);
+                return (
+                  <div
+                    key={`${topic.position}-${topic.topic}`}
+                    data-testid="player-between-games-topic"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      // Staggered fade-in only (global tr1via-rise keyframe) — no
+                      // infinite loop, so the phone stays calm and battery-easy.
+                      animation: `tr1via-rise .5s cubic-bezier(.2,.7,.3,1) ${i * 0.06}s both`,
+                    }}
+                  >
+                    <span
+                      aria-hidden
+                      style={{ flex: "none", width: 6, height: 22, borderRadius: 99, background: bar }}
+                    />
+                    <span
+                      style={{
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: 16,
+                        fontWeight: 600,
+                        letterSpacing: "-0.01em",
+                        color: t.ink,
+                      }}
+                    >
+                      {topic.topic}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
         <div style={{ marginTop: "auto", paddingTop: 18 }}>
           <Eyebrow color={t.inkMute} size={10}>SEND A CHEER</Eyebrow>

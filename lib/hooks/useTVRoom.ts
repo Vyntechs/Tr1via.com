@@ -21,6 +21,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
+import { withTimeout, BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
 
 const SAFETY_REFETCH_MS = 4000;
 
@@ -167,9 +168,16 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const fetchSnapshot = useCallback(async () => {
     if (!code) return;
     try {
-      const res = await fetch(`/api/tv/${code}/snapshot`, {
-        cache: "no-store",
-      });
+      // Bound the fetch so a hung request fast-fails to "error" (and the 4s
+      // safety poll auto-recovers) rather than spinning the TV forever. The TV
+      // reads server-side via Vercel, so it's immune to the venue WiFi that
+      // blocks the host/player's direct Supabase reads — this just guards the
+      // rarer hung-Vercel/DNS case.
+      const res = await withTimeout(
+        fetch(`/api/tv/${code}/snapshot`, { cache: "no-store" }),
+        BOOTSTRAP_TIMEOUT_MS,
+        "tv/snapshot",
+      );
       if (res.status === 404) {
         setStatus("not-found");
         setSnapshot(null);

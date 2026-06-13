@@ -147,6 +147,25 @@ describe("selectLobbyTopicsFromRoom", () => {
     ]);
   });
 
+  it("between games (game 1 done, game 2 ready, current = the done game) returns game 2's ready topics", () => {
+    // pickCurrentGame returns the most-recently-done game once none is live,
+    // so during between-games currentGame is the done game 1; the selector must
+    // still surface the UPCOMING game 2's ready topics for the preview.
+    const g1 = rGame("g1", 1, "done");
+    const s = rSnap({
+      games: [g1, rGame("g2", 2, "ready")],
+      currentGame: g1,
+      categories: [
+        rCat("c1", "g1", 0, "ready", "Old Game Topic", "Movies"),
+        rCat("c2", "g2", 0, "ready", "Fresh Board Topic", "Sports", "#5AA8E0"),
+        rCat("c3", "g2", 1, "draft", "Not Ready Yet", "Food", null),
+      ],
+    });
+    expect(selectLobbyTopicsFromRoom(s)).toEqual([
+      { name: "Sports", topic: "Fresh Board Topic", color: "#5AA8E0", position: 0 },
+    ]);
+  });
+
   it("follows the live currentGame when one is set", () => {
     const g2 = rGame("g2", 2, "live");
     const s = rSnap({
