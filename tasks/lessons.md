@@ -143,3 +143,8 @@ Reason: The black host screen came from null `night` after the direct reads fail
 Trigger: A "player stuck on a stale view" brief that says to OR a slow server field with "data already on hand."
 Rule: First confirm a fast LOCAL signal exists (and the broadcast-tag union carries it) and that the 15s heartbeat already self-heals — before adding an optimistic flip.
 Reason: The proposed game-ended OR was dead code (game-ended not in BroadcastTag union; handler never stamped lastBroadcast); the heartbeat self-heals. Real gap: the category preview.
+
+### one-session-owns-a-linear-task-parallelism-is-internal
+Trigger: Offering to "independently review" or otherwise running a linear task (validate→review→merge) across two separate Claude sessions Brandon drives.
+Rule: Don't. One session owns a linear task end-to-end; do fan-out via internal subagents/Workflow that report to me. Reserve separate sessions for genuinely INDEPENDENT tracks.
+Reason: Two sessions on one task forced Brandon to hand-carry the validator's summary into the reviewer and relay the go/no-go back — painful, inefficient courier work I created. Subagents report to me, never to his clipboard.
