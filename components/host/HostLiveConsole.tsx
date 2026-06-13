@@ -28,6 +28,7 @@ import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { deriveHostMode } from "@/lib/host/deriveHostMode";
 import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { useReachability } from "@/lib/realtime/reachability";
 import { RemovePlayerButton } from "./RemovePlayerButton";
 
 // The control strip sits over the console's hardcoded `#000` TV bezel in
@@ -238,7 +239,7 @@ function HostLiveConsoleInner({
               themeKey={themeKey}
             />
           ) : (
-            <DevPlaceholder />
+            <NoSnapshotPanel />
           )}
           {celebration && (
             <TVSectionComplete
@@ -755,10 +756,67 @@ function PlayersSheet({
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// Dev placeholder — shown in the /dev/host gallery where tvSnapshot is
-// not wired. Real /host/live/[nightId] always supplies a snapshot.
+// No-snapshot panel — fills the TV area when `tvSnapshot` is null.
+//
+// Two very different reasons the snapshot can be null:
+//   1. The browser→Supabase reads failed (restrictive venue WiFi) →
+//      reachability === "unreachable". Show Heather an ACTIONABLE message
+//      ("switch to a hotspot") instead of the cryptic black placeholder that
+//      looked like a crash during Heather's live show.
+//   2. The /dev/host gallery renders HostLiveConsole with no `useRoom` mounted
+//      → reachability stays undefined. Keep the original dev placeholder there.
 // ─────────────────────────────────────────────────────────────────────────
 
+function NoSnapshotPanel() {
+  const reachability = useReachability();
+  if (reachability === "unreachable") return <UnreachableConsole />;
+  return <DevPlaceholder />;
+}
+
+function UnreachableConsole() {
+  return (
+    <div
+      data-testid="host-unreachable"
+      role="status"
+      aria-live="polite"
+      style={{
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 14,
+        padding: "0 32px",
+        textAlign: "center",
+        color: "rgba(244,230,196,.92)",
+        fontFamily: "var(--font-sans)",
+      }}
+    >
+      <div style={{ fontSize: 28, fontWeight: 700, letterSpacing: "-0.01em" }}>
+        Can&rsquo;t reach the server
+      </div>
+      <div style={{ fontSize: 16, maxWidth: 460, lineHeight: 1.5, color: "rgba(244,230,196,.72)" }}>
+        This network is blocking the connection. Switch this laptop to a phone
+        hotspot or cellular — the game is safe and the screen will reconnect on
+        its own.
+      </div>
+      <div
+        style={{
+          marginTop: 6,
+          fontFamily: "var(--font-mono)",
+          fontSize: 12,
+          letterSpacing: "0.06em",
+          color: "rgba(244,230,196,.5)",
+        }}
+      >
+        Reconnecting automatically…
+      </div>
+    </div>
+  );
+}
+
+// Dev placeholder — shown in the /dev/host gallery where tvSnapshot is not
+// wired. Real /host/live/[nightId] always supplies a snapshot once reachable.
 function DevPlaceholder() {
   const { t } = useTheme();
   return (

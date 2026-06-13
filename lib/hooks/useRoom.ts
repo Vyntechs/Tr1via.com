@@ -25,7 +25,15 @@ import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
 import { useRevalidateOnFocus } from "@/lib/hooks/useRevalidateOnFocus";
 import { setChannelHealth, getChannelHealth } from "@/lib/realtime/channelHealth";
+import { setReachability, useReachability } from "@/lib/realtime/reachability";
+import { withTimeout, BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
 import { useFreshnessWatchdog } from "@/lib/hooks/useFreshnessWatchdog";
+import { useUnreachableRetry } from "@/lib/hooks/useUnreachableRetry";
+import { useRoomRoutePoll } from "@/lib/hooks/useRoomRoutePoll";
+import { pickCurrentGame } from "@/lib/room/pickCurrentGame";
+import { fetchRoomSnapshotPayload } from "@/lib/room/fetchRoomSnapshot";
+import { payloadToRoomSnapshot } from "@/lib/room/roomSnapshotPayload";
+import { publishRoomFallback, setBackupMode } from "@/lib/room/roomFallbackStore";
 import { clearEndedGameQuestions } from "@/lib/player/betweenGames";
 import type {
   AnswerRow,
@@ -92,6 +100,10 @@ export interface BroadcastTag {
   /** player-joined specific: ISO timestamp the row was inserted. */
   joinedAt?: string;
 }
+
+// Max random delay before the FIRST server-route fallback fetch, to de-sync a
+// whole room whose direct reads all fail at the same timeout (anti-stampede).
+const INITIAL_FALLBACK_SPREAD_MS = 2500;
 
 const EMPTY: RoomSnapshot = {
   night: null,
@@ -216,14 +228,73 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
     },
   });
 
+  // ── "Unreachable" detection + self-healing retry (ALL surfaces) ────────
+  // The watchdog/heartbeat/reconnect layers above only fire once a socket has
+  // CONNECTED and then gone quiet. They do NOT catch a restrictive venue
+  // network that blocks the browser→Supabase reads outright — the case that
+  // froze Heather's host console on the black "provide tvSnapshot" placeholder
+  // and spins a player's phone on "Catching up…" forever. bootstrap() (below)
+  // bounds those reads with `withTimeout` and flips the `reachability` signal
+  // to "unreachable" on a hang/failure, which surfaces the "switch to a
+  // hotspot" message on the ribbon + host banner/console. This retry then
+  // re-bootstraps on a jittered backoff so the message self-clears within a
+  // few seconds of the network returning — no manual refresh.
+  const reachability = useReachability();
+  const [recoveryTick, setRecoveryTick] = useState(0);
+  useUnreachableRetry({
+    enabled: reachability === "unreachable" && !!roomCode,
+    onRetry: () => setRecoveryTick((t) => t + 1),
+  });
+
+  // ── Backup mode: keep the game working via the server route (Phase 2) ──────
+  // When the DIRECT browser→Supabase reads degrade/fail, bootstrap() falls back
+  // to `GET /api/room/:code/snapshot` (same-origin → Vercel → Supabase, which
+  // survives the venue WiFi that blocks the direct line). While in backup mode
+  // we poll that route on a jittered ~5s cadence so the live game keeps updating
+  // (≈poll latency) instead of going black or prompting a network switch.
+  // "unreachable" (the switch-to-hotspot surface) now means EVEN the route
+  // failed. Recovery back to realtime is owned by the heartbeat re-bootstrap.
+  const [backupMode, setBackupModeState] = useState(false);
+  // Mirror to the module store so the aux consumer hooks (player answers /
+  // participations / scores, host board / scores / answers) read from the one
+  // fetched payload instead of each firing its own degraded request.
+  useEffect(() => {
+    setBackupMode(backupMode);
+  }, [backupMode]);
+  useRoomRoutePoll({
+    enabled: backupMode && !!roomCode,
+    fetchPayload: () => fetchRoomSnapshotPayload(parseRoomCode(roomCode as string)),
+    onPayload: (payload) => {
+      publishRoomFallback(payload);
+      setSnapshot(payloadToRoomSnapshot(payload));
+      // A route poll succeeded → the server is reachable; clear any hotspot tier.
+      setReachability("ok");
+    },
+    onError: () => {
+      // Even the route is failing now → true outage → surface the hotspot tier.
+      setReachability("unreachable");
+    },
+  });
+
   useEffect(() => {
     if (!roomCode || waitingForDevice) {
-      if (!roomCode) setSnapshot(EMPTY);
+      if (!roomCode) {
+        setSnapshot(EMPTY);
+        // No room to reach → clear any stale "unreachable" / backup mode so a
+        // fresh room doesn't inherit the previous one's failure state.
+        setReachability(undefined);
+        setBackupModeState(false);
+      }
       return;
     }
     const code = parseRoomCode(roomCode);
     let cancelled = false;
     let channelHandles: Array<() => void> = [];
+    // Aborts the same-origin night lookup on teardown so a hung Vercel/DNS
+    // request doesn't outlive this effect run. (The direct Supabase reads can't
+    // be aborted in this postgrest-js version; the browser's 6-connection
+    // per-host cap bounds any orphaned reads, and `withTimeout` bounds the wait.)
+    const bootstrapAbort = new AbortController();
 
     const supa = getSupabaseBrowser();
 
@@ -348,6 +419,33 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       });
     }
 
+    // Degraded/blocked DIRECT reads → keep the game working through the server
+    // route (Phase 2). Returns true if the route served a snapshot (→ backup
+    // mode), false if even the route failed (→ caller marks "unreachable").
+    async function tryRouteFallback(): Promise<boolean> {
+      try {
+        // Spread the herd: a whole room's direct reads fail at the SAME
+        // deterministic timeout, so without this every phone would hit the
+        // route in the same instant (a Supabase read-fan-out spike). A small
+        // per-client random delay de-syncs that first fetch; subsequent polls
+        // are already jittered. Bounded (≤ INITIAL_FALLBACK_SPREAD_MS) so a
+        // lone degraded client still recovers quickly.
+        await new Promise((r) => setTimeout(r, Math.random() * INITIAL_FALLBACK_SPREAD_MS));
+        if (cancelled) return true;
+        const payload = await fetchRoomSnapshotPayload(code, {
+          signal: bootstrapAbort.signal,
+        });
+        if (cancelled) return true;
+        publishRoomFallback(payload);
+        setSnapshot(payloadToRoomSnapshot(payload));
+        setReachability("ok");
+        setBackupModeState(true);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
     async function bootstrap() {
       // Look up the night by room code first via our admin-backed route —
       // bypasses RLS so we get the night id, host default theme, etc. in one
@@ -358,9 +456,34 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       // cookie). A `hosts!inner` join on the player client returns 406 from
       // PostgREST and the whole night row drops, which renders the lobby as
       // "That room isn't open."
-      const nightRes = await fetch(`/api/nights/by-code/${code}`);
+      // This lookup hits our Vercel route (same-origin, server-side) so it
+      // survives the venue WiFi that blocks the DIRECT Supabase reads below.
+      // Bound it anyway so a hung Vercel/DNS also fast-fails to "unreachable".
+      let nightRes: Response;
+      try {
+        nightRes = await withTimeout(
+          fetch(`/api/nights/by-code/${code}`, { signal: bootstrapAbort.signal }),
+          BOOTSTRAP_TIMEOUT_MS,
+          "nights/by-code",
+        );
+      } catch {
+        // The same-origin lookup itself failed → try the resilient room route
+        // before declaring "unreachable" (it does its own night lookup).
+        if (cancelled) return;
+        const served = await tryRouteFallback();
+        if (!cancelled && !served) {
+          setReachability("unreachable");
+          setSnapshot((prev) => ({ ...prev, isLoading: false }));
+        }
+        return;
+      }
       if (!nightRes.ok) {
-        if (!cancelled) setSnapshot({ ...EMPTY, isLoading: false });
+        // The server answered — we ARE reachable; the room just isn't open.
+        if (!cancelled) {
+          setReachability("ok");
+          setBackupModeState(false);
+          setSnapshot({ ...EMPTY, isLoading: false });
+        }
         return;
       }
       const lookup = (await nightRes.json()) as {
@@ -375,6 +498,107 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       // reveals concurrently. The `nights` query is a flat select so we
       // don't have to satisfy any FK-table RLS in the same request — the
       // host default theme already came back from the admin route above.
+      //
+      // These are DIRECT browser→Supabase reads — exactly what a restrictive
+      // venue network drops. `withTimeout` converts a silent hang into an
+      // "unreachable" signal within ~5s instead of a black host screen / an
+      // endless player spinner.
+      let reads: [
+        Awaited<ReturnType<typeof readNight>>,
+        Awaited<ReturnType<typeof readGames>>,
+        Awaited<ReturnType<typeof readCategories>>,
+        Awaited<ReturnType<typeof readPlayers>>,
+        Awaited<ReturnType<typeof readLiveQuestion>>,
+        Awaited<ReturnType<typeof readLastResolved>>,
+        Awaited<ReturnType<typeof readReveals>>,
+      ];
+      function readNight() {
+        return supa.from("nights").select("*").eq("id", nightId).single();
+      }
+      function readGames() {
+        return supa
+          .from("games")
+          .select("*")
+          .eq("night_id", nightId)
+          .order("game_no", { ascending: true });
+      }
+      function readCategories() {
+        return supa
+          .from("categories")
+          .select("*, games!inner(night_id)")
+          .eq("games.night_id", nightId)
+          .order("position", { ascending: true });
+      }
+      function readPlayers() {
+        return supa
+          .from("players")
+          .select("*")
+          .eq("night_id", nightId)
+          .is("removed_at", null)
+          .order("joined_at", { ascending: true });
+      }
+      function readLiveQuestion() {
+        return supa
+          .from("questions")
+          // Live question: omit correct_index — the answer must not reach the
+          // phone while the answer window is open (see PLAYER_QUESTION_COLUMNS).
+          .select(`${PLAYER_QUESTION_COLUMNS}, categories!inner(games!inner(night_id))`)
+          .eq("categories.games.night_id", nightId)
+          .not("played_at", "is", null)
+          .is("finished_at", null)
+          .maybeSingle();
+      }
+      function readLastResolved() {
+        return supa
+          .from("questions")
+          .select("*, categories!inner(games!inner(night_id))")
+          .eq("categories.games.night_id", nightId)
+          .not("finished_at", "is", null)
+          .order("finished_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+      }
+      function readReveals() {
+        return supa
+          .from("reveals")
+          .select("*, games!inner(night_id)")
+          .eq("games.night_id", nightId)
+          .order("occurred_at", { ascending: false })
+          .limit(1);
+      }
+      try {
+        reads = await withTimeout(
+          Promise.all([
+            readNight(),
+            readGames(),
+            readCategories(),
+            readPlayers(),
+            readLiveQuestion(),
+            readLastResolved(),
+            readReveals(),
+          ]),
+          BOOTSTRAP_TIMEOUT_MS,
+          "bootstrap-reads",
+        );
+      } catch {
+        // DIRECT reads degraded/blocked → keep the game working via the server
+        // route instead of going black. Only if the route ALSO fails do we
+        // surface the switch-to-hotspot tier (true outage).
+        if (cancelled) return;
+        const served = await tryRouteFallback();
+        if (!cancelled && !served) {
+          setReachability("unreachable");
+          setSnapshot((prev) => ({ ...prev, isLoading: false }));
+        }
+        return;
+      }
+
+      if (cancelled) return;
+      // Direct reads work → fully healthy. Clear any prior "unreachable" AND
+      // exit backup mode (stops the route poller, clears the fallback store so
+      // the aux hooks resume their direct reads + realtime).
+      setReachability("ok");
+      setBackupModeState(false);
       const [
         nightRow,
         gameRows,
@@ -383,54 +607,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
         liveQuestion,
         lastResolved,
         recentReveals,
-      ] = await Promise.all([
-        supa
-          .from("nights")
-          .select("*")
-          .eq("id", nightId)
-          .single(),
-        supa
-          .from("games")
-          .select("*")
-          .eq("night_id", nightId)
-          .order("game_no", { ascending: true }),
-        supa
-          .from("categories")
-          .select("*, games!inner(night_id)")
-          .eq("games.night_id", nightId)
-          .order("position", { ascending: true }),
-        supa
-          .from("players")
-          .select("*")
-          .eq("night_id", nightId)
-          .is("removed_at", null)
-          .order("joined_at", { ascending: true }),
-        supa
-          .from("questions")
-          // Live question: omit correct_index — the answer must not reach the
-          // phone while the answer window is open (see PLAYER_QUESTION_COLUMNS).
-          .select(`${PLAYER_QUESTION_COLUMNS}, categories!inner(games!inner(night_id))`)
-          .eq("categories.games.night_id", nightId)
-          .not("played_at", "is", null)
-          .is("finished_at", null)
-          .maybeSingle(),
-        supa
-          .from("questions")
-          .select("*, categories!inner(games!inner(night_id))")
-          .eq("categories.games.night_id", nightId)
-          .not("finished_at", "is", null)
-          .order("finished_at", { ascending: false })
-          .limit(1)
-          .maybeSingle(),
-        supa
-          .from("reveals")
-          .select("*, games!inner(night_id)")
-          .eq("games.night_id", nightId)
-          .order("occurred_at", { ascending: false })
-          .limit(1),
-      ]);
-
-      if (cancelled) return;
+      ] = reads;
 
       const games = (gameRows.data ?? []) as GameRow[];
       const categories = sanitizeCategoryRows(
@@ -757,13 +934,17 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
     void bootstrap();
     return () => {
       cancelled = true;
+      bootstrapAbort.abort();
       for (const teardown of channelHandles) teardown();
       channelHandles = [];
       // Clear health so the ribbon doesn't show stale "Reconnecting..." after
-      // navigation away from the room route.
+      // navigation away from the room route. NOTE: reachability is intentionally
+      // NOT reset here — this cleanup also fires on every re-bootstrap (dep
+      // change), and clearing it would flash the unreachable surface off→on
+      // between retries. It's reset only when there's no room (effect top).
       setChannelHealth(undefined);
     };
-  }, [roomCode, waitingForDevice, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick]);
+  }, [roomCode, waitingForDevice, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick]);
 
   return snapshot;
 }
@@ -819,17 +1000,3 @@ function applyRow<T extends { id: string }>(
   return [...merged].sort(cmp);
 }
 
-function pickCurrentGame(games: GameRow[]): GameRow | null {
-  const live = games.find((g) => g.state === "live");
-  if (live) return live;
-  // Fall back to the most recently ended game, then the lowest-game-no
-  // ready game. Keeps the TV from going blank between hands.
-  const done = [...games].filter((g) => g.state === "done").sort((a, b) => {
-    const aT = a.ended_at ?? "";
-    const bT = b.ended_at ?? "";
-    return bT.localeCompare(aT);
-  });
-  if (done[0]) return done[0];
-  const ready = games.find((g) => g.state === "ready");
-  return ready ?? games[0] ?? null;
-}

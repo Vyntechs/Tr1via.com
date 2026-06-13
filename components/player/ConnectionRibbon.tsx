@@ -19,16 +19,33 @@ export function ConnectionRibbon({ status }: ConnectionRibbonProps) {
   if (status === "online") return null;
 
   const reconnecting = status === "reconnecting";
-  const bg = reconnecting ? t.pop : t.wrong;
-  const label = reconnecting ? "Reconnecting…" : "You're offline";
-  const tail = reconnecting
-    ? "We'll send your answer as soon as the signal comes back."
-    : "Check Wi-Fi or signal — your answer is held locally until you're back.";
+  const backup = status === "backup";
+  const unreachable = status === "unreachable";
+  // Amber (calm) for the working-but-degraded tiers (backup / reconnecting);
+  // red for the user-actionable tiers (unreachable / offline).
+  const calm = backup || reconnecting;
+  const bg = calm ? t.pop : t.wrong;
+  const label = backup
+    ? "Slow connection"
+    : reconnecting
+      ? "Reconnecting…"
+      : unreachable
+        ? "Can't reach the server"
+        : "You're offline";
+  const tail = backup
+    ? "The game is still live — running on a backup connection. Hang tight."
+    : reconnecting
+      ? "We'll send your answer as soon as the signal comes back."
+      : unreachable
+        ? "Switch this device to a hotspot or cellular — it'll reconnect on its own."
+        : "Check Wi-Fi or signal — your answer is held locally until you're back.";
 
   return (
     <div
       role="status"
       aria-live="polite"
+      data-testid="connection-ribbon"
+      data-status={status}
       style={{
         position: "fixed",
         top: 0,
@@ -51,8 +68,8 @@ export function ConnectionRibbon({ status }: ConnectionRibbonProps) {
         animation: "tr1via-rise .25s cubic-bezier(.2,.7,.3,1) both",
       }}
     >
-      {reconnecting && <span aria-hidden="true">⟳</span>}
-      {!reconnecting && <span aria-hidden="true">●</span>}
+      {calm && <span aria-hidden="true">⟳</span>}
+      {!calm && <span aria-hidden="true">●</span>}
       <span>{label}</span>
       <span
         style={{

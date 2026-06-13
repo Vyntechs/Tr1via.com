@@ -24,6 +24,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRoom, type BroadcastTag } from "@/lib/hooks/useRoom";
+import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
   AddLatecomerModal,
@@ -62,9 +63,21 @@ export function HostLiveConsoleClient({
   themeKey,
 }: HostLiveConsoleClientProps) {
   const room = useRoom({ roomCode });
-  const [allQuestions, setAllQuestions] = useState<QuestionRow[]>([]);
-  const [answers, setAnswers] = useState<AnswerRow[]>([]);
-  const [scores, setScores] = useState<GameScoreRow[]>([]);
+  const [directAllQuestions, setAllQuestions] = useState<QuestionRow[]>([]);
+  const [directAnswers, setAnswers] = useState<AnswerRow[]>([]);
+  const [directScores, setScores] = useState<GameScoreRow[]>([]);
+  // Degraded network (Phase 2): useRoom is in backup mode and feeding `room`
+  // from the server route; prefer that same route payload for the host's
+  // auxiliary reads (board questions, scores, live answers) so the board +
+  // lock counts stay live instead of emptying out. Direct subscriptions stay
+  // mounted so they're warm when realtime recovers.
+  const { backupMode, payload: fallbackPayload } = useRoomFallback();
+  const allQuestions =
+    backupMode && fallbackPayload ? fallbackPayload.allQuestions : directAllQuestions;
+  const answers =
+    backupMode && fallbackPayload ? fallbackPayload.liveAnswers : directAnswers;
+  const scores =
+    backupMode && fallbackPayload ? fallbackPayload.scores : directScores;
   const [lastRevealAt, setLastRevealAt] = useState<number | null>(null);
   const [adjusting, setAdjusting] = useState<HostLivePlayer | null>(null);
   const [addingLatecomer, setAddingLatecomer] = useState(false);

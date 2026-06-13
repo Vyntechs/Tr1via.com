@@ -125,11 +125,31 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     await expect(phone1.getByTestId(TID.playerJoinGame2.root))
       .toBeVisible({ timeout: 15_000 });
 
+    // The join recap previews the UPCOMING game 2's ready topics (the seeded
+    // "Bonus round" category, topic "general trivia") — both not-opted phones
+    // see it. Proves the topics thread through PlayerJoinGame2 end-to-end.
+    await expect(phone1.getByTestId(TID.playerJoinGame2.topics))
+      .toBeVisible({ timeout: 15_000 });
+    expect(await phone1.getByTestId(TID.playerJoinGame2.topic).count())
+      .toBeGreaterThan(0);
+    await expect(phone1.getByText("general trivia")).toBeVisible();
+    await expect(phone3.getByTestId(TID.playerJoinGame2.topics))
+      .toBeVisible({ timeout: 15_000 });
+
     // Phones 1 and 2 opt in via the UI button (same path a real user takes —
     // this exercises the optimistic-update fix in PlayerJoinGame2Wired).
     // Phone 3 deliberately stays on PlayerJoinGame2.
     await phone1.getByTestId(TID.playerJoinGame2.submit).click();
     await phone2.getByTestId(TID.playerJoinGame2.submit).click();
+
+    // Once opted in, the continuing players move to the "You're in Game 2"
+    // waiting screen — which previews the same upcoming game-2 topics.
+    await expect(phone1.getByTestId(TID.playerBetweenGames.root))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(phone1.getByTestId(TID.playerBetweenGames.topics))
+      .toBeVisible();
+    expect(await phone1.getByTestId(TID.playerBetweenGames.topic).count())
+      .toBeGreaterThan(0);
 
     // ── Game 2: 7 reveals (1 category × 7) ────────────────────────────
     await startGame(hostPage, seed.game2.id);

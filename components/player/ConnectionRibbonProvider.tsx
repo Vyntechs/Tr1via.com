@@ -8,9 +8,13 @@
 import { ConnectionRibbon } from "./ConnectionRibbon";
 import { useConnectionStatus } from "@/lib/hooks/useConnectionStatus";
 import { useChannelHealth } from "@/lib/realtime/channelHealth";
+import { useReachability } from "@/lib/realtime/reachability";
+import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 
 export function ConnectionRibbonProvider() {
   const channelState = useChannelHealth();
-  const status = useConnectionStatus({ channelState });
+  const reachability = useReachability();
+  const { backupMode } = useRoomFallback();
+  const status = useConnectionStatus({ channelState, reachability, backupMode });
   return <ConnectionRibbon status={status} />;
 }
