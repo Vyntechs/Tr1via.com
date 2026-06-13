@@ -14,6 +14,7 @@ import {
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 
 export interface PlayerJoinGame2Props {
   themeKey?: ThemeKey;
@@ -35,6 +36,10 @@ export interface PlayerJoinGame2Props {
   onJoin?: () => void;
   /** True while a join request is in flight. Disables the CTA. */
   submitting?: boolean;
+  /** Upcoming Game-2 ready topics — the same "Tonight's Topics" the venue TV and
+   *  lobby show. Renders a preview panel so a player deciding whether to rejoin
+   *  sees what Game 2 is about. Empty/omitted → no panel. */
+  topics?: LobbyTopic[];
 }
 
 export function PlayerJoinGame2({
@@ -47,6 +52,7 @@ export function PlayerJoinGame2({
   fastestSeconds = 1.4,
   onJoin,
   submitting,
+  topics = [],
 }: PlayerJoinGame2Props = {}) {
   const { t } = useTheme();
   const ctaDisabled = !onJoin || submitting;
@@ -104,6 +110,54 @@ export function PlayerJoinGame2({
           Game 2 starts fresh — everyone back to zero. Same room, new board.{" "}
           <span style={{ color: t.ink, fontWeight: 600 }}>Your name is already in.</span>
         </div>
+
+        {topics.length > 0 && (
+          <div
+            data-testid="player-join-game2-topics"
+            // flexShrink + scrollable inner list so a small phone with many
+            // topics scrolls this panel instead of pushing the Join CTA away.
+            style={{ marginTop: 24, minHeight: 0, flexShrink: 1, overflowY: "auto" }}
+          >
+            <Eyebrow color={t.inkMid} size={10}>GAME 2 TOPICS</Eyebrow>
+            <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+              {topics.map((topic, i) => {
+                const bar = topic.color ?? categoryColor(topic.name);
+                return (
+                  <div
+                    key={`${topic.position}-${topic.topic}`}
+                    data-testid="player-join-game2-topic"
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      // Staggered fade-in only (global tr1via-rise keyframe).
+                      animation: `tr1via-rise .5s cubic-bezier(.2,.7,.3,1) ${i * 0.06}s both`,
+                    }}
+                  >
+                    <span
+                      aria-hidden
+                      style={{ flex: "none", width: 6, height: 22, borderRadius: 99, background: bar }}
+                    />
+                    <span
+                      style={{
+                        minWidth: 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        fontSize: 16,
+                        fontWeight: 600,
+                        letterSpacing: "-0.01em",
+                        color: t.ink,
+                      }}
+                    >
+                      {topic.topic}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       <button

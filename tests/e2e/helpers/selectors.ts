@@ -19,7 +19,8 @@ export const TID = {
   playerLocked: { root: "player-locked" },
   playerRevealCorrect: { root: "player-reveal-correct", points: "player-reveal-points" },
   playerRevealWrong: { root: "player-reveal-wrong" },
-  playerJoinGame2: { root: "player-join-game2", submit: "player-join-game2-submit" },
+  playerBetweenGames: { root: "player-between-games", topics: "player-between-games-topics", topic: "player-between-games-topic" },
+  playerJoinGame2: { root: "player-join-game2", submit: "player-join-game2-submit", topics: "player-join-game2-topics", topic: "player-join-game2-topic" },
   playerWinnerCard: { root: "player-winner-card", download: "player-winner-download" },
   playerRecap: { root: "player-recap" },
 
@@ -35,4 +36,13 @@ export const TID = {
   // Host
   hostDashboard: { root: "host-dashboard", newNightBtn: "host-new-night-btn", openRoomBtn: (nightId: string) => `host-open-room-${nightId}` },
   hostLiveConsole: { root: "host-live-console", revealBtn: "host-reveal-btn", undoBtn: "host-undo-btn", endEarlyBtn: "host-end-early-btn", question: (qid: string) => `host-question-${qid}` },
+
+  // Connection / reachability — the "can't reach the server, switch to hotspot"
+  // failure surfaces (player ribbon + full-screen states, host banner + console).
+  connection: {
+    ribbon: "connection-ribbon",
+    playerUnreachable: "player-unreachable",
+    hostUnreachable: "host-unreachable",
+    hostBackupBanner: "host-backup-banner",
+  },
 } as const;

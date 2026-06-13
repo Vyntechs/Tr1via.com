@@ -60,4 +60,52 @@ describe("useConnectionStatus", () => {
     act(() => setOnline(false));
     expect(result.current).toBe("offline");
   });
+
+  it("reports 'unreachable' when reachability is unreachable but the browser is online", () => {
+    const { result } = renderHook(() =>
+      useConnectionStatus({ reachability: "unreachable" }),
+    );
+    expect(result.current).toBe("unreachable");
+  });
+
+  it("prefers 'offline' over 'unreachable' when the browser is offline", () => {
+    const { result } = renderHook(() =>
+      useConnectionStatus({ reachability: "unreachable" }),
+    );
+    act(() => setOnline(false));
+    expect(result.current).toBe("offline");
+  });
+
+  it("prefers 'unreachable' over 'reconnecting' when reads fail AND the socket is flaky", () => {
+    const { result } = renderHook(() =>
+      useConnectionStatus({ channelState: "CHANNEL_ERROR", reachability: "unreachable" }),
+    );
+    expect(result.current).toBe("unreachable");
+  });
+
+  it("reports 'backup' when running via the server route (degraded but working)", () => {
+    const { result } = renderHook(() =>
+      useConnectionStatus({ channelState: "CHANNEL_ERROR", reachability: "ok", backupMode: true }),
+    );
+    // Working-via-route outranks the flaky-socket 'reconnecting' tier.
+    expect(result.current).toBe("backup");
+  });
+
+  it("prefers 'unreachable' over 'backup' when even the route is failing", () => {
+    const { result } = renderHook(() =>
+      useConnectionStatus({ reachability: "unreachable", backupMode: true }),
+    );
+    expect(result.current).toBe("unreachable");
+  });
+
+  it("returns to 'online' when reachability recovers to ok", () => {
+    const { result, rerender } = renderHook(
+      ({ reachability }: { reachability?: "ok" | "unreachable" }) =>
+        useConnectionStatus({ reachability }),
+      { initialProps: { reachability: "unreachable" as "ok" | "unreachable" | undefined } },
+    );
+    expect(result.current).toBe("unreachable");
+    rerender({ reachability: "ok" });
+    expect(result.current).toBe("online");
+  });
 });

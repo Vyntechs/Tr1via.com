@@ -107,6 +107,7 @@ Reason: Host flow was laptop-only; on phones the fixed grids (`240px 1fr`, `1fr 
 Trigger: Dispatching researchers (or reading code) to scope a feature/bug while the local working tree is a long-lived scratch branch.
 Rule: Point research at `origin/main` (fetch + a worktree off it), not the working checkout — a stale branch hides shipped features and inverts the plan.
 Reason: Researchers read the stale `june-reactive-water` tree and missed the trial+entitlement foundation already on main; the Stripe brief's "greenfield" premise was false until a worktree off origin/main surfaced it.
+UPDATE (live-incident analysis): before treating code reads as "what players saw," confirm the live PROD deployment SHA == local HEAD (`vercel inspect tr1via.com` → created time matches the commit). Local-clean ≠ prod-current.
 
 ### dba-is-not-a-separate-legal-entity
 Trigger: Setting the legal party on a Stripe account, Terms of Service, or any contract when the business operates under a DBA / assumed name (e.g. "Vyntechs").
@@ -122,3 +123,23 @@ Reason: Caught only by a real-browser console check (jsdom + HTTP 200 both staye
 Trigger: Writing a multi-row reassignment of `questions.point_value` (board reorder) given the `unique(category_id, point_value) deferrable initially deferred` index.
 Rule: supabase-js auto-commits each `.update()`, so "deferrable" doesn't save you — a transient A→200 while B holds 200 still trips. NULL every target value first (NULLs are exempt), THEN set each. Mirror `lib/host/pickQuestions.ts`.
 Reason: A naive per-row swap 500s on the unique index; clear-first is the established codebase idiom and needs no migration (reuses point_value, dodging this project's apply-on-deploy footgun).
+
+### jitter-the-initial-fallback-not-just-the-poll
+Trigger: Adding a server-route fallback for a whole room (many clients) that polls on a jittered cadence when realtime degrades.
+Rule: Jitter the FIRST fallback fetch too, not only the subsequent polls. A room's direct reads all fail at the SAME deterministic timeout, so every client's initial route fetch fires in the same instant — a Supabase read-fan-out spike — even though the polls are spread.
+Reason: Load test (N=8) put all 8 initial `/api/room` fetches in one 500ms bin (≈72 admin reads burst); a per-client random pre-delay (≤2.5s) spread them to maxBin=3. The poll jitter alone didn't cover the entry stampede.
+
+### route-survives-venue-block-direct-reads-dont
+Trigger: A venue network where the live game breaks but the site + TV still load.
+Rule: Only the live game does DIRECT browser→Supabase reads; a server route (browser→Vercel→Supabase) survives the block because Vercel→Supabase is server-to-server. Route the live game's reads through Vercel (like /tv) to keep it working; don't assume "switch networks" is the only fix.
+Reason: On 06-10 marketing + TV worked, only the live game went black — proof the Vercel→Supabase leg was fine and a route fallback keeps the game live (Phase 2). See [[reachability-keys-off-supa-reads-not-by-code]].
+
+### reachability-keys-off-supa-reads-not-by-code
+Trigger: Detecting "can't reach the server" on the host/player room surfaces (venue WiFi blocking Supabase).
+Rule: Key the unreachable signal off the DIRECT `supa.from(...)` read outcome, NOT the `/api/nights/by-code` response. By-code is same-origin (Vercel reads Supabase server-side) so it survives the block; only the browser's direct reads fail.
+Reason: The black host screen came from null `night` after the direct reads failed while by-code still returned 200. e2e must block `*.supabase.co` AND seed a real open night — the block doesn't touch the server route.
+
+### stale-view-fix-needs-a-real-local-signal
+Trigger: A "player stuck on a stale view" brief that says to OR a slow server field with "data already on hand."
+Rule: First confirm a fast LOCAL signal exists (and the broadcast-tag union carries it) and that the 15s heartbeat already self-heals — before adding an optimistic flip.
+Reason: The proposed game-ended OR was dead code (game-ended not in BroadcastTag union; handler never stamped lastBroadcast); the heartbeat self-heals. Real gap: the category preview.
