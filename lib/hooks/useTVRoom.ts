@@ -104,8 +104,14 @@ export interface TVAnswer {
   player_id: string;
   player_name: string;
   ms_to_lock: number;
+  /** Withheld (null) until the question is RESOLVED — the public TV feed
+   *  never ships correctness for a live question (anti-cheat). */
   is_correct: boolean | null;
-  chosen_index: 0 | 1 | 2 | 3;
+  /** The player's pick. Withheld (null) until the question is RESOLVED so a
+   *  player can't read opponents' answers mid-question off this public feed
+   *  (pentest 2026-06-13). The venue TV's live "locked in" display only needs
+   *  player_name + ms_to_lock; only the host-side mirror ever reads the pick. */
+  chosen_index: 0 | 1 | 2 | 3 | null;
 }
 
 export interface TVReveal {
