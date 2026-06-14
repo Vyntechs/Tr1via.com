@@ -223,15 +223,17 @@ function TVFinaleWinnerInner({
             </span>
 
             <div style={{ marginTop: 18, display: "flex", alignItems: "baseline", gap: 28 }}>
-              <Numeric
-                size={88}
-                weight={700}
-                color={t.accent}
-                tracking={-0.05}
-                style={{ lineHeight: 1 }}
-              >
-                {winner.score.toLocaleString()}
-              </Numeric>
+              <span data-testid="tv-finale-winner-score" style={{ display: "block" }}>
+                <Numeric
+                  size={88}
+                  weight={700}
+                  color={t.accent}
+                  tracking={-0.05}
+                  style={{ lineHeight: 1 }}
+                >
+                  {winner.score.toLocaleString()}
+                </Numeric>
+              </span>
               <span style={{ fontSize: 26, color: t.inkMid, fontWeight: 500 }}>points</span>
             </div>
 

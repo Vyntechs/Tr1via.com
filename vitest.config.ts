@@ -22,7 +22,14 @@ export default defineConfig({
     },
     globals: false,
     setupFiles: ["./tests/setup.ts"],
-    include: ["tests/unit/**/*.test.ts", "tests/unit/**/*.test.tsx", "tests/component/**/*.test.tsx"],
+    include: [
+      "tests/unit/**/*.test.ts",
+      "tests/unit/**/*.test.tsx",
+      "tests/component/**/*.test.tsx",
+      // Real-Postgres integration tests (pglite, in-process WASM — no Docker/CLI).
+      // Each file declares `// @vitest-environment node` for the WASM/fs surface.
+      "tests/integration/**/*.test.ts",
+    ],
     exclude: ["tests/e2e/**", "node_modules", ".next"],
   },
 });
