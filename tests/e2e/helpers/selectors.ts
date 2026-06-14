@@ -31,7 +31,7 @@ export const TID = {
   tvReveal: { root: "tv-reveal", correctAnswer: "tv-reveal-correct" },
   tvLeaderboard: { root: "tv-leaderboard", row: (rank: number) => `tv-leaderboard-row-${rank}` },
   tvIntermission: { root: "tv-intermission" },
-  tvFinaleWinner: { root: "tv-finale-winner", name: "tv-finale-winner-name" },
+  tvFinaleWinner: { root: "tv-finale-winner", name: "tv-finale-winner-name", score: "tv-finale-winner-score" },
 
   // Host
   hostDashboard: { root: "host-dashboard", newNightBtn: "host-new-night-btn", openRoomBtn: (nightId: string) => `host-open-room-${nightId}` },

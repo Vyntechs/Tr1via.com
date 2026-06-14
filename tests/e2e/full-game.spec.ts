@@ -177,5 +177,23 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     await endGame(hostPage, seed.game2.id);
     await expect(tvPage.getByTestId(TID.tvFinaleWinner.root))
       .toBeVisible({ timeout: 15_000 });
+
+    // Assert the WINNER'S VALUES, not just that the card rendered. The
+    // game_scores cross-game double-count passed CI for months precisely
+    // because this spec only checked visibility (lesson:
+    // e2e-assert-values-not-just-visibility-for-correctness). The per-game
+    // arithmetic itself is proven deterministically in
+    // tests/integration/game-scores-per-game.test.ts; here we guard the
+    // finale's identity end-to-end.
+    const finaleName = (await tvPage.getByTestId(TID.tvFinaleWinner.name).innerText()).trim();
+    const winnerName = finaleName.replace(/\.\s*$/, ""); // rendered as "Alex."
+    // Game 2's winner must be a player who opted INTO game 2 (Alex or Brooke).
+    // Casey opted out; "Devon" is the /dev demo default that must never leak.
+    expect(["Alex", "Brooke"]).toContain(winnerName);
+
+    const scoreText = await tvPage.getByTestId(TID.tvFinaleWinner.score).innerText();
+    const winnerScore = Number(scoreText.replace(/[^\d]/g, ""));
+    expect(Number.isInteger(winnerScore)).toBe(true);
+    expect(winnerScore).toBeGreaterThanOrEqual(0);
   });
 });
