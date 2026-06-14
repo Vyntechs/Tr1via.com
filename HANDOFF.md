@@ -1,70 +1,61 @@
-# TR1VIA — Handoff (2026-06-09 — Terms of Service shipped + merged; Phase B is next)
+# TR1VIA — Handoff (2026-06-14 — #105 scoring MERGED; #106 RLS answer-leak fix OPEN, pre-merge validation queued)
 
 **Next session, read in order: this → `MEMORY.md` (auto-loaded) → `CLAUDE.md` → grep `tasks/lessons.md` → `tasks/todo.md`.**
 
 ---
 
 ## ⭐ Where we are
-Working the **free/paid go-live in sequence A → B → C** (Brandon's chosen order). **Phase A (Terms of Service) is DONE, MERGED, and LIVE.** Phase B is next.
+This session: (1) **merged PR #105** (scoring per-game isolation) to `main` (squash `9de0f51`); (2) built + opened **PR #106**, the anti-cheat RLS fix that stops players reading the live answer; (3) Brandon queued a **pre-merge validation** task for next session to drive #106's merge risk to ~none.
 
-- **PR #98** (`feat(legal): publish Terms of Service at /terms`) **squash-merged** → `origin/main` = **`b0810d0`**. ToS is live at **tr1via.com/terms** (auto-deployed).
-- ToS is a hand-written server component mirroring the privacy page; plain-text mirror at `docs/legal/terms-of-service.md`. **Terms** linked beside **Privacy** in 5 places (host login, player join, pricing/themes/trivia-night footers).
-- Brandon approved the 4 flagged legal defaults as-is: **no refunds · 18+ hosts · liability cap (greater of 12-mo fees or $100) · attorney pass recommended (not yet done).**
+- **PR #106 (`fix/rls-correct-index-leak`)** — **OPEN + MERGEABLE. NOT merged.** Brandon merges (PR-first). Fix commit `3bbfaf5`, branched off merged `main`.
+- **PR #105** — **MERGED this session** (`9de0f51`). ⚠️ migration `0013` is **NOT yet applied to prod** — prod scoring still double-counts until applied by hand.
+- **Two prod migrations now pending a manual apply:** `0013` (scoring) + `0014` (RLS answer-lock). Batch them in ONE safe window, **outside the Wed 2026-06-17 show**. `0014` is **deploy-before-migrate** (see constraints).
 
-## ⭐ Immediate next step — Phase B (part 1): make public signup safe, then merge it
-**The signup code already exists but is UNMERGED and has a known security hole that must be fixed first.**
-- The signup work sits in worktree `.claude/worktrees/pivot-accounts-auth` (commit `6397c02`, LOCAL ONLY): `app/api/auth/register/route.ts` + `app/(host)/login/page.tsx` (Google + password + register) + 11 tests. It was built off **pre-billing** main → must be **replayed cleanly** onto current `origin/main`, not merged with its divergent history.
-- **SECURITY GATE (fix before signup merges):** `app/api/auth/founder-login/route.ts` signs in ANY email that has a hosts row **without a password check**. Once public register ships, a stranger could sign in as any self-registered host just by typing their email. This touches Brandon's + the first host's login → **plan the fix and get Brandon's approval BEFORE writing code.** Recommended zero-lockout approach: tag self-registered accounts; founder-login refuses passwordless login for them; founder + the first host keep their magic-link path.
+## ⭐ Immediate next step (Brandon's queued brief): PRE-MERGE validation of #106 to make merge risk ~none
+Validate #106 on a **throwaway Supabase copy** (preview branch — NOT prod, NOT the first host's data), proving the parts the local pglite tests could NOT cover. Exact first actions a fresh agent runs:
+1. `gh pr view 106` + read memory `anti-cheat-sweep-2026-06-13-open-siblings` + grep `tasks/lessons.md` for `rls-is-column-blind-revoke-the-column`, `revoke-migration-deploy-client-before-migrate`, `verdict-ui-must-hold-when-both-signals-absent`.
+2. Stand up a Supabase **preview branch** (confirm the small cost with Brandon FIRST), apply migration `0014` to it. **Never prod.**
+3. Prove on the real stack (as `anon` player + `authenticated` host), via BOTH raw SQL AND the PostgREST web API: player is DENIED `correct_index` (live + resolved) but reads the safe columns; host still reads it.
+4. Prove the **realtime** feed never delivers `correct_index` to a player (pglite couldn't test this).
+5. Prove the **browser reveal flow** on a preview deploy pointed at the throwaway DB: correct player sees CORRECT (never a "WRONG"/blank flash), fresh-join-mid-reveal sees the highlighted answer, and a hand-written anon answer query during the live window is DENIED. (This step moves risk "low → none".)
+6. Confirm + write the **deploy-before-migrate** rollout sequence (batched with `0013`). Tear down the throwaway copy. Produce a validation report: each area PROVEN (with evidence) or "DO NOT MERGE" + the defect.
+Full brief is in `tasks/todo.md`.
 
-### Copy-paste brief for Phase B part 1 (set `/effort xhigh`):
-```
-Phase B (part 1 of free/paid go-live): make public signup safe, then merge it.
+## What shipped in PR #106 (verified locally this session)
+- `supabase/migrations/0014_questions_withhold_correct_index_from_players.sql` — column-level fix: `revoke select on questions from anon; grant select (<14 cols, all EXCEPT correct_index>) to anon`. Host (`authenticated`) + `service_role` untouched. Instant, no rewrite/backfill, reversible.
+- `tests/integration/questions-correct-index-rls.test.ts` — **real Postgres via pglite**, reproduces the `anon` player role (device header + RLS membership). **RED on 0002** (player reads `correct_index: 2` on the live question), **GREEN on 0014** (denied live + resolved; safe cols still read; `authenticated` host still reads it).
+- `lib/hooks/useRoom.ts` — players can't read `correct_index` off the row anymore, so: `readLastResolved` dropped `select('*')` → `PLAYER_QUESTION_COLUMNS`; new `readResolvedAnswer()` sources the answer from the `resolve` reveal metadata; `refreshLiveState` no-hint fallback uses it; merged into bootstrap.
+- `app/api/games/[id]/end-early/route.ts` — now broadcasts `correctIndex` like `resolve` already does.
+- `app/(player)/room/[code]/page.tsx` — `RevealView` holds a neutral "revealing…" frame (`RevealPendingView`) when `correct_index` hasn't landed, so a correct player is never flashed "WRONG" with a blank answer (review-driven hardening; also fixes a latent pre-existing edge).
 
-Goal: A stranger can register as a free host (email/password or Google) with NO way to hijack an existing host's account — signup code merged to main behind a PR, but NOT yet advertised publicly. the first host and the founder are completely unaffected.
+**Verified by:** `npx vitest run` → 123 files, **745 passed** / 8 skipped (was 741; +4). `npx tsc --noEmit` clean except pre-existing `HostHomeClient-founder-build` errors. RED→GREEN watched directly. Two adversarial reviews (correctness + silent-failure); the silent-failure pass caught the "correct player shown WRONG" regression → hardened (above).
 
-Scope:
-- app/api/auth/founder-login/route.ts — close the passwordless-login hole.
-- The unmerged pivot-accounts-auth worktree (commit 6397c02): app/api/auth/register/route.ts, app/(host)/login/page.tsx + tests — replay cleanly onto CURRENT origin/main (built off pre-billing main).
-
-Out of scope: Do NOT touch the first host's or the founder's account/data, players, or the game state machine. Do NOT build email infra (Zoho/ZeptoMail/DNS), change Supabase dashboard settings, or touch billing — later Phase B steps. Do NOT advertise/link public signup yet. Do NOT delete or recreate any auth user.
-
-Steps:
-1. FIRST, plan only — do not write code yet: re-verify current /api/auth/founder-login behavior and the pivot-accounts-auth register code, then propose a zero-lockout fix for the passwordless hole (e.g. tag self-registered accounts; founder-login refuses passwordless for them; founder + the first host keep magic-link). Write to tasks/todo.md and WAIT for my approval.
-2. After approval: implement the security fix with tests (RED first).
-3. Replay the signup work (register route + login page + tests) cleanly onto current origin/main as one PR — don't merge divergent pre-billing history.
-4. Open the PR; I review + merge.
-
-Verify by: Full test suite green (incl. new tests). On LOCAL dev (not prod): a new email/password signup creates a hosts row with is_paywall_bypassed=false, AND a self-registered email is REFUSED on the passwordless magic path while a founder/comped email still signs in. Do not run a prod login test or full-flow-prod this week (the first host is building live).
-```
-
-## Phase B remaining (later, NOT part 1)
-- **Email infra (§5.3):** Brandon buys Zoho Mail Lite inbox + creates ZeptoMail account + adds SPF/DKIM DNS. Then wire Supabase custom SMTP to ZeptoMail + update privacy policy to name ZeptoMail. Real email confirmation for new hosts depends on this.
-- **Supabase dashboard toggles (Brandon):** enable Google provider + client ID/secret; add `https://tr1via.com/auth/callback` to redirect allowlist; turn on email confirmation.
-
-## Phase C (billing go-live) — verified state + what's left
-- **Verified this session (read-only, prod):** all 5 hosts currently have AI. **the first host, founder, and Brandon's gmail are comped** ✓. The 2 non-comped (`the***@gmail`, `nic***@gmail`, created 06-08/09) are **Brandon's own test accounts** on active trials → ignore/clean up, no go-live concern.
-- **No `is_paid` column** — entitlement derives "paid" from `subscription_status IN ('active','trialing')`. Columns on `hosts`: `is_paywall_bypassed`, `role`, `subscription_status`, `stripe_customer_id`, `stripe_subscription_id`, `current_period_end`, `trial_ends_at`.
-- **Stripe account:** exists as `Tr1via.com` (`acct_1TgCkjQpJ8eXP22U`). Read-only MCP only sees TEST mode (`livemode:false`). **Live activation NOT confirmed** — Brandon to verify/activate from the dashboard under the legal entity.
-- **Legal entity decided:** Brandon personally, **sole proprietor d/b/a Vyntechs (Texas)**. (A DBA is not a separate entity — see lessons.)
-- **Go-live still blocked on:** live Stripe activation + doing it *after* the first host's show this week (prod env change near her live game = risk). The flip itself is ~10 min (live product/price/webhook + prod `STRIPE_*` env).
+## ⚠️ Honest verification gap (what the queued validation closes)
+The DB security fix is rigorously proven on real Postgres. The **client reveal flow** (realtime leg, PostgREST `select` behavior, on-phone reveal in a browser) is review-checked + suite-green + type-clean, but its authoritative behavioral check needs a **real Supabase instance** — `useRoom` is a realtime hook with no unit harness, and pglite can't exercise Realtime/PostgREST. That is exactly the queued pre-merge validation. Do NOT claim the reveal flow is "verified on a real instance" yet — it isn't.
 
 ## Hard constraints
-- **PR-first, never push/merge `main` yourself** — Brandon merges. (He merged #98 himself.)
-- **NEVER put `sk_test_` keys in PROD env.** Test keys → preview only; live keys → prod at go-live.
-- Entitlement is ALWAYS `founder OR comped OR paid OR active-trial`, founder/comped checked FIRST — the first host (comped) can never be locked out.
-- **the first host is building a live game this week** — no prod login tests, no `full-flow-prod` (founder-collision risk), no prod env changes until her show is done.
+- **PR-first; Brandon merges.** Don't merge #106; don't apply `0013`/`0014` to prod without his go.
+- **`0014` is DEPLOY-BEFORE-MIGRATE** (inverts `merge-is-not-migrated`): it REMOVES a privilege the old client relies on. Apply `0014` only AFTER #106's merge has deployed (new client live). If applied first, old client's `select('*')` 401s (degrades to the admin route, not catastrophic). Lesson `revoke-migration-deploy-client-before-migrate`.
+- **Migrations don't auto-apply on deploy.** Apply `0013` + `0014` by hand, batched, **outside / not near the Wed 2026-06-17 show.**
+- **Validate on a throwaway Supabase copy, never prod; never touch the first host's data.**
+- Fan out via internal subagents/Workflow, never a second human-driven session.
 
-## Git state (verified + synced 2026-06-09)
-- `origin/main` = **`b0810d0`** (ToS #98). Start Phase B from a fresh branch off `origin/main`.
-- Current checkout is the merged `feat/terms-of-service` branch — safe to delete; create the Phase B branch off `origin/main`.
-- **Stash `stash@{0}`** holds Brandon's pre-session uncommitted edits (HANDOFF.md + tasks/lessons.md + scratch files), stashed off `fix/reroll-stale-questions-404` to build the ToS on a clean branch. Restore with `git stash pop` when back on that branch. (This handoff overwrites the working-tree HANDOFF.md regardless.)
-- Billing worktree `.claude/worktrees/stripe-billing` is fully merged (#92) → safe to remove. `pivot-accounts-auth` worktree is NEEDED for Phase B (don't remove yet).
+## Still open — verified, separate tracks (lower priority)
+- **#2 HIGH (client, no migration):** in-game reveal total + `/won`/`/recap` *secondary* stats sum both games (`app/(player)/room/[code]/page.tsx` `sumAwarded`; `useMyAnswers` night-wide). Headline score already correct.
+- **#3 HIGH (client, no migration):** host console board shows earlier-resolved cells re-clickable ~15s after resolve (`HostLiveConsoleClient.tsx` `allQuestions` keyed on `[room.games]`); also delays End-Game ~15s. `/tv/[code]` not affected.
+- **#4 MED (client):** dropped Game-2 category realtime event can strand a player on "Waiting…"; self-heals in ≤15s.
+- **Lower-priority anti-cheat:** unauth `/api/games/[id]/locks` (roster+timing). `/api/questions/[id]/resolve` griefing is **self-defeating** (resolving closes answering room-wide) AND legitimately player-called on timer-zero — can't just add an owner guard.
+- **BROAD pre-customer (BWW) readiness pass** — GATED: only meaningful after #106 + #2 + #3 ship.
+
+## Git state (2026-06-14)
+- `origin/main` = **`9de0f51`** (PR #105) — live on prod (but `0013` not yet applied to prod DB).
+- **PR #106 OPEN** from `fix/rls-correct-index-leak` (`3bbfaf5`), mergeable, CI green (GitGuardian + Vercel). The 5 fix files are the only code in the PR; session docs (HANDOFF/lessons/todo) are committed separately on the branch by `/done`.
 
 ## Lessons logged this session
-- `dba-is-not-a-separate-legal-entity` — the legal party on Stripe/ToS is the individual d/b/a the trade name, not the DBA itself.
+`rls-is-column-blind-revoke-the-column`, `revoke-migration-deploy-client-before-migrate`, `verdict-ui-must-hold-when-both-signals-absent`.
 
 ## Skipped/Failed
-None. Phase A complete and merged. Phase C live steps intentionally deferred (blocked on Stripe activation + the first host's week).
+None failed. By design not done: didn't merge #106 (Brandon's), didn't apply `0013`/`0014` to prod (post-merge, batched, outside the show), didn't run the real-instance reveal smoke (that IS the queued pre-merge validation).
 
 ## Resume prompt
 Read HANDOFF.md in full and tell me where we left off.

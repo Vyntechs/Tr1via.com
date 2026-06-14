@@ -98,6 +98,21 @@ Rule: That guard diffs against a local-only `marketing-base` git tag (unpushed �
 Reason: The merged guard keys off a fixed tag, so it red-flags ALL later backend work locally though it's a no-op in CI; cost a diagnosis loop before the paywall build could verify.
 UPDATE (host-mobile pass): the scope-guard `describe` was RETIRED — its job ended at merge and it blocked sanctioned host edits. Only the SEO checks remain in that file. No tag to delete now.
 
+### rls-is-column-blind-revoke-the-column
+Trigger: Hiding ONE secret column (e.g. answer) from a role while the row itself must stay readable (live question still needs prompt/options).
+Rule: RLS is row-level only. Use column privileges: `revoke select on T from <role>` then `grant select (every col EXCEPT secret) on T to <role>`. Postgres can't subtract one column from a relation-wide grant.
+Reason: questions_player_read gated on played_at exposed correct_index to any anon player; the only column-level lock is the explicit re-grant (migration 0014, players=anon, host=authenticated keeps it).
+
+### revoke-migration-deploy-client-before-migrate
+Trigger: A migration REMOVES a privilege/column the currently-deployed client still reads (the reverse of an additive migration).
+Rule: Deploy the new client FIRST, then apply the migration. Applying first makes the old client's `select('*')`/secret-column reads 401. (merge→Vercel deploys, then apply by hand — natural order is safe; never apply before the deploy lands.)
+Reason: 0014 revokes anon's correct_index; the old player client's `readLastResolved select('*')` 401s once it lands (degrades to the admin route, but deploy-first avoids it entirely). Inverts [[merge-is-not-migrated]]'s usual flow.
+
+### verdict-ui-must-hold-when-both-signals-absent
+Trigger: A right/wrong (binary) reveal computes from a client field OR'd with a server echo (see trust-client-data-over-async-echo) and a change can make BOTH momentarily absent.
+Rule: When neither signal is present yet, render a neutral holding frame — never a definitive verdict. `chosen === undefined` is false, so a correct player flashes "WRONG" with a blank answer.
+Reason: Migration 0014 stripped correct_index from the player row, reintroducing a window where correct_index AND is_correct are both unset on fresh-join; RevealView now guards on `typeof correct_index !== "number"`.
+
 ### host-screens-inline-styles-need-usemediaquery-not-media-queries
 Trigger: Making a host-laptop screen (login, onboarding, dashboards, LaptopShell) responsive for mobile.
 Rule: These screens are pure inline styles — CSS media queries can't reach them. Gate layout props on `useMediaQuery(...)` from `@/components/system/useMediaQuery` (defaults false→desktop on SSR). Keep the desktop branch's literal values so desktop stays byte-identical (verify via before/after 1280px screenshot SHA match).
@@ -148,3 +163,23 @@ Reason: The proposed game-ended OR was dead code (game-ended not in BroadcastTag
 Trigger: Offering to "independently review" or otherwise running a linear task (validate→review→merge) across two separate Claude sessions Brandon drives.
 Rule: Don't. One session owns a linear task end-to-end; do fan-out via internal subagents/Workflow that report to me. Reserve separate sessions for genuinely INDEPENDENT tracks.
 Reason: Two sessions on one task forced Brandon to hand-carry the validator's summary into the reviewer and relay the go/no-go back — painful, inefficient courier work I created. Subagents report to me, never to his clipboard.
+
+### fetch-doesnt-throw-on-http-error-catch-only-fallback-misses-it
+Trigger: Wrapping a `fetch()` in a resilient retry/route-fallback but wiring that fallback only inside the `catch` block.
+Rule: `fetch` rejects ONLY on transport failure/timeout, never on an HTTP non-2xx — a server-answered 4xx/5xx skips a catch-only fallback and lands in the `!res.ok` branch with no retry. Handle both.
+Reason: `useRoom`'s by-code `tryRouteFallback` is catch-only, so a transient route 5xx on bad WiFi still hard-renders "room isn't open" — the still-open join-path fast-follow surfaced during the PR #103 review.
+
+### logged-lesson-is-not-a-shipped-fix
+Trigger: A bug pattern already documented in tasks/lessons.md (a past diagnosis), assumed to be fixed.
+Rule: A logged lesson records that something was UNDERSTOOD, not that the fix shipped. Verify the fix exists in code/migrations before trusting it; periodically re-audit the actual artifact.
+Reason: `view-leftjoin-filter-trap` was diagnosed and lessoned, but `game_scores` (0001_init.sql) was never redefined — the CRITICAL 2-game score double-count is still live in prod (foundation audit 2026-06-13).
+
+### e2e-assert-values-not-just-visibility-for-correctness
+Trigger: Writing or relying on an e2e covering a correctness-critical path (scores, winners, money, counts).
+Rule: Assert the actual VALUE (name/number), not just that the element rendered. "Winner card is visible" passes even when the winner and score are wrong.
+Reason: `tests/e2e/full-game.spec.ts` plays game1→game2→finale but only checks the winner card is visible, so the `game_scores` double-count passed CI undetected.
+
+### test-sql-views-on-pglite-not-mocked-client
+Trigger: Needing to test a Postgres view / SQL aggregate (e.g. `game_scores`) the mocked supabase-js client can't exercise, with no Docker/CLI available.
+Rule: Use `@electric-sql/pglite` (real Postgres in WASM, devDep). Stub `auth.users` + `extensions` schema, apply the actual migration files, seed, assert. Runs in normal `npm test`/CI.
+Reason: The `game_scores` double-count shipped because mocked unit tests can't run a view; pglite gave a deterministic RED→GREEN proof in-process — no cloud branch or Docker (PR #105).
