@@ -1036,6 +1036,20 @@ function RevealView({
   // Use the player's saved scramble when we have an answer; otherwise compute
   // it deterministically so the correct slot still maps correctly.
   const scramble = myAnswer?.scramble ?? scrambleFor(question.id, player.id);
+
+  // The answer (correct_index) reaches the player post-resolve via the resolve/
+  // end-early broadcast hint or the 'resolve' reveal metadata — players can't
+  // read it off the questions row (migration 0014). In the rare window before it
+  // lands (a transient reveal-read miss, or a not-yet-joined spectator), do NOT
+  // compute a right/wrong verdict: with correct_index absent, `wasCorrect` below
+  // would flip a player who picked correctly to "WRONG" with a blank answer —
+  // the exact live complaint documented at `wasCorrect`. Hold on a neutral frame
+  // instead; the broadcast / 15s heartbeat fills correct_index in (usually
+  // instant), and this re-renders into the real reveal.
+  if (typeof question.correct_index !== "number") {
+    return <RevealPendingView category={category.name} />;
+  }
+
   const correctSlot = correctSlotFor(scramble as number[], question.correct_index) as
     | 1
     | 2
@@ -1103,6 +1117,31 @@ function RevealView({
       rank={rank}
       totalScore={totalScore}
     />
+  );
+}
+
+// ─── REVEAL PENDING ──────────────────────────────────────────────────────
+// Brief holding frame for the window after a question resolves but before the
+// answer (correct_index) has reached this device — see RevealView's guard.
+// Never shows a right/wrong verdict, so a correct player is never flashed as
+// "wrong" while the answer is still in flight.
+
+function RevealPendingView({ category }: { category: string }) {
+  const { t } = useTheme();
+  return (
+    <PhoneScreen>
+      <PhoneHeader eyebrow={category.toUpperCase()} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
+        <Display size={52} color={t.ink}>
+          Revealing the
+          <br />
+          <span style={{ color: t.accent }}>answer…</span>
+        </Display>
+        <div style={{ marginTop: 14, color: t.inkMid, fontSize: 15, lineHeight: 1.45 }}>
+          Locking in the results.
+        </div>
+      </div>
+    </PhoneScreen>
   );
 }
 

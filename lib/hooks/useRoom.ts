@@ -330,6 +330,39 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
      * read access. Called as a fallback whenever a broadcast event arrives,
      * since postgres_changes can drop events for device-authed players.
      */
+    /**
+     * Player-safe source of a RESOLVED question's answer.
+     *
+     * Players (the `anon` role) can no longer read questions.correct_index off
+     * the row — migration 0014 (questions_withhold_correct_index_from_players)
+     * closed the anti-cheat leak. After a question resolves the answer is public
+     * via the 'resolve' reveal's metadata (reveals_read lets joined players read
+     * it, and that row only exists post-resolve), so we read it there instead of
+     * the questions row. Returns undefined if the question isn't resolved yet or
+     * the reveal isn't readable. The host (authenticated) could still read the
+     * column directly, but this path works for both and keeps one code path.
+     */
+    async function readResolvedAnswer(questionId: string): Promise<number | undefined> {
+      const { data, error } = await supa
+        .from("reveals")
+        .select("metadata")
+        .eq("question_id", questionId)
+        .eq("event", "resolve")
+        .order("occurred_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) {
+        // A real read failure (RLS denial / network) — distinct from a reveal
+        // that simply isn't written yet (data null, no error). Surface it with
+        // context; the reveal heals on the next broadcast / 15s re-bootstrap.
+        console.warn("readResolvedAnswer: resolve reveal read failed", { questionId, error });
+        return undefined;
+      }
+      const ci = (data as { metadata?: { correct_index?: number } } | null)?.metadata
+        ?.correct_index;
+      return typeof ci === "number" ? ci : undefined;
+    }
+
     async function refreshLiveState(
       nightId: string,
       questionId?: string,
@@ -358,22 +391,19 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       let nextQ = (qRes.data ?? null) as QuestionRow | null;
       // The fetch above omits correct_index. Once the question is FINISHED the
       // answer is public (the reveal is showing), so RevealView needs it back.
-      // Prefer the broadcast's value; otherwise (end-early, heartbeat) fetch it.
+      // Prefer the broadcast's value; otherwise (heartbeat, any no-hint path)
+      // read it from the 'resolve' reveal — players can't read it off the
+      // questions row anymore (migration 0014).
       if (nextQ?.finished_at) {
         let ci = correctIndexHint;
         if (typeof ci !== "number") {
-          const { data: ans, error: ansErr } = await supa
-            .from("questions")
-            .select("correct_index")
-            .eq("id", nextQ.id)
-            .maybeSingle();
+          ci = await readResolvedAnswer(nextQ.id);
           if (cancelled) return;
-          if (ansErr) {
+          if (typeof ci !== "number") {
             // Don't blank the reveal silently — surface it. The 15s heartbeat
-            // re-bootstrap (resolved query keeps select('*')) heals the row.
-            console.warn("reveal correct_index fetch failed; healing on re-bootstrap", ansErr);
+            // re-bootstrap heals the row once the 'resolve' reveal lands.
+            console.warn("reveal answer unavailable from resolve reveal; healing on re-bootstrap");
           }
-          ci = (ans as { correct_index: number } | null)?.correct_index;
         }
         if (typeof ci === "number") {
           nextQ = { ...nextQ, correct_index: ci as 0 | 1 | 2 | 3 };
@@ -551,7 +581,10 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       function readLastResolved() {
         return supa
           .from("questions")
-          .select("*, categories!inner(games!inner(night_id))")
+          // Omit correct_index: the player (anon) role can't read it off the
+          // row anymore (migration 0014), and `select('*')` would 401 for them.
+          // The answer is merged back from the 'resolve' reveal below.
+          .select(`${PLAYER_QUESTION_COLUMNS}, categories!inner(games!inner(night_id))`)
           .eq("categories.games.night_id", nightId)
           .not("finished_at", "is", null)
           .order("finished_at", { ascending: false })
@@ -617,9 +650,20 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       const currentQuestion = sanitizeQuestionRow(
         liveQuestion.data as (QuestionRow & { categories?: unknown }) | null,
       );
-      const lastResolvedQuestion = sanitizeQuestionRow(
+      let lastResolvedQuestion = sanitizeQuestionRow(
         lastResolved.data as (QuestionRow & { categories?: unknown }) | null,
       );
+      // The read above omits correct_index (players can't read it off the row —
+      // migration 0014). On a fresh join / re-bootstrap mid-reveal there's no
+      // broadcast to carry the answer, so recover it from the 'resolve' reveal
+      // metadata, which is public post-resolve. Keeps RevealView's highlight.
+      if (lastResolvedQuestion && typeof lastResolvedQuestion.correct_index !== "number") {
+        const ci = await readResolvedAnswer(lastResolvedQuestion.id);
+        if (cancelled) return;
+        if (typeof ci === "number") {
+          lastResolvedQuestion = { ...lastResolvedQuestion, correct_index: ci as 0 | 1 | 2 | 3 };
+        }
+      }
       const reveals = (recentReveals.data ?? []) as Array<
         RevealRow & { games?: unknown }
       >;
@@ -738,10 +782,17 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
             event: "end-early",
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
+            correctIndex:
+              typeof p.correctIndex === "number" ? p.correctIndex : undefined,
           });
-          // End-early = manual reveal of the answer. Pull the latest
-          // question state so the reveal screen renders without delay.
-          void refreshLiveState(nightId, String(p.questionId));
+          // End-early = manual reveal of the answer. Pull the latest question
+          // state so the reveal renders without delay; pass the broadcast's
+          // correctIndex (players can't read it off the row — migration 0014).
+          void refreshLiveState(
+            nightId,
+            String(p.questionId),
+            typeof p.correctIndex === "number" ? p.correctIndex : undefined,
+          );
         })
         .on("broadcast", { event: "game-ended" }, () => {
           // Game state flipped to 'done' on the server. Refresh games rows
