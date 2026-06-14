@@ -47,7 +47,7 @@ export async function POST(
   // joined selects.
   const { data: q } = await admin
     .from("questions")
-    .select("id, category_id, played_at, finished_at")
+    .select("id, category_id, played_at, finished_at, correct_index")
     .eq("id", parsed.data.questionId)
     .maybeSingle();
   if (!q) return notFound("question not found");
@@ -68,9 +68,13 @@ export async function POST(
 
   // Broadcast end-early as a hint that the reveal is "early"; phones can
   // animate the timer ring "snapping" to 0 rather than naturally winding.
+  // Carry correctIndex (same as the 'resolve' broadcast) so the player reveal
+  // gets the answer straight from this message — players can no longer read
+  // correct_index off the questions row (migration 0014).
   try {
     await broadcastToRoom(owned.night.room_code, "end-early", {
       questionId: parsed.data.questionId,
+      correctIndex: q.correct_index,
       serverNow: new Date().toISOString(),
     });
   } catch (e) {
