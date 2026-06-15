@@ -38,6 +38,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { autoAttachPhoto } from "@/lib/ai/auto-attach-photo";
 import { generateQuestions, type GeneratedQuestion } from "@/lib/ai/generate-questions";
+import { costUsd, type TokenUsage } from "@/lib/ai/usage-cost";
 import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import { rerollPlan } from "@/lib/host/rerollPlan";
@@ -253,6 +254,21 @@ async function runGenerationJob(opts: {
     void emitProgress();
   }, GENERATION_HEARTBEAT_MS);
 
+  // Accumulate real token spend across every generate + verify call this job
+  // makes, so prod logs show the TRUE per-category cost — including refill
+  // rounds and both verify passes, the things a clean benchmark misses.
+  // Cost accounting only; never throws.
+  const cost = { usd: 0, calls: 0, tokensIn: 0, tokensOut: 0 };
+  const trackUsage = (model: string, u: TokenUsage) => {
+    cost.usd += costUsd(model, u);
+    cost.calls += 1;
+    cost.tokensIn +=
+      (u.input_tokens ?? 0) +
+      (u.cache_read_input_tokens ?? 0) +
+      (u.cache_creation_input_tokens ?? 0);
+    cost.tokensOut += u.output_tokens ?? 0;
+  };
+
   let generated: GeneratedQuestion[];
   try {
     generated = await collectVerifiedQuestions({
@@ -274,17 +290,23 @@ async function runGenerationJob(opts: {
           count: Math.min(20, need + 1),
           themeKey: opts.themeKey,
           avoidPrompts: [...(reroll?.avoidPrompts ?? []), ...avoid],
+          onUsage: trackUsage,
         });
       },
       verify: (qs) => {
         phase = "checking";
         void emitProgress();
-        return verifyAnswers(qs);
+        return verifyAnswers(qs, { onUsage: trackUsage });
       },
     });
   } finally {
     clearInterval(heartbeat);
   }
+  console.log(
+    `[generation-cost] category=${opts.categoryId} kept=${generated?.length ?? 0} ` +
+      `llmCalls=${cost.calls} tokensIn=${cost.tokensIn} tokensOut=${cost.tokensOut} ` +
+      `estUsd=${cost.usd.toFixed(4)}`,
+  );
   if (generated.length === 0) {
     throw new Error("no questions passed the answer check");
   }
