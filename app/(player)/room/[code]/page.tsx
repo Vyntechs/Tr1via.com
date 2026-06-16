@@ -52,6 +52,7 @@ import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { useLockCount } from "@/lib/hooks/useLockCount";
 import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
+import { sumAwardedForGame } from "@/lib/player/revealTotal";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
@@ -294,6 +295,41 @@ function RoomStateMachine({
     return merged.sort((a, b) => a.locked_at.localeCompare(b.locked_at));
   }, [realAnswers, optimisticAnswers]);
 
+  // Map every picked question_id → its game_id for the whole night so the reveal
+  // running total can be scoped to the CURRENT game — the phone must match the
+  // TV's per-game leaderboard, not sum both games together (#2). The room
+  // snapshot only carries the live + last-resolved question, so fetch the night's
+  // question→category once (categories already carry game_id; players may read
+  // id/category_id but not correct_index per the column grant). Refreshes if the
+  // category set changes — game 2's categories are added during setup.
+  const [questionGameMap, setQuestionGameMap] = useState<Map<string, string>>(
+    () => new Map(),
+  );
+  useEffect(() => {
+    const categories = snapshot.categories;
+    if (categories.length === 0) return;
+    const categoryGame = new Map(categories.map((c) => [c.id, c.game_id]));
+    const categoryIds = categories.map((c) => c.id);
+    let cancelled = false;
+    const supa = getSupabaseBrowser();
+    void (async () => {
+      const { data } = await supa
+        .from("questions")
+        .select("id, category_id")
+        .in("category_id", categoryIds);
+      if (cancelled || !data) return;
+      const map = new Map<string, string>();
+      for (const row of data as Array<{ id: string; category_id: string }>) {
+        const gameId = categoryGame.get(row.category_id);
+        if (gameId) map.set(row.id, gameId);
+      }
+      setQuestionGameMap(map);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [snapshot.categories]);
+
   // June: the water reflects the reveal the moment this phone enters it. The
   // snapshot clears currentQuestion when finished_at fires and holds the reveal
   // via lastResolvedQuestion, so read whichever carries the just-resolved id.
@@ -535,6 +571,7 @@ function RoomStateMachine({
           myAnswers={myAnswers}
           categories={snapshot.categories}
           game={currentGame}
+          questionGameMap={questionGameMap}
           rank={myRank}
         />
       );
@@ -562,6 +599,7 @@ function RoomStateMachine({
             myAnswers={myAnswers}
             categories={snapshot.categories}
             game={currentGame}
+            questionGameMap={questionGameMap}
             rank={myRank}
           />
         );
@@ -1019,6 +1057,7 @@ function RevealView({
   myAnswers,
   categories,
   game,
+  questionGameMap,
   rank,
 }: {
   question: QuestionRow;
@@ -1028,6 +1067,9 @@ function RevealView({
   myAnswers: AnswerRow[];
   categories: CategoryRow[];
   game: GameRow | null;
+  /** question_id → game_id for the whole night; scopes the running total to the
+   *  current game so the phone matches the TV's per-game leaderboard (#2). */
+  questionGameMap: ReadonlyMap<string, string>;
   /** Player's 1-based rank from game_scores. `null` while the scores
    *  fetch hasn't landed or the player isn't in the view — propagates
    *  down to PlayerRevealCorrect/Wrong which render "in the mix". */
@@ -1084,7 +1126,7 @@ function RevealView({
         msToLock: myAnswer.ms_to_lock,
       });
     const streak = computeStreak(myAnswers, question, categories, game);
-    const totalScore = sumAwarded(myAnswers, game);
+    const totalScore = sumAwardedForGame(myAnswers, game?.id ?? null, questionGameMap);
     return (
       <PlayerRevealCorrect
         category={category.name}
@@ -1105,7 +1147,7 @@ function RevealView({
     ? ((scramble.indexOf(myAnswer.chosen_index) + 1) as 1 | 2 | 3 | 4)
     : null;
   const chosenText = myAnswer ? question.options[myAnswer.chosen_index] ?? "" : "";
-  const totalScore = sumAwarded(myAnswers, game);
+  const totalScore = sumAwardedForGame(myAnswers, game?.id ?? null, questionGameMap);
   return (
     <PlayerRevealWrong
       category={category.name}
@@ -1771,9 +1813,10 @@ function computeStreak(
   return streak;
 }
 
-function sumAwarded(answers: AnswerRow[], _game: GameRow | null): number {
-  return answers.reduce((sum, a) => sum + (a.awarded_points ?? 0), 0);
-}
+// The recap/summary sums every answer it's handed (its caller already scopes to
+// one game), so it passes gameId=null + this empty map. The LIVE reveal instead
+// uses sumAwardedForGame with the real night-wide question→game map (#2).
+const EMPTY_QUESTION_GAME_MAP: ReadonlyMap<string, string> = new Map();
 
 function summarizeGame(
   answers: AnswerRow[],
@@ -1785,7 +1828,7 @@ function summarizeGame(
   bestCategoryRatio: string;
   fastestSeconds: number;
 } {
-  const score = sumAwarded(answers, null);
+  const score = sumAwardedForGame(answers, null, EMPTY_QUESTION_GAME_MAP);
   const correct = answers.filter((a) => a.is_correct === true);
   const fastestMs = correct.length
     ? Math.min(...correct.map((a) => a.ms_to_lock))
