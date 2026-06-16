@@ -31,8 +31,17 @@ const MODELS = {
 };
 const JUDGE_MODEL = "claude-opus-4-8";
 
-// Assumed $/MTok (input, output) — same rates the existing compare script uses.
-const RATES = { Haiku: [1, 5], Sonnet: [3, 15], Opus: [15, 75] };
+// $/MTok (input, output) — current published rates (2026-06).
+// Opus 4.8 corrected from the deprecated [15,75] to [5,25]; every cost number
+// below was ~3x-inflated on the Opus slice until this fix.
+const RATES = { Haiku: [1, 5], Sonnet: [3, 15], Opus: [5, 25] };
+
+// Optional focus, e.g. BENCH_MODELS="Sonnet" runs only the production generator
+// for a cheap, targeted A/B. Default: all three for the full comparison.
+const ONLY = (process.env.BENCH_MODELS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+const ACTIVE_MODELS = ONLY.length
+  ? Object.fromEntries(Object.entries(MODELS).filter(([l]) => ONLY.includes(l)))
+  : MODELS;
 
 // ── PROBE A: known-truth recall ───────────────────────────────────────────
 // The two clean live-show mis-keys + hard celebrity/film controls with settled answers.
@@ -136,14 +145,30 @@ const usageCost = (label, u) => {
   const [ci, co] = RATES[label] ?? RATES[label.split(" ")[0]] ?? [0, 0];
   return ((u?.input_tokens ?? 0) / 1e6) * ci + ((u?.output_tokens ?? 0) / 1e6) * co;
 };
+// Opus occasionally double-encodes the verdicts array as a JSON string inside
+// the tool input (the same quirk lib/ai/verify-answers.ts handles). Coerce to
+// an array so the caller's .map never throws and a topic isn't lost to an ERR.
+function asVerdictArray(v) {
+  if (Array.isArray(v)) return v;
+  if (typeof v === "string") {
+    try {
+      const p = JSON.parse(v);
+      if (Array.isArray(p)) return p;
+      if (p && Array.isArray(p.verdicts)) return p.verdicts;
+    } catch {
+      /* fall through to [] */
+    }
+  }
+  return [];
+}
 
 // ── PROBE A ────────────────────────────────────────────────────────────────
 async function recallProbe() {
   console.log("\n════════ PROBE A — known-truth recall (temp 0) ════════");
-  const score = { Haiku: 0, Sonnet: 0, Opus: 0 };
+  const score = Object.fromEntries(Object.keys(ACTIVE_MODELS).map((l) => [l, 0]));
   for (const item of RECALL) {
     const line = [];
-    for (const [label, model] of Object.entries(MODELS)) {
+    for (const [label, model] of Object.entries(ACTIVE_MODELS)) {
       try {
         const r = await client.messages.create({
           model, max_tokens: 200, ...(noTemp(model) ? {} : { temperature: 0 }),
@@ -189,17 +214,17 @@ async function judge(questions) {
     messages: [{ role: "user", content: `Fact-check these ${payload.length} questions:\n${JSON.stringify(payload, null, 1)}` }],
     tools: [JUDGE_TOOL], tool_choice: { type: "tool", name: "verdicts" },
   }, { timeout: 120_000 });
-  return { verdicts: toolInput(r, "verdicts")?.verdicts ?? [], usage: r.usage };
+  return { verdicts: asVerdictArray(toolInput(r, "verdicts")?.verdicts), usage: r.usage };
 }
 
 async function genProbe() {
   console.log("\n\n════════ PROBE B — generate then Opus-fact-check (landmines per 20) ════════");
   const totals = {};
-  for (const label of Object.keys(MODELS)) totals[label] = { wrong: 0, ambiguous: 0, total: 0, genCost: 0, judgeCost: 0 };
+  for (const label of Object.keys(ACTIVE_MODELS)) totals[label] = { wrong: 0, ambiguous: 0, total: 0, genCost: 0, judgeCost: 0 };
   const samples = [];
 
   for (const topic of GEN_TOPICS) {
-    for (const [label, model] of Object.entries(MODELS)) {
+    for (const [label, model] of Object.entries(ACTIVE_MODELS)) {
       try {
         const g = await generate(label, model, topic);
         const j = await judge(g.questions);

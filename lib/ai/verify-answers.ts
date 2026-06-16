@@ -20,6 +20,7 @@ import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { GeneratedQuestion } from "./generate-questions";
+import type { TokenUsage } from "./usage-cost";
 
 export const VERIFIER_MODEL = "claude-opus-4-8";
 
@@ -39,6 +40,8 @@ export interface AnswerVerdict {
 export interface VerifyAnswersOptions {
   client?: Pick<Anthropic, "messages">;
   model?: string;
+  /** Optional: receive token usage per chunk call for cost logging. No-op if omitted. */
+  onUsage?: (model: string, usage: TokenUsage) => void;
 }
 
 const VERDICTS_TOOL_NAME = "verdicts";
@@ -110,6 +113,7 @@ async function verifyChunk(
   client: Pick<Anthropic, "messages">,
   model: string,
   chunk: GeneratedQuestion[],
+  onUsage?: (model: string, usage: TokenUsage) => void,
 ): Promise<Map<number, AnswerVerdict>> {
   const payload = chunk.map((q, i) => ({
     index: i,
@@ -142,6 +146,7 @@ async function verifyChunk(
       },
       { timeout: 60_000 },
     );
+    onUsage?.(model, response.usage);
 
     const block = response.content.find(
       (b): b is Extract<typeof b, { type: "tool_use" }> =>
@@ -199,7 +204,7 @@ export async function verifyAnswers(
   // preserves chunk order, so the merged global indices are identical to the
   // old sequential walk.
   const chunkResults = await Promise.all(
-    chunks.map((chunk) => verifyChunk(client, model, chunk.items)),
+    chunks.map((chunk) => verifyChunk(client, model, chunk.items, opts.onUsage)),
   );
 
   const out: AnswerVerdict[] = [];
