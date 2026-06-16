@@ -34,6 +34,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { SYSTEM_PROMPT, userPromptFor } from "./prompts";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import type { TokenUsage } from "./usage-cost";
 
 // ─── Public types ─────────────────────────────────────────────────────
 
@@ -103,6 +104,8 @@ export interface GenerateQuestionsOptions {
   model?: string;
   /** Optional override of the request timeout in ms. Default 30_000. */
   timeoutMs?: number;
+  /** Optional: receive token usage for cost logging. No-op if omitted. */
+  onUsage?: (model: string, usage: TokenUsage) => void;
 }
 
 // ─── Tool definition ──────────────────────────────────────────────────
@@ -261,6 +264,7 @@ export async function generateQuestions(
     throw err;
   }
   console.log(`[generateQuestions] returned in ${Date.now() - t0}ms`);
+  opts.onUsage?.(model, response.usage);
 
   const toolBlock = response.content.find(
     (block): block is Extract<typeof block, { type: "tool_use" }> =>
