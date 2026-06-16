@@ -22,9 +22,11 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoom, type BroadcastTag } from "@/lib/hooks/useRoom";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
+import { hostRecoverySeed } from "@/lib/room/hostRecoverySeed";
+import type { RoomSnapshotPayload } from "@/lib/room/roomSnapshotPayload";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
   AddLatecomerModal,
@@ -83,6 +85,33 @@ export function HostLiveConsoleClient({
   const [addingLatecomer, setAddingLatecomer] = useState(false);
   const [removingPlayerId, setRemovingPlayerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // ── host board freshness on WiFi recovery (#3) ───────────────────────
+  // While degraded, the host reads from the route payload (kept current by the
+  // ~5s poll); the direct subscriptions sit frozen because postgres_changes are
+  // missed. When useRoom leaves backup mode the direct reads revert to those
+  // frozen values, so the live "locked-in" count (+ board + scores) can flash
+  // stale. Remember the last route payload (setBackupMode(false) nulls it in the
+  // same tick, so we can't read it at the edge) and seed the direct state from it
+  // on recovery; the direct subscriptions then refresh on the next change.
+  const lastFallbackRef = useRef<RoomSnapshotPayload | null>(null);
+  useEffect(() => {
+    if (fallbackPayload) lastFallbackRef.current = fallbackPayload;
+  }, [fallbackPayload]);
+  const prevBackupModeRef = useRef(backupMode);
+  useEffect(() => {
+    const seed = hostRecoverySeed(
+      prevBackupModeRef.current,
+      backupMode,
+      lastFallbackRef.current,
+    );
+    prevBackupModeRef.current = backupMode;
+    if (seed) {
+      setAnswers(seed.liveAnswers);
+      setScores(seed.scores);
+      setAllQuestions(seed.allQuestions);
+    }
+  }, [backupMode]);
 
   // ── load all picked questions for the night ──────────────────────────
   useEffect(() => {
