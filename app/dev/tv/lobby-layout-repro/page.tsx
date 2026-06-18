@@ -14,12 +14,14 @@ import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 // Mirrors a founder-built game: 6 ready categories with the long natural-
 // language topic strings the AI generates (like the screenshot).
 const REPRO_TOPICS: LobbyTopic[] = [
-  { name: "Games",     topic: "classic and modern video games",   color: "#E64A8C", position: 0 },
-  { name: "Sports",    topic: "legendary athletes across major sports", color: "#5AA8E0", position: 1 },
-  { name: "Mythology", topic: "Greek, Roman, and Norse mythology", color: "#9B7BD8", position: 2 },
-  { name: "Science",   topic: "space exploration milestones",     color: "#7AC4A8", position: 3 },
-  { name: "Music",     topic: "one-hit wonders of the 1980s",     color: "#4ECDC4", position: 4 },
-  { name: "Film",      topic: "blockbuster movie quotes",         color: "#F0A35E", position: 5 },
+  // label = topic here on purpose: this page exists to reproduce the long-label
+  // clipping a host can still hit when the clean name itself is long.
+  { label: "classic and modern video games",         name: "Games",     topic: "classic and modern video games",   color: "#E64A8C", position: 0 },
+  { label: "legendary athletes across major sports", name: "Sports",    topic: "legendary athletes across major sports", color: "#5AA8E0", position: 1 },
+  { label: "Greek, Roman, and Norse mythology",      name: "Mythology", topic: "Greek, Roman, and Norse mythology", color: "#9B7BD8", position: 2 },
+  { label: "space exploration milestones",           name: "Science",   topic: "space exploration milestones",     color: "#7AC4A8", position: 3 },
+  { label: "one-hit wonders of the 1980s",           name: "Music",     topic: "one-hit wonders of the 1980s",     color: "#4ECDC4", position: 4 },
+  { label: "blockbuster movie quotes",               name: "Film",      topic: "blockbuster movie quotes",         color: "#F0A35E", position: 5 },
 ];
 
 export default function LobbyLayoutReproPage() {

@@ -106,7 +106,7 @@ export function PlayerBetweenGames({
                 const bar = topic.color ?? categoryColor(topic.name);
                 return (
                   <div
-                    key={`${topic.position}-${topic.topic}`}
+                    key={`${topic.position}-${topic.label}`}
                     data-testid="player-between-games-topic"
                     style={{
                       display: "flex",
@@ -133,7 +133,7 @@ export function PlayerBetweenGames({
                         color: t.ink,
                       }}
                     >
-                      {topic.topic}
+                      {topic.label}
                     </span>
                   </div>
                 );

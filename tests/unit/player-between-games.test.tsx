@@ -12,8 +12,9 @@ const TOP: StandingRow[] = [
 ];
 
 const TOPICS: LobbyTopic[] = [
-  { name: "Movies", topic: "Disney Pixar Movies", color: "#E64A8C", position: 0 },
-  { name: "Music", topic: "80s One-Hit Wonders", color: null, position: 1 },
+  // name = the host's clean label; topic = the long AI generation instruction.
+  { label: "Pest", name: "Pest", topic: "Pest like mosquitoes and flies, also children in movies", color: "#E64A8C", position: 0 },
+  { label: "Cocktails", name: "Cocktails", topic: "cocktails and mixed drinks", color: null, position: 1 },
 ];
 
 function wrap(node: React.ReactNode) {
@@ -56,9 +57,10 @@ describe("PlayerBetweenGames — upcoming Game-2 topics preview", () => {
     render(wrap(<PlayerBetweenGames playerName="You" top={TOP} you={null} topics={TOPICS} />));
     expect(screen.getByTestId("player-between-games-topics")).toBeInTheDocument();
     expect(screen.getAllByTestId("player-between-games-topic")).toHaveLength(TOPICS.length);
-    // the specific theme string (topic), not the umbrella name, is shown
-    expect(screen.getByText("Disney Pixar Movies")).toBeInTheDocument();
-    expect(screen.getByText("80s One-Hit Wonders")).toBeInTheDocument();
+    // the host's clean label (name), not the AI generation instruction, is shown
+    expect(screen.getByText("Pest")).toBeInTheDocument();
+    expect(screen.getByText("Cocktails")).toBeInTheDocument();
+    expect(screen.queryByText(/mosquitoes/i)).not.toBeInTheDocument();
   });
 
   it("renders no topics panel when there are no ready topics", () => {

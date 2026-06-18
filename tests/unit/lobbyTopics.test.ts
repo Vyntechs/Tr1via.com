@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  lobbyTopicLabel,
   selectUpcomingGameId,
   selectLobbyTopics,
   selectLobbyTopicsFromRoom,
@@ -34,6 +35,47 @@ function snap(partial: Partial<TVSnapshot>): TVSnapshot {
     ...partial,
   };
 }
+
+// Regression: the lobby was rendering categories.topic (the long instruction a
+// host gives the AI to generate questions) instead of the host's clean label
+// categories.name. The display label is resolved once here in the selection
+// core so the TV / player / host-mirror surfaces can't drift.
+describe("lobbyTopicLabel", () => {
+  it("shows the host's clean category name, not the AI generation instruction", () => {
+    expect(
+      lobbyTopicLabel("Pest", "Pest like mosquitoes and flies, also children in movies"),
+    ).toBe("Pest");
+  });
+  it("falls back to the generation topic only when the name is blank", () => {
+    expect(lobbyTopicLabel("", "fallback topic")).toBe("fallback topic");
+    expect(lobbyTopicLabel("   ", "fallback topic")).toBe("fallback topic");
+  });
+  it("trims the clean name", () => {
+    expect(lobbyTopicLabel("  Pest  ", "x")).toBe("Pest");
+  });
+});
+
+describe("selectLobbyTopics — label regression", () => {
+  it("uses the clean category name as the label, never the verbose generation topic", () => {
+    const s = snap({
+      games: [game("g1", 1, "ready")],
+      currentGameId: "g1",
+      categories: [
+        cat(
+          "c1", "g1", 0, "ready",
+          "Pest like mosquitoes and flies, also children in movies",
+          "Pest", null,
+        ),
+      ],
+    });
+    const topics = selectLobbyTopics(s);
+    expect(topics).toHaveLength(1);
+    expect(topics[0].label).toBe("Pest");
+    expect(topics[0].topic).toBe(
+      "Pest like mosquitoes and flies, also children in movies",
+    );
+  });
+});
 
 describe("selectUpcomingGameId", () => {
   it("returns the current game when it's set and not done", () => {
@@ -75,8 +117,8 @@ describe("selectLobbyTopics", () => {
       ],
     });
     expect(selectLobbyTopics(s)).toEqual([
-      { name: "Movies", topic: "Disney Pixar Movies", color: "#E64A8C", position: 0 },
-      { name: "Music", topic: "80s One-Hit Wonders", color: "#9B7BD8", position: 1 },
+      { label: "Movies", name: "Movies", topic: "Disney Pixar Movies", color: "#E64A8C", position: 0 },
+      { label: "Music", name: "Music", topic: "80s One-Hit Wonders", color: "#9B7BD8", position: 1 },
     ]);
   });
 
@@ -142,8 +184,8 @@ describe("selectLobbyTopicsFromRoom", () => {
       ],
     });
     expect(selectLobbyTopicsFromRoom(s)).toEqual([
-      { name: "Movies", topic: "Disney Pixar Movies", color: "#E64A8C", position: 0 },
-      { name: "Music", topic: "80s One-Hit Wonders", color: "#9B7BD8", position: 1 },
+      { label: "Movies", name: "Movies", topic: "Disney Pixar Movies", color: "#E64A8C", position: 0 },
+      { label: "Music", name: "Music", topic: "80s One-Hit Wonders", color: "#9B7BD8", position: 1 },
     ]);
   });
 
@@ -162,7 +204,7 @@ describe("selectLobbyTopicsFromRoom", () => {
       ],
     });
     expect(selectLobbyTopicsFromRoom(s)).toEqual([
-      { name: "Sports", topic: "Fresh Board Topic", color: "#5AA8E0", position: 0 },
+      { label: "Sports", name: "Sports", topic: "Fresh Board Topic", color: "#5AA8E0", position: 0 },
     ]);
   });
 
@@ -177,7 +219,7 @@ describe("selectLobbyTopicsFromRoom", () => {
       ],
     });
     expect(selectLobbyTopicsFromRoom(s)).toEqual([
-      { name: "Sports", topic: "Live Game Topic", color: "#5AA8E0", position: 0 },
+      { label: "Sports", name: "Sports", topic: "Live Game Topic", color: "#5AA8E0", position: 0 },
     ]);
   });
 
