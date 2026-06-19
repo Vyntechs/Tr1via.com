@@ -237,7 +237,17 @@ export function TVStateMachine({
           />
         );
       }
-      return <TVRevealView snapshot={snapshot} question={targetQuestion} themeKey={themeKey} />;
+      // Key by question id so a question change forces a clean remount (parity
+      // with the player RevealView, commit f928981) instead of an in-place prop
+      // swap — belt-and-suspenders on top of the newest-resolved guard upstream.
+      return (
+        <TVRevealView
+          key={targetQuestion.id}
+          snapshot={snapshot}
+          question={targetQuestion}
+          themeKey={themeKey}
+        />
+      );
     }
 
     // No live question, no recent resolve → the Jeopardy grid is the
