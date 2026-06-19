@@ -1,6 +1,7 @@
 // TV lobby — "Tonight's Topics" panel. Shows the upcoming game's category
-// topics (the specific theme strings, e.g. "Disney Pixar Movies") so players
-// deciding whether to join can see what the game is about. Every topic is
+// labels (the host's clean category names, e.g. "Pest" — LobbyTopic.label, NOT
+// the long AI generation instruction) so players deciding whether to join can
+// see what the game is about. Every topic is
 // visible at once — no cycling, no waiting. Rows cascade in, then gently float
 // while their color bar shimmers. Pure-CSS motion (no JS loop) so it costs
 // nothing on the host laptop; reduced-motion is honored globally by
@@ -14,11 +15,11 @@ import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 
 /** Demo data for the /dev/tv gallery (not used in production). */
 export const DEMO_LOBBY_TOPICS: LobbyTopic[] = [
-  { name: "Movies",    topic: "Disney Pixar Movies",  color: "#E64A8C", position: 0 },
-  { name: "Music",     topic: "80s One-Hit Wonders",  color: "#9B7BD8", position: 1 },
-  { name: "Geography", topic: "World Capitals",       color: "#4ECDC4", position: 2 },
-  { name: "Sports",    topic: "Famous Quarterbacks",  color: "#5AA8E0", position: 3 },
-  { name: "Science",   topic: "Kitchen Science",      color: "#7AC4A8", position: 4 },
+  { label: "Disney Pixar Movies", name: "Movies",    topic: "Disney Pixar Movies",  color: "#E64A8C", position: 0 },
+  { label: "80s One-Hit Wonders", name: "Music",     topic: "80s One-Hit Wonders",  color: "#9B7BD8", position: 1 },
+  { label: "World Capitals",      name: "Geography", topic: "World Capitals",       color: "#4ECDC4", position: 2 },
+  { label: "Famous Quarterbacks", name: "Sports",    topic: "Famous Quarterbacks",  color: "#5AA8E0", position: 3 },
+  { label: "Kitchen Science",     name: "Science",   topic: "Kitchen Science",      color: "#7AC4A8", position: 4 },
 ];
 
 export function TVLobbyTopics({ topics }: { topics: LobbyTopic[] }) {
@@ -40,7 +41,7 @@ export function TVLobbyTopics({ topics }: { topics: LobbyTopic[] }) {
           const bar = topic.color ?? categoryColor(topic.name);
           return (
             <div
-              key={`${topic.position}-${topic.topic}`}
+              key={`${topic.position}-${topic.label}`}
               data-testid="tv-lobby-topic"
               // Cascade entrance — staggered so rows arrive one after another.
               style={{ animation: `tr1via-rise .5s cubic-bezier(.2,.7,.3,1) ${i * 0.07}s both` }}
@@ -84,7 +85,7 @@ export function TVLobbyTopics({ topics }: { topics: LobbyTopic[] }) {
                     color: t.ink,
                   }}
                 >
-                  {topic.topic}
+                  {topic.label}
                 </span>
               </div>
             </div>

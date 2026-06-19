@@ -4,14 +4,31 @@ import type { RoomSnapshot } from "@/lib/hooks/useRoom";
 /** A single category shown on the lobby's "Tonight's Topics" panel — used by
  *  both the venue TV (TVLobby) and the player phone (PlayerLobby). */
 export interface LobbyTopic {
-  /** Short umbrella name (e.g. "Movies") — used only for the color fallback. */
+  /** The player-facing display string: the host's clean category name
+   *  (categories.name, e.g. "Pest"), falling back to the generation topic only
+   *  when the name is blank. THIS is what every lobby surface renders — never
+   *  the raw `topic`. Resolved once via lobbyTopicLabel() so the surfaces can't
+   *  drift on which field to show. */
+  label: string;
+  /** The host's short clean category name (categories.name, e.g. "Pest").
+   *  Drives the color fallback (categoryColor) and is the source of `label`. */
   name: string;
-  /** The specific theme shown to players (e.g. "Disney Pixar Movies"). */
+  /** The instruction the host gave the AI to generate this category's questions
+   *  (categories.topic, e.g. "Pest like mosquitoes and flies, also children in
+   *  movies"). Generation input — NOT shown to players. */
   topic: string;
   /** Stored category color; null falls back to categoryColor(name) at render. */
   color: string | null;
   /** Sort order within the game. */
   position: number;
+}
+
+/** The player-facing label for a category: its clean name, falling back to the
+ *  generation topic only when the name is blank. Centralized so the TV, player
+ *  phone, and host-mirrored console surfaces can't drift on which field to show. */
+export function lobbyTopicLabel(name: string, topic: string): string {
+  const clean = (name ?? "").trim();
+  return clean.length > 0 ? clean : topic;
 }
 
 // The minimal shapes the selection core needs. Both snapshot flavors (the
@@ -62,7 +79,13 @@ function pickLobbyTopics(
   return categories
     .filter((c) => c.gameId === gameId && c.state === "ready")
     .sort((a, b) => a.position - b.position)
-    .map((c) => ({ name: c.name, topic: c.topic, color: c.color, position: c.position }));
+    .map((c) => ({
+      label: lobbyTopicLabel(c.name, c.topic),
+      name: c.name,
+      topic: c.topic,
+      color: c.color,
+      position: c.position,
+    }));
 }
 
 /** TV surface: the upcoming game id from the camelCase TV snapshot. */

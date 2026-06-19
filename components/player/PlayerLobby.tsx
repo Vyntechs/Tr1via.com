@@ -126,7 +126,7 @@ export function PlayerLobby({
                 const bar = topic.color ?? categoryColor(topic.name);
                 return (
                   <div
-                    key={`${topic.position}-${topic.topic}`}
+                    key={`${topic.position}-${topic.label}`}
                     data-testid="player-lobby-topic"
                     style={{
                       display: "flex",
@@ -155,7 +155,7 @@ export function PlayerLobby({
                         color: t.ink,
                       }}
                     >
-                      {topic.topic}
+                      {topic.label}
                     </span>
                   </div>
                 );
