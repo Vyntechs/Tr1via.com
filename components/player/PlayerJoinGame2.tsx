@@ -124,7 +124,7 @@ export function PlayerJoinGame2({
                 const bar = topic.color ?? categoryColor(topic.name);
                 return (
                   <div
-                    key={`${topic.position}-${topic.topic}`}
+                    key={`${topic.position}-${topic.label}`}
                     data-testid="player-join-game2-topic"
                     style={{
                       display: "flex",
@@ -150,7 +150,7 @@ export function PlayerJoinGame2({
                         color: t.ink,
                       }}
                     >
-                      {topic.topic}
+                      {topic.label}
                     </span>
                   </div>
                 );
