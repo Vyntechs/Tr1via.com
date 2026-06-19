@@ -173,6 +173,7 @@ Reason: `useRoom`'s by-code `tryRouteFallback` is catch-only, so a transient rou
 Trigger: A bug pattern already documented in tasks/lessons.md (a past diagnosis), assumed to be fixed.
 Rule: A logged lesson records that something was UNDERSTOOD, not that the fix shipped. Verify the fix exists in code/migrations before trusting it; periodically re-audit the actual artifact.
 Reason: `view-leftjoin-filter-trap` was diagnosed and lessoned, but `game_scores` (0001_init.sql) was never redefined — the CRITICAL 2-game score double-count is still live in prod (foundation audit 2026-06-13).
+UPDATE (2026-06-14): the inverse also bit — this Reason is itself WRONG. The audit read the repo file (`0001_init.sql`), but LIVE prod was already fixed on 5/28 (`fix_game_scores_view_per_game_filter`); the double-count is NOT live in prod. See [[verify-live-prod-catalog-not-repo-or-handoff]].
 
 ### e2e-assert-values-not-just-visibility-for-correctness
 Trigger: Writing or relying on an e2e covering a correctness-critical path (scores, winners, money, counts).
@@ -183,3 +184,63 @@ Reason: `tests/e2e/full-game.spec.ts` plays game1→game2→finale but only chec
 Trigger: Needing to test a Postgres view / SQL aggregate (e.g. `game_scores`) the mocked supabase-js client can't exercise, with no Docker/CLI available.
 Rule: Use `@electric-sql/pglite` (real Postgres in WASM, devDep). Stub `auth.users` + `extensions` schema, apply the actual migration files, seed, assert. Runs in normal `npm test`/CI.
 Reason: The `game_scores` double-count shipped because mocked unit tests can't run a view; pglite gave a deterministic RED→GREEN proof in-process — no cloud branch or Docker (PR #105).
+
+### comment-string-concat-breaks-migration-replay
+Trigger: A Supabase preview branch (or any from-scratch migration replay) comes up MIGRATIONS_FAILED with 0 applied, though prod has them.
+Rule: `COMMENT ON ... IS 'a' || 'b'` is invalid SQL (COMMENT needs ONE literal). Branch replay runs all files in one transaction, so one such line rolls back EVERYTHING. Collapse concatenated comments to single literals.
+Reason: tr1via 0006/0010 used `||` in COMMENT; the branch auto-migrate applied nothing. Prod was fine (already applied); only clean replays (new branch / DR rebuild) break. Found during #106 validation.
+
+### prove-server-db-target-before-destructive-test
+Trigger: A local dev server points at a throwaway DB and you're about to seed/reset; must confirm it isn't accidentally prod.
+Rule: Don't trust the ".env.local" boot log (sourced env still wins) or `ps` (macOS hides env). Plant a unique marker row on the intended DB via the admin/MCP connection, then read it through the server's OWN route — not-found means wrong DB, abort.
+Reason: #106 browser validation — confirmed the dev server read the branch not prod by renaming a branch-only night to a valid room code and reading it via /api/tv/[code]/snapshot before any seed/reset.
+
+### sb-secret-key-authenticates-as-service-role
+Trigger: You need a branch/project service-role credential but the Supabase MCP only returns anon/publishable keys.
+Rule: A modern `sb_secret_…` key authenticates as `service_role` over PostgREST (apikey + Bearer) and supabase-js forwards it verbatim, so the app's admin client accepts it. Grab it from the dashboard's API Keys page.
+Reason: #106 browser validation needed the branch's service-role key the MCP can't expose; the dashboard `sb_secret_` key read correct_index + the RLS-protected hosts table and ran the full app.
+
+### verify-live-prod-catalog-not-repo-or-handoff
+Trigger: A handoff/audit says a prod bug "is still live" or a migration "is NOT yet applied," based on reading a repo migration FILE.
+Rule: Read prod's LIVE catalog before believing it — `pg_get_viewdef`, `information_schema` grants, `list_migrations`. Repo↔prod migration NAMES drift (repo `00NN_*` vs prod timestamps), so "not in repo history" ≠ "not applied."
+Reason: Handoff said "prod still double-counts, 0013 unapplied"; live prod already had `fix_game_scores_view_per_game_filter` (5/28) closing it. The 6/13 audit read repo `0001_init.sql`, never prod — nearly applied a redundant migration.
+
+### where-form-game-filter-drops-cross-game-joiner
+Trigger: Fixing a per-game aggregate view with `WHERE c.game_id = gp.game_id OR a.id IS NULL` (the [[view-leftjoin-filter-trap]] "move to WHERE" remedy).
+Rule: That OR only rescues players who answered NOWHERE. A two-game player who answered in the OTHER game has non-null answer rows, so no null row exists and they VANISH from this game's board. Use aggregate FILTER (repo 0013) to keep every participation row at 0.
+Reason: Proven on real prod via synthetic-CTE A/B + 8 real participation rows that disappear. The WHERE remedy fixed the double-count but introduced this edge; FILTER fixes both.
+
+### player-per-game-total-from-broadcast-answers-not-scores-sub
+Trigger: Showing a per-game running total (or similar live number) on a PLAYER phone reveal screen.
+Rule: Derive it from the broadcast-refreshed `myAnswers` (filtered to the current game via a question→game map), NOT the `game_scores` subscription — postgres_changes drops for device-cookie sessions, so the scores sub can sit stale.
+Reason: PR #108 #2 — summing all `myAnswers` double-counted across games; `game_scores` was correct but its phone subscription is unreliable, so the broadcast-triggered `myAnswers` is the fresh source. Same root cause as [[trust-client-data-over-async-echo]].
+
+### branch-off-main-in-place-aborts-on-tracked-untracked-collision
+Trigger: `git checkout -b new origin/main` in the main repo when untracked local files exist that are TRACKED on origin/main (e.g. a report committed on main but only local-untracked on the scratch branch).
+Rule: The checkout aborts ("move or remove them"). Don't fight it with stashes — use a worktree off origin/main (symlink `node_modules` + `.env.local` to the main repo, per the project's existing worktree pattern). Run vitest from the worktree cwd.
+Reason: PR #108 — stashing the 3 tracked docs still aborted on untracked `tasks/*-report.md` that exist tracked on main; a worktree sidesteps the collision entirely and keeps the main tree untouched.
+
+### live-e2e-blocked-by-edge-runtime-fetch-in-this-env
+Trigger: Running Playwright e2e (`npm run test:e2e`) here to validate against live prod Supabase; every test dies at the first `/api/_test/*` call with `loginAsHost failed: 500 {"error":"fetch failed"}`.
+Rule: Not a fix bug and not a network block — it's the Next EDGE-runtime middleware (`server/web/sandbox/context.js`) failing to fetch Supabase auth under local Turbopack dev. Confirm with curl (Supabase host → 401, neutral host → 200 = egress fine), then DON'T chase it; lean on vitest+PGlite + wiring audit + adversarial fan-out. The same middleware serves Heather's live shows on Vercel.
+Reason: PR #108 validation — burned a run discovering localhost e2e can't reach Supabase from the edge isolate here; prod was untouched (login fails before any seed).
+
+### reveal-points-testid-is-per-question-not-running-total
+Trigger: Writing an e2e to assert the player reveal RUNNING TOTAL (the per-game cumulative score, e.g. for #2).
+Rule: `player-reveal-points` (`PlayerRevealCorrect.tsx`) is the THIS-QUESTION number (`+{awardedPoints}`). The cumulative `totalScore` is a separate element with NO testid (the "NOW AT" footer); `PlayerRevealWrong` shows the total with no testid at all. Add a `player-reveal-total` testid before asserting it.
+Reason: PR #108 #2 — the per-game total bug was invisible to `full-game.spec.ts` (drives the 2-game arc but never asserts the phone total) precisely because the value the fix changes isn't selectable. [[e2e-target-testid-not-visible-copy]]
+
+### sync-beat-schedule-against-target-not-fire-on-mount
+Trigger: Adding a "catch-up" so a freshly-mounted component still plays a synchronized one-shot beat (firework/flash) it may have missed.
+Rule: Don't fire on mount — schedule against the shared target instant + de-dup by beat id. Mount-firing ignores the target and double-fires across per-view remounts.
+Reason: Each TV view mounts its OWN Pyrotechnics engine, so the resolve that triggers the beat also remounts it; my mount catch-up fired on the outgoing screen at fireAt, then replayed late on the reveal engine — a double-burst, out of step (July Phase 2; adversarial review caught it).
+
+### gate-cosmetic-beat-bind-to-its-own-id
+Trigger: Gating a per-X cosmetic beat (firework/flash) on derived state (e.g. "did I get it right") that arrives via a DIFFERENT async path than the beat.
+Rule: Bind the beat to X's id and gate only on a match. The derived state lags the synchronous beat by one X until the refetch lands.
+Reason: July salvo gated on `amCorrect`, which reflected the PRIOR question until refreshLiveState landed — could fire a salvo on a wrong answer (or miss a correct one) in the race window (Phase 3; adversarial review caught it).
+
+### opting-into-a-shared-registry-flag-flips-every-consumer-on-every-surface
+Trigger: Registering a theme into a shared config registry to enable ONE treatment (e.g. adding `july: { ceremony: "fireworks" }` to lockInCeremony to get the TV marquee + TV firework ceremony).
+Rule: A registry flag is read by EVERY consumer of that flag across ALL surfaces. Before flipping it, grep every reader (`hasCeremony`, `hasMarquee`, `lockInCeremonyFor(...).ceremony`) on phone AND tv AND host — a generic gate elsewhere will silently inherit the new behavior. Gate surface-specific visuals on the SPECIFIC value, not the generic "has X" predicate.
+Reason: July Phase 4 — enabling `hasCeremony("july")` made the player phone's `PlayerLockInBolt` (a LIGHTNING bolt, gated on generic `hasCeremony`) fire on July phones — lightning on the 4th. Fix: gate the bolt on `ceremony === "lightning"`. Caught by adversarial review, NOT by the grounding subagents (two of them wrongly claimed "phones show no ceremony" — verify subagent claims against real code). [[gate-cosmetic-beat-bind-to-its-own-id]]

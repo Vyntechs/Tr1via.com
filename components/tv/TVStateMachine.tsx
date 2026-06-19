@@ -53,7 +53,7 @@ import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
-import { hasCeremony, hasMarquee } from "@/lib/theme/lockInCeremony";
+import { hasCeremony, hasMarquee, lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
 import { shouldHoldReveal } from "@/lib/tv/revealPause";
 import { selectLobbyTopics } from "@/lib/tv/lobbyTopics";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -552,6 +552,7 @@ function TVQuestionView({
       {hasCeremony(themeKey) && (
         <TVLockInCeremony
           events={ceremonyQueue}
+          ceremony={lockInCeremonyFor(themeKey).ceremony}
           onEventComplete={handleEventComplete}
           onSpotlight={handleSpotlight}
         />

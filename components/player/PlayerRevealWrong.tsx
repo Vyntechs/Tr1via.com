@@ -14,6 +14,7 @@ import {
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { gotItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealWrongProps {
   themeKey?: ThemeKey;
@@ -34,6 +35,10 @@ export interface PlayerRevealWrongProps {
   rank?: number | null;
   /** Player's running score. */
   totalScore?: number;
+  /** Number of players who answered correctly — shown as an awareness pill. */
+  correctCount?: number;
+  /** Total number of players who answered — used with correctCount. */
+  answeredCount?: number;
 }
 
 export function PlayerRevealWrong({
@@ -46,6 +51,8 @@ export function PlayerRevealWrong({
   correctText = "Alaska",
   rank = 11,
   totalScore = 2230,
+  correctCount,
+  answeredCount,
 }: PlayerRevealWrongProps = {}) {
   const { t } = useTheme();
   const noAnswer = chosenSlot === null;
@@ -68,6 +75,24 @@ export function PlayerRevealWrong({
       <div style={{ marginTop: 10, color: t.inkMid, fontSize: 14, lineHeight: 1.4 }}>
         No points lost — that&apos;s not how this game treats you.
       </div>
+
+      {typeof correctCount === "number" && typeof answeredCount === "number" && (
+        <div
+          data-testid="reveal-awareness"
+          style={{
+            marginTop: 14,
+            alignSelf: "flex-start",
+            padding: "8px 14px",
+            borderRadius: 99,
+            background: t.surface,
+            color: t.inkMid,
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        >
+          {gotItLine(correctCount, answeredCount)}
+        </div>
+      )}
 
       <div style={{ marginTop: 30, display: "flex", flexDirection: "column", gap: 10 }}>
         {!noAnswer && chosenSlot !== null && (

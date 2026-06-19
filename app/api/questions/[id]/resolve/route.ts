@@ -21,7 +21,7 @@
 
 import { ok, serverError, notFound } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { broadcastToRoom } from "@/lib/api/broadcast";
+import { broadcastToRoom, broadcastFireworks } from "@/lib/api/broadcast";
 
 export async function POST(
   _req: Request,
@@ -76,7 +76,9 @@ export async function POST(
     correctIndex: q.correct_index,
     awards: (awards ?? []).map((a) => ({
       playerId: a.player_id,
-      isCorrect: a.is_correct,
+      // Coerce to a real boolean: the column is boolean|null (null = no answer),
+      // but the broadcast/awards type is `boolean`. null counts as not-correct.
+      isCorrect: a.is_correct === true,
       awarded: a.awarded_points ?? 0,
     })),
     serverNow: new Date().toISOString(),
@@ -86,6 +88,15 @@ export async function POST(
     await broadcastToRoom(roomCode, "resolve", payload);
   } catch (e) {
     console.warn("broadcast resolve failed", e);
+  }
+
+  // Synchronized firework salvo (July) — every July screen ignites the same
+  // burst at the same instant as the answer is revealed. Cosmetic + best-effort
+  // (a dropped beat never affects scoring); no-op on non-July nights.
+  try {
+    await broadcastFireworks(roomCode, "salvo", questionId);
+  } catch (e) {
+    console.warn("broadcast fireworks(salvo) failed", e);
   }
 
   return ok({

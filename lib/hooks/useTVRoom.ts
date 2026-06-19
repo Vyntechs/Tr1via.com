@@ -22,6 +22,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
 import { withTimeout, BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
+import type { FireworksBeat } from "@/components/system/PyrotechnicsBeatConductor";
 
 const SAFETY_REFETCH_MS = 4000;
 
@@ -158,6 +159,10 @@ export interface TVRoomState {
   status: TVRoomStatus;
   snapshot: TVSnapshot | null;
   lastBroadcast: TVBroadcast | null;
+  /** Most recent synchronized firework beat (July). Carried separately from
+   *  lastBroadcast (cosmetic — must not trigger a snapshot refetch). The
+   *  PyrotechnicsBeatConductor reads this and schedules the burst for `fireAt`. */
+  lastFireworksBeat: FireworksBeat | null;
   /** Force a manual refetch (e.g. after the host triggers an event). */
   refresh: () => void;
 }
@@ -166,6 +171,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const [status, setStatus] = useState<TVRoomStatus>("loading");
   const [snapshot, setSnapshot] = useState<TVSnapshot | null>(null);
   const [lastBroadcast, setLastBroadcast] = useState<TVBroadcast | null>(null);
+  const [lastFireworksBeat, setLastFireworksBeat] = useState<FireworksBeat | null>(null);
   const safetyHandle = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const code = roomCodeRaw ? parseRoomCode(roomCodeRaw) : null;
@@ -278,6 +284,21 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         });
         void fetchSnapshot();
       })
+      .on("broadcast", { event: "fireworks" }, (msg) => {
+        // Cosmetic synchronized firework beat (July). Surface it for the
+        // PyrotechnicsBeatConductor — NO fetchSnapshot (nothing changed) and
+        // separate from lastBroadcast. Stamp receivedAtMs locally so the
+        // conductor's staleness check is immune to clock skew.
+        const p = msg.payload as Record<string, unknown>;
+        if (typeof p.fireAt !== "string" || typeof p.serverNow !== "string") return;
+        const kind = p.kind === "finale" ? "finale" : "salvo";
+        setLastFireworksBeat({
+          kind,
+          fireAt: p.fireAt,
+          serverNow: p.serverNow,
+          receivedAtMs: Date.now(),
+        });
+      })
       .subscribe();
 
     // Safety polling for missed broadcasts + slow-moving state (players
@@ -297,6 +318,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     status,
     snapshot,
     lastBroadcast,
+    lastFireworksBeat,
     refresh: () => {
       void fetchSnapshot();
     },

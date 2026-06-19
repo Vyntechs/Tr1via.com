@@ -17,6 +17,7 @@ import {
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { useCrescendo } from "@/lib/hooks/useCrescendo";
 
 export interface PlayerWinnerCardStat {
   label: string;
@@ -72,6 +73,9 @@ export function PlayerWinnerCard({
   const { t, themeKey } = useTheme();
   const cardRef = useRef<HTMLDivElement | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  // Finale build for the winner's souvenir: the weather climbs from calm to a
+  // heightened peak as the card settles. Reduced motion sits at the peak.
+  const finaleIntensity = useCrescendo({ from: 1.0, to: 2.0, durationMs: 3000 });
 
   // Default save handler: render the trading-card panel to a PNG via
   // html-to-image and trigger a browser download. We dynamic-import the
@@ -111,9 +115,9 @@ export function PlayerWinnerCard({
   return (
     <PhoneScreen data-testid="player-winner-card">
       {/* Heightened weather behind the card for finale energy. PhoneScreen
-          already renders weather at intensity 0.5; we add an extra layer at
-          1.4 to dial up the moment without rebuilding the shell. */}
-      <Weather themeKey={themeKey} intensity={1.4} />
+          already renders weather at intensity 0.5; we add an extra layer that
+          ramps up (build) to dial up the moment without rebuilding the shell. */}
+      <Weather themeKey={themeKey} intensity={finaleIntensity} />
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", height: "100%" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 6 }}>
           <Eyebrow color={t.accent} size={10}>YOU WON</Eyebrow>
