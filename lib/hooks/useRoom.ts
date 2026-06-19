@@ -35,6 +35,7 @@ import { fetchRoomSnapshotPayload } from "@/lib/room/fetchRoomSnapshot";
 import { payloadToRoomSnapshot } from "@/lib/room/roomSnapshotPayload";
 import { publishRoomFallback, setBackupMode } from "@/lib/room/roomFallbackStore";
 import { clearEndedGameQuestions } from "@/lib/player/betweenGames";
+import { pickNewerResolvedQuestion } from "@/lib/hooks/resolvedQuestionState";
 import type { FireworksBeat } from "@/components/system/PyrotechnicsBeatConductor";
 import type {
   AnswerRow,
@@ -427,7 +428,10 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
         if (nextQ) {
           if (nextQ.finished_at) {
             if (prev.currentQuestion?.id === nextQ.id) currentQuestion = null;
-            lastResolvedQuestion = nextQ;
+            // Most-recently-resolved wins: a stale/redelivered refetch for an
+            // OLDER question must not overwrite a fresher reveal (the host
+            // console flip-flop, 2026-06-19).
+            lastResolvedQuestion = pickNewerResolvedQuestion(lastResolvedQuestion, nextQ);
           } else {
             currentQuestion = nextQ;
             if (lastResolvedQuestion?.id !== nextQ.id) lastResolvedQuestion = null;
@@ -991,14 +995,16 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
             } else if (nextQ?.id === updated.id) {
               // It's the live question that just resolved or got cleared.
               if (updated.finished_at) {
-                nextResolved = updated;
+                // Newest-resolved wins (same guard as the refetch path) so an
+                // out-of-order durable echo can't regress the reveal slot.
+                nextResolved = pickNewerResolvedQuestion(nextResolved, updated);
                 nextQ = null;
               } else {
                 nextQ = updated;
               }
             } else if (updated.finished_at && nextResolved?.id === updated.id) {
               // Updates (e.g. fact_blurb backfill) on the already-resolved row.
-              nextResolved = updated;
+              nextResolved = pickNewerResolvedQuestion(nextResolved, updated);
             }
           }
           return { ...prev, currentQuestion: nextQ, lastResolvedQuestion: nextResolved };
