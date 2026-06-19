@@ -77,6 +77,9 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
     lastResolvedQuestion: payload.lastResolvedQuestion,
     currentReveal: payload.currentReveal,
     lastBroadcast: null,
+    // The server-route fallback payload carries durable state only; the
+    // firework beat is a transient broadcast, never reconstructed from a poll.
+    lastFireworksBeat: null,
     isLoading: false,
   };
 }

@@ -20,6 +20,7 @@ import {
 } from "@/components/system";
 import type { ResolvedTheme } from "@/lib/theme/resolve";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { useCrescendo } from "@/lib/hooks/useCrescendo";
 
 export interface TVFinaleWinnerData {
   name: string;
@@ -122,6 +123,12 @@ function TVFinaleWinnerInner({
   // nothing. Keying the effect on the winner restarts the timers the moment
   // Lightning actually mounts. Regression: tests/unit/tv-finale-winner-hooks.test.tsx.
   const hasWinner = Boolean(winner);
+  // Finale "build → erupt" crescendo: the theme's weather climbs from a calm
+  // base to a heightened peak over ~3s as the winner card settles, while the
+  // synchronized firework beat (PyrotechnicsBeatConductor on the TV route)
+  // delivers the unified erupt burst. Reduced motion sits at the peak (static).
+  // Reads live by the engine — the show is never reset mid-ramp.
+  const finaleIntensity = useCrescendo({ from: 1.1, to: 2.4, durationMs: 3000 });
   const [lightningTriggerCount, setLightningTriggerCount] = useState(0);
   useEffect(() => {
     if (themeKey !== "may" || !hasWinner) return;
@@ -156,10 +163,11 @@ function TVFinaleWinnerInner({
         flexDirection: "column",
       }}
     >
-      {/* Heightened weather — the theme's signature motion turned up for the finale */}
+      {/* Heightened weather — the theme's signature motion ramps up (build) into
+          the synchronized firework erupt for the finale crescendo */}
       <Weather
         themeKey={themeKey}
-        intensity={2.2}
+        intensity={finaleIntensity}
         lightningTriggerCount={lightningTriggerCount}
       />
       {/* Soft radial glow center-stage */}

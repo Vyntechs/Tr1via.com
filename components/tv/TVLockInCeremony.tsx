@@ -18,6 +18,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { fireLightningBeat } from "@/components/system/Lightning";
+import { fireLockInBurst } from "@/components/system/Pyrotechnics";
+import type { CeremonyKind } from "@/lib/theme/lockInCeremony";
 
 export type CeremonyMode = "calm" | "storm";
 
@@ -54,6 +56,10 @@ export function decideMode(input: {
 export interface TVLockInCeremonyProps {
   /** External event stream — parent forwards lock-in broadcasts here. */
   events: CeremonyEvent[];
+  /** Which per-player flourish to fire on lock-in. "lightning" (May) tints a
+   *  strike; "fireworks" (July) fires a player-tinted burst. Defaults to
+   *  "lightning" for back-compat with May's original wiring. */
+  ceremony?: CeremonyKind;
   /** Called when each event has finished its ceremony (parent clears it from `events`). */
   onEventComplete?: (playerId: string) => void;
   /** Called when calm mode starts a spotlight so parent can highlight the chip. */
@@ -62,6 +68,7 @@ export interface TVLockInCeremonyProps {
 
 export function TVLockInCeremony({
   events,
+  ceremony = "lightning",
   onEventComplete,
   onSpotlight,
 }: TVLockInCeremonyProps) {
@@ -101,7 +108,12 @@ export function TVLockInCeremony({
       onSpotlightRef.current?.(next.playerId);
     }
 
-    fireLightningBeat("close", { tint: next.tint });
+    // Fire the theme's per-player flourish in the locking player's color.
+    if (ceremony === "fireworks") {
+      fireLockInBurst(next.tint);
+    } else {
+      fireLightningBeat("close", { tint: next.tint });
+    }
 
     const ceremonyMs = mode === "calm" ? CEREMONY_MS_CALM : CEREMONY_MS_STORM;
     const handle = setTimeout(() => {
@@ -120,8 +132,7 @@ export function TVLockInCeremony({
     }, ceremonyMs);
 
     return () => clearTimeout(handle);
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- activeRef is a ref, intentionally excluded
-  }, [events]);
+  }, [events, ceremony]);
 
   // Pure orchestration — no DOM output. Visuals come from Lightning + parent chip spotlight.
   return null;

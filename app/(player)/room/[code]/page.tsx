@@ -33,6 +33,7 @@ import {
   Eyebrow,
   useTheme,
   fireJuneBeat,
+  PyrotechnicsBeatConductor,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import {
@@ -41,9 +42,11 @@ import {
   PlayerQuestion,
   PlayerLocked,
   PlayerRevealCorrect,
+  PlayerRevealCorrectSequence,
   PlayerRevealWrong,
   PlayerJoinGame2,
   PlayerBetweenGames,
+  PlayerStandingsNeighborhood,
   type PlayerQuestionSlot,
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
@@ -62,6 +65,9 @@ import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { selectBetweenGamesView, buildGame1Standings, type StandingRow } from "@/lib/player/betweenGames";
+import { buildNeighborhood, type Neighborhood } from "@/lib/player/standings";
+import { summarizeResolve, type ResolveSummary } from "@/lib/player/celebrationCopy";
+import { gateBeatForPlayer, playerWasCorrect } from "@/lib/game/revealOutcome";
 import { selectLobbyTopicsFromRoom, type LobbyTopic } from "@/lib/tv/lobbyTopics";
 import { playWelcomeChime, triggerWelcomeHaptic } from "@/lib/audio/welcomeChime";
 import {
@@ -72,7 +78,7 @@ import {
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { readThemeSeed, writeThemeSeed } from "@/lib/theme/themeSeed";
-import { questionDurationFor, hasCeremony } from "@/lib/theme/lockInCeremony";
+import { questionDurationFor, lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
 import type {
   AnswerRow,
   CategoryRow,
@@ -459,9 +465,13 @@ function RoomStateMachine({
   // Bolt ceremony: fires when the server confirms the player's answer.
   // Rendered once outside all branch returns (position:fixed, pointer-events:none)
   // so the overlay survives the QuestionView→LockedView switch on optimistic lock-in.
+  // The phone bolt is a LIGHTNING visual, so it's gated to the lightning ceremony
+  // (May) specifically — NOT generic hasCeremony(). July's ceremony is "fireworks",
+  // and July phones get their earned reveal fireworks (Phase 3) instead of a strike;
+  // a lightning bolt on the 4th would be off-theme.
   const [boltActive, setBoltActive] = useState(false);
   const handleServerConfirm = useCallback(() => {
-    if (!hasCeremony(themeKey)) return;
+    if (lockInCeremonyFor(themeKey).ceremony !== "lightning") return;
     setBoltActive(true);
   }, [themeKey]);
   // Reset if a new question arrives while the bolt is still playing.
@@ -483,6 +493,31 @@ function RoomStateMachine({
     if (!game2) return false;
     return myParticipations.some((p) => p.game_id === game2.id);
   }, [myParticipations, game2, optimisticInGame2]);
+
+  // ── July fireworks (Phase 3) ───────────────────────────────────────────
+  // The resolve broadcast carries per-player `awards` (already on the phone — no
+  // new read). Derive the social counts straight from it for the matching
+  // question. Read from state during render (not a ref) so it stays consistent;
+  // if a later broadcast supersedes lastBroadcast, the line simply stops showing
+  // (graceful) rather than rendering a stale/wrong count.
+  const summaryFor = (qid: string | undefined): ResolveSummary | undefined => {
+    const b = snapshot.lastBroadcast;
+    if (!qid || !b || b.event !== "resolve" || b.questionId !== qid) return undefined;
+    return summarizeResolve(b.awards);
+  };
+
+  // Did I get the just-resolved question right? Drives the correct-only salvo
+  // gate below (a finale fires for everyone; a salvo fires only on a correct
+  // phone). Mirrors RevealView's wasCorrect via the shared playerWasCorrect.
+  const resolvedQuestion =
+    snapshot.currentQuestion?.finished_at
+      ? snapshot.currentQuestion
+      : snapshot.lastResolvedQuestion;
+  const myResolvedAnswer = resolvedQuestion
+    ? myAnswers.find((a) => a.question_id === resolvedQuestion.id) ?? null
+    : null;
+  const amCorrect = playerWasCorrect(myResolvedAnswer, resolvedQuestion?.correct_index ?? null);
+  const neighborhood: Neighborhood = buildNeighborhood(scores ?? [], me.id, 4);
 
   // ── Compute the screen content. The bolt overlay is rendered once below,
   //    outside this branch, so it persists across the QuestionView→LockedView
@@ -564,6 +599,7 @@ function RoomStateMachine({
       // Resolved. Show reveal-correct or reveal-wrong for THIS question.
       inner = (
         <RevealView
+          key={currentQuestion.id}
           question={currentQuestion}
           category={currentCategory}
           myAnswer={myAnswerForQ}
@@ -573,6 +609,9 @@ function RoomStateMachine({
           game={currentGame}
           questionGameMap={questionGameMap}
           rank={myRank}
+          themeKey={themeKey}
+          summary={summaryFor(currentQuestion.id)}
+          neighborhood={neighborhood}
         />
       );
     }
@@ -592,6 +631,7 @@ function RoomStateMachine({
           myAnswers.find((a) => a.question_id === lastResolvedQuestion.id) ?? null;
         inner = (
           <RevealView
+            key={lastResolvedQuestion.id}
             question={lastResolvedQuestion}
             category={resolvedCategory}
             myAnswer={myAnswerForResolved}
@@ -601,6 +641,9 @@ function RoomStateMachine({
             game={currentGame}
             questionGameMap={questionGameMap}
             rank={myRank}
+            themeKey={themeKey}
+            summary={summaryFor(lastResolvedQuestion.id)}
+            neighborhood={neighborhood}
           />
         );
       }
@@ -620,6 +663,18 @@ function RoomStateMachine({
         />
       )}
       {inner}
+      {/* July: schedule the synchronized firework beat for THIS phone. A finale
+          (game end) fires for everyone; a per-question salvo fires only when I
+          got it right (gateBeatForPlayer). Render-less; no-op on non-July. */}
+      {themeKey === "july" && (
+        <PyrotechnicsBeatConductor
+          beat={gateBeatForPlayer(
+            snapshot.lastFireworksBeat,
+            amCorrect,
+            resolvedQuestion?.id ?? null,
+          )}
+        />
+      )}
     </>
   );
 }
@@ -1059,6 +1114,9 @@ function RevealView({
   game,
   questionGameMap,
   rank,
+  themeKey,
+  summary,
+  neighborhood,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -1074,7 +1132,25 @@ function RevealView({
    *  fetch hasn't landed or the player isn't in the view — propagates
    *  down to PlayerRevealCorrect/Wrong which render "in the mix". */
   rank: number | null;
+  /** Active theme — gates the July dark→bright correct sequence. */
+  themeKey: ThemeKey;
+  /** Per-question resolve counts (correct/answered) for the social lines. */
+  summary: ResolveSummary | undefined;
+  /** ±4 standings shown as the third reveal beat. */
+  neighborhood: Neighborhood;
 }) {
+  // 3-beat reveal: celebrate/payoff first, then settle into the ±4 standings for
+  // the rest of the between-questions wait. Fireworks live only in the celebrate/
+  // payoff beat, so they never overlap the standings. Resets per question.
+  const [beatPhase, setBeatPhase] = useState<"reveal" | "standings">("reveal");
+  // Advance to the standings beat after the celebration/payoff plays. RevealView
+  // is keyed by question id at the call site, so a new question remounts it and
+  // resets the phase via initial state — no synchronous setState in the effect.
+  useEffect(() => {
+    const h = window.setTimeout(() => setBeatPhase("standings"), 3200);
+    return () => window.clearTimeout(h);
+  }, []);
+
   // Use the player's saved scramble when we have an answer; otherwise compute
   // it deterministically so the correct slot still maps correctly.
   const scramble = myAnswer?.scramble ?? scrambleFor(question.id, player.id);
@@ -1090,6 +1166,18 @@ function RevealView({
   // instant), and this re-renders into the real reveal.
   if (typeof question.correct_index !== "number") {
     return <RevealPendingView category={category.name} />;
+  }
+
+  // Beat 3: once the celebration/payoff has played, settle into "where you
+  // stand" for the rest of the wait (fireworks are already done — no overlap).
+  if (beatPhase === "standings") {
+    return (
+      <PlayerStandingsNeighborhood
+        rows={neighborhood.rows}
+        meRank={neighborhood.meRank}
+        total={neighborhood.total}
+      />
+    );
   }
 
   const correctSlot = correctSlotFor(scramble as number[], question.correct_index) as
@@ -1126,19 +1214,28 @@ function RevealView({
         msToLock: myAnswer.ms_to_lock,
       });
     const streak = computeStreak(myAnswers, question, categories, game);
+    // #108's per-game total (cross-game-safe) feeding July's payoff structure.
     const totalScore = sumAwardedForGame(myAnswers, game?.id ?? null, questionGameMap);
-    return (
-      <PlayerRevealCorrect
-        category={category.name}
-        value={question.point_value ?? 100}
-        awardedPoints={awarded}
-        msToLock={myAnswer.ms_to_lock}
-        streak={streak}
-        rank={rank}
-        totalScore={totalScore}
-        rankDelta={0}
-        nextHint="Hold tight — the next question is on its way."
+    const payoffProps = {
+      category: category.name,
+      value: question.point_value ?? 100,
+      awardedPoints: awarded,
+      msToLock: myAnswer.ms_to_lock,
+      streak,
+      rank,
+      totalScore,
+      rankDelta: 0,
+      nextHint: "Hold tight — the next question is on its way.",
+    };
+    // July: a dark fireworks moment (ignited in sync with the TV by the gated
+    // conductor) → the bright payoff. Other themes go straight to the payoff.
+    return themeKey === "july" ? (
+      <PlayerRevealCorrectSequence
+        correctCount={summary?.correctCount}
+        payoffProps={payoffProps}
       />
+    ) : (
+      <PlayerRevealCorrect {...payoffProps} correctCount={summary?.correctCount} />
     );
   }
 
@@ -1158,6 +1255,8 @@ function RevealView({
       correctText={correctText}
       rank={rank}
       totalScore={totalScore}
+      correctCount={summary?.correctCount}
+      answeredCount={summary?.answeredCount}
     />
   );
 }

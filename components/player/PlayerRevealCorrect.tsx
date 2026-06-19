@@ -13,6 +13,7 @@ import {
   Numeric,
 } from "@/components/system";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { nailedItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealCorrectProps {
   themeKey?: ThemeKey;
@@ -36,6 +37,9 @@ export interface PlayerRevealCorrectProps {
   rankDelta?: number;
   /** Caption for the next-action strip. */
   nextHint?: string;
+  /** Total players who answered correctly — drives the social "You + N others nailed it" line.
+   *  Omit to hide the line entirely. */
+  correctCount?: number;
 }
 
 export function PlayerRevealCorrect({
@@ -49,6 +53,7 @@ export function PlayerRevealCorrect({
   totalScore = 2340,
   rankDelta = 4,
   nextHint = "Linda is picking the next category…",
+  correctCount,
 }: PlayerRevealCorrectProps = {}) {
   const { t } = useTheme();
   const speedBonus = msToLock < 5000;
@@ -149,6 +154,29 @@ export function PlayerRevealCorrect({
             +{speedBonusAmount} SPEED
           </span>
           <span style={{ fontSize: 13, color: "rgba(14,8,5,.7)" }}>under 5s nails the bonus.</span>
+        </div>
+      )}
+
+      {typeof correctCount === "number" && (
+        <div
+          data-testid="reveal-social"
+          style={{
+            marginTop: 16,
+            alignSelf: "flex-start",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "9px 16px",
+            borderRadius: 99,
+            background: "rgba(14,8,5,.10)",
+            border: "1.5px solid rgba(14,8,5,.25)",
+            color: "#0E0805",
+            fontSize: 15,
+            fontWeight: 700,
+          }}
+        >
+          <span aria-hidden style={{ width: 9, height: 9, borderRadius: 99, background: "#0E0805" }} />
+          {nailedItLine(correctCount)}
         </div>
       )}
 

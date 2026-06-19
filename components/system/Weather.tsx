@@ -10,7 +10,8 @@
 import { ParticleField } from "./ParticleField";
 import { Lightning } from "./Lightning";
 import { JuneSky } from "./JuneSky";
-import { Snowflake, Heart, Clover, Leaf, Pumpkin, Firework, Pine, Rain } from "./motifs";
+import { Pyrotechnics } from "./Pyrotechnics";
+import { Snowflake, Heart, Clover, Leaf, Pumpkin, Pine, Rain } from "./motifs";
 import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 
 export interface WeatherProps {
@@ -95,7 +96,7 @@ export function Weather({
     case "june":
       return <JuneSky intensity={intensity} />;
     case "july":
-      return <FireworkBursts colors={["#E63946", "#FFD93D", "#FFFFFF"]} />;
+      return <Pyrotechnics intensity={intensity} />;
     case "august":
     case "september":
     case "november":
@@ -162,33 +163,6 @@ export function Weather({
 // May case now delegates to `Lightning` which renders procedural strikes
 // and falls back to the same legacy glow internally for prefers-reduced-
 // motion users.
-
-function FireworkBursts({ colors = ["#E63946", "#FFD93D"] }: { colors?: string[] }) {
-  const bursts = [
-    { x: "15%", y: "18%", delay: 0,   color: colors[0],            dur: 6.0 },
-    { x: "82%", y: "12%", delay: 1.7, color: colors[1],            dur: 7.4 },
-    { x: "88%", y: "78%", delay: 3.1, color: colors[2] ?? colors[0], dur: 8.1 },
-    { x: "8%",  y: "64%", delay: 4.6, color: colors[0],            dur: 6.6 },
-  ];
-  return (
-    <div style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "hidden" }}>
-      {bursts.map((b, i) => (
-        <div
-          key={i}
-          style={{
-            position: "absolute",
-            left: b.x,
-            top: b.y,
-            animation: `tr1via-burst ${b.dur}s ease-out ${b.delay}s infinite`,
-            opacity: 0,
-          }}
-        >
-          <Firework size={56} color={b.color} />
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function FlickerGlow({ color = "#F08C2A" }: { color?: string }) {
   return (

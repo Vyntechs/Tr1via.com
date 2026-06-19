@@ -41,11 +41,6 @@ body {
 @keyframes tr1via-lightning    { 0%,100% { opacity:0; }
                                  2.5% { opacity:0.9; } 3.5% { opacity:0.1; } 4% { opacity:0.7; } 5% { opacity:0; }
                                  45% { opacity:0; } 46% { opacity:0.5; } 47% { opacity:0; } }
-@keyframes tr1via-burst        { 0% { opacity:0; transform:scale(0.3); }
-                                 8% { opacity:0.85; transform:scale(1.0); }
-                                 18% { opacity:0.6; transform:scale(1.4); }
-                                 35% { opacity:0; transform:scale(1.9); }
-                                 100% { opacity:0; transform:scale(1.9); } }
 @keyframes tr1via-glow-flicker { 0%,100% { opacity:0.7; } 25% { opacity:1; } 50% { opacity:0.55; } 72% { opacity:0.95; } }
 @keyframes tr1via-skeleton-pulse { 0%,100% { opacity:1; } 50% { opacity:0.55; } }
 @keyframes tr1via-tile-land    { 0%   { transform:translate3d(0,-60px,0) scale(0.8) rotate(-8deg); opacity:0; }
