@@ -27,7 +27,7 @@
 import { use, useEffect, useState } from "react";
 import { TVSectionComplete, TVStateMachine } from "@/components/tv";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
-import { ThemeProvider, WELCOME_OVERLAY_DURATION_MS } from "@/components/system";
+import { ThemeProvider, WELCOME_OVERLAY_DURATION_MS, PyrotechnicsBeatConductor } from "@/components/system";
 import { fireLightningBeat } from "@/components/system/Lightning";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
@@ -43,7 +43,7 @@ export default function TVPage({
   params: Promise<{ code: string }>;
 }) {
   const { code } = use(params);
-  const { status, snapshot, lastBroadcast } = useTVRoom(code);
+  const { status, snapshot, lastBroadcast, lastFireworksBeat } = useTVRoom(code);
 
   // Hooks must run on every render — call BEFORE any conditional return.
   // (`snapshot` is null until the room loads; the hook reads `players?.length`
@@ -97,6 +97,10 @@ export default function TVPage({
           themeKey={themeKey}
         />
         <SectionCompleteOverlay snapshot={snapshot} />
+        {/* Schedules the July firework beat so this TV ignites the same burst
+            at the same instant as the host preview (and, Phase 3, every phone).
+            Render-less; no-op on non-July nights. */}
+        <PyrotechnicsBeatConductor beat={lastFireworksBeat} />
       </TVStageFrame>
     </ThemeProvider>
   );

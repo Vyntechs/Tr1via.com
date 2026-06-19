@@ -10,7 +10,7 @@
 import { ok, forbidden, unauthorized, serverError, notFound } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { broadcastGameEnded } from "@/lib/api/broadcast";
+import { broadcastGameEnded, broadcastFireworks } from "@/lib/api/broadcast";
 
 export async function POST(
   _req: Request,
@@ -41,6 +41,16 @@ export async function POST(
     await broadcastGameEnded(owned.night.room_code, id);
   } catch (e) {
     console.warn("broadcast game-ended failed", e);
+  }
+
+  // Heavier synchronized firework eruption (July) at the game-end moment — the
+  // whole room erupts together. Cosmetic + best-effort; no-op on non-July
+  // nights. (The full build→erupt finale crescendo is Phase 4; this is the
+  // single synchronized eruption riding the same beat primitive.)
+  try {
+    await broadcastFireworks(owned.night.room_code, "finale");
+  } catch (e) {
+    console.warn("broadcast fireworks(finale) failed", e);
   }
 
   return ok({ state: data.state, endedAt: data.ended_at });

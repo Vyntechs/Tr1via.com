@@ -30,7 +30,8 @@ export type RoomEventName =
   | "resolve"
   | "end-early"
   | "game-ended"
-  | "player-joined";
+  | "player-joined"
+  | "fireworks";
 export type CategoryEventName =
   | "progress"
   | "question_added"
@@ -168,6 +169,71 @@ export async function broadcastGameEnded(
       payload: {
         gameId,
         serverNow: new Date().toISOString(),
+      },
+    },
+  ]);
+}
+
+// ─── Synchronized firework "beat" ──────────────────────────────────────────
+// July's signature moment: a single game beat makes every July screen ignite
+// the SAME firework burst at the SAME wall-clock instant — not "whenever each
+// screen happens to receive the broadcast." The broadcast carries `fireAt`, an
+// absolute server instant a short lead in the future; each client schedules the
+// burst against its own clock so the ignition lands together everywhere.
+//
+// This is transport only — no schema, no migration. It rides the existing
+// `room:{code}` channel Supabase already fans out. It is cosmetic and
+// best-effort: a dropped beat just means one screen misses one burst (the game
+// is unaffected). It is a NO-OP on non-July nights — only the July weather
+// mounts a Pyrotechnics engine to react, so emitting unconditionally is safe
+// and avoids a server-side theme lookup on the hot path.
+
+export type FireworksBeatKind = "salvo" | "finale";
+
+// Lead between emit and ignition. Long enough that the broadcast reaches every
+// screen AND the target reveal/finale view has mounted its Pyrotechnics engine
+// before the burst fires; short enough that the celebration still feels tied to
+// the moment. The finale gets a longer lead because the TV must refetch the
+// winner snapshot and mount the finale card before it can paint a burst.
+export const FIREWORKS_SALVO_LEAD_MS = 450;
+export const FIREWORKS_FINALE_LEAD_MS = 700;
+
+function fireworksLeadFor(kind: FireworksBeatKind): number {
+  return kind === "finale" ? FIREWORKS_FINALE_LEAD_MS : FIREWORKS_SALVO_LEAD_MS;
+}
+
+/**
+ * Broadcast a synchronized firework beat on `room:{roomCode}`. Carries:
+ *   - `kind`      — "salvo" (per-question celebration) or "finale" (heavier
+ *                   game-end eruption).
+ *   - `serverNow` — server "now" at emit (ISO). Clients use it only as a
+ *                   clock-sanity check.
+ *   - `fireAt`    — the absolute server instant to ignite (ISO) =
+ *                   serverNow + the kind's lead. Clients schedule against this.
+ *
+ * Best-effort: callers should swallow throws (the game never depends on a
+ * cosmetic burst). No-op on non-July nights (nothing is mounted to react).
+ */
+export async function broadcastFireworks(
+  roomCode: string,
+  kind: FireworksBeatKind,
+  /** The question this salvo celebrates. Lets a player's phone bind the beat to
+   *  the SAME question its correctness is known for, so a per-question salvo
+   *  fires only on a phone that got THAT question right (not a stale prior one).
+   *  Omitted for the game-end finale, which is a whole-room (game-level) beat. */
+  questionId?: string,
+): Promise<void> {
+  const now = Date.now();
+  const fireAt = now + fireworksLeadFor(kind);
+  await postBroadcasts([
+    {
+      topic: `room:${roomCode}`,
+      event: "fireworks",
+      payload: {
+        kind,
+        serverNow: new Date(now).toISOString(),
+        fireAt: new Date(fireAt).toISOString(),
+        ...(questionId ? { questionId } : {}),
       },
     },
   ]);

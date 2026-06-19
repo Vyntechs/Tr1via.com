@@ -35,6 +35,7 @@ import { fetchRoomSnapshotPayload } from "@/lib/room/fetchRoomSnapshot";
 import { payloadToRoomSnapshot } from "@/lib/room/roomSnapshotPayload";
 import { publishRoomFallback, setBackupMode } from "@/lib/room/roomFallbackStore";
 import { clearEndedGameQuestions } from "@/lib/player/betweenGames";
+import type { FireworksBeat } from "@/components/system/PyrotechnicsBeatConductor";
 import type {
   AnswerRow,
   CategoryRow,
@@ -73,6 +74,11 @@ export interface RoomSnapshot {
   currentReveal: RevealRow | null;
   /** Most recent broadcast event tag — useful for triggering one-shot animations. */
   lastBroadcast: BroadcastTag | null;
+  /** Most recent synchronized firework beat (July). Carried on its OWN field —
+   *  NOT lastBroadcast — so a cosmetic beat never bumps lastBroadcast.serverNow
+   *  (which the phone's myAnswers refetch keys off). The PyrotechnicsBeatConductor
+   *  reads this and schedules the burst for `fireAt`. */
+  lastFireworksBeat: FireworksBeat | null;
   /** True while the initial snapshot fetch is in flight. */
   isLoading: boolean;
 }
@@ -116,6 +122,7 @@ const EMPTY: RoomSnapshot = {
   lastResolvedQuestion: null,
   currentReveal: null,
   lastBroadcast: null,
+  lastFireworksBeat: null,
   isLoading: true,
 };
 
@@ -688,6 +695,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
         lastResolvedQuestion,
         currentReveal,
         lastBroadcast: null,
+        lastFireworksBeat: null,
         isLoading: false,
       });
 
@@ -823,6 +831,31 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
             joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
           });
           void refreshPlayers(nightId);
+        })
+        .on("broadcast", { event: "fireworks" }, (msg) => {
+          // Cosmetic synchronized firework beat (July). Surface it on its OWN
+          // field for PyrotechnicsBeatConductor to schedule — deliberately NOT
+          // via mergeBroadcast (which would bump lastBroadcast.serverNow and
+          // trigger the phone's myAnswers refetch for a purely visual event)
+          // and with NO refreshLiveState (no game state changed). Stamp
+          // receivedAtMs on the local clock so staleness is skew-immune.
+          if (cancelled) return;
+          const p = msg.payload as Record<string, unknown>;
+          if (typeof p.fireAt !== "string" || typeof p.serverNow !== "string") return;
+          const kind = p.kind === "finale" ? "finale" : "salvo";
+          markFresh();
+          setSnapshot((prev) => ({
+            ...prev,
+            lastFireworksBeat: {
+              kind,
+              fireAt: p.fireAt as string,
+              serverNow: p.serverNow as string,
+              receivedAtMs: Date.now(),
+              // Bind a salvo to its question so a phone only celebrates the
+              // question it actually got right (finale carries none).
+              questionId: typeof p.questionId === "string" ? p.questionId : undefined,
+            },
+          }));
         })
         .subscribe((status) => {
           broadcastChannelState = status;

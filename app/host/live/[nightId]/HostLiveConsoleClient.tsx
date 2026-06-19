@@ -44,7 +44,7 @@ import type {
 } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
-import { WELCOME_OVERLAY_DURATION_MS } from "@/components/system";
+import { WELCOME_OVERLAY_DURATION_MS, PyrotechnicsBeatConductor } from "@/components/system";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { playWelcomeChime } from "@/lib/audio/welcomeChime";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
@@ -473,6 +473,10 @@ export function HostLiveConsoleClient({
   return (
     <>
       <HostConnectionBanner />
+      {/* Schedules the July firework beat so the embedded TV preview ignites
+          the same burst at the same instant as the venue TV. Render-less;
+          no-op on non-July nights. */}
+      <PyrotechnicsBeatConductor beat={room.lastFireworksBeat} />
       <HostLiveConsole
         themeKey={themeKey as ThemeKey}
         title={`${venueName.toLowerCase()} · ${titleSuffix} · ${roomCode}`}
