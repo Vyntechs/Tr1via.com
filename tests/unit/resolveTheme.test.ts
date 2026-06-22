@@ -131,10 +131,9 @@ describe("resolveTheme", () => {
       }
     });
 
-    it("SYSTEM_DEFAULT_THEME matches the layout default ('daylight')", () => {
-      // Sanity check: if this fails, app/layout.tsx and resolveTheme
-      // disagree about the first-paint theme — back to the inconsistency
-      // bug that motivated PR #28.
+    it("SYSTEM_DEFAULT_THEME is the documented last-resort fallback ('daylight')", () => {
+      // The public root now renders the live month, not this constant; daylight
+      // remains only the floor for surfaces with no calendar/host/night.
       expect(SYSTEM_DEFAULT_THEME).toBe("daylight");
     });
   });

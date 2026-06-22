@@ -1,7 +1,9 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono, Bricolage_Grotesque } from "next/font/google";
 import "./globals.css";
-import { ThemeProvider } from "@/components/system/ThemeProvider";
+import { SeasonalThemeProvider } from "@/components/system/SeasonalThemeProvider";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
+import { MONTH_THEME_SCRIPT } from "@/lib/theme/monthThemeScript";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist", display: "swap" });
 const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono", display: "swap" });
@@ -36,15 +38,26 @@ export const viewport: Viewport = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
+  // Public-site default = the live calendar month. resolveTheme(null, null)
+  // returns the current month's key (its layer-3 fallback); the inline script
+  // + SeasonalThemeProvider correct a statically-cached page to the visitor's
+  // real month at runtime. Surfaces that need a specific theme (a live game,
+  // host setup) mount their own <ThemeProvider> deeper and override this.
+  const ssrThemeKey = resolveTheme(null, null);
   return (
     <html
       lang="en"
-      data-theme="daylight"
+      data-theme={ssrThemeKey}
       className={`${geist.variable} ${geistMono.variable} ${bricolage.variable}`}
       suppressHydrationWarning
     >
       <body>
-        <ThemeProvider themeKey="daylight">{children}</ThemeProvider>
+        {/* Render-blocking: flip data-theme to the visitor's live month before
+            first paint, so a cached page wakes up in the right season. */}
+        <script dangerouslySetInnerHTML={{ __html: MONTH_THEME_SCRIPT }} />
+        <SeasonalThemeProvider ssrThemeKey={ssrThemeKey}>
+          {children}
+        </SeasonalThemeProvider>
       </body>
     </html>
   );
