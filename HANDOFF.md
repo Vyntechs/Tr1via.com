@@ -1,35 +1,40 @@
-# TR1VIA — Handoff (2026-06-19 — July Pyrotechnics ALL 4 PHASES DONE + verified)
+# TR1VIA — Handoff (2026-06-22 — Seasonal public-site theming + front-door theme toy SHIPPED to prod)
 
-**Next session, read in order: this → `MEMORY.md` (auto-loaded) → `tasks/july-pyrotechnics-plan.md` → `tasks/july-pyrotechnics-phase4-report.md` → `CLAUDE.md`.**
+**Next session, read in order: `MEMORY.md` (auto-loaded — canonical state) → this → `CLAUDE.md`/`AGENTS.md`.**
+
+> Note: this handoff was written in the leftover worktree `.claude/worktrees/seasonal-public-theme` (now on `main`, post-merge). It is committed there but NOT pushed (PR-first). The reliable cross-session record is **MEMORY.md**, which is auto-loaded.
 
 ---
 
 ## Where we are (one line)
-**All 4 phases of "July pyrotechnics" are DONE + verified** on branch `fix/rls-correct-index-leak` (**commit-only — NOT pushed, NOT merged, NOT deployed**; local is ahead of `origin` by all four phases). The 4-phase effort is COMPLETE; what remains is Brandon's branch/deploy decision + a live multi-device visual confirmation.
+**SHIPPED + LIVE on prod:** every public page now auto-wears the current calendar month's theme, and the `/trivia-night` front door is an interactive "tap-through-the-months" theme toy. Merged via **PR #112** (squash `43567be` on `origin/main`) and verified live on tr1via.com.
 
-## What shipped THIS session (Phase 4) — committed to `fix/rls-correct-index-leak`
-The polish capstone — see `tasks/july-pyrotechnics-phase4-report.md`. **Transport/client only — no migration.**
-- **July lock-in ceremony** (TV/host): registry entry `july: { marquee:true, ceremony:"fireworks" }` → marquee scoreboard + a per-player TINTED firework on the TV each time someone locks in (new `fireLockInBurst` in `Pyrotechnics.tsx`, dispatched by `TVLockInCeremony` — mirrors May's lightning, batched by the existing queue).
-- **Finale build→erupt crescendo**: new `lib/game/crescendo.ts` + `lib/hooks/useCrescendo.ts` (rAF intensity ramp, throttled ~12/s, reduced-motion → peak) wired into `TVFinaleWinner` + `PlayerWinnerCard`. The "erupt" is the existing synchronized beat; the "build" is the ramp.
-- **Contrast/cohesion sweep** (live `/dev` walk): sound — dark text on every saturated bg, cream never on red/gold. **No token change needed.** Marquee + reduced-motion fallback confirmed live.
-- **Adversarial review (4 agents)**: 22 non-bugs + **1 real HIGH** — enabling `hasCeremony("july")` made July player phones fire May's LIGHTNING bolt (`PlayerLockInBolt` gated on generic `hasCeremony`). FIXED: gate on `ceremony === "lightning"` (`app/(player)/room/[code]/page.tsx:434`) + regression test + lesson `opting-into-a-shared-registry-flag-flips-every-consumer-on-every-surface`.
+## What shipped this session (live for users)
+- **Whole public site follows the real month** (landing/marketing, `/join`, `/login`, `/themes` chrome, privacy/terms) — auto-rotates, flips to the July 4th look on July 1, no maintenance.
+- **"The Year, In One Touch"** front door: the 12-month strip is a live controller — tap/hover a month → the WHOLE hero repaints (colors + product demo + real per-month weather). Opens on the live month, gently auto-drifts until touched, `prefers-reduced-motion` respected. The chosen season **follows the visitor across navigation** (join/login/etc.).
+- New files: `lib/theme/monthThemeScript.ts`, `components/system/SeasonalThemeProvider.tsx`, `components/marketing/YearInOneTouch.tsx` (+tests). One small change to `app/layout.tsx`. Game/host/player/TV + the multi-theme showcase pages are deliberately unchanged.
+- Spec/plan: `docs/superpowers/{specs,plans}/2026-06-22-public-site-monthly-theme*`.
 
 ## Verified by
-- `npm test` → **820 passed / 8 skipped, exit 0** (136 files). `npx tsc --noEmit` → only the 2 known pre-existing `HostHomeClient-founder-build.test.tsx` errors.
-- eslint (run directly; `npm run lint` is project-broken on Next 16) → **0 new problems**; player route lints byte-identically to committed HEAD.
-- Live `/dev/player` + `/dev/tv` sweep: cohesion good, July marquee renders, reduced-motion fallback confirmed, canvas path mounts clean.
+- Pre-merge: `npm test` → **850 pass / 8 skip**; `npx tsc --noEmit` → clean (only 2 known baseline errors in `HostHomeClient-founder-build.test.tsx`).
+- Post-merge: `git show 43567be --stat` = exactly the 15 theming files (nothing else). Live smoke on https://tr1via.com — toy present (12 month controls), opens on current month, tap repaints + holds, drift stops on interaction; `/join` + `/login` render the current month. Only console msg = pre-existing favicon.svg 404 (cosmetic).
+- Rollback if ever needed: `git revert 43567be` + redeploy.
 
-## Hard constraints / what only Brandon does
-- **Merge / push / deploy / migrations = Brandon only. Never during a live Wednesday show.** This branch is intentionally local — **push = a Vercel preview deploy** (outward-facing), so it's gated.
-- **Live multi-device canvas motion is UNVERIFIED here** (no live July room + edge-runtime e2e block + headless-canvas-paint limitation). Confirm the lock-in fireworks + finale crescendo on a real TV + phones before any deploy.
+## Immediate next step (queued, NOT built) — "The Night-Stamp"
+A shareable, auto-branded end-of-night keepsake card on every player's phone (venue brand auto-pulled from the host record — default "TR1VIA", "SoulFire Trivia" when Heather hosts; **no typing**). Tap → native share → friend taps `tr1via.com` link → lands on the themed front door → "Start your own — free." It's the zero-friction growth loop; Heather-safe (fires after scores lock, read-only to the live game). **Brandon-approved copy:** caption *"I just played SoulFire Trivia."* / footer *"Run your own night, free → tr1via.com"*. First action for a fresh agent: brainstorm → plan the Night-Stamp card (image + share button on `app/(player)/room/[code]/{won,recap}`, reusing `QRBlock`/`PlayerRecap`/`themeVars`).
 
-## Pending / open (all Brandon's call)
-1. **Branch decision** — local is ahead of `origin` by Phases 1–4. Push (preview) / open a clean `feat/july-pyrotechnics` PR / or hold.
-2. **Live multi-device visual confirmation** of the phone + TV fireworks/crescendo before deploy.
-3. **Optional**: fuller "mirror May" phone parity — a July firework flourish on the phone at lock-in (mirroring May's phone bolt). Deferred; small follow-up if wanted (see Phase 4 report).
-4. Pre-existing uncommitted files left UNTOUCHED (NOT mine; per Brandon "commit only my files"): `app/dev/host/page.tsx`, `app/host/live/[nightId]/HostLiveConsoleClient.tsx`, `components/host/HostLiveConsole.tsx` (a cold-start "TUNING IN" connecting console), `tasks/todo.md`, plus untracked reports / `prod-*.jpeg` / `july-*.png` (W3 screenshots) / `.claude/worktrees/`.
+**Also: Brandon has "a few other changes/improvements/implementations" for next session — not yet specified. Ask him to list them first.**
+
+## Hard constraints / only-Brandon
+- Deploy/merge/push-to-main = Brandon's call (PR-first, real users). Never deploy during a live Wednesday show.
+- July fireworks ("pyrotechnics") are ALREADY live on prod (PR #110) — do not claim otherwise.
+
+## Cleanup
+- This worktree (`.claude/worktrees/seasonal-public-theme`) is leftover after the merge — safe to remove. Throwaway local branch `preview-combined` also created earlier (harmless).
+
+---
 
 ## Resume prompt
 ```
-Read HANDOFF.md in full and tell me where we left off.
+Read HANDOFF.md in full and tell me where we left off, then ask me to list the "few other changes" I have queued.
 ```

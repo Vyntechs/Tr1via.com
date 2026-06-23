@@ -2,6 +2,16 @@
 
 > Curated by the `lesson-keeper` subagent per workflow §3. Each lesson must be a non-obvious pattern with Trigger / Rule / Reason, each ≤ 25 words. Hard cap: 40 active lessons; overflow moves to `lessons-archive.md`.
 
+### shipped-is-by-content-not-commit-hash
+Trigger: About to say a branch's work "never shipped / isn't on main / is behind" based on `git log main..branch` or `is-ancestor`.
+Rule: Squash/rebase merges land content under a NEW hash, so originals show "missing" by hash. Verify by content: `git diff main branch -- <file>` (empty = shipped).
+Reason: Told Brandon July fireworks "never shipped" (live via squashed #110) — false, contradicted what he'd seen, triggered a needless risky cross-branch rebase.
+
+### git-stat-cache-phantom-on-volumes
+Trigger: cherry-pick/rebase on a `/Volumes` (external/network) checkout aborts with "local changes would be overwritten" but `git diff` is empty.
+Rule: Stale stat-cache, not a real diff. Clear with `git update-index -q --refresh` or `git checkout -- <file>`, then continue.
+Reason: Burned 3 attempts on a phantom diff during a cherry-pick before refreshing the index fixed it.
+
 ### creating-row-early-skips-routing-gate
 Trigger: Asked to "set field X on the signup endpoint" when X lives on a row that a downstream onboarding step creates.
 Rule: If `/host` redirects to onboarding ONLY when no hosts row exists, don't create the row in the auth endpoint — let onboarding-complete stay the single writer and stamp X there.
