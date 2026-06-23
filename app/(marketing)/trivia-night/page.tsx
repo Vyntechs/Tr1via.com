@@ -24,7 +24,9 @@ import Link from "next/link";
 import { Display, Eyebrow } from "@/components/system";
 import { ThemeShowcase } from "@/components/marketing/ThemeShowcase";
 import { ThemedSection } from "@/components/marketing/ThemedSection";
+import { YearInOneTouch } from "@/components/marketing/YearInOneTouch";
 import { YearScroll } from "@/components/marketing/YearScroll";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { TheMoment } from "@/components/marketing/TheMoment";
 import { SegmentCues } from "@/components/marketing/SegmentCues";
 import { Pricing } from "@/components/marketing/Pricing";
@@ -89,16 +91,6 @@ const JSON_LD = {
     },
   ],
 };
-
-// The 12 months' accent colors — the hero's bottom strip makes the year-tour
-// obvious before you even scroll. (Display-only; the real palettes live in
-// lib/theme/tokens.ts and are applied per-section by ThemedSection.)
-const STRIP: { m: string; a: string }[] = [
-  { m: "JAN", a: "#5AA8E0" }, { m: "FEB", a: "#FF4673" }, { m: "MAR", a: "#3FAE56" },
-  { m: "APR", a: "#7A4FCC" }, { m: "MAY", a: "#E8C46A" }, { m: "JUN", a: "#E04A6B" },
-  { m: "JUL", a: "#E63946" }, { m: "AUG", a: "#F08C2A" }, { m: "SEP", a: "#C84A2C" },
-  { m: "OCT", a: "#F08C2A" }, { m: "NOV", a: "#C25E22" }, { m: "DEC", a: "#E63946" },
-];
 
 const SCREEN = "#0b0b12";
 const HERO_PHONES: string[][] = [
@@ -215,28 +207,6 @@ function Hero() {
           <HeroProduct />
         </div>
       </div>
-
-      {/* 12-theme strip — the year-tour, made obvious before you scroll. */}
-      <div className="mx-auto mb-2 max-w-[1140px] px-6">
-        <Eyebrow color="var(--ink-mid)" size={11}>
-          One game · a new look every month · ↓ scroll the year
-        </Eyebrow>
-      </div>
-      <div className="flex w-full overflow-hidden rounded-none">
-        {STRIP.map(({ m, a }) => {
-          const here = m === "JUN";
-          return (
-            <div
-              key={m}
-              className="flex flex-1 flex-col items-center justify-center py-4 text-white"
-              style={{ background: a }}
-            >
-              <span className={`text-[11px] font-bold tracking-wide ${here ? "" : "opacity-80"}`}>{m}</span>
-              {here && <span className="text-[9px]">you&rsquo;re here</span>}
-            </div>
-          );
-        })}
-      </div>
     </>
   );
 }
@@ -342,9 +312,9 @@ export default function TriviaNightPage() {
       />
       <YearScroll />
 
-      <ThemedSection themeKey="june">
+      <YearInOneTouch ssrThemeKey={resolveTheme(null, null)}>
         <Hero />
-      </ThemedSection>
+      </YearInOneTouch>
 
       <ThemedSection themeKey="july">
         <TheMoment />

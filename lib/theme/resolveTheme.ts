@@ -18,9 +18,10 @@
 //      (Halloween,       on every page they        pick anything)
 //      finale, etc)      visit)
 //
-// SYSTEM_DEFAULT matches `app/layout.tsx`'s root <ThemeProvider> so any
-// surface rendered before a host loads (login, code-entry, first paint)
-// stays consistent with the user's experience after auth.
+// SYSTEM_DEFAULT is the true last-resort fallback. The public root layout now
+// seasonalizes (resolveTheme(null, null) → current month), so login, code-entry
+// and first paint follow the live season; daylight only shows if month
+// resolution itself somehow fails.
 //
 // Tolerant by design: every input is optional. Pass undefined for night
 // on a non-night route (uses host preference). Pass undefined for host
@@ -37,8 +38,8 @@ import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
  *  - AND we're not on a route that even knows about a host
  *  - AND we somehow can't read the current month
  *
- *  Matches `app/layout.tsx`'s root <ThemeProvider> so the first paint
- *  before any auth/data lands is stable. */
+ *  Last-resort only; the public root layout renders the current month, not
+ *  this constant. Kept as the stable floor for surfaces with no calendar. */
 export const SYSTEM_DEFAULT_THEME: ThemeKey = "daylight";
 
 /** Map a 1-12 calendar month to a ThemeKey. Used as a fallback BEFORE
