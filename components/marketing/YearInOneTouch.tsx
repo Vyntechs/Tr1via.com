@@ -2,19 +2,24 @@
 
 // YearInOneTouch — the front-door "toy". The hero opens in the visitor's REAL
 // current month and the 12-month rail below is a live controller: tap (or hover)
-// a month and the ENTIRE hero — colors, the product demo, the signature weather
+// a month and the ENTIRE SITE — colors, the product demo, the signature weather
 // (July fireworks, December snow, May lightning) — repaints in ~260ms. Until the
 // visitor touches it, the rail gently auto-drifts month to month so the
 // transformation is visible even to someone who never lifts a finger.
 //
-// Progressive enhancement: the hero is fully themed + readable from the server
+// Crucially it drives the GLOBAL theme (the shared ThemeProvider that sets
+// <html data-theme>), not just its own section — so the season the visitor is
+// looking at FOLLOWS them when they click "Start hosting", "Join a game", etc.
+// No jarring reset to a different theme on navigation.
+//
+// Progressive enhancement: the page is fully themed + readable from the server
 // (initial paint uses ssrThemeKey, so crawlers and no-JS visitors get a complete
 // themed page). This island only layers the live switching + drift on top, and
-// it stays out of the way of reduced-motion users.
+// it stays out of the way of reduced-motion visitors.
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 import { MONTH_THEME_KEYS } from "@/lib/theme/monthThemeScript";
-import { themeVars } from "./themeVars";
+import { useTheme } from "@/components/system/ThemeProvider";
 import { Weather } from "@/components/system";
 
 const MONTH_LABELS = [
@@ -31,24 +36,31 @@ export function YearInOneTouch({
   ssrThemeKey: ThemeKey;
   children: ReactNode;
 }) {
+  // The selected month IS the global site theme — so it carries across the app.
+  const { themeKey, setThemeKey } = useTheme();
+  const index = Math.max(0, MONTH_THEME_KEYS.indexOf(themeKey));
+  const indexRef = useRef(index);
+  indexRef.current = index;
+
   const ssrIndex = Math.max(0, MONTH_THEME_KEYS.indexOf(ssrThemeKey));
-  const [index, setIndex] = useState(ssrIndex);
   const [homeIndex, setHomeIndex] = useState(ssrIndex);
   const [touched, setTouched] = useState(false);
   const touchedRef = useRef(false);
 
-  // On mount, snap to the visitor's real current month (a statically-cached page
-  // may have been built in a different month) and mark it "you're here".
+  // On mount, snap the whole site to the visitor's real current month (a cached
+  // page may have been built in another month) and mark it "you're here".
   useEffect(() => {
     const live = new Date().getMonth();
-    if (MONTH_THEME_KEYS[live]) {
+    const key = MONTH_THEME_KEYS[live];
+    if (key) {
       setHomeIndex(live);
-      if (!touchedRef.current) setIndex(live);
+      if (!touchedRef.current) setThemeKey(key);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-drift through the year until the first interaction; never after. Off for
-  // reduced-motion visitors — the page simply opens in the current month.
+  // reduced-motion visitors — the site simply rests on the current month.
   useEffect(() => {
     if (touched) return;
     const reduce =
@@ -57,27 +69,30 @@ export function YearInOneTouch({
     if (reduce) return;
     const id = window.setInterval(() => {
       if (touchedRef.current) return;
-      setIndex((i) => (i + 1) % 12);
+      const next = MONTH_THEME_KEYS[(indexRef.current + 1) % 12];
+      if (next) setThemeKey(next);
     }, DRIFT_MS);
     return () => window.clearInterval(id);
-  }, [touched]);
+  }, [touched, setThemeKey]);
 
   const pick = (i: number) => {
+    const key = MONTH_THEME_KEYS[i];
+    if (!key) return;
     touchedRef.current = true;
     setTouched(true);
-    setIndex(i);
+    setThemeKey(key);
   };
 
   const selected = MONTH_THEME_KEYS[index] ?? ssrThemeKey;
 
   return (
     <section
-      data-theme={selected}
       data-ys-section={selected}
       data-testid="year-in-one-touch"
       className="relative isolate overflow-hidden"
       style={{
-        ...themeVars(selected),
+        // Inherits the global theme's vars from <html data-theme>; the toy moves
+        // that, so this whole block (and every page you click into) repaints.
         background: "var(--paper)",
         color: "var(--ink)",
         transition: "background-color 260ms ease, color 260ms ease",

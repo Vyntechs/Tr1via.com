@@ -6,15 +6,29 @@ import { act, fireEvent, render, screen } from "@testing-library/react";
 // test focuses on the controller logic, not particle rendering.
 vi.mock("@/components/system", () => ({ Weather: () => null }));
 
+import { ThemeProvider } from "@/components/system/ThemeProvider";
 import { YearInOneTouch } from "@/components/marketing/YearInOneTouch";
 
-function theme() {
-  return screen.getByTestId("year-in-one-touch").getAttribute("data-theme");
+// The toy drives the WHOLE document's theme (so the season carries to every page
+// you click into), not just its own section — so we assert on <html>.
+function docTheme() {
+  return document.documentElement.getAttribute("data-theme");
+}
+
+function mount(ssrThemeKey = "july") {
+  return render(
+    <ThemeProvider themeKey={ssrThemeKey as never}>
+      <YearInOneTouch ssrThemeKey={ssrThemeKey as never}>
+        <div>hero</div>
+      </YearInOneTouch>
+    </ThemeProvider>,
+  );
 }
 
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+  document.documentElement.removeAttribute("data-theme");
 });
 
 describe("YearInOneTouch", () => {
@@ -22,60 +36,47 @@ describe("YearInOneTouch", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 6, 4)); // July
     act(() => {
-      render(
-        <YearInOneTouch ssrThemeKey="july">
-          <div>hero</div>
-        </YearInOneTouch>,
-      );
+      mount("july");
     });
-    expect(theme()).toBe("july");
-    // The 'you're here' marker rides the real month (July).
+    expect(docTheme()).toBe("july");
     const jul = screen.getByRole("tab", { name: /jul/i });
     expect(jul).toHaveTextContent(/you'?re here/i);
   });
 
-  it("repaints the whole hero to a month when its cell is tapped", () => {
+  it("repaints the WHOLE document when a month is tapped (carries across the app)", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 6, 4)); // July
     act(() => {
-      render(
-        <YearInOneTouch ssrThemeKey="july">
-          <div>hero</div>
-        </YearInOneTouch>,
-      );
+      mount("july");
     });
     act(() => {
       fireEvent.click(screen.getByRole("tab", { name: /dec/i }));
     });
-    expect(theme()).toBe("december");
+    // The document theme — not just a section — follows the pick, so /login,
+    // /join, everything the visitor navigates to wears December too.
+    expect(docTheme()).toBe("december");
     expect(screen.getByRole("tab", { name: /dec/i })).toHaveAttribute("aria-selected", "true");
   });
 
-  it("auto-drifts through the months until first interaction, then stops", () => {
+  it("auto-drifts the document theme until first interaction, then stops", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 6, 4)); // July
     act(() => {
-      render(
-        <YearInOneTouch ssrThemeKey="july">
-          <div>hero</div>
-        </YearInOneTouch>,
-      );
+      mount("july");
     });
-    expect(theme()).toBe("july");
-    // Drifts forward on its own.
+    expect(docTheme()).toBe("july");
     act(() => {
       vi.advanceTimersByTime(2300);
     });
-    expect(theme()).toBe("august");
-    // A tap takes control and freezes the drift.
+    expect(docTheme()).toBe("august");
     act(() => {
       fireEvent.click(screen.getByRole("tab", { name: /mar/i }));
     });
-    expect(theme()).toBe("march");
+    expect(docTheme()).toBe("march");
     act(() => {
       vi.advanceTimersByTime(10000);
     });
-    expect(theme()).toBe("march"); // never drifts again
+    expect(docTheme()).toBe("march"); // never drifts again
   });
 
   it("does not auto-drift when the visitor prefers reduced motion", () => {
@@ -95,16 +96,12 @@ describe("YearInOneTouch", () => {
     });
     vi.stubGlobal("matchMedia", mql as unknown as typeof window.matchMedia);
     act(() => {
-      render(
-        <YearInOneTouch ssrThemeKey="july">
-          <div>hero</div>
-        </YearInOneTouch>,
-      );
+      mount("july");
     });
-    expect(theme()).toBe("july");
+    expect(docTheme()).toBe("july");
     act(() => {
       vi.advanceTimersByTime(10000);
     });
-    expect(theme()).toBe("july"); // stays put — no ambient drift
+    expect(docTheme()).toBe("july");
   });
 });

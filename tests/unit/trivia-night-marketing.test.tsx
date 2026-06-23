@@ -16,23 +16,33 @@
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import TriviaNightPage, { metadata } from "@/app/(marketing)/trivia-night/page";
+import { ThemeProvider } from "@/components/system/ThemeProvider";
+
+// The page always renders under the root layout's ThemeProvider in production;
+// the front-door toy reads that theme context, so tests supply it too.
+const renderPage = () =>
+  render(
+    <ThemeProvider themeKey="june">
+      <TriviaNightPage />
+    </ThemeProvider>,
+  );
 
 describe("/trivia-night marketing landing", () => {
   it("renders the anti-cheat differentiator hook", () => {
-    render(<TriviaNightPage />);
+    renderPage();
     // The sharp edge of the positioning: solo play + per-phone scramble.
     expect(screen.getByText(/nobody can cheat/i)).toBeTruthy();
   });
 
   it("primary CTA starts hosting (links to /login)", () => {
-    render(<TriviaNightPage />);
+    renderPage();
     const start = screen.getByTestId("marketing-cta-host");
     expect(start.getAttribute("href")).toBe("/login");
     expect(within(start).getByText(/host/i)).toBeTruthy();
   });
 
   it("secondary CTA joins a game (links to /join, not / — / now redirects here)", () => {
-    render(<TriviaNightPage />);
+    renderPage();
     const join = screen.getByTestId("marketing-cta-join");
     expect(join.getAttribute("href")).toBe("/join");
   });
