@@ -131,7 +131,7 @@ function TVLobbyInner({
           // of vertical to fixed top/bottom gutters.
           padding: "clamp(4px, 1vh, 28px) 56px clamp(4px, 1vh, 12px)",
           display: "grid",
-          gridTemplateColumns: "1.25fr 1fr",
+          gridTemplateColumns: "1fr 1fr",
           gridTemplateRows: "minmax(0, 1fr)",
           gap: 56,
           // `safe center` keeps the balanced vertical centering on a tall
@@ -221,16 +221,18 @@ function TVLobbyInner({
           >
             <QRBlock
               url={joinUrl}
-              // QR scales with viewport but never drops below 160px —
-              // scannable from across a small bar room even at the floor.
-              size="clamp(160px, 25vh, 300px)"
+              // The QR is the door into the room — it's the hero on the
+              // wall-sized venue TV. 40vh makes it the dominant element (288px
+              // on a 720p TV, 432px on 1080p); the 240px floor guarantees
+              // back-table scannability even on a short host laptop.
+              size="clamp(240px, 40vh, 460px)"
               light
             />
           </div>
 
           <div
             style={{
-              marginTop: 20,
+              marginTop: "clamp(10px, 1.4vh, 20px)",
               padding: "14px 22px",
               borderRadius: 99,
               background: t.pop,
@@ -255,7 +257,7 @@ function TVLobbyInner({
             <span style={{ fontSize: 14, color: "#0E0805", fontWeight: 600 }}>in the room</span>
           </div>
 
-          <div style={{ marginTop: 28, width: "100%", maxWidth: 420 }}>
+          <div style={{ marginTop: "clamp(12px, 1.8vh, 28px)", width: "100%", maxWidth: 420 }}>
             <Eyebrow color={t.inkMute} size={10}>JUST JOINED</Eyebrow>
             <div
               data-testid="tv-lobby-roster"

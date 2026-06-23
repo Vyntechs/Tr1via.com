@@ -556,7 +556,9 @@ function PlayersSheet({
       style={{
         position: "absolute",
         inset: 0,
-        background: "rgba(0,0,0,0.45)",
+        // Lighter scrim so the live board reads ALIVE behind the sheet, not
+        // paused — the board is never unmounted; this is purely the visual cue.
+        background: "rgba(0,0,0,0.28)",
         display: "flex",
         justifyContent: "flex-end",
         zIndex: 40,
@@ -608,34 +610,52 @@ function PlayersSheet({
           </button>
         </div>
 
+        {/* Reassurance: the board, timers, and reveals stay mounted under
+            this sheet — opening it never pauses the game. */}
+        <div style={{ fontSize: 12, color: t.inkMid, marginTop: -6 }}>
+          Game&apos;s still running — players can join right now.
+        </div>
+
         {(roomCode || joinUrl) && (
           <div
             style={{
               display: "flex",
-              gap: 12,
+              flexDirection: "column",
               alignItems: "center",
+              gap: 10,
               padding: "10px 12px",
               background: t.dark ? "rgba(244,230,196,.04)" : "rgba(20,19,15,.03)",
               border: `1px solid ${t.line}`,
               borderRadius: 10,
             }}
           >
-            {joinUrl ? <QRBlock url={joinUrl} size={72} light /> : null}
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            {/* The QR is the door into the room — make it the hero of the
+                drawer. clamp fits the ~316px usable interior; light forced so
+                the code stays scannable regardless of theme. */}
+            {joinUrl ? <QRBlock url={joinUrl} size="clamp(200px, 30vh, 300px)" light /> : null}
+            <div
+              style={{
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                gap: 2,
+              }}
+            >
               {roomCode && (
                 <div
                   style={{
                     fontFamily: "var(--font-mono)",
-                    fontSize: 20,
+                    fontSize: 24,
                     fontWeight: 700,
                     color: t.ink,
                     letterSpacing: "0.08em",
+                    textAlign: "center",
                   }}
                 >
                   {roomCode}
                 </div>
               )}
-              <div style={{ fontSize: 11, color: t.inkMid }}>
+              <div style={{ fontSize: 11, color: t.inkMid, textAlign: "center" }}>
                 tr1via.com/join
               </div>
             </div>
