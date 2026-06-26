@@ -61,3 +61,4 @@ supabase/.temp
 
 # internal session notes — never publish
 HANDOFF.md
+/tasks/
