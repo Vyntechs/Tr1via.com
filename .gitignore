@@ -58,3 +58,7 @@ supabase/.temp
 .surgeon
 .playwright-mcp/
 .superpowers/
+
+# internal session notes — never publish
+HANDOFF.md
+/tasks/
