@@ -31,6 +31,7 @@ describe("generation done audit summary", () => {
     });
     acc.recordAcceptedQuestions([
       q("As of 2026, what is the largest country by area in the world?"),
+      ...Array.from({ length: 19 }, (_, i) => q(`Accepted question ${i + 2}?`)),
     ]);
     acc.recordImageTargets(20);
     acc.recordImageAttached();

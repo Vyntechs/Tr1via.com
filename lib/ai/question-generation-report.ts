@@ -134,6 +134,7 @@ export function createQuestionGenerationReportAccumulator(input: {
   let estimatedCostUsd = 0;
   let imageTargetCount = 0;
   let imageAttachedCount = 0;
+  let acceptedQuestionCount: number | null = null;
 
   const countReason = (reason: QuestionRejectionReason) => {
     reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
@@ -162,6 +163,7 @@ export function createQuestionGenerationReportAccumulator(input: {
       invalidCandidates.push({ prompt, reasons: ["invalid_schema"] });
     },
     recordAcceptedQuestions(questions) {
+      acceptedQuestionCount = questions.length;
       riskFlags.length = 0;
       for (const question of questions) {
         const flags = riskFlagsForQuestion(question);
@@ -178,7 +180,11 @@ export function createQuestionGenerationReportAccumulator(input: {
       const generatedCount =
         rounds.reduce((sum, round) => sum + round.generated, 0) +
         invalidCandidates.length;
-      const acceptedCount = rounds.reduce((sum, round) => sum + round.accepted, 0);
+      const roundAcceptedCount = rounds.reduce(
+        (sum, round) => sum + round.accepted,
+        0,
+      );
+      const acceptedCount = acceptedQuestionCount ?? roundAcceptedCount;
       const rejectedCount =
         rounds.reduce((sum, round) => sum + round.rejected.length, 0) +
         invalidCandidates.length;

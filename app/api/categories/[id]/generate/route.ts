@@ -436,7 +436,7 @@ async function runGenerationJob(opts: {
     try {
       const photo = await autoAttachPhoto(q, { topic: opts.topic });
       if (photo.imageUrl) {
-        await admin
+        const { error: photoUpdateError } = await admin
           .from("questions")
           .update({
             image_url: photo.imageUrl,
@@ -444,7 +444,14 @@ async function runGenerationJob(opts: {
             image_source: "pexels",
           })
           .eq("id", id);
-        qualityReport.recordImageAttached();
+        if (photoUpdateError) {
+          console.warn(
+            "[generate] photo update failed for question:",
+            photoUpdateError.message,
+          );
+        } else {
+          qualityReport.recordImageAttached();
+        }
       }
       await broadcastToCategory(opts.categoryId, "photo_attached", {
         serverNow: new Date().toISOString(),
