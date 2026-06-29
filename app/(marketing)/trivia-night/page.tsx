@@ -21,7 +21,7 @@
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Display, Eyebrow } from "@/components/system";
+import { Display, Eyebrow, Wordmark } from "@/components/system";
 import { ThemeShowcase } from "@/components/marketing/ThemeShowcase";
 import { ThemedSection } from "@/components/marketing/ThemedSection";
 import { YearInOneTouch } from "@/components/marketing/YearInOneTouch";
@@ -92,52 +92,165 @@ const JSON_LD = {
   ],
 };
 
-const SCREEN = "#0b0b12";
-const HERO_PHONES: string[][] = [
-  ["Paris", "Lyon", "Rome"],
-  ["Rome", "Paris", "Nice"],
-  ["Lyon", "Nice", "Paris"],
+const HEATHER_QUOTE =
+  "I love the new Tr1via platform. It has cut my time in half creating games. I am impressed how it adapts to my type of questions the more I use it.";
+const HEATHER_ATTRIBUTION = "Heather, weekly trivia host";
+
+const SCREEN = "#070812";
+const SCREEN_SOFT = "#111321";
+const SURFACE_PHONES: { label: string; answers: string[] }[] = [
+  { label: "Player A", answers: ["Paris", "Lyon", "Rome", "Nice"] },
+  { label: "Player B", answers: ["Rome", "Nice", "Paris", "Lyon"] },
+  { label: "Player C", answers: ["Lyon", "Paris", "Nice", "Rome"] },
 ];
 
-function HeroProduct() {
+function MiniAnswer({ answer }: { answer: string }) {
+  const correct = answer === "Paris";
   return (
     <div
-      className="relative w-full max-w-[560px] rounded-3xl p-6"
-      style={{ background: "var(--ink)" }}
+      className="rounded-md px-2 py-1.5 text-[10px] font-bold leading-none"
+      style={
+        correct
+          ? { background: "var(--correct)", color: SCREEN }
+          : { background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.72)" }
+      }
     >
-      <div className="rounded-2xl p-5" style={{ background: SCREEN }}>
-        <Eyebrow color="var(--pop)" size={10}>
-          Question 4 · Geography
-        </Eyebrow>
-        <Display size={26} color="#fff" style={{ display: "block", marginTop: 6 }}>
-          Which city is the capital of France?
-        </Display>
+      {answer}
+    </div>
+  );
+}
+
+function SurfacePhone({ label, answers }: { label: string; answers: string[] }) {
+  return (
+    <div
+      className="rounded-lg p-2"
+      style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.11)" }}
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <span className="font-[family-name:var(--font-mono)] text-[8px] font-bold uppercase" style={{ color: "rgba(255,255,255,0.5)" }}>
+          {label}
+        </span>
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: "var(--correct)" }} />
       </div>
-      <div className="mt-4 grid grid-cols-3 gap-3">
-        {HERO_PHONES.map((opts, i) => (
-          <div key={i} className="flex flex-col gap-2 rounded-xl p-2.5" style={{ background: SCREEN }}>
-            {opts.map((o, j) => {
-              const correct = o === "Paris";
-              return (
-                <div
-                  key={j}
-                  className="rounded-md px-2 py-1.5 text-[11px] font-semibold"
-                  style={
-                    correct
-                      ? { background: "var(--correct)", color: "#0b0b12" }
-                      : { background: "rgba(255,255,255,0.07)", color: "rgba(255,255,255,0.8)" }
-                  }
-                >
-                  {o}
-                </div>
-              );
-            })}
-          </div>
+      <div className="grid gap-1.5">
+        {answers.map((answer) => (
+          <MiniAnswer key={answer} answer={answer} />
         ))}
       </div>
-      <p className="mt-3 text-center text-[12px] font-semibold" style={{ color: "rgba(255,255,255,0.6)" }}>
-        Same answer, different spot on every phone.
+    </div>
+  );
+}
+
+function SurfaceChip({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-lg px-3 py-2" style={{ background: "rgba(255,255,255,0.07)" }}>
+      <p className="font-[family-name:var(--font-mono)] text-[9px] font-bold uppercase" style={{ color: "rgba(255,255,255,0.48)" }}>
+        {title}
       </p>
+      <p className="mt-1 text-[13px] font-bold text-white">{value}</p>
+    </div>
+  );
+}
+
+function LandingSurfaceStage() {
+  return (
+    <div
+      data-testid="landing-surface-stage"
+      className="relative w-full max-w-[650px] overflow-hidden rounded-lg p-3 sm:p-5"
+      style={{
+        background: `linear-gradient(140deg, var(--ink), ${SCREEN_SOFT})`,
+        boxShadow: "0 28px 70px -36px var(--ink)",
+      }}
+    >
+      <div
+        className="absolute left-10 top-8 h-24 w-48 rounded-full blur-3xl"
+        style={{ background: "var(--accent)", opacity: 0.42 }}
+      />
+      <div
+        className="absolute bottom-8 right-10 h-20 w-44 rounded-full blur-3xl"
+        style={{ background: "var(--pop)", opacity: 0.24 }}
+      />
+
+      <div
+        className="relative rounded-lg p-3 sm:p-4"
+        style={{ background: "rgba(7,8,18,0.78)", border: "1px solid rgba(255,255,255,0.14)" }}
+      >
+        <div className="flex items-center justify-between gap-4">
+          <Eyebrow color="var(--pop)" size={10}>
+            Live reveal
+          </Eyebrow>
+          <span className="rounded-full px-3 py-1 font-[family-name:var(--font-mono)] text-[9px] font-bold uppercase text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
+            one press
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-3 lg:grid-cols-[1.14fr_0.86fr]">
+          <section className="rounded-lg p-4" style={{ background: SCREEN, border: "1px solid rgba(255,255,255,0.1)" }}>
+            <div className="flex items-center justify-between">
+              <Eyebrow color="var(--correct)" size={9}>
+                Venue TV
+              </Eyebrow>
+              <span className="font-[family-name:var(--font-mono)] text-[9px] font-bold uppercase" style={{ color: "rgba(255,255,255,0.44)" }}>
+                00:18
+              </span>
+            </div>
+            <Display
+              size={31}
+              color="#fff"
+              tracking={0}
+              style={{ display: "block", lineHeight: 1.03, marginTop: 12 }}
+            >
+              Which city is the capital of France?
+            </Display>
+            <div className="mt-5 grid grid-cols-2 gap-2">
+              {["Paris", "Lyon", "Rome", "Nice"].map((answer) => (
+                <div
+                  key={answer}
+                  className="rounded-md px-3 py-2 text-[12px] font-bold"
+                  style={
+                    answer === "Paris"
+                      ? { background: "var(--correct)", color: SCREEN }
+                      : { background: "rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.78)" }
+                  }
+                >
+                  {answer}
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <div className="grid gap-3">
+            <section className="rounded-lg p-4" style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}>
+              <Eyebrow color="var(--pop)" size={9}>
+                Host console
+              </Eyebrow>
+              <div className="mt-3 flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-[22px] font-black leading-none text-white">Reveal sent</p>
+                  <p className="mt-1 text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.58)" }}>
+                    TV and phones move together.
+                  </p>
+                </div>
+                <span className="rounded-md px-2.5 py-2 font-[family-name:var(--font-mono)] text-[10px] font-bold uppercase" style={{ background: "var(--accent)", color: "#fff" }}>
+                  live
+                </span>
+              </div>
+            </section>
+
+            <section className="grid grid-cols-3 gap-2">
+              {SURFACE_PHONES.map((phone) => (
+                <SurfacePhone key={phone.label} label={phone.label} answers={phone.answers} />
+              ))}
+            </section>
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <SurfaceChip title="TV" value="Big question" />
+          <SurfaceChip title="Host" value="One tap" />
+          <SurfaceChip title="Phones" value="Shuffled" />
+        </div>
+      </div>
     </div>
   );
 }
@@ -146,8 +259,13 @@ function Header() {
   return (
     <header className="mx-auto flex max-w-[1140px] items-center justify-between px-6 py-6">
       <Link href="/trivia-night" className="no-underline" aria-label="TR1VIA home">
-        <span className="font-[family-name:var(--font-sans)] text-[22px] font-bold tracking-tight text-[color:var(--ink)]">
-          TR<span className="font-[family-name:var(--font-mono)] text-accent">1</span>VIA
+        <span data-testid="tr1via-wordmark">
+          <Wordmark
+            size={26}
+            weight={800}
+            tracking={-0.018}
+            style={{ display: "inline-flex" }}
+          />
         </span>
       </Link>
       <Link
@@ -165,24 +283,26 @@ function Hero() {
   return (
     <>
       <Header />
-      <div className="mx-auto grid max-w-[1140px] items-center gap-12 px-6 pb-16 pt-8 sm:pt-14 lg:grid-cols-[1.05fr_0.95fr]">
+      <div className="mx-auto grid max-w-[1180px] items-center gap-12 px-6 pb-12 pt-8 sm:pt-14 lg:grid-cols-[0.92fr_1.08fr]">
         <div>
           <Eyebrow color="var(--accent)" size={12}>
-            Free to host · unlimited players
+            Seasonal room system · tap the month rail
           </Eyebrow>
           <Display
-            size="clamp(44px, 7vw, 84px)"
-            tracking={-0.04}
-            style={{ display: "block", marginTop: 18 }}
+            size="clamp(46px, 6.4vw, 78px)"
+            tracking={0}
+            style={{ display: "block", lineHeight: 0.95, marginTop: 18 }}
           >
-            Everybody plays solo.
+            One press.
             <br />
-            <span style={{ color: "var(--accent)" }}>Nobody can cheat.</span>
+            <span style={{ color: "var(--accent)" }}>Three surfaces.</span>
+            <br />
+            A room that feels alive.
           </Display>
-          <p className="mt-7 max-w-[560px] text-[18px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
-            One question on the big screen. Every phone shuffles the four answers
-            into its own order &mdash; so shouting &ldquo;it&rsquo;s number three!&rdquo;
-            means nothing. You run the show; we handle the rest.
+          <p className="mt-7 max-w-[590px] text-[18px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
+            Tap Reveal once. The venue TV, your host console, and every player
+            phone snap into the same moment. Answers shuffle on each phone, so
+            nobody can cheat; the room gets the show.
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-3">
             <Link
@@ -204,10 +324,31 @@ function Hero() {
           </div>
         </div>
         <div className="flex justify-center lg:justify-end">
-          <HeroProduct />
+          <LandingSurfaceStage />
         </div>
       </div>
+
+      <HeatherProofBar />
     </>
+  );
+}
+
+function HeatherProofBar() {
+  return (
+    <div className="mx-auto max-w-[1140px] px-6 py-7">
+      <div
+        className="grid gap-4 border-y py-5 sm:grid-cols-[0.34fr_1fr] sm:items-center"
+        style={{ borderColor: "var(--line)" }}
+      >
+        <Eyebrow color="var(--accent)" size={11}>
+          First live host proof
+        </Eyebrow>
+        <p className="max-w-[780px] text-[17px] font-semibold leading-relaxed" style={{ color: "var(--ink)" }}>
+          Heather, weekly trivia host, cut game creation time in half after
+          moving her live night onto TR1VIA.
+        </p>
+      </div>
+    </div>
   );
 }
 
@@ -239,6 +380,69 @@ function HowItWorks() {
         <Step n="03" title="You run the board off the TV" body="Tap a question. The whole room sees it at once and a 20-second timer starts. You set the pace." />
         <Step n="04" title="Everyone answers alone" body="The four answers are shuffled on every single phone, so shouting “it’s number three!” means nothing." />
       </ol>
+    </div>
+  );
+}
+
+function BuildNight() {
+  return (
+    <div className="mx-auto grid max-w-[1120px] items-center gap-10 px-6 py-24 sm:py-28 lg:grid-cols-[0.9fr_1.1fr]">
+      <div>
+        <Eyebrow color="var(--accent)" size={12}>
+          Build a night in minutes
+        </Eyebrow>
+        <Display
+          size="clamp(36px, 5vw, 58px)"
+          tracking={0}
+          style={{ display: "block", lineHeight: 1, marginTop: 16 }}
+        >
+          Bring the idea.
+          <br />
+          Leave with the board.
+        </Display>
+        <p className="mt-6 max-w-[520px] text-[17px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
+          Type the vibe for the room, keep what hits, edit what needs your
+          voice, then walk into showtime with a TV-ready game.
+        </p>
+      </div>
+
+      <div
+        className="rounded-lg p-4 sm:p-5"
+        style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Eyebrow color="var(--accent)" size={10}>
+            Host builder
+          </Eyebrow>
+          <span className="rounded-md px-3 py-1.5 font-[family-name:var(--font-mono)] text-[10px] font-bold uppercase" style={{ background: "var(--accent)", color: "#fff" }}>
+            ready for review
+          </span>
+        </div>
+
+        <div className="mt-5 grid gap-3">
+          {[
+            ["01", "Pick the room", "Sports bar regulars, birthday party, office crowd, or your own strange theme."],
+            ["02", "Shape the questions", "Use AI to draft faster, then review every clue before it goes live."],
+            ["03", "Run the show", "The board, TV, host phone, and player phones stay in one shared moment."],
+          ].map(([n, title, body]) => (
+            <div
+              key={n}
+              className="grid gap-3 rounded-lg p-4 sm:grid-cols-[46px_1fr]"
+              style={{ background: "var(--paper)", border: "1px solid var(--line)" }}
+            >
+              <span className="font-[family-name:var(--font-mono)] text-[13px] font-black" style={{ color: "var(--accent)" }}>
+                {n}
+              </span>
+              <div>
+                <h3 className="text-[18px] font-black leading-tight text-[color:var(--ink)]">{title}</h3>
+                <p className="mt-1 text-[14px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
+                  {body}
+                </p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -320,6 +524,10 @@ export default function TriviaNightPage() {
         <TheMoment />
       </ThemedSection>
 
+      <ThemedSection themeKey="september">
+        <BuildNight />
+      </ThemedSection>
+
       <ThemedSection themeKey="august">
         <HowItWorks />
       </ThemedSection>
@@ -339,7 +547,7 @@ export default function TriviaNightPage() {
       </ThemedSection>
 
       <ThemedSection themeKey="april">
-        <Proof quote={null} />
+        <Proof quote={{ text: HEATHER_QUOTE, attribution: HEATHER_ATTRIBUTION }} />
       </ThemedSection>
 
       <ThemedSection themeKey="june">

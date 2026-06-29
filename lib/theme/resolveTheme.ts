@@ -46,7 +46,7 @@ export const SYSTEM_DEFAULT_THEME: ThemeKey = "daylight";
  *  SYSTEM_DEFAULT when the night + host have no explicit pick — so a
  *  brand-new host in May lands on the May storm theme automatically
  *  instead of getting "daylight" forever. */
-function themeKeyForMonth(month: number): ThemeKey | null {
+export function themeKeyForMonth(month: number): ThemeKey | null {
   switch (month) {
     case 1:  return "january";
     case 2:  return "february";
@@ -74,11 +74,15 @@ function themeKeyForMonth(month: number): ThemeKey | null {
  *  what makes a stale stored season self-heal every month with nothing
  *  saved to rot. Per-night overrides are exempt: picking a month for one
  *  specific night (a Halloween night, a finale) IS a deliberate choice. */
-const SEASONAL_MONTH_KEYS: ReadonlySet<ThemeKey> = new Set(
+export const SEASONAL_MONTH_KEYS: ReadonlySet<ThemeKey> = new Set(
   Array.from({ length: 12 }, (_, i) => themeKeyForMonth(i + 1)).filter(
     (k): k is ThemeKey => k !== null,
   ),
 );
+
+export function isSeasonalMonthThemeKey(value: unknown): value is ThemeKey {
+  return isThemeKey(value) && SEASONAL_MONTH_KEYS.has(value);
+}
 
 /** Subset of NightRow this helper reads — keeps the input loose so any
  *  shape (snapshot, raw DB row, hand-built test fixture) works. */
@@ -128,7 +132,7 @@ export function resolveTheme(
   // (house, daylight, …). A month here means "follow the season" → fall
   // through to the live calendar so it can never freeze on a stale month.
   const hostKey = host?.default_theme_key;
-  if (isThemeKey(hostKey) && !SEASONAL_MONTH_KEYS.has(hostKey)) return hostKey;
+  if (isThemeKey(hostKey) && !isSeasonalMonthThemeKey(hostKey)) return hostKey;
   const monthKey = themeKeyForMonth(now.getMonth() + 1);
   if (monthKey) return monthKey;
   return SYSTEM_DEFAULT_THEME;

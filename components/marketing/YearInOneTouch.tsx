@@ -21,6 +21,7 @@ import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 import { MONTH_THEME_KEYS } from "@/lib/theme/monthThemeScript";
 import { useTheme } from "@/components/system/ThemeProvider";
 import { Weather } from "@/components/system";
+import { ThemeCharacterBand } from "@/components/marketing/ThemeCharacterBand";
 
 const MONTH_LABELS = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -104,6 +105,8 @@ export function YearInOneTouch({
       </div>
 
       {children}
+
+      <ThemeCharacterBand themeKey={selected} activeIndex={index} homeIndex={homeIndex} />
 
       {/* The interactive year rail — promoted from decoration to the control knob. */}
       <div className="mx-auto mb-2 max-w-[1140px] px-6">
