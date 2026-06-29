@@ -259,7 +259,14 @@ function Header() {
   return (
     <header className="mx-auto flex max-w-[1140px] items-center justify-between px-6 py-6">
       <Link href="/trivia-night" className="no-underline" aria-label="TR1VIA home">
-        <Wordmark size={22} />
+        <span data-testid="tr1via-wordmark">
+          <Wordmark
+            size={26}
+            weight={800}
+            tracking={-0.018}
+            style={{ display: "inline-flex" }}
+          />
+        </span>
       </Link>
       <Link
         href="/login"

@@ -49,6 +49,13 @@ describe("/trivia-night marketing landing", () => {
     expect(screen.getByText(/first live host/i)).toBeTruthy();
   });
 
+  it("renders the canonical proportional wordmark in the header", () => {
+    renderPage();
+    const home = screen.getByRole("link", { name: /tr1via home/i });
+    expect(home.textContent?.replace(/\s+/g, "")).toContain("TR1VIA");
+    expect(home.querySelector("[data-testid='tr1via-wordmark']")).toBeTruthy();
+  });
+
   it("primary CTA starts hosting (links to /login)", () => {
     renderPage();
     const start = screen.getByTestId("marketing-cta-host");
