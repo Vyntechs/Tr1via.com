@@ -2,11 +2,17 @@
 
 Live trivia, designed to make the room feel alive.
 
-This is the web app for **tr1via.com** — a Jeopardy-style multiplayer trivia game run live at small venues. One host on a laptop (mirrored to a TV) plus a private host phone, and 20–40 players each on their own phone.
+This is the web app for **[tr1via.com](https://tr1via.com)** — a Jeopardy-style multiplayer trivia game run live at small venues. One host on a laptop (mirrored to a TV), a private host phone, and 20–40 players each on their own phone — one press, three synchronized surfaces, in realtime.
 
-> **Single source of truth — the rules:** `tr1via-plan.md`
-> **Design package:** `tr1via/` directory in the design handoff bundle (HTML/JSX prototypes from Claude Design)
-> **Build plan:** `docs/superpowers/plans/2026-05-23-tr1via.md`
+<p align="center">
+  <img src="docs/screenshots/player-question/after-iphone-15-pro-max-image.png" alt="A live question on a player's phone" width="300">
+</p>
+
+**Live at [tr1via.com](https://tr1via.com).** My pride-and-joy project — real venues, real players, in production.
+
+## How it's built
+
+AI-directed, human-verified. I direct the agents; I own the judgment and the verification. The realtime sync model, the three-surface design (TV, host, player), and the call on what "done" means are mine — enforced in the code and the tests. The line-by-line authoring is paired with Claude, credited in the commit trailers. I don't claim I hand-wrote every line. I claim I know exactly why every line is there — and the multi-context Playwright tests that prove the TV, host, and player phones stay in sync are how I check it.
 
 ## Stack
 
@@ -63,6 +69,10 @@ tests/                Vitest unit + Playwright E2E
 npm test               # unit tests (Vitest)
 npm run test:e2e       # E2E (Playwright, including multi-context sync tests)
 ```
+
+## What this is
+
+The real production app behind tr1via.com, shared to show how I build — not a drop-in template. Still learning, still building; the deploy doc is a known gap, noted below. I'd rather show the limit than hide it.
 
 ## Deploy
 
