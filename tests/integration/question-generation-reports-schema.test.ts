@@ -38,6 +38,7 @@ async function freshDb(): Promise<PGlite> {
 describe("question_generation_reports schema", () => {
   let db: PGlite;
   let hostUserId: string;
+  let nonOwnerUserId: string;
   let reportId: string;
 
   async function runAs(role: "anon" | "authenticated", authUid: string | null, sql: string) {
@@ -58,6 +59,7 @@ describe("question_generation_reports schema", () => {
       (await one<{ id: string }>(sql + " returning id", params)).id;
 
     hostUserId = (await one<{ id: string }>("insert into auth.users default values returning id")).id;
+    nonOwnerUserId = (await one<{ id: string }>("insert into auth.users default values returning id")).id;
     const hostId = await id("insert into hosts (user_id, display_name) values ($1, 'Host')", [hostUserId]);
     const nightId = await id("insert into nights (host_id, venue_name, room_code) values ($1, 'Venue', 'ROOM01')", [hostId]);
     const gameId = await id("insert into games (night_id, game_no) values ($1, 1)", [nightId]);
@@ -97,6 +99,15 @@ describe("question_generation_reports schema", () => {
       `select id from question_generation_reports where id = '${reportId}'`,
     );
     expect(r.rows).toHaveLength(1);
+  });
+
+  test("an authenticated non-owner cannot read another host's report", async () => {
+    const r = await runAs(
+      "authenticated",
+      nonOwnerUserId,
+      `select id from question_generation_reports where id = '${reportId}'`,
+    );
+    expect(r.rows).toHaveLength(0);
   });
 
   test("anon cannot read reports", async () => {
