@@ -58,6 +58,20 @@ describe("YearInOneTouch", () => {
     expect(screen.getByRole("tab", { name: /dec/i })).toHaveAttribute("aria-selected", "true");
   });
 
+  it("keeps the visual troupe synchronized to the selected month without audio affordances", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 6, 4)); // July
+    act(() => {
+      mount("july");
+    });
+    expect(screen.getByTestId("theme-character-band")).toHaveAttribute("data-theme-character", "july");
+    act(() => {
+      fireEvent.click(screen.getByRole("tab", { name: /dec/i }));
+    });
+    expect(screen.getByTestId("theme-character-band")).toHaveAttribute("data-theme-character", "december");
+    expect(screen.getByTestId("theme-character-band").textContent).not.toMatch(/sound|audio|music|speaker/i);
+  });
+
   it("auto-drifts the document theme until first interaction, then stops", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(2026, 6, 4)); // July
