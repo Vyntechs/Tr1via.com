@@ -1,7 +1,7 @@
 import type { GeneratedQuestion } from "./generate-questions";
 import { riskFlagsForQuestion, type QuestionRiskFlag } from "./question-risk-flags";
 import { costUsd, type TokenUsage } from "./usage-cost";
-import type { Json } from "@/lib/supabase/types";
+import type { Json, QuestionGenerationReportRow } from "@/lib/supabase/types";
 
 export type QuestionGenerationMode =
   | "initial"
@@ -232,6 +232,20 @@ export function hostAuditSummaryFromSnapshot(
     imageTargetCount: snapshot.imageTargetCount,
     imageAttachedCount: snapshot.imageAttachedCount,
     riskFlagCount: snapshot.riskFlagCount,
+  };
+}
+
+export function hostAuditSummaryFromReportRow(
+  row: QuestionGenerationReportRow,
+): HostQuestionAuditSummary {
+  return {
+    acceptedCount: row.accepted_count,
+    generatedCount: row.generated_count,
+    verifyPasses: row.verify_passes,
+    estimatedCostUsd: Number(row.estimated_cost_usd),
+    imageTargetCount: row.image_target_count,
+    imageAttachedCount: row.image_attached_count,
+    riskFlagCount: row.risk_flag_count,
   };
 }
 

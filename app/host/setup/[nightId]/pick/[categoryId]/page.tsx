@@ -12,9 +12,10 @@
 
 import { notFound, redirect } from "next/navigation";
 import { requireOwnedCategory } from "@/lib/api/auth";
+import { hostAuditSummaryFromReportRow } from "@/lib/ai/question-generation-report";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
-import type { QuestionRow } from "@/lib/supabase/types";
+import type { QuestionGenerationReportRow, QuestionRow } from "@/lib/supabase/types";
 import { HostSetupPickClient } from "./HostSetupPickClient";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +42,16 @@ export default async function SetupPickPage({
     .select("*")
     .eq("category_id", categoryId);
   const questions = (questionRows ?? []) as QuestionRow[];
+  const { data: reportRow } = await admin
+    .from("question_generation_reports")
+    .select("*")
+    .eq("category_id", categoryId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const initialAuditSummary = reportRow
+    ? hostAuditSummaryFromReportRow(reportRow as QuestionGenerationReportRow)
+    : null;
 
   return (
     <HostSetupPickClient
@@ -50,6 +61,7 @@ export default async function SetupPickPage({
       categoryTopic={owned.category.topic}
       initialState={owned.category.state}
       initialQuestions={questions}
+      initialAuditSummary={initialAuditSummary}
       themeKey={resolveTheme(owned.night, owned.host)}
     />
   );

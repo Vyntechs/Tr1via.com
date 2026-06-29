@@ -129,4 +129,28 @@ describe("HostGenPick sidebar — clump-heavy regression (32bb985)", () => {
     // 6 shift to other tiers (with strikethrough showing the original).
     expect(struck).toHaveLength(6);
   });
+
+  it("renders the audit summary above the candidate grid when provided", () => {
+    const questions = clumpQuestions(3);
+
+    render(
+      <HostGenPick
+        themeKey="house"
+        topic="Grunge bands"
+        questions={questions}
+        auditSummary={{
+          acceptedCount: 7,
+          generatedCount: 9,
+          verifyPasses: 2,
+          estimatedCostUsd: 0.12,
+          imageTargetCount: 7,
+          imageAttachedCount: 6,
+          riskFlagCount: 1,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("host-gen-audit-summary")).toBeInTheDocument();
+    expect(screen.getByText("7 accepted from 9 candidates")).toBeInTheDocument();
+  });
 });

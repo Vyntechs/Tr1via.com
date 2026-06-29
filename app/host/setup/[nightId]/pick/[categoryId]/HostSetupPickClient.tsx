@@ -33,7 +33,8 @@ import {
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { QuestionRow, CategoryRow } from "@/lib/supabase/types";
 import { useGenerationStatus } from "@/lib/hooks/useGenerationStatus";
-import type { GenerationPhase } from "@/lib/api/broadcast";
+import type { CategoryDonePayload, GenerationPhase } from "@/lib/api/broadcast";
+import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
 import {
   deriveInitialGenerationMessage,
   explainGenerationFailure,
@@ -54,6 +55,7 @@ export interface HostSetupPickClientProps {
   categoryTopic: string;
   initialState: CategoryRow["state"];
   initialQuestions: QuestionRow[];
+  initialAuditSummary?: HostQuestionAuditSummary | null;
   themeKey: string;
 }
 
@@ -70,11 +72,15 @@ export function HostSetupPickClient({
   categoryTopic,
   initialState,
   initialQuestions,
+  initialAuditSummary = null,
   themeKey,
 }: HostSetupPickClientProps) {
   const router = useRouter();
   const [questions, setQuestions] = useState<QuestionRow[]>(initialQuestions);
   const [state, setState] = useState<CategoryRow["state"]>(initialState);
+  const [auditSummary, setAuditSummary] = useState<HostQuestionAuditSummary | null>(
+    initialAuditSummary,
+  );
   // Local mirror of the category's display label so the inline rename
   // can update the header + modal eyebrows without a hard reload. The
   // server is the source of truth on refresh.
@@ -134,6 +140,33 @@ export function HostSetupPickClient({
   );
   const [retrying, setRetrying] = useState(false);
 
+  const refetchQuestions = useCallback(async () => {
+    // Query Supabase directly via the browser client (RLS allows the host
+    // to read questions under their own category).
+    const supa = getSupabaseBrowser();
+    const { data } = await supa.from("questions").select("*").eq("category_id", categoryId);
+    if (data) {
+      const rows = data as QuestionRow[];
+      setQuestions(rows);
+      // Picks live in client state until lock — never overwrite the host's
+      // selections with what's in the DB. The merge keeps every client
+      // pick whose row still exists, unions any DB-confirmed is_picked
+      // rows, and drops orphans. See lib/host/mergePickedAfterRefetch.
+      // The previous "blindly replace from DB" version silently wiped the
+      // host's in-progress picks every time `question_added` fired during
+      // an "↻ Another 20" — that was bug A.
+      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
+      // If the host had an edit/swap/upload panel open for a question that was
+      // just deleted by the reroll, close the modal and surface a recoverable
+      // message — otherwise she'd hit Save and get a confusing 404.
+      const openModal = modalRef.current;
+      if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
+        setModal({ kind: "none" });
+        setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
+      }
+    }
+  }, [categoryId]);
+
   // ── live subscription ────────────────────────────────────────────────
   useEffect(() => {
     const supa = getSupabaseBrowser();
@@ -168,8 +201,10 @@ export function HostSetupPickClient({
           ),
         );
       })
-      .on("broadcast", { event: "done" }, () => {
+      .on("broadcast", { event: "done" }, (msg) => {
         if (cancelled) return;
+        const payload = msg.payload as CategoryDonePayload;
+        if (payload.auditSummary) setAuditSummary(payload.auditSummary);
         setGenPhase(null);
         setState("review");
         setRegenerating(false);
@@ -217,40 +252,14 @@ export function HostSetupPickClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId]);
 
-  const refetchQuestions = useCallback(async () => {
-    // Query Supabase directly via the browser client (RLS allows the host
-    // to read questions under their own category).
-    const supa = getSupabaseBrowser();
-    const { data } = await supa.from("questions").select("*").eq("category_id", categoryId);
-    if (data) {
-      const rows = data as QuestionRow[];
-      setQuestions(rows);
-      // Picks live in client state until lock — never overwrite the host's
-      // selections with what's in the DB. The merge keeps every client
-      // pick whose row still exists, unions any DB-confirmed is_picked
-      // rows, and drops orphans. See lib/host/mergePickedAfterRefetch.
-      // The previous "blindly replace from DB" version silently wiped the
-      // host's in-progress picks every time `question_added` fired during
-      // an "↻ Another 20" — that was bug A.
-      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
-      // If the host had an edit/swap/upload panel open for a question that was
-      // just deleted by the reroll, close the modal and surface a recoverable
-      // message — otherwise she'd hit Save and get a confusing 404.
-      const openModal = modalRef.current;
-      if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
-        setModal({ kind: "none" });
-        setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
-      }
-    }
-  }, [categoryId]);
-
   // Re-fetch on mount when we're already in review (covers reload during pick).
   useEffect(() => {
     if (initialState === "generating") {
       // Nothing to do — wait for the channel to fire.
-    } else {
-      void refetchQuestions();
+      return;
     }
+    const id = window.setTimeout(() => void refetchQuestions(), 0);
+    return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -296,28 +305,26 @@ export function HostSetupPickClient({
   });
 
   useEffect(() => {
-    if (watchStatus.kind === "timeout" && !generationFailureMessage) {
-      setGenerationFailureMessage(
-        explainGenerationFailure({
-          broadcastMessage: null,
-          fromTimeout: true,
-          fromRollback: false,
-        }),
-      );
+    const nextMessage =
+      watchStatus.kind === "timeout" && !generationFailureMessage
+        ? explainGenerationFailure({
+            broadcastMessage: null,
+            fromTimeout: true,
+            fromRollback: false,
+          })
+        : watchStatus.kind === "rolled-back" && !generationFailureMessage
+          ? explainGenerationFailure({
+              broadcastMessage: null,
+              fromTimeout: false,
+              fromRollback: true,
+            })
+          : null;
+    if (!nextMessage) return;
+    const id = window.setTimeout(() => {
+      setGenerationFailureMessage(nextMessage);
       setState("draft");
-    } else if (
-      watchStatus.kind === "rolled-back" &&
-      !generationFailureMessage
-    ) {
-      setGenerationFailureMessage(
-        explainGenerationFailure({
-          broadcastMessage: null,
-          fromTimeout: false,
-          fromRollback: true,
-        }),
-      );
-      setState("draft");
-    }
+    }, 0);
+    return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchStatus.kind]);
 
@@ -861,6 +868,7 @@ export function HostSetupPickClient({
           isRenaming={renaming}
           isLocking={locking}
           isRegenerating={regenerating}
+          auditSummary={auditSummary}
         />
       )}
 
