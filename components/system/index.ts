@@ -2,6 +2,7 @@
 
 export { ThemeProvider, useTheme } from "./ThemeProvider";
 export { Wordmark } from "./Wordmark";
+export { seasonalLogoSkinForTheme } from "./seasonalLogo";
 export { Display } from "./Display";
 export { Eyebrow } from "./Eyebrow";
 export { Numeric } from "./Numeric";

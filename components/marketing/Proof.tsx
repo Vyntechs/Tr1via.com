@@ -1,8 +1,7 @@
-// Proof — honest social proof. The product has exactly one real host, so this
-// section NEVER fabricates a testimonial. With no quote it shows only signal
-// that is true today (live weekly nights, the cheat-proof guarantee, free to
-// host). When a real quote is supplied it renders with ANONYMOUS attribution
-// (the host's real name is never used).
+// Proof — honest social proof. This section NEVER fabricates a testimonial.
+// With no quote it shows only signal that is true today (live weekly nights,
+// the cheat-proof guarantee, free to host). When a real quote is supplied, use
+// only approved public attribution: first name + role, no venue/city/photo.
 //
 // Server component; reads theme vars from the wrapping ThemedSection.
 import { Display, Eyebrow } from "@/components/system";
@@ -10,7 +9,7 @@ import { Display, Eyebrow } from "@/components/system";
 export interface ProofQuote {
   /** The host's real words. */
   text: string;
-  /** Anonymous attribution, e.g. "a host running TR1VIA weekly" — never a name. */
+  /** Approved public attribution, e.g. "Heather, weekly trivia host". */
   attribution: string;
 }
 

@@ -12,6 +12,7 @@
 
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Wordmark } from "@/components/system";
 import { ThemedSection } from "@/components/marketing/ThemedSection";
 import { Pricing } from "@/components/marketing/Pricing";
 import { Faq, FAQ_ITEMS } from "@/components/marketing/Faq";
@@ -61,9 +62,7 @@ function Header() {
   return (
     <header className="mx-auto flex max-w-[1140px] items-center justify-between px-6 py-6">
       <Link href="/trivia-night" className="no-underline" aria-label="TR1VIA home">
-        <span className="font-[family-name:var(--font-sans)] text-[22px] font-bold tracking-tight text-[color:var(--ink)]">
-          TR<span className="font-[family-name:var(--font-mono)] text-accent">1</span>VIA
-        </span>
+        <Wordmark size={22} />
       </Link>
       <Link
         href="/login"

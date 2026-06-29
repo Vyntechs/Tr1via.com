@@ -16,7 +16,7 @@
 
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Display, Eyebrow } from "@/components/system";
+import { Display, Eyebrow, Wordmark } from "@/components/system";
 import { ThemeShowcase } from "@/components/marketing/ThemeShowcase";
 
 const TITLE = "A new theme every month";
@@ -59,9 +59,7 @@ export default function ThemesPage() {
       {/* Header — wordmark + the host sign-in chip (mirrors /trivia-night) */}
       <header className="mx-auto flex max-w-[1100px] items-center justify-between py-6">
         <Link href="/trivia-night" className="no-underline" aria-label="TR1VIA home">
-          <span className="font-[family-name:var(--font-sans)] text-[22px] font-bold tracking-tight text-ink">
-            TR<span className="font-[family-name:var(--font-mono)] text-accent">1</span>VIA
-          </span>
+          <Wordmark size={22} />
         </Link>
         <Link
           href="/login"
