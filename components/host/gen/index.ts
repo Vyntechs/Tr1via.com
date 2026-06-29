@@ -32,6 +32,9 @@ export type { HostGenLoadingProps, HostGenLoadingQuestion } from "./HostGenLoadi
 export { HostGenPick } from "./HostGenPick";
 export type { HostGenPickProps, HostGenPickQuestion } from "./HostGenPick";
 
+export { HostGenAuditSummary } from "./HostGenAuditSummary";
+export type { HostGenAuditSummaryProps } from "./HostGenAuditSummary";
+
 export { HostGenEdit } from "./HostGenEdit";
 export type { HostGenEditProps, HostGenEditValues } from "./HostGenEdit";
 

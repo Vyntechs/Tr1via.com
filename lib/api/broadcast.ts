@@ -24,6 +24,8 @@
 
 import "server-only";
 
+import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
+
 export type RoomEventName =
   | "reveal"
   | "undo"
@@ -62,6 +64,12 @@ export type GenerationPhase = "writing" | "checking";
 /** Payload for the `progress` heartbeat event. */
 export interface CategoryProgressPayload extends CategoryBroadcastPayload {
   phase: GenerationPhase;
+}
+
+/** Payload for the category generation completion event. */
+export interface CategoryDonePayload extends CategoryBroadcastPayload {
+  count: number;
+  auditSummary?: HostQuestionAuditSummary;
 }
 
 interface BroadcastMessage {

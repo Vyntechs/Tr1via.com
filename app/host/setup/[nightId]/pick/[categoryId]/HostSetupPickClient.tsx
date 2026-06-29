@@ -33,7 +33,8 @@ import {
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { QuestionRow, CategoryRow } from "@/lib/supabase/types";
 import { useGenerationStatus } from "@/lib/hooks/useGenerationStatus";
-import type { GenerationPhase } from "@/lib/api/broadcast";
+import type { CategoryDonePayload, GenerationPhase } from "@/lib/api/broadcast";
+import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
 import {
   deriveInitialGenerationMessage,
   explainGenerationFailure,
@@ -54,6 +55,7 @@ export interface HostSetupPickClientProps {
   categoryTopic: string;
   initialState: CategoryRow["state"];
   initialQuestions: QuestionRow[];
+  initialAuditSummary?: HostQuestionAuditSummary | null;
   themeKey: string;
 }
 
@@ -63,6 +65,52 @@ type ModalState =
   | { kind: "swap"; questionId: string }
   | { kind: "upload"; questionId: string };
 
+type AuditReportRow = {
+  accepted_count: number;
+  generated_count: number;
+  verify_passes: number;
+  estimated_cost_usd: number | string;
+  image_target_count: number;
+  image_attached_count: number;
+  risk_flag_count: number;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isHostQuestionAuditSummary(
+  value: unknown,
+): value is HostQuestionAuditSummary {
+  if (!isRecord(value)) return false;
+  return (
+    isFiniteNumber(value.acceptedCount) &&
+    isFiniteNumber(value.generatedCount) &&
+    isFiniteNumber(value.verifyPasses) &&
+    isFiniteNumber(value.estimatedCostUsd) &&
+    isFiniteNumber(value.imageTargetCount) &&
+    isFiniteNumber(value.imageAttachedCount) &&
+    isFiniteNumber(value.riskFlagCount)
+  );
+}
+
+function auditSummaryFromReportRow(row: AuditReportRow): HostQuestionAuditSummary | null {
+  const summary = {
+    acceptedCount: row.accepted_count,
+    generatedCount: row.generated_count,
+    verifyPasses: row.verify_passes,
+    estimatedCostUsd: Number(row.estimated_cost_usd),
+    imageTargetCount: row.image_target_count,
+    imageAttachedCount: row.image_attached_count,
+    riskFlagCount: row.risk_flag_count,
+  };
+  return isHostQuestionAuditSummary(summary) ? summary : null;
+}
+
 export function HostSetupPickClient({
   nightId,
   categoryId,
@@ -70,11 +118,15 @@ export function HostSetupPickClient({
   categoryTopic,
   initialState,
   initialQuestions,
+  initialAuditSummary = null,
   themeKey,
 }: HostSetupPickClientProps) {
   const router = useRouter();
   const [questions, setQuestions] = useState<QuestionRow[]>(initialQuestions);
   const [state, setState] = useState<CategoryRow["state"]>(initialState);
+  const [auditSummary, setAuditSummary] = useState<HostQuestionAuditSummary | null>(
+    initialAuditSummary,
+  );
   // Local mirror of the category's display label so the inline rename
   // can update the header + modal eyebrows without a hard reload. The
   // server is the source of truth on refresh.
@@ -134,6 +186,47 @@ export function HostSetupPickClient({
   );
   const [retrying, setRetrying] = useState(false);
 
+  const refetchQuestions = useCallback(async () => {
+    // Query Supabase directly via the browser client (RLS allows the host
+    // to read questions under their own category).
+    const supa = getSupabaseBrowser();
+    const { data } = await supa.from("questions").select("*").eq("category_id", categoryId);
+    if (data) {
+      const rows = data as QuestionRow[];
+      setQuestions(rows);
+      // Picks live in client state until lock — never overwrite the host's
+      // selections with what's in the DB. The merge keeps every client
+      // pick whose row still exists, unions any DB-confirmed is_picked
+      // rows, and drops orphans. See lib/host/mergePickedAfterRefetch.
+      // The previous "blindly replace from DB" version silently wiped the
+      // host's in-progress picks every time `question_added` fired during
+      // an "↻ Another 20" — that was bug A.
+      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
+      // If the host had an edit/swap/upload panel open for a question that was
+      // just deleted by the reroll, close the modal and surface a recoverable
+      // message — otherwise she'd hit Save and get a confusing 404.
+      const openModal = modalRef.current;
+      if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
+        setModal({ kind: "none" });
+        setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
+      }
+    }
+  }, [categoryId]);
+
+  const refetchAuditSummary = useCallback(async () => {
+    const supa = getSupabaseBrowser();
+    const { data } = await supa
+      .from("question_generation_reports")
+      .select(
+        "accepted_count, generated_count, verify_passes, estimated_cost_usd, image_target_count, image_attached_count, risk_flag_count",
+      )
+      .eq("category_id", categoryId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    setAuditSummary(data ? auditSummaryFromReportRow(data as AuditReportRow) : null);
+  }, [categoryId]);
+
   // ── live subscription ────────────────────────────────────────────────
   useEffect(() => {
     const supa = getSupabaseBrowser();
@@ -168,8 +261,17 @@ export function HostSetupPickClient({
           ),
         );
       })
-      .on("broadcast", { event: "done" }, () => {
+      .on("broadcast", { event: "done" }, (msg) => {
         if (cancelled) return;
+        const payload = msg.payload as CategoryDonePayload;
+        const nextAuditSummary = isHostQuestionAuditSummary(payload.auditSummary)
+          ? payload.auditSummary
+          : null;
+        if (nextAuditSummary) {
+          setAuditSummary(nextAuditSummary);
+        } else {
+          void refetchAuditSummary();
+        }
         setGenPhase(null);
         setState("review");
         setRegenerating(false);
@@ -217,40 +319,14 @@ export function HostSetupPickClient({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryId]);
 
-  const refetchQuestions = useCallback(async () => {
-    // Query Supabase directly via the browser client (RLS allows the host
-    // to read questions under their own category).
-    const supa = getSupabaseBrowser();
-    const { data } = await supa.from("questions").select("*").eq("category_id", categoryId);
-    if (data) {
-      const rows = data as QuestionRow[];
-      setQuestions(rows);
-      // Picks live in client state until lock — never overwrite the host's
-      // selections with what's in the DB. The merge keeps every client
-      // pick whose row still exists, unions any DB-confirmed is_picked
-      // rows, and drops orphans. See lib/host/mergePickedAfterRefetch.
-      // The previous "blindly replace from DB" version silently wiped the
-      // host's in-progress picks every time `question_added` fired during
-      // an "↻ Another 20" — that was bug A.
-      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
-      // If the host had an edit/swap/upload panel open for a question that was
-      // just deleted by the reroll, close the modal and surface a recoverable
-      // message — otherwise she'd hit Save and get a confusing 404.
-      const openModal = modalRef.current;
-      if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
-        setModal({ kind: "none" });
-        setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
-      }
-    }
-  }, [categoryId]);
-
   // Re-fetch on mount when we're already in review (covers reload during pick).
   useEffect(() => {
     if (initialState === "generating") {
       // Nothing to do — wait for the channel to fire.
-    } else {
-      void refetchQuestions();
+      return;
     }
+    const id = window.setTimeout(() => void refetchQuestions(), 0);
+    return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -273,6 +349,7 @@ export function HostSetupPickClient({
       const dbState = (data as { state?: string } | null)?.state;
       if (dbState === "review" || dbState === "ready") {
         void refetchQuestions();
+        void refetchAuditSummary();
         setRegenerating(false);
       }
     }, 5_000);
@@ -280,7 +357,7 @@ export function HostSetupPickClient({
       cancelled = true;
       clearInterval(interval);
     };
-  }, [regenerating, categoryId, refetchQuestions]);
+  }, [regenerating, categoryId, refetchQuestions, refetchAuditSummary]);
 
   // ── safety net: timeout + DB-polling fallback for the broadcast ──────
   const watchStatus = useGenerationStatus({
@@ -296,28 +373,26 @@ export function HostSetupPickClient({
   });
 
   useEffect(() => {
-    if (watchStatus.kind === "timeout" && !generationFailureMessage) {
-      setGenerationFailureMessage(
-        explainGenerationFailure({
-          broadcastMessage: null,
-          fromTimeout: true,
-          fromRollback: false,
-        }),
-      );
+    const nextMessage =
+      watchStatus.kind === "timeout" && !generationFailureMessage
+        ? explainGenerationFailure({
+            broadcastMessage: null,
+            fromTimeout: true,
+            fromRollback: false,
+          })
+        : watchStatus.kind === "rolled-back" && !generationFailureMessage
+          ? explainGenerationFailure({
+              broadcastMessage: null,
+              fromTimeout: false,
+              fromRollback: true,
+            })
+          : null;
+    if (!nextMessage) return;
+    const id = window.setTimeout(() => {
+      setGenerationFailureMessage(nextMessage);
       setState("draft");
-    } else if (
-      watchStatus.kind === "rolled-back" &&
-      !generationFailureMessage
-    ) {
-      setGenerationFailureMessage(
-        explainGenerationFailure({
-          broadcastMessage: null,
-          fromTimeout: false,
-          fromRollback: true,
-        }),
-      );
-      setState("draft");
-    }
+    }, 0);
+    return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchStatus.kind]);
 
@@ -437,6 +512,7 @@ export function HostSetupPickClient({
     setError(null);
     const isInPlaceRegenerate = state === "review" || state === "ready";
     if (isInPlaceRegenerate) {
+      setAuditSummary(null);
       setRegenerating(true);
     }
     try {
@@ -861,6 +937,7 @@ export function HostSetupPickClient({
           isRenaming={renaming}
           isLocking={locking}
           isRegenerating={regenerating}
+          auditSummary={auditSummary}
         />
       )}
 

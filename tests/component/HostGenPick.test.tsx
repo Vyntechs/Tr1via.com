@@ -17,14 +17,31 @@
 // being threaded through to PickSidebar, the rendered output drifts and this
 // test fails.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { act, render, screen, cleanup, waitFor } from "@testing-library/react";
 import {
   HostGenPick,
   type HostGenPickQuestion,
 } from "@/components/host/gen/HostGenPick";
+import { HostSetupPickClient } from "@/app/host/setup/[nightId]/pick/[categoryId]/HostSetupPickClient";
+import type { QuestionRow } from "@/lib/supabase/types";
 
-afterEach(() => cleanup());
+const push = vi.fn();
+let supa: ReturnType<typeof createSupabaseMock>;
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push }),
+}));
+
+vi.mock("@/lib/supabase/client", () => ({
+  getSupabaseBrowser: () => supa,
+}));
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  vi.unstubAllGlobals();
+});
 
 function clumpQuestions(difficulty: number): HostGenPickQuestion[] {
   return Array.from({ length: 7 }, (_, i) => ({
@@ -129,4 +146,232 @@ describe("HostGenPick sidebar — clump-heavy regression (32bb985)", () => {
     // 6 shift to other tiers (with strikethrough showing the original).
     expect(struck).toHaveLength(6);
   });
+
+  it("renders the audit summary above the candidate grid when provided", () => {
+    const questions = clumpQuestions(3);
+
+    render(
+      <HostGenPick
+        themeKey="house"
+        topic="Grunge bands"
+        questions={questions}
+        auditSummary={{
+          acceptedCount: 7,
+          generatedCount: 9,
+          verifyPasses: 2,
+          estimatedCostUsd: 0.12,
+          imageTargetCount: 7,
+          imageAttachedCount: 6,
+          riskFlagCount: 1,
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("host-gen-audit-summary")).toBeInTheDocument();
+    expect(screen.getByText("7 accepted from 9 candidates")).toBeInTheDocument();
+  });
+
+  it("renders no audit summary when auditSummary is omitted or null", () => {
+    const { rerender } = render(
+      <HostGenPick
+        themeKey="house"
+        topic="Grunge bands"
+        questions={clumpQuestions(3)}
+      />,
+    );
+
+    expect(screen.queryByTestId("host-gen-audit-summary")).not.toBeInTheDocument();
+
+    rerender(
+      <HostGenPick
+        themeKey="house"
+        topic="Grunge bands"
+        questions={clumpQuestions(3)}
+        auditSummary={null}
+      />,
+    );
+
+    expect(screen.queryByTestId("host-gen-audit-summary")).not.toBeInTheDocument();
+  });
 });
+
+describe("HostSetupPickClient audit summary recovery", () => {
+  it("clears the old audit summary as soon as an in-place reroll starts", async () => {
+    supa = createSupabaseMock({
+      questions: questionRows(),
+      report: null,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Grunge bands"
+        categoryTopic="grunge"
+        initialState="review"
+        initialQuestions={questionRows()}
+        initialAuditSummary={{
+          acceptedCount: 7,
+          generatedCount: 10,
+          verifyPasses: 2,
+          estimatedCostUsd: 0.125,
+          imageTargetCount: 7,
+          imageAttachedCount: 5,
+          riskFlagCount: 1,
+        }}
+        themeKey="house"
+      />,
+    );
+
+    expect(screen.getByTestId("host-gen-audit-summary")).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: /another 20/i }).click();
+    });
+
+    expect(screen.queryByTestId("host-gen-audit-summary")).not.toBeInTheDocument();
+    expect(screen.getByTestId("host-pick-regenerating-banner")).toBeInTheDocument();
+  });
+
+  it("ignores malformed done.auditSummary payloads and hydrates from the latest report", async () => {
+    supa = createSupabaseMock({
+      questions: questionRows(),
+      report: {
+        accepted_count: 7,
+        generated_count: 10,
+        verify_passes: 2,
+        estimated_cost_usd: "0.1250",
+        image_target_count: 7,
+        image_attached_count: 5,
+        risk_flag_count: 1,
+      },
+    });
+
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Grunge bands"
+        categoryTopic="grunge"
+        initialState="generating"
+        initialQuestions={[]}
+        themeKey="house"
+      />,
+    );
+
+    await act(async () => {
+      supa.broadcast("done", {
+        count: 7,
+        serverNow: "2026-06-29T12:00:00.000Z",
+        auditSummary: {
+          acceptedCount: 7,
+          generatedCount: 10,
+          verifyPasses: 2,
+          estimatedCostUsd: "bad",
+          imageTargetCount: 7,
+          imageAttachedCount: 5,
+          riskFlagCount: 1,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("host-gen-audit-summary")).toBeInTheDocument();
+    });
+    expect(screen.getByText("7 accepted from 10 candidates")).toBeInTheDocument();
+    expect(screen.getByText("Estimated AI cost: $0.13")).toBeInTheDocument();
+  });
+});
+
+function questionRows(): QuestionRow[] {
+  return clumpQuestions(3).map((q) => ({
+    id: q.id,
+    category_id: "cat-1",
+    prompt: q.prompt,
+    options: q.options,
+    correct_index: q.correctIndex,
+    difficulty: q.difficulty,
+    point_value: null,
+    source: "ai",
+    image_url: null,
+    image_attribution: null,
+    image_source: null,
+    fact_blurb: null,
+    finished_at: null,
+    is_picked: false,
+    played_at: null,
+    created_at: "2026-06-29T12:00:00.000Z",
+    updated_at: "2026-06-29T12:00:00.000Z",
+  })) as QuestionRow[];
+}
+
+function createSupabaseMock(input: {
+  questions: QuestionRow[];
+  report: Record<string, unknown> | null;
+}) {
+  const handlers = new Map<string, (msg: { payload: unknown }) => void>();
+
+  return {
+    channel: vi.fn(() => {
+      const channel = {
+        on: vi.fn((
+          _kind: string,
+          filter: { event: string },
+          handler: (msg: { payload: unknown }) => void,
+        ) => {
+          handlers.set(filter.event, handler);
+          return channel;
+        }),
+        subscribe: vi.fn(),
+      };
+      return channel;
+    }),
+    removeChannel: vi.fn(),
+    broadcast(event: string, payload: unknown) {
+      handlers.get(event)?.({ payload });
+    },
+    from: vi.fn((table: string) => {
+      if (table === "questions") return createQuestionsQuery(input.questions);
+      if (table === "question_generation_reports") {
+        return createReportQuery(input.report);
+      }
+      return createCategoriesQuery();
+    }),
+  };
+}
+
+function createQuestionsQuery(questions: QuestionRow[]) {
+  return {
+    select: vi.fn(() => ({
+      eq: vi.fn(async () => ({ data: questions })),
+    })),
+  };
+}
+
+function createReportQuery(report: Record<string, unknown> | null) {
+  return {
+    select: vi.fn(() => ({
+      eq: vi.fn(() => ({
+        order: vi.fn(() => ({
+          limit: vi.fn(() => ({
+            maybeSingle: vi.fn(async () => ({ data: report })),
+          })),
+        })),
+      })),
+    })),
+  };
+}
+
+function createCategoriesQuery() {
+  return {
+    select: vi.fn(() => ({
+      eq: vi.fn(() => ({
+        maybeSingle: vi.fn(async () => ({ data: { state: "review" } })),
+      })),
+    })),
+  };
+}

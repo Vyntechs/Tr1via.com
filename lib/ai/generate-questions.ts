@@ -88,6 +88,13 @@ export interface GeneratedQuestion {
   photoQuery: string;
 }
 
+export interface GenerateQuestionsRejectedCandidate {
+  index: number;
+  reason: "invalid_schema";
+  issues: string[];
+  prompt?: string;
+}
+
 export interface GenerateQuestionsOptions {
   topic: string;
   flavor?: string[];
@@ -106,6 +113,8 @@ export interface GenerateQuestionsOptions {
   timeoutMs?: number;
   /** Optional: receive token usage for cost logging. No-op if omitted. */
   onUsage?: (model: string, usage: TokenUsage) => void;
+  /** Optional: observe local schema-validation drops. No-op if omitted. */
+  onRejectedCandidate?: (candidate: GenerateQuestionsRejectedCandidate) => void;
 }
 
 // ─── Tool definition ──────────────────────────────────────────────────
@@ -285,14 +294,23 @@ export async function generateQuestions(
 
   const valid: GeneratedQuestion[] = [];
   for (let i = 0; i < input.questions.length; i++) {
-    const parsed = GeneratedQuestionSchema.safeParse(input.questions[i]);
+    const candidate = input.questions[i];
+    const parsed = GeneratedQuestionSchema.safeParse(candidate);
     if (!parsed.success) {
+      const issues = parsed.error.issues.map((iss) => iss.message);
+      const prompt = rawCandidatePrompt(candidate);
+      opts.onRejectedCandidate?.({
+        index: i,
+        reason: "invalid_schema",
+        issues,
+        ...(prompt === undefined ? {} : { prompt }),
+      });
       // Drop the item, keep the batch. Log so dev notices recurring
       // drift (never log keys or full Claude response).
       console.warn(
-        `[generateQuestions] dropped invalid question at index ${i}: ${parsed.error.issues
-          .map((iss) => iss.message)
-          .join("; ")}`,
+        `[generateQuestions] dropped invalid question at index ${i}: ${issues.join(
+          "; ",
+        )}`,
       );
       continue;
     }
@@ -318,4 +336,12 @@ function isQuestionsContainer(value: unknown): value is { questions: unknown[] }
     "questions" in value &&
     Array.isArray((value as { questions: unknown }).questions)
   );
+}
+
+function rawCandidatePrompt(value: unknown): string | undefined {
+  if (typeof value !== "object" || value === null || !("prompt" in value)) {
+    return undefined;
+  }
+  const prompt = (value as { prompt: unknown }).prompt;
+  return typeof prompt === "string" ? prompt : undefined;
 }

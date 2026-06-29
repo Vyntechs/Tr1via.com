@@ -45,7 +45,9 @@ import { LaptopShell } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { computeReorderAssignments } from "@/lib/host/boardReorder";
+import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
 import { DifficultyBar, StockImage } from "./_shared";
+import { HostGenAuditSummary } from "./HostGenAuditSummary";
 
 export type DifficultyTarget = "easy" | "normal" | "hard";
 
@@ -77,6 +79,8 @@ export interface HostGenPickProps {
   topic?: string;
   /** All 20 candidates returned by the generator. */
   questions?: HostGenPickQuestion[];
+  /** Compact AI quality/cost summary for the generated batch. Omitted for old categories. */
+  auditSummary?: HostQuestionAuditSummary | null;
   /** The ids the host has currently selected. */
   pickedIds?: Set<string>;
   /** Active difficulty target (drives the regenerate button group). */
@@ -159,6 +163,7 @@ function HostGenPickInner({
   shellTitle = "pick 7 · pixar movies",
   topic = "Pixar Movies",
   questions = DEMO_QUESTIONS,
+  auditSummary = null,
   pickedIds,
   difficulty = "normal",
   flavor = [],
@@ -175,6 +180,7 @@ function HostGenPickInner({
   isRegenerating = false,
 }: Omit<HostGenPickProps, "themeKey">) {
   const { t } = useTheme();
+  void shellTitle;
   const cc = categoryColor(topic, t.accent);
   const picked = pickedIds ?? new Set(["1", "2", "3", "4", "7", "8"]);
   const pickedQs = questions.filter((q) => picked.has(q.id));
@@ -347,6 +353,7 @@ function HostGenPickInner({
 
       <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 300px", overflow: "hidden" }}>
         <div style={{ overflow: "auto", padding: "20px 36px 32px 56px" }}>
+          {auditSummary && <HostGenAuditSummary summary={auditSummary} />}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
             {questions.map((q) => (
               <QuestionCard
@@ -903,14 +910,12 @@ function EditableTopicEyebrow({
   const [localError, setLocalError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // When entering edit mode, sync draft + focus the input.
+  // When entering edit mode, focus the input after it mounts.
   useEffect(() => {
     if (!editing) return;
-    setDraft(value);
-    setLocalError(null);
     const id = setTimeout(() => inputRef.current?.focus(), 0);
     return () => clearTimeout(id);
-  }, [editing, value]);
+  }, [editing]);
 
   // Gallery mode (no save handler) — render the static eyebrow.
   if (!onSave) {
@@ -953,6 +958,12 @@ function EditableTopicEyebrow({
     setEditing(false);
   }
 
+  function beginEditing(): void {
+    setDraft(value);
+    setLocalError(null);
+    setEditing(true);
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLInputElement>): void {
     if (e.key === "Enter") {
       e.preventDefault();
@@ -984,7 +995,7 @@ function EditableTopicEyebrow({
         </Eyebrow>
         <button
           type="button"
-          onClick={() => setEditing(true)}
+          onClick={beginEditing}
           aria-label="Rename category"
           data-testid="host-category-rename-btn"
           style={{

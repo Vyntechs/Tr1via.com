@@ -457,6 +457,119 @@ export type Database = {
           },
         ]
       }
+      question_generation_reports: {
+        Row: {
+          accepted_count: number
+          category_id: string | null
+          category_name: string | null
+          created_at: string
+          estimated_cost_usd: number
+          game_id: string | null
+          generated_count: number
+          host_id: string | null
+          id: string
+          image_attached_count: number
+          image_skipped_count: number
+          image_target_count: number
+          llm_calls: number
+          mode: string
+          night_id: string | null
+          rejected_count: number
+          report: Json
+          requested_count: number
+          risk_flag_count: number
+          rounds: number
+          status: string
+          tokens_in: number
+          tokens_out: number
+          topic: string
+          verify_passes: number
+        }
+        Insert: {
+          accepted_count: number
+          category_id?: string | null
+          category_name?: string | null
+          created_at?: string
+          estimated_cost_usd?: number
+          game_id?: string | null
+          generated_count: number
+          host_id?: string | null
+          id?: string
+          image_attached_count?: number
+          image_skipped_count?: number
+          image_target_count?: number
+          llm_calls?: number
+          mode?: string
+          night_id?: string | null
+          rejected_count: number
+          report?: Json
+          requested_count: number
+          risk_flag_count?: number
+          rounds: number
+          status: string
+          tokens_in?: number
+          tokens_out?: number
+          topic: string
+          verify_passes: number
+        }
+        Update: {
+          accepted_count?: number
+          category_id?: string | null
+          category_name?: string | null
+          created_at?: string
+          estimated_cost_usd?: number
+          game_id?: string | null
+          generated_count?: number
+          host_id?: string | null
+          id?: string
+          image_attached_count?: number
+          image_skipped_count?: number
+          image_target_count?: number
+          llm_calls?: number
+          mode?: string
+          night_id?: string | null
+          rejected_count?: number
+          report?: Json
+          requested_count?: number
+          risk_flag_count?: number
+          rounds?: number
+          status?: string
+          tokens_in?: number
+          tokens_out?: number
+          topic?: string
+          verify_passes?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_generation_reports_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_reports_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_reports_host_id_fkey"
+            columns: ["host_id"]
+            isOneToOne: false
+            referencedRelation: "hosts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_reports_night_id_fkey"
+            columns: ["night_id"]
+            isOneToOne: false
+            referencedRelation: "nights"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       questions: {
         Row: {
           category_id: string
@@ -906,6 +1019,10 @@ export type TopicSuggestionUpdate = TablesUpdate<"topic_suggestions">
 export type AudienceTopicVoteRow    = Tables<"audience_topic_votes">
 export type AudienceTopicVoteInsert = TablesInsert<"audience_topic_votes">
 export type AudienceTopicVoteUpdate = TablesUpdate<"audience_topic_votes">
+
+export type QuestionGenerationReportRow    = Tables<"question_generation_reports">
+export type QuestionGenerationReportInsert = TablesInsert<"question_generation_reports">
+export type QuestionGenerationReportUpdate = TablesUpdate<"question_generation_reports">
 
 /** View row — game_scores. Columns are nullable because of the underlying
  *  LEFT JOIN; the app filters out rows where player_id is null. */
