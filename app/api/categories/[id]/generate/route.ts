@@ -20,6 +20,7 @@ import { after } from "next/server";
 import { requireOwnedCategory } from "@/lib/api/auth";
 import {
   broadcastToCategory,
+  type CategoryDonePayload,
   type CategoryProgressPayload,
   type GenerationPhase,
 } from "@/lib/api/broadcast";
@@ -38,6 +39,13 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { autoAttachPhoto } from "@/lib/ai/auto-attach-photo";
 import { generateQuestions, type GeneratedQuestion } from "@/lib/ai/generate-questions";
+import {
+  createQuestionGenerationReportAccumulator,
+  hostAuditSummaryFromSnapshot,
+  questionGenerationReportInsertFromSnapshot,
+  type QuestionGenerationReportContext,
+} from "@/lib/ai/question-generation-report";
+import { persistQuestionGenerationReport } from "@/lib/ai/question-generation-report-store";
 import { costUsd, type TokenUsage } from "@/lib/ai/usage-cost";
 import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
@@ -128,6 +136,19 @@ export async function POST(
   // been flushed — the host UI sees the 202 immediately and then subscribes
   // to the category channel for progress events.
   const nightThemeKey = owned.night.theme_key;
+  const reportContext: QuestionGenerationReportContext = {
+    categoryId,
+    gameId: category.game_id,
+    nightId: owned.night.id,
+    hostId: owned.host.id,
+    categoryName: category.name,
+    topic: category.topic,
+    mode: parsed.data.autoPick
+      ? "auto_build"
+      : parsed.data.keptIds
+        ? "reroll"
+        : "initial",
+  };
   after(async () => {
     await runGenerationJob({
       categoryId,
@@ -137,6 +158,7 @@ export async function POST(
       themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,
       keptIds: parsed.data.keptIds,
       autoPick: parsed.data.autoPick,
+      reportContext,
     }).catch(async (err) => {
       // Rollback + broadcast on any unexpected failure inside the job.
       // (Per-question failures are handled inside runGenerationJob.)
@@ -198,8 +220,13 @@ async function runGenerationJob(opts: {
   // When true: after photos, auto-pick 7 (spread across difficulty) and flip
   // to 'ready' instead of 'review'. Founder build-a-full-game path.
   autoPick?: boolean;
+  reportContext: QuestionGenerationReportContext;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
+  const qualityReport = createQuestionGenerationReportAccumulator({
+    requestedCount: 20,
+    verifyPasses: 2,
+  });
 
   // Reroll: gather what the host has already seen so we avoid repeats, and
   // remember which unpicked rows to remove once the fresh batch is inserted.
@@ -267,6 +294,7 @@ async function runGenerationJob(opts: {
       (u.cache_read_input_tokens ?? 0) +
       (u.cache_creation_input_tokens ?? 0);
     cost.tokensOut += u.output_tokens ?? 0;
+    qualityReport.recordUsage(model, u);
   };
 
   let generated: GeneratedQuestion[];
@@ -291,12 +319,30 @@ async function runGenerationJob(opts: {
           themeKey: opts.themeKey,
           avoidPrompts: [...(reroll?.avoidPrompts ?? []), ...avoid],
           onUsage: trackUsage,
+          onRejectedCandidate: (event) => {
+            qualityReport.recordInvalidCandidate(
+              event.prompt ?? `candidate ${event.index}`,
+              event.issues,
+            );
+          },
         });
       },
       verify: (qs) => {
         phase = "checking";
         void emitProgress();
         return verifyAnswers(qs, { onUsage: trackUsage });
+      },
+      onRoundComplete: (event) => {
+        qualityReport.recordRound({
+          round: event.round,
+          requested: event.requested,
+          generated: event.generated,
+          accepted: event.accepted,
+          rejected: event.rejected.map((item) => ({
+            prompt: item.prompt,
+            reasons: item.reasons,
+          })),
+        });
       },
     });
   } finally {
@@ -310,6 +356,7 @@ async function runGenerationJob(opts: {
   if (generated.length === 0) {
     throw new Error("no questions passed the answer check");
   }
+  qualityReport.recordAcceptedQuestions(generated);
 
   // Step 2: insert all rows up front so the UI can render them immediately.
   // Photos backfill afterwards.
@@ -380,6 +427,7 @@ async function runGenerationJob(opts: {
     const keep = new Set(ids);
     photoTargets = photoTargets.filter((t) => keep.has(t.id));
   }
+  qualityReport.recordImageTargets(photoTargets.length);
 
   // Step 3: attach photos. Sequential within a category because Pexels' free
   // tier is 200 req/hr — bursting risks brittleness without measurable
@@ -396,6 +444,7 @@ async function runGenerationJob(opts: {
             image_source: "pexels",
           })
           .eq("id", id);
+        qualityReport.recordImageAttached();
       }
       await broadcastToCategory(opts.categoryId, "photo_attached", {
         serverNow: new Date().toISOString(),
@@ -425,8 +474,20 @@ async function runGenerationJob(opts: {
       .update({ state: "review" })
       .eq("id", opts.categoryId);
   }
-  await broadcastToCategory(opts.categoryId, "done", {
+  const reportSnapshot = qualityReport.snapshot(
+    generated.length >= 20 ? "completed" : "partial",
+  );
+  const auditSummary = hostAuditSummaryFromSnapshot(reportSnapshot);
+  await persistQuestionGenerationReport(
+    admin,
+    questionGenerationReportInsertFromSnapshot(opts.reportContext, reportSnapshot),
+  );
+  const donePayload: CategoryDonePayload = {
     serverNow: new Date().toISOString(),
     count: inserted.length,
-  }).catch(() => undefined);
+    auditSummary,
+  };
+  await broadcastToCategory(opts.categoryId, "done", donePayload).catch(
+    () => undefined,
+  );
 }
