@@ -32,6 +32,7 @@ async function freshDb(): Promise<PGlite> {
     grant execute on all functions in schema public to anon, authenticated, service_role;
   `);
   await db.exec(readFileSync(path.join(MIGRATIONS_DIR, "0015_question_generation_reports.sql"), "utf8"));
+  await db.exec(readFileSync(path.join(MIGRATIONS_DIR, "0016_question_generation_reports_privileges.sql"), "utf8"));
   return db;
 }
 
@@ -114,5 +115,26 @@ describe("question_generation_reports schema", () => {
     await expect(
       runAs("anon", null, "select id from question_generation_reports"),
     ).rejects.toThrow(/permission denied|violates row-level security/i);
+  });
+
+  test("table grants keep client writes disabled", async () => {
+    const r = await db.query<{ grantee: string; privilege_type: string }>(
+      `select grantee, privilege_type
+       from information_schema.role_table_grants
+       where table_schema = 'public'
+         and table_name = 'question_generation_reports'
+         and grantee in ('anon', 'authenticated', 'service_role')
+       order by grantee, privilege_type`,
+    );
+
+    const grantsByRole = new Map<string, string[]>();
+    for (const row of r.rows) {
+      const grants = grantsByRole.get(row.grantee) ?? [];
+      grants.push(row.privilege_type);
+      grantsByRole.set(row.grantee, grants);
+    }
+    expect(grantsByRole.get("anon") ?? []).toEqual([]);
+    expect(grantsByRole.get("authenticated")).toEqual(["SELECT"]);
+    expect(grantsByRole.get("service_role")).toContain("INSERT");
   });
 });

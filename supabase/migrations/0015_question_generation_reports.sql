@@ -61,7 +61,7 @@ create policy question_generation_reports_host_read
     )
   );
 
-revoke all on question_generation_reports from anon;
+revoke all on question_generation_reports from anon, authenticated;
 grant select on question_generation_reports to authenticated;
 grant all on question_generation_reports to service_role;
 
