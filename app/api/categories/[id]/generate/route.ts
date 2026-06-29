@@ -473,14 +473,6 @@ async function runGenerationJob(opts: {
     }
   }
 
-  // Step 4: finalize state. The auto-build is already 'ready' (picked above);
-  // manual review stops at 'review' for the host to curate.
-  if (!opts.autoPick) {
-    await admin
-      .from("categories")
-      .update({ state: "review" })
-      .eq("id", opts.categoryId);
-  }
   const reportSnapshot = qualityReport.snapshot(
     generated.length >= 20 ? "completed" : "partial",
   );
@@ -489,6 +481,16 @@ async function runGenerationJob(opts: {
     admin,
     questionGenerationReportInsertFromSnapshot(opts.reportContext, reportSnapshot),
   );
+
+  // Step 4: finalize state. The auto-build is already 'ready' (picked above);
+  // manual review stops at 'review' for the host to curate. Persist the report
+  // first so DB-poll fallback can't observe review before the summary exists.
+  if (!opts.autoPick) {
+    await admin
+      .from("categories")
+      .update({ state: "review" })
+      .eq("id", opts.categoryId);
+  }
   const donePayload: CategoryDonePayload = {
     serverNow: new Date().toISOString(),
     count: inserted.length,

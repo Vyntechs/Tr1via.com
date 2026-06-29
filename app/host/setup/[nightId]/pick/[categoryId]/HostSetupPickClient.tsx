@@ -512,6 +512,7 @@ export function HostSetupPickClient({
     setError(null);
     const isInPlaceRegenerate = state === "review" || state === "ready";
     if (isInPlaceRegenerate) {
+      setAuditSummary(null);
       setRegenerating(true);
     }
     try {

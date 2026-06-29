@@ -40,6 +40,7 @@ vi.mock("@/lib/supabase/client", () => ({
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
 
 function clumpQuestions(difficulty: number): HostGenPickQuestion[] {
@@ -195,6 +196,47 @@ describe("HostGenPick sidebar — clump-heavy regression (32bb985)", () => {
 });
 
 describe("HostSetupPickClient audit summary recovery", () => {
+  it("clears the old audit summary as soon as an in-place reroll starts", async () => {
+    supa = createSupabaseMock({
+      questions: questionRows(),
+      report: null,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Grunge bands"
+        categoryTopic="grunge"
+        initialState="review"
+        initialQuestions={questionRows()}
+        initialAuditSummary={{
+          acceptedCount: 7,
+          generatedCount: 10,
+          verifyPasses: 2,
+          estimatedCostUsd: 0.125,
+          imageTargetCount: 7,
+          imageAttachedCount: 5,
+          riskFlagCount: 1,
+        }}
+        themeKey="house"
+      />,
+    );
+
+    expect(screen.getByTestId("host-gen-audit-summary")).toBeInTheDocument();
+
+    await act(async () => {
+      screen.getByRole("button", { name: /another 20/i }).click();
+    });
+
+    expect(screen.queryByTestId("host-gen-audit-summary")).not.toBeInTheDocument();
+    expect(screen.getByTestId("host-pick-regenerating-banner")).toBeInTheDocument();
+  });
+
   it("ignores malformed done.auditSummary payloads and hydrates from the latest report", async () => {
     supa = createSupabaseMock({
       questions: questionRows(),
