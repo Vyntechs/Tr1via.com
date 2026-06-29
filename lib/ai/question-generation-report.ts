@@ -156,7 +156,8 @@ export function createQuestionGenerationReportAccumulator(input: {
       }
       if (round.generated === 0) countReason("generation_empty");
     },
-    recordInvalidCandidate(prompt, issues) {
+    recordInvalidCandidate(prompt, _issues) {
+      void _issues;
       countReason("invalid_schema");
       invalidCandidates.push({ prompt, reasons: ["invalid_schema"] });
     },
