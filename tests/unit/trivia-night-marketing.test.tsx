@@ -34,6 +34,21 @@ describe("/trivia-night marketing landing", () => {
     expect(screen.getByText(/nobody can cheat/i)).toBeTruthy();
   });
 
+  it("renders the premium showpiece proof above the fold", () => {
+    renderPage();
+    expect(screen.getAllByText(/one press/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/three surfaces/i).length).toBeGreaterThan(0);
+    expect(screen.getByTestId("landing-surface-stage")).toBeTruthy();
+    expect(screen.getByText(/seasonal room system/i)).toBeTruthy();
+  });
+
+  it("renders the Heather trust proof on the landing page", () => {
+    renderPage();
+    expect(screen.getAllByText(/Heather/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/weekly trivia host/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/first live host/i)).toBeTruthy();
+  });
+
   it("primary CTA starts hosting (links to /login)", () => {
     renderPage();
     const start = screen.getByTestId("marketing-cta-host");

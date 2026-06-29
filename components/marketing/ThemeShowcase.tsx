@@ -22,7 +22,7 @@
 
 import Link from "next/link";
 import type { CSSProperties } from "react";
-import { Display, Eyebrow } from "@/components/system";
+import { Display, Eyebrow, Wordmark } from "@/components/system";
 import { weatherLabel } from "@/components/system/Weather";
 import { resolveTheme } from "@/lib/theme/resolve";
 import { TR1VIA_CATEGORIES } from "@/lib/theme/categories";
@@ -92,17 +92,13 @@ function ThemeCard({ themeKey, index, size }: { themeKey: ThemeKey; index: numbe
       >
         {/* Top bar: wordmark + category banner */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-          <span
-            style={{
-              fontFamily: "var(--font-sans)",
-              fontWeight: 700,
-              fontSize: lg ? 15 : 12.5,
-              letterSpacing: "-0.01em",
-              color: t.ink,
-            }}
-          >
-            TR<span style={{ fontFamily: "var(--font-mono)", color: t.accent }}>1</span>VIA
-          </span>
+          <Wordmark
+            size={lg ? 15 : 12.5}
+            accent={t.accent}
+            ink={t.ink}
+            pop={t.pop}
+            seasonalKey={themeKey}
+          />
           <span
             style={{
               fontFamily: "var(--font-mono)",
