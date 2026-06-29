@@ -21,6 +21,90 @@ it("keeps only correct, non-ambiguous questions", async () => {
   expect(out.map((x) => x.prompt)).toEqual(["k1", "k2"]);
 });
 
+it("reports verifier rejection reasons for a completed round", async () => {
+  const events: Array<{
+    round: number;
+    requested: number;
+    generated: number;
+    accepted: number;
+    rejected: Array<{ prompt: string; reasons: string[] }>;
+  }> = [];
+  const batch = [
+    q("clean"),
+    q("wrong"),
+    q("ambiguous"),
+    q("missing"),
+    q("wrong and ambiguous"),
+  ];
+
+  const out = await collectVerifiedQuestions({
+    target: 10,
+    maxRounds: 1,
+    verifyPasses: 1,
+    generate: async () => batch,
+    verify: async () => [
+      ok(0),
+      wrong(1),
+      ambig(2),
+      { index: 4, markedAnswerIsCorrect: false, ambiguous: true },
+    ],
+    onRoundComplete: (event) => events.push(event),
+  });
+
+  expect(out.map((x) => x.prompt)).toEqual(["clean"]);
+  expect(events).toEqual([
+    {
+      round: 1,
+      requested: 10,
+      generated: 5,
+      accepted: 1,
+      rejected: [
+        { prompt: "wrong", reasons: ["verifier_wrong"] },
+        { prompt: "ambiguous", reasons: ["verifier_ambiguous"] },
+        { prompt: "missing", reasons: ["missing_verdict"] },
+        {
+          prompt: "wrong and ambiguous",
+          reasons: ["verifier_wrong", "verifier_ambiguous"],
+        },
+      ],
+    },
+  ]);
+});
+
+it("reports empty generation rounds before stopping", async () => {
+  const events: Array<{
+    round: number;
+    requested: number;
+    generated: number;
+    accepted: number;
+    rejected: Array<{ prompt: string; reasons: string[] }>;
+  }> = [];
+  let verifyCalls = 0;
+
+  const out = await collectVerifiedQuestions({
+    target: 3,
+    maxRounds: 5,
+    generate: async () => [],
+    verify: async () => {
+      verifyCalls++;
+      return [];
+    },
+    onRoundComplete: (event) => events.push(event),
+  });
+
+  expect(out).toEqual([]);
+  expect(verifyCalls).toBe(0);
+  expect(events).toEqual([
+    {
+      round: 1,
+      requested: 3,
+      generated: 0,
+      accepted: 0,
+      rejected: [],
+    },
+  ]);
+});
+
 it("regenerates avoiding seen prompts until target is reached", async () => {
   const seenByRound: string[][] = [];
   const out = await collectVerifiedQuestions({

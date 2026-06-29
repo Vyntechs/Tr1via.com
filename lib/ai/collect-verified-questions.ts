@@ -17,6 +17,24 @@
 import type { GeneratedQuestion } from "./generate-questions";
 import type { AnswerVerdict } from "./verify-answers";
 
+export type CollectVerifiedRejectionReason =
+  | "verifier_wrong"
+  | "verifier_ambiguous"
+  | "missing_verdict";
+
+export interface CollectVerifiedRejectedCandidate {
+  prompt: string;
+  reasons: CollectVerifiedRejectionReason[];
+}
+
+export interface CollectVerifiedRoundEvent {
+  round: number;
+  requested: number;
+  generated: number;
+  accepted: number;
+  rejected: CollectVerifiedRejectedCandidate[];
+}
+
 export interface CollectVerifiedOptions {
   target: number;
   maxRounds: number;
@@ -29,6 +47,8 @@ export interface CollectVerifiedOptions {
    */
   generate: (avoidPrompts: string[], need: number) => Promise<GeneratedQuestion[]>;
   verify: (questions: GeneratedQuestion[]) => Promise<AnswerVerdict[]>;
+  /** Optional: observe per-round verification quality. No-op if omitted. */
+  onRoundComplete?: (event: CollectVerifiedRoundEvent) => void;
 }
 
 export async function collectVerifiedQuestions(
@@ -43,7 +63,16 @@ export async function collectVerifiedQuestions(
     // one extra question + its verify passes, not a whole fresh batch.
     const need = opts.target - clean.length;
     const batch = await opts.generate([...seenPrompts], need);
-    if (batch.length === 0) break;
+    if (batch.length === 0) {
+      opts.onRoundComplete?.({
+        round: round + 1,
+        requested: need,
+        generated: 0,
+        accepted: 0,
+        rejected: [],
+      });
+      break;
+    }
     for (const q of batch) seenPrompts.push(q.prompt);
 
     // Independent verify passes, run concurrently. Keep a question only if
@@ -51,17 +80,53 @@ export async function collectVerifiedQuestions(
     const passResults = await Promise.all(
       Array.from({ length: passes }, () => opts.verify(batch)),
     );
-    const cleanByPass = passResults.map((verdicts) => {
-      const byIndex = new Map(verdicts.map((v) => [v.index, v]));
-      return (i: number) => {
-        const v = byIndex.get(i);
-        return !!v && v.markedAnswerIsCorrect && !v.ambiguous;
-      };
-    });
+    const verdictsByPass = passResults.map(
+      (verdicts) => new Map(verdicts.map((v) => [v.index, v])),
+    );
+    const accepted: GeneratedQuestion[] = [];
+    const rejected: CollectVerifiedRejectedCandidate[] = [];
     batch.forEach((q, i) => {
-      if (cleanByPass.every((isClean) => isClean(i))) clean.push(q);
+      const reasons = rejectionReasonsForIndex(verdictsByPass, i);
+      if (reasons.length === 0) {
+        clean.push(q);
+        accepted.push(q);
+      } else {
+        rejected.push({ prompt: q.prompt, reasons });
+      }
+    });
+    opts.onRoundComplete?.({
+      round: round + 1,
+      requested: need,
+      generated: batch.length,
+      accepted: accepted.length,
+      rejected,
     });
   }
 
   return clean.slice(0, opts.target);
+}
+
+function rejectionReasonsForIndex(
+  verdictsByPass: Array<Map<number, AnswerVerdict>>,
+  index: number,
+): CollectVerifiedRejectionReason[] {
+  let verifierWrong = false;
+  let verifierAmbiguous = false;
+  let missingVerdict = false;
+
+  for (const byIndex of verdictsByPass) {
+    const verdict = byIndex.get(index);
+    if (!verdict) {
+      missingVerdict = true;
+      continue;
+    }
+    if (!verdict.markedAnswerIsCorrect) verifierWrong = true;
+    if (verdict.ambiguous) verifierAmbiguous = true;
+  }
+
+  const reasons: CollectVerifiedRejectionReason[] = [];
+  if (verifierWrong) reasons.push("verifier_wrong");
+  if (verifierAmbiguous) reasons.push("verifier_ambiguous");
+  if (missingVerdict) reasons.push("missing_verdict");
+  return reasons;
 }

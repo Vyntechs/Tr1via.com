@@ -124,6 +124,50 @@ describe("generateQuestions", () => {
     expect(out[0]?.options).toHaveLength(4);
   });
 
+  it("reports invalid schema candidates through the optional callback", async () => {
+    const capture: MockClientCall[] = [];
+    const client = makeMockClient(
+      {
+        questions: [
+          validQuestion(),
+          // INVALID: only 3 options, but prompt is still available for tracing.
+          validQuestion({
+            prompt: "Bad item three options total",
+            options: ["alpha", "bravo", "charlie"],
+          }),
+          // INVALID: no string prompt, so tracing should omit prompt.
+          validQuestion({
+            prompt: 42,
+            difficulty: 9,
+          }),
+        ],
+      },
+      capture,
+    );
+    const onRejectedCandidate = vi.fn();
+
+    const out = await generateQuestions({
+      topic: "US states",
+      onRejectedCandidate,
+      // @ts-expect-error — narrowing to the Pick<Anthropic,...> shape in tests
+      client,
+    });
+
+    expect(out).toHaveLength(1);
+    expect(onRejectedCandidate).toHaveBeenCalledTimes(2);
+    expect(onRejectedCandidate).toHaveBeenNthCalledWith(1, {
+      index: 1,
+      reason: "invalid_schema",
+      prompt: "Bad item three options total",
+      issues: expect.arrayContaining([expect.any(String)]),
+    });
+    expect(onRejectedCandidate).toHaveBeenNthCalledWith(2, {
+      index: 2,
+      reason: "invalid_schema",
+      issues: expect.arrayContaining([expect.any(String)]),
+    });
+  });
+
   it("includes flavor and difficulty in the user prompt forwarded to Claude", async () => {
     const capture: MockClientCall[] = [];
     const client = makeMockClient(
