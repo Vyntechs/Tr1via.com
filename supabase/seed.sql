@@ -4,7 +4,58 @@
 --
 -- Idempotent: skips rows that already exist by unique constraints.
 
-set search_path = public;
+set search_path = pg_temp, public;
+
+create temporary table question_seed (
+  prompt text not null,
+  options text[] not null,
+  correct_index smallint not null,
+  point_value smallint not null
+) on commit drop;
+
+create or replace function pg_temp.seed_category(
+  p_game_id uuid,
+  p_name text,
+  p_topic text,
+  p_position integer,
+  p_color text,
+  p_questions question_seed[]
+)
+returns void
+language plpgsql
+as $$
+declare
+  v_category_id uuid;
+  v_question question_seed;
+begin
+  insert into public.categories (game_id, name, topic, position, color, state)
+    values (p_game_id, p_name, p_topic, p_position::smallint, p_color, 'ready')
+    returning id into v_category_id;
+
+  foreach v_question in array p_questions loop
+    insert into public.questions (
+      category_id,
+      point_value,
+      prompt,
+      options,
+      correct_index,
+      difficulty,
+      source,
+      is_picked
+    )
+    values (
+      v_category_id,
+      v_question.point_value,
+      v_question.prompt,
+      to_jsonb(v_question.options),
+      v_question.correct_index,
+      greatest(1, least(7, v_question.point_value / 100))::smallint,
+      'host-edit',
+      true
+    );
+  end loop;
+end;
+$$;
 
 -- NOTE: requires an auth.users row to exist. In a real local dev session,
 -- supabase auth signup creates that for you. For seeding without auth,
@@ -44,7 +95,7 @@ begin
   insert into games (night_id, game_no, state) values (v_night_id, 2, 'draft') returning id into v_game2;
 
   -- Game 1 categories + 7 picked questions each
-  perform seed_category(v_game1, 'Geography', 'U.S. states', 0, '#4ECDC4', ARRAY[
+  perform pg_temp.seed_category(v_game1, 'Geography', 'U.S. states', 0, '#4ECDC4', ARRAY[
     ('Which U.S. state has the longest coastline?',   ARRAY['Florida','Alaska','California','Maine'], 1, 100),
     ('What is the largest U.S. state by area?',        ARRAY['Texas','Alaska','California','Montana'], 1, 200),
     ('Which state has the most national parks?',       ARRAY['Utah','California','Alaska','Arizona'], 1, 300),
@@ -54,7 +105,7 @@ begin
     ('Which state has the longest border with Canada?',ARRAY['Alaska','Montana','Minnesota','North Dakota'], 0, 700)
   ]::question_seed[]);
 
-  perform seed_category(v_game1, 'Animals', 'Mammals', 1, '#C8E25E', ARRAY[
+  perform pg_temp.seed_category(v_game1, 'Animals', 'Mammals', 1, '#C8E25E', ARRAY[
     ('Which mammal lays eggs?',                        ARRAY['Platypus','Hedgehog','Aardvark','Pangolin'], 0, 100),
     ('What is the largest land mammal?',                ARRAY['Elephant','Hippo','Rhino','Giraffe'], 0, 200),
     ('What is the only mammal that can truly fly?',    ARRAY['Bat','Flying squirrel','Sugar glider','Colugo'], 0, 300),
@@ -64,7 +115,7 @@ begin
     ('Which mammal has the most teeth?',                ARRAY['Giant armadillo','Crocodile','Shark','Hippo'], 0, 700)
   ]::question_seed[]);
 
-  perform seed_category(v_game1, 'Food', 'World cuisine', 2, '#F2A02D', ARRAY[
+  perform pg_temp.seed_category(v_game1, 'Food', 'World cuisine', 2, '#F2A02D', ARRAY[
     ('Which of these is botanically a berry?',         ARRAY['Banana','Strawberry','Raspberry','Blackberry'], 0, 100),
     ('What spice gives curry its yellow color?',       ARRAY['Turmeric','Saffron','Paprika','Cumin'], 0, 200),
     ('Which country invented ice cream cones?',         ARRAY['United States','Italy','France','Belgium'], 0, 300),
@@ -74,7 +125,7 @@ begin
     ('Honey discovered in Egyptian tombs was edible — roughly how old?', ARRAY['~3,000 years','~500 years','~10,000 years','~1,000 years'], 0, 700)
   ]::question_seed[]);
 
-  perform seed_category(v_game1, 'Movies', 'Animated films', 3, '#E64A8C', ARRAY[
+  perform pg_temp.seed_category(v_game1, 'Movies', 'Animated films', 3, '#E64A8C', ARRAY[
     ('In The Lion King, what does "Hakuna Matata" mean?', ARRAY['No worries','Lion king','Hello friend','Big trouble'], 0, 100),
     ('Which Pixar film features a rat who can cook?',   ARRAY['Ratatouille','Up','Wall-E','Cars'], 0, 200),
     ('What year did the first Toy Story release?',      ARRAY['1995','1998','1992','2000'], 0, 300),
@@ -84,7 +135,7 @@ begin
     ('Which Pixar short was the first computer-animated film to win an Oscar?', ARRAY['Tin Toy','Geri''s Game','Luxo Jr','For the Birds'], 0, 700)
   ]::question_seed[]);
 
-  perform seed_category(v_game1, 'Music', '60s rock', 4, '#9B7BD8', ARRAY[
+  perform pg_temp.seed_category(v_game1, 'Music', '60s rock', 4, '#9B7BD8', ARRAY[
     ('What was The Beatles'' original band name?',     ARRAY['The Quarrymen','The Silver Beetles','The Cavemen','The Mods'], 0, 100),
     ('Which band released "Bohemian Rhapsody"?',        ARRAY['Queen','The Who','Led Zeppelin','Pink Floyd'], 0, 200),
     ('Who wrote "Like a Rolling Stone"?',               ARRAY['Bob Dylan','Neil Young','Paul Simon','James Taylor'], 0, 300),
@@ -94,7 +145,7 @@ begin
     ('What year did Jimi Hendrix die?',                  ARRAY['1970','1969','1971','1972'], 0, 700)
   ]::question_seed[]);
 
-  perform seed_category(v_game1, 'History', 'Ancient civilizations', 5, '#FF6A3D', ARRAY[
+  perform pg_temp.seed_category(v_game1, 'History', 'Ancient civilizations', 5, '#FF6A3D', ARRAY[
     ('Which empire did Julius Caesar lead?',            ARRAY['Roman','Greek','Persian','Egyptian'], 0, 100),
     ('In what year did Christopher Columbus first reach the Americas?', ARRAY['1492','1500','1485','1510'], 0, 200),
     ('Who was the first emperor of China?',             ARRAY['Qin Shi Huang','Han Wudi','Kublai Khan','Wu Zetian'], 0, 300),

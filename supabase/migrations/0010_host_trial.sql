@@ -28,6 +28,4 @@ alter table hosts
   add column trial_ends_at timestamptz;
 
 comment on column hosts.trial_ends_at is
-  'End of a self-serve host''s free trial (set at onboarding-complete to ' ||
-  'now + 30 days). NULL for founder/comped hosts. Recorded only — paywall ' ||
-  'enforcement against this value is a later phase.';
+  'End of a self-serve host''s free trial (set at onboarding-complete to now + 30 days). NULL for founder/comped hosts. Recorded only — paywall enforcement against this value is a later phase.';
