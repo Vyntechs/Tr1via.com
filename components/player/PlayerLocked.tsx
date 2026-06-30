@@ -15,6 +15,7 @@ import {
   TimerRing,
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import type { StandingRow } from "@/lib/player/betweenGames";
@@ -66,6 +67,10 @@ export function PlayerLocked({
   roomMagicEnabled = false,
 }: PlayerLockedProps = {}) {
   const { t } = useTheme();
+  const reducedMotion = usePrefersReducedMotion();
+  const pulseAnimation = reducedMotion
+    ? "none"
+    : "tr1via-pulse 1.4s ease-in-out infinite";
   const catColor = categoryColor(category, t.accent);
   const secondsToLock = (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock < 5000;
@@ -153,12 +158,13 @@ export function PlayerLocked({
         <div data-testid="lockin-progress" style={{ marginBottom: 16 }} role="status" aria-live="polite">
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <span
+              data-testid="player-lockin-pulse-dot"
               style={{
                 width: 6,
                 height: 6,
                 borderRadius: 99,
                 background: catColor,
-                animation: "tr1via-pulse 1.4s ease-in-out infinite",
+                animation: pulseAnimation,
               }}
             />
             <Eyebrow color={t.inkMid} size={10}>
@@ -205,6 +211,8 @@ export function PlayerLocked({
       <div style={{ marginTop: "auto", paddingTop: 18, textAlign: "center", color: t.inkMid, fontSize: 13 }}>
         {roomMagicEnabled && (
           <div
+            aria-live="polite"
+            data-testid="player-house-lights-confirmation"
             style={{
               marginBottom: 8,
               color: t.ink,
@@ -217,12 +225,13 @@ export function PlayerLocked({
         )}
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
           <span
+            data-testid="player-waiting-pulse-dot"
             style={{
               width: 5,
               height: 5,
               borderRadius: 99,
               background: catColor,
-              animation: "tr1via-pulse 1.4s ease-in-out infinite",
+              animation: pulseAnimation,
             }}
           />
           Waiting for the room to lock in&hellip;
