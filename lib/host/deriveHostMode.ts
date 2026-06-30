@@ -73,7 +73,10 @@ export function getRemainingTopics(
   const out: RemainingTopic[] = [];
   for (const cat of gameCats) {
     const catQuestions = snapshot.questions.filter(
-      (q) => q.categoryId === cat.id && q.isPicked,
+      (q) =>
+        q.categoryId === cat.id &&
+        q.isPicked &&
+        q.pointValue !== null,
     );
     const unplayed = catQuestions.filter((q) => q.finishedAt === null);
     if (unplayed.length === 0) continue;
@@ -168,7 +171,10 @@ export function deriveHostMode(
       .map((c) => c.id),
   );
   const pickedInGame = snapshot.questions.filter(
-    (q) => q.isPicked && catIdsInGame.has(q.categoryId),
+    (q) =>
+      q.isPicked &&
+      q.pointValue !== null &&
+      catIdsInGame.has(q.categoryId),
   );
   const canEndGame =
     pickedInGame.length > 0 && pickedInGame.every((q) => q.finishedAt !== null);

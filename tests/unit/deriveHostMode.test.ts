@@ -242,6 +242,46 @@ describe("deriveHostMode", () => {
     expect(ctx.canEndGame).toBe(true);
   });
 
+  it("ignores stale picked rows without board point values when enabling End Game", () => {
+    const ctx = deriveHostMode(
+      snapshot({
+        games: [game({ id: "g1", gameNo: 1, state: "live" })],
+        currentGameId: "g1",
+        categories: [
+          category({ id: "c1", gameId: "g1" }),
+          category({ id: "c2", gameId: "g1" }),
+        ],
+        questions: [
+          question({
+            id: "q1",
+            categoryId: "c1",
+            pointValue: 100,
+            playedAt: "2026-05-24T00:00:00Z",
+            finishedAt: "2026-05-24T00:00:30Z",
+          }),
+          question({
+            id: "q2",
+            categoryId: "c2",
+            pointValue: 100,
+            playedAt: "2026-05-24T00:01:00Z",
+            finishedAt: "2026-05-24T00:01:30Z",
+          }),
+          question({
+            id: "q-stale",
+            categoryId: "c1",
+            pointValue: null,
+            isPicked: true,
+            playedAt: null,
+            finishedAt: null,
+          }),
+        ],
+      }),
+      true,
+    );
+    expect(ctx.mode).toBe("picking");
+    expect(ctx.canEndGame).toBe(true);
+  });
+
   it("does not flag canEndGame when at least one picked question still pending", () => {
     const ctx = deriveHostMode(
       snapshot({
@@ -417,6 +457,31 @@ describe("getRemainingTopics", () => {
     expect(out).toHaveLength(1);
     expect(out[0]?.categoryId).toBe("c2");
     expect(out[0]?.name).toBe("Music");
+  });
+
+  it("ignores stale picked rows without board point values", () => {
+    const out = getRemainingTopics(
+      {
+        categories: [category({ id: "c1", gameId: "g1", name: "Geography" })],
+        questions: [
+          question({
+            id: "q-board",
+            categoryId: "c1",
+            pointValue: 100,
+            finishedAt: "2026-05-24T00:00:30Z",
+          }),
+          question({
+            id: "q-stale",
+            categoryId: "c1",
+            pointValue: null,
+            isPicked: true,
+            finishedAt: null,
+          }),
+        ],
+      },
+      "g1",
+    );
+    expect(out).toEqual([]);
   });
 
   it("picks the lowest-points UNPLAYED question per category", () => {
