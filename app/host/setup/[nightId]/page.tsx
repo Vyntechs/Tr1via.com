@@ -65,6 +65,7 @@ export default async function SetupOverviewPage({
       isOpen={night.opened_at !== null}
       initialThemeKey={night.theme_key}
       hostDefaultThemeKey={host.default_theme_key}
+      initialRoomMagicEnabled={Boolean(night.room_magic_enabled)}
     />
   );
 }
