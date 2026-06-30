@@ -37,6 +37,10 @@ import { publishRoomFallback, setBackupMode } from "@/lib/room/roomFallbackStore
 import { clearEndedGameQuestions } from "@/lib/player/betweenGames";
 import { pickNewerResolvedQuestion } from "@/lib/hooks/resolvedQuestionState";
 import type { FireworksBeat } from "@/components/system/PyrotechnicsBeatConductor";
+import {
+  isRoomMagicReactionKind,
+  type RoomMagicReactionEvent,
+} from "@/lib/room-magic/reactions";
 import type {
   AnswerRow,
   CategoryRow,
@@ -80,6 +84,9 @@ export interface RoomSnapshot {
    *  (which the phone's myAnswers refetch keys off). The PyrotechnicsBeatConductor
    *  reads this and schedules the burst for `fireAt`. */
   lastFireworksBeat: FireworksBeat | null;
+  /** Most recent Room Magic reaction. Cosmetic-only: never updates
+   *  lastBroadcast or triggers a data refetch. */
+  lastRoomMagicReaction: RoomMagicReactionEvent | null;
   /** True while the initial snapshot fetch is in flight. */
   isLoading: boolean;
 }
@@ -124,6 +131,7 @@ const EMPTY: RoomSnapshot = {
   currentReveal: null,
   lastBroadcast: null,
   lastFireworksBeat: null,
+  lastRoomMagicReaction: null,
   isLoading: true,
 };
 
@@ -700,6 +708,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
         currentReveal,
         lastBroadcast: null,
         lastFireworksBeat: null,
+        lastRoomMagicReaction: null,
         isLoading: false,
       });
 
@@ -858,6 +867,34 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
               // Bind a salvo to its question so a phone only celebrates the
               // question it actually got right (finale carries none).
               questionId: typeof p.questionId === "string" ? p.questionId : undefined,
+            },
+          }));
+        })
+        .on("broadcast", { event: "room-magic-reaction" }, (msg) => {
+          // Cosmetic room reaction. Keep it separate from lastBroadcast so
+          // answer/score refetch keys only move for real game-state events.
+          if (cancelled) return;
+          const p = msg.payload as Record<string, unknown>;
+          const kind = p.kind;
+          const questionId = p.questionId;
+          const playerId = p.playerId;
+          const serverNow = p.serverNow;
+          if (
+            !isRoomMagicReactionKind(kind) ||
+            typeof questionId !== "string" ||
+            typeof playerId !== "string" ||
+            typeof serverNow !== "string"
+          ) {
+            return;
+          }
+          markFresh();
+          setSnapshot((prev) => ({
+            ...prev,
+            lastRoomMagicReaction: {
+              kind,
+              questionId,
+              playerId,
+              serverNow,
             },
           }));
         })
@@ -1089,4 +1126,3 @@ function applyRow<T extends { id: string }>(
   const merged = exists ? prev.map((r) => (r.id === next.id ? next : r)) : [...prev, next];
   return [...merged].sort(cmp);
 }
-

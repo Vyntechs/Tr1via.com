@@ -28,6 +28,7 @@ function snap(partial: Partial<TVSnapshot>): TVSnapshot {
     night: {
       id: "n1", venueName: "V", themeKey: null, hostDefaultThemeKey: null,
       roomCode: "ABCD", openedAt: null, closedAt: null, scheduledAt: null, isLocked: false,
+      roomMagicEnabled: false,
     },
     games: [], currentGameId: null, categories: [], questions: [],
     liveQuestionId: null, targetQuestionId: null,

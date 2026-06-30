@@ -83,6 +83,7 @@ const READY_SNAPSHOT: TVSnapshot = {
     closedAt: null,
     scheduledAt: null,
     isLocked: false,
+    roomMagicEnabled: false,
   },
   games: [],
   currentGameId: null,

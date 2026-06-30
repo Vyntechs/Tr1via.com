@@ -80,6 +80,7 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
     // The server-route fallback payload carries durable state only; the
     // firework beat is a transient broadcast, never reconstructed from a poll.
     lastFireworksBeat: null,
+    lastRoomMagicReaction: null,
     isLoading: false,
   };
 }

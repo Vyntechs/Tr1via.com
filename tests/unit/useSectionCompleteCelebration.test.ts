@@ -27,6 +27,7 @@ function snapshot(overrides: Partial<TVSnapshot> = {}): TVSnapshot {
       closedAt: null,
       scheduledAt: null,
       isLocked: false,
+      roomMagicEnabled: false,
     },
     games: [],
     currentGameId: null,
