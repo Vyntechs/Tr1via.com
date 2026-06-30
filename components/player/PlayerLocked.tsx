@@ -51,8 +51,59 @@ export interface PlayerLockedProps {
   roomMagicEnabled?: boolean;
 }
 
+interface PlayerLockedStandingsRowProps {
+  row: StandingRow;
+  pinned?: boolean;
+  accent: string;
+  surface: string;
+  ink: string;
+}
+
+function PlayerLockedStandingsRow({
+  row,
+  pinned,
+  accent,
+  surface,
+  ink,
+}: PlayerLockedStandingsRowProps) {
+  return (
+    <div
+      data-testid={row.isYou ? "standings-you" : "standings-row"}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "28px 1fr auto",
+        alignItems: "center",
+        gap: 10,
+        padding: "9px 12px",
+        borderRadius: 10,
+        background: row.isYou ? accent : surface,
+        color: row.isYou ? "#0E0805" : ink,
+        border: pinned ? `1.5px dashed ${accent}` : "none",
+        fontWeight: row.isYou ? 700 : 500,
+      }}
+    >
+      <Numeric size={15} weight={700} color="currentColor">
+        {row.rank}
+      </Numeric>
+      <span
+        style={{
+          fontSize: 14,
+          fontWeight: row.isYou ? 700 : 600,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {row.name}
+      </span>
+      <Numeric size={15} weight={700} color="currentColor">
+        {row.score.toLocaleString()}
+      </Numeric>
+    </div>
+  );
+}
+
 export function PlayerLocked({
-  themeKey: _themeKey,
   category = "Geography",
   value = 100,
   options = ["Florida", "Alaska", "California", "Maine"],
@@ -85,29 +136,6 @@ export function PlayerLocked({
     ? Math.round(Math.min(1, Math.max(0, lockedCount! / totalPlayers!)) * 100)
     : 0;
 
-  function StandingsRow({ row, pinned }: { row: StandingRow; pinned?: boolean }) {
-    return (
-      <div
-        data-testid={row.isYou ? "standings-you" : "standings-row"}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "28px 1fr auto",
-          alignItems: "center",
-          gap: 10,
-          padding: "9px 12px",
-          borderRadius: 10,
-          background: row.isYou ? catColor : t.surface,
-          color: row.isYou ? "#0E0805" : t.ink,
-          border: pinned ? `1.5px dashed ${catColor}` : "none",
-          fontWeight: row.isYou ? 700 : 500,
-        }}
-      >
-        <Numeric size={15} weight={700} color="currentColor">{row.rank}</Numeric>
-        <span style={{ fontSize: 14, fontWeight: row.isYou ? 700 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</span>
-        <Numeric size={15} weight={700} color="currentColor">{row.score.toLocaleString()}</Numeric>
-      </div>
-    );
-  }
   return (
     <PhoneScreen data-testid="player-locked">
       <div
@@ -202,9 +230,23 @@ export function PlayerLocked({
         <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 6 }}>
           <Eyebrow color={t.inkMute} size={10}>WHERE YOU STAND</Eyebrow>
           {standings!.top.map((row) => (
-            <StandingsRow key={`${row.rank}-${row.name}`} row={row} />
+            <PlayerLockedStandingsRow
+              key={`${row.rank}-${row.name}`}
+              row={row}
+              accent={catColor}
+              surface={t.surface}
+              ink={t.ink}
+            />
           ))}
-          {standings!.you && <StandingsRow row={standings!.you} pinned />}
+          {standings!.you && (
+            <PlayerLockedStandingsRow
+              row={standings!.you}
+              pinned
+              accent={catColor}
+              surface={t.surface}
+              ink={t.ink}
+            />
+          )}
         </div>
       )}
 

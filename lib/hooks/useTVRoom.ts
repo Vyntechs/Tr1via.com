@@ -220,14 +220,15 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
 
   useEffect(() => {
     if (!code) {
-      setSnapshot(null);
-      setLastRoomMagicReaction(null);
-      setStatus("loading");
       return;
     }
-    setStatus("loading");
-    setLastRoomMagicReaction(null);
-    void fetchSnapshot();
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setStatus("loading");
+      setLastRoomMagicReaction(null);
+      void fetchSnapshot();
+    });
 
     // Subscribe to the broadcast channel for low-latency wake-ups. Broadcast
     // is auth-free; anonymous TVs receive these.
@@ -345,19 +346,20 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     }, SAFETY_REFETCH_MS);
 
     return () => {
+      cancelled = true;
       void supa.removeChannel(channel);
       if (safetyHandle.current) clearInterval(safetyHandle.current);
     };
   }, [code, fetchSnapshot]);
 
   return {
-    status,
-    snapshot,
-    lastBroadcast,
-    lastFireworksBeat,
-    lastRoomMagicReaction,
+    status: code ? status : "loading",
+    snapshot: code ? snapshot : null,
+    lastBroadcast: code ? lastBroadcast : null,
+    lastFireworksBeat: code ? lastFireworksBeat : null,
+    lastRoomMagicReaction: code ? lastRoomMagicReaction : null,
     refresh: () => {
-      void fetchSnapshot();
+      if (code) void fetchSnapshot();
     },
   };
 }
