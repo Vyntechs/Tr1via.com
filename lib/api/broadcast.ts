@@ -25,6 +25,10 @@
 import "server-only";
 
 import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
+import type {
+  RoomMagicReactionEvent,
+  RoomMagicReactionKind,
+} from "@/lib/room-magic/reactions";
 
 export type RoomEventName =
   | "reveal"
@@ -33,6 +37,7 @@ export type RoomEventName =
   | "end-early"
   | "game-ended"
   | "player-joined"
+  | "room-magic-reaction"
   | "fireworks";
 export type CategoryEventName =
   | "progress"
@@ -53,6 +58,12 @@ export interface BroadcastPayload {
 export interface CategoryBroadcastPayload {
   serverNow: string;
   [extra: string]: unknown;
+}
+
+export interface RoomMagicReactionPayload extends BroadcastPayload {
+  questionId: string;
+  playerId: string;
+  kind: RoomMagicReactionKind;
 }
 
 /**
@@ -178,6 +189,24 @@ export async function broadcastGameEnded(
         gameId,
         serverNow: new Date().toISOString(),
       },
+    },
+  ]);
+}
+
+/**
+ * Broadcast a bounded player reaction after a question reveal resolves.
+ * Cosmetic only: receivers update transient atmosphere state and must not
+ * refetch snapshots, scores, answers, or timers because of this event.
+ */
+export async function broadcastRoomMagicReaction(
+  roomCode: string,
+  event: RoomMagicReactionEvent,
+): Promise<void> {
+  await postBroadcasts([
+    {
+      topic: `room:${roomCode}`,
+      event: "room-magic-reaction",
+      payload: event as unknown as Record<string, unknown>,
     },
   ]);
 }
