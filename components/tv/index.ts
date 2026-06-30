@@ -21,6 +21,8 @@ export { TVRevealStumper } from "./TVRevealStumper";
 export type { TVRevealStumperProps, TVStumperFastest } from "./TVRevealStumper";
 export { TVSectionComplete } from "./TVSectionComplete";
 export type { TVSectionCompleteProps } from "./TVSectionComplete";
+export { TVRoomMagicOverlay } from "./TVRoomMagicOverlay";
+export type { TVRoomMagicOverlayProps } from "./TVRoomMagicOverlay";
 export { TVFinaleWinner, DEMO_WINNER, DEMO_PODIUM, DEMO_STATS } from "./TVFinaleWinner";
 export type {
   TVFinaleWinnerProps,

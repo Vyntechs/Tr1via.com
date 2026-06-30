@@ -21,7 +21,7 @@ import {
   ThemeProvider,
   useTheme,
 } from "@/components/system";
-import { TVSectionComplete, TVStateMachine } from "@/components/tv";
+import { TVRoomMagicOverlay, TVSectionComplete, TVStateMachine } from "@/components/tv";
 import { fireLightningBeat } from "@/components/system/Lightning";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
@@ -30,6 +30,7 @@ import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCel
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { useReachability } from "@/lib/realtime/reachability";
 import { RemovePlayerButton } from "./RemovePlayerButton";
+import type { RoomMagicReactionEvent } from "@/lib/room-magic/reactions";
 
 // The control strip sits over the console's hardcoded `#000` TV bezel in
 // EVERY theme, so its text/borders must use fixed light values — the
@@ -111,6 +112,10 @@ export interface HostLiveConsoleProps {
    *  state machine so the host's laptop drives the same overlay the
    *  HDMI'd venue TV shows. */
   welcomeEvent?: TVLobbyWelcomeEvent | null;
+  /** Cosmetic Room Magic reaction for the patron-visible embedded TV layer. */
+  lastRoomMagicReaction?: RoomMagicReactionEvent | null;
+  /** Per-night Room Magic toggle. Default false preserves Heather's Classic. */
+  roomMagicEnabled?: boolean;
 }
 
 export function HostLiveConsole(props: HostLiveConsoleProps) {
@@ -158,6 +163,8 @@ function HostLiveConsoleInner({
   tvLastBroadcastRevealedAt = null,
   tvLastBroadcastServerNow = null,
   welcomeEvent = null,
+  lastRoomMagicReaction = null,
+  roomMagicEnabled = false,
   themeKey,
 }: HostLiveConsoleProps) {
   const { t } = useTheme();
@@ -247,6 +254,10 @@ function HostLiveConsoleInner({
               color={celebration.color}
             />
           )}
+          <TVRoomMagicOverlay
+            enabled={roomMagicEnabled}
+            event={lastRoomMagicReaction}
+          />
         </div>
 
         <HostControlStrip

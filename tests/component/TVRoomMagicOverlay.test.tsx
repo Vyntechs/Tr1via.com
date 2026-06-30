@@ -1,0 +1,117 @@
+import { act, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { TVRoomMagicOverlay } from "@/components/tv/TVRoomMagicOverlay";
+import type { RoomMagicReactionEvent } from "@/lib/room-magic/reactions";
+
+function reaction(
+  kind: RoomMagicReactionEvent["kind"],
+  playerId: string,
+  serverNow = new Date(Date.now()).toISOString(),
+): RoomMagicReactionEvent {
+  return {
+    kind,
+    questionId: "question-1",
+    playerId,
+    serverNow,
+  };
+}
+
+describe("TVRoomMagicOverlay", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("renders nothing when disabled", () => {
+    const { container } = render(
+      <TVRoomMagicOverlay enabled={false} event={reaction("wow", "player-1")} />,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders nothing for a null event", () => {
+    const { container } = render(
+      <TVRoomMagicOverlay enabled event={null} />,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("renders aggregate counts instead of one row per tap", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-30T18:00:00.000Z"));
+
+    const { rerender } = render(
+      <TVRoomMagicOverlay enabled event={reaction("wow", "player-1")} />,
+    );
+
+    rerender(
+      <TVRoomMagicOverlay
+        enabled
+        event={reaction("wow", "player-2", "2026-06-30T18:00:00.500Z")}
+      />,
+    );
+
+    const overlay = screen.getByTestId("tv-room-magic-overlay");
+    expect(within(overlay).getAllByText(/Wow/i)).toHaveLength(1);
+    expect(within(overlay).getByText(/Wow\s*x2/i)).toBeInTheDocument();
+  });
+
+  it("removes events after the short display window", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-30T18:00:00.000Z"));
+
+    render(<TVRoomMagicOverlay enabled event={reaction("nice_one", "player-1")} />);
+
+    expect(screen.getByTestId("tv-room-magic-overlay")).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_700);
+    });
+
+    expect(screen.queryByTestId("tv-room-magic-overlay")).not.toBeInTheDocument();
+  });
+
+  it("does not use sound or audio language", () => {
+    render(<TVRoomMagicOverlay enabled event={reaction("applause", "player-1")} />);
+
+    const overlay = screen.getByTestId("tv-room-magic-overlay");
+    expect(
+      within(overlay).queryByText(/sound|audio|speaker|music|volume|chime/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the decorative layer out of pointer hit testing", () => {
+    render(<TVRoomMagicOverlay enabled event={reaction("brutal", "player-1")} />);
+
+    const overlay = screen.getByTestId("tv-room-magic-overlay");
+    expect(overlay.style.pointerEvents).toBe("none");
+    expect(overlay).toHaveAttribute("aria-hidden", "true");
+  });
+
+  it("ignores malformed or stale events", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-30T18:00:00.000Z"));
+
+    const stale = reaction("wow", "player-1", "2026-06-30T17:59:40.000Z");
+    const { container, rerender } = render(
+      <TVRoomMagicOverlay enabled event={stale} />,
+    );
+
+    expect(container.firstChild).toBeNull();
+
+    rerender(
+      <TVRoomMagicOverlay
+        enabled
+        event={
+          {
+            ...reaction("wow", "player-2"),
+            kind: "chat",
+          } as unknown as RoomMagicReactionEvent
+        }
+      />,
+    );
+
+    expect(container.firstChild).toBeNull();
+  });
+});
