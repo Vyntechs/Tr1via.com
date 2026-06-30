@@ -35,8 +35,7 @@ alter table hosts
   add column default_theme_key text not null default 'daylight';
 
 comment on column hosts.default_theme_key is
-  'Host-level theme preference. Drives every host route by default; ' ||
-  'per-night `nights.theme_key` overrides this when set (special events).';
+  'Host-level theme preference. Drives every host route by default; per-night `nights.theme_key` overrides this when set (special events).';
 
 -- Per-night theme becomes OPTIONAL — null means "use host preference."
 -- Existing rows are untouched; they keep whatever value was set at create
@@ -47,6 +46,4 @@ alter table nights
   alter column theme_key drop default;
 
 comment on column nights.theme_key is
-  'Optional per-night theme override. When null, the host''s ' ||
-  'default_theme_key is used. Set explicitly only for special-event ' ||
-  'themes (Halloween, season finale, etc).';
+  'Optional per-night theme override. When null, the host''s default_theme_key is used. Set explicitly only for special-event themes (Halloween, season finale, etc).';

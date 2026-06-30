@@ -3,7 +3,7 @@
 // POST /api/categories → POST /api/categories/[id]/manual). This route
 // is a test-only sequencer; it owns no direct DB writes that prod doesn't.
 //
-// Body: {hostId?, scenario?, themeKey?, roomCode?, venueName?}.
+// Body: {hostId?, scenario?, themeKey?, roomMagicEnabled?, roomCode?, venueName?}.
 // hostId is ignored (auth comes from cookies, same as prod). It's kept in
 // the body for backwards compat with old fixtures that still pass it.
 //
@@ -34,6 +34,7 @@ interface SeedReq {
   hostId?: string;
   scenario?: "happy-path-3-cats-game1" | "two-games-ready" | "empty-night";
   themeKey?: string;
+  roomMagicEnabled?: boolean;
   roomCode?: string;
   venueName?: string;
 }
@@ -152,6 +153,19 @@ export async function POST(req: NextRequest) {
   }
   const nightBody = (await nightRes.json()) as { nightId: string; roomCode: string };
   const nightId = nightBody.nightId;
+
+  if (typeof body.roomMagicEnabled === "boolean") {
+    const roomMagicRes = await callProd(`/api/nights/${nightId}/room-magic`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled: body.roomMagicEnabled }),
+    });
+    if (!roomMagicRes.ok) {
+      return NextResponse.json(
+        { error: `set room magic failed: ${roomMagicRes.status} ${await roomMagicRes.text()}` },
+        { status: 500 },
+      );
+    }
+  }
 
   // The caller may have requested a specific roomCode (older fixtures did
   // this for deterministic URLs). The new /api/nights endpoint mints its

@@ -5,6 +5,7 @@
 
 "use client";
 
+import type { ReactNode } from "react";
 import {
   useTheme,
   Display,
@@ -39,6 +40,8 @@ export interface PlayerRevealWrongProps {
   correctCount?: number;
   /** Total number of players who answered — used with correctCount. */
   answeredCount?: number;
+  /** Reveal-only Room Magic controls supplied by the player room state machine. */
+  roomMagicControls?: ReactNode;
 }
 
 export function PlayerRevealWrong({
@@ -53,6 +56,7 @@ export function PlayerRevealWrong({
   totalScore = 2230,
   correctCount,
   answeredCount,
+  roomMagicControls,
 }: PlayerRevealWrongProps = {}) {
   const { t } = useTheme();
   const noAnswer = chosenSlot === null;
@@ -101,6 +105,8 @@ export function PlayerRevealWrong({
         <Eyebrow color={t.inkMid} size={9} style={{ marginLeft: 4, marginTop: 4 }}>THE ANSWER WAS</Eyebrow>
         <AnswerCard n={correctSlot} text={correctText} state="missed-correct" />
       </div>
+
+      {roomMagicControls}
 
       <div
         style={{

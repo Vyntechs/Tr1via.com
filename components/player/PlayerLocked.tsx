@@ -46,6 +46,8 @@ export interface PlayerLockedProps {
    *  stand while the timer runs. Omitted → the board is hidden (gallery/demo
    *  keep the original locked screen). Mirrors the between-games board shape. */
   standings?: { top: StandingRow[]; you: StandingRow | null };
+  /** Room Magic is enabled for this night. Does not mount controls pre-reveal. */
+  roomMagicEnabled?: boolean;
 }
 
 export function PlayerLocked({
@@ -61,6 +63,7 @@ export function PlayerLocked({
   lockedCount,
   totalPlayers,
   standings,
+  roomMagicEnabled = false,
 }: PlayerLockedProps = {}) {
   const { t } = useTheme();
   const catColor = categoryColor(category, t.accent);
@@ -200,6 +203,18 @@ export function PlayerLocked({
       )}
 
       <div style={{ marginTop: "auto", paddingTop: 18, textAlign: "center", color: t.inkMid, fontSize: 13 }}>
+        {roomMagicEnabled && (
+          <div
+            style={{
+              marginBottom: 8,
+              color: t.ink,
+              fontSize: 13,
+              fontWeight: 700,
+            }}
+          >
+            Sent to the room.
+          </div>
+        )}
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
           <span
             style={{

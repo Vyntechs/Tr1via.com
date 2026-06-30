@@ -23,6 +23,8 @@ export interface HostSetupOverviewClientProps {
   initialThemeKey: string | null;
   /** Host's preferred theme. Used when the night has no override. */
   hostDefaultThemeKey: string;
+  /** Night-level cosmetic player reaction toggle. Default false for Classic. */
+  initialRoomMagicEnabled: boolean;
 }
 
 const SLOTS_PER_GAME = 6;
@@ -35,6 +37,7 @@ export function HostSetupOverviewClient({
   isOpen,
   initialThemeKey,
   hostDefaultThemeKey,
+  initialRoomMagicEnabled,
 }: HostSetupOverviewClientProps) {
   const router = useRouter();
   const [opening, setOpening] = useState(false);
@@ -55,6 +58,10 @@ export function HostSetupOverviewClient({
   );
   const [themePickerOpen, setThemePickerOpen] = useState(false);
   const [savingTheme, setSavingTheme] = useState(false);
+  const [roomMagicEnabled, setRoomMagicEnabled] = useState(
+    initialRoomMagicEnabled,
+  );
+  const [savingRoomMagic, setSavingRoomMagic] = useState(false);
 
   async function handlePickTheme(key: ThemeKey) {
     if (savingTheme || key === themeKey) {
@@ -83,6 +90,38 @@ export function HostSetupOverviewClient({
       setError("Could not save theme.");
     } finally {
       setSavingTheme(false);
+    }
+  }
+
+  async function handleToggleRoomMagic(next: boolean) {
+    if (savingRoomMagic || liveGameExists || next === roomMagicEnabled) return;
+    const previous = roomMagicEnabled;
+    setError(null);
+    setSavingRoomMagic(true);
+    setRoomMagicEnabled(next);
+    try {
+      const res = await fetch(`/api/nights/${nightId}/room-magic`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: next }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setRoomMagicEnabled(previous);
+        setError(body.error ?? "Could not save Room Magic.");
+        return;
+      }
+      const body = (await res.json().catch(() => ({}))) as {
+        roomMagicEnabled?: boolean;
+      };
+      if (typeof body.roomMagicEnabled === "boolean") {
+        setRoomMagicEnabled(body.roomMagicEnabled);
+      }
+    } catch {
+      setRoomMagicEnabled(previous);
+      setError("Could not save Room Magic.");
+    } finally {
+      setSavingRoomMagic(false);
     }
   }
 
@@ -221,6 +260,56 @@ export function HostSetupOverviewClient({
           gap: 6,
         }}
       >
+        <div
+          role="group"
+          aria-label="Room Magic"
+          style={{
+            padding: 4,
+            borderRadius: 999,
+            border: "1px solid rgba(255,255,255,.12)",
+            background: liveGameExists
+              ? "rgba(20,19,15,.55)"
+              : "rgba(20,19,15,.92)",
+            color: liveGameExists ? "rgba(244,230,196,.35)" : "#F4E6C4",
+            boxShadow: liveGameExists ? "none" : "0 12px 28px rgba(0,0,0,.45)",
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 4,
+            fontFamily: "var(--font-sans)",
+          }}
+        >
+          <span
+            style={{
+              padding: "0 9px 0 10px",
+              fontSize: 11,
+              fontWeight: 700,
+              letterSpacing: "0.04em",
+              textTransform: "uppercase",
+              lineHeight: "30px",
+              whiteSpace: "nowrap",
+            }}
+          >
+            Room Magic
+          </span>
+          <button
+            type="button"
+            onClick={() => void handleToggleRoomMagic(false)}
+            aria-pressed={!roomMagicEnabled}
+            disabled={liveGameExists || savingRoomMagic}
+            style={roomMagicSegmentStyle(!roomMagicEnabled, liveGameExists)}
+          >
+            Off
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleToggleRoomMagic(true)}
+            aria-pressed={roomMagicEnabled}
+            disabled={liveGameExists || savingRoomMagic}
+            style={roomMagicSegmentStyle(roomMagicEnabled, liveGameExists)}
+          >
+            On
+          </button>
+        </div>
         {liveGameExists && (
           <div
             style={{
@@ -296,6 +385,33 @@ export function HostSetupOverviewClient({
       )}
     </>
   );
+}
+
+function roomMagicSegmentStyle(active: boolean, disabled: boolean) {
+  return {
+    minWidth: 44,
+    height: 30,
+    padding: "0 12px",
+    borderRadius: 999,
+    border: "0",
+    background: active
+      ? disabled
+        ? "rgba(244,230,196,.16)"
+        : "#F4E6C4"
+      : "transparent",
+    color: active
+      ? disabled
+        ? "rgba(244,230,196,.46)"
+        : "#0E0805"
+      : disabled
+        ? "rgba(244,230,196,.32)"
+        : "rgba(244,230,196,.72)",
+    fontFamily: "var(--font-sans)",
+    fontSize: 12,
+    fontWeight: 800,
+    letterSpacing: 0,
+    cursor: disabled ? "not-allowed" : "pointer",
+  } as const;
 }
 
 function buildGameData(

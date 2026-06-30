@@ -504,6 +504,8 @@ export function HostLiveConsoleClient({
         tvLastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
         tvLastBroadcastServerNow={tvLastBroadcastServerNow}
         welcomeEvent={welcomeEvent}
+        roomMagicEnabled={Boolean(room.night?.room_magic_enabled)}
+        lastRoomMagicReaction={room.lastRoomMagicReaction}
       />
       {adjusting && (
         <AdjustPointsModal

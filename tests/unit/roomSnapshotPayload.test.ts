@@ -108,6 +108,7 @@ describe("payloadToRoomSnapshot", () => {
     const snap = payloadToRoomSnapshot(basePayload());
     expect(snap.isLoading).toBe(false);
     expect(snap.lastBroadcast).toBeNull();
+    expect(snap.lastRoomMagicReaction).toBeNull();
   });
 
   it("passes night/games/categories/players through unchanged", () => {

@@ -25,6 +25,7 @@ function snapshot(overrides: Partial<TVSnapshot> = {}): TVSnapshot {
       closedAt: null,
       scheduledAt: null,
       isLocked: false,
+      roomMagicEnabled: false,
     },
     games: [],
     currentGameId: null,
@@ -316,6 +317,7 @@ describe("deriveHostMode", () => {
           closedAt: "2026-05-24T02:00:00Z",
           scheduledAt: null,
           isLocked: false,
+          roomMagicEnabled: false,
         },
         games: [
           game({ id: "g1", gameNo: 1, state: "done" }),

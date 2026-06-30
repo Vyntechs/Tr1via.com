@@ -59,6 +59,8 @@ export interface SeedNightOptions {
   scenario?: "happy-path-3-cats-game1" | "two-games-ready" | "empty-night";
   /** ThemeKey to apply to the night. Defaults to "house". */
   themeKey?: string;
+  /** Test-only convenience for seeding a night with Room Magic on. Defaults off. */
+  roomMagicEnabled?: boolean;
 }
 
 /**
@@ -69,7 +71,7 @@ export interface SeedNightOptions {
  *
  * Accepts either:
  *   seedNight(page, hostId, scenario)            — legacy positional form
- *   seedNight(page, hostId, { scenario, themeKey }) — options object form
+ *   seedNight(page, hostId, { scenario, themeKey, roomMagicEnabled }) — options object form
  */
 export async function seedNight(
   page: Page,
@@ -82,17 +84,24 @@ export async function seedNight(
 ): Promise<SeededNight> {
   let scenario: SeedNightOptions["scenario"] = "happy-path-3-cats-game1";
   let themeKey: string | undefined;
+  let roomMagicEnabled: boolean | undefined;
 
   if (typeof scenarioOrOptions === "string") {
     scenario = scenarioOrOptions;
   } else if (scenarioOrOptions !== undefined) {
     scenario = scenarioOrOptions.scenario ?? "happy-path-3-cats-game1";
     themeKey = scenarioOrOptions.themeKey;
+    roomMagicEnabled = scenarioOrOptions.roomMagicEnabled;
   }
 
   const res = await page.request.post("/api/_test/seed-night", {
     headers: { "x-test-secret": TEST_SECRET },
-    data: { hostId, scenario, ...(themeKey !== undefined ? { themeKey } : {}) },
+    data: {
+      hostId,
+      scenario,
+      ...(themeKey !== undefined ? { themeKey } : {}),
+      ...(roomMagicEnabled !== undefined ? { roomMagicEnabled } : {}),
+    },
   });
   if (!res.ok()) {
     throw new Error(`seedNight failed: ${res.status()} ${await res.text()}`);

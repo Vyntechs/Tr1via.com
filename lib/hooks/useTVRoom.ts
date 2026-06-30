@@ -23,6 +23,10 @@ import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
 import { withTimeout, BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
 import type { FireworksBeat } from "@/components/system/PyrotechnicsBeatConductor";
+import {
+  isRoomMagicReactionKind,
+  type RoomMagicReactionEvent,
+} from "@/lib/room-magic/reactions";
 
 const SAFETY_REFETCH_MS = 4000;
 
@@ -41,6 +45,7 @@ export interface TVNight {
   closedAt: string | null;
   scheduledAt: string | null;
   isLocked: boolean;
+  roomMagicEnabled: boolean;
 }
 
 export interface TVGame {
@@ -163,6 +168,9 @@ export interface TVRoomState {
    *  lastBroadcast (cosmetic — must not trigger a snapshot refetch). The
    *  PyrotechnicsBeatConductor reads this and schedules the burst for `fireAt`. */
   lastFireworksBeat: FireworksBeat | null;
+  /** Most recent Room Magic reaction. Cosmetic-only: never mutates
+   *  lastBroadcast or triggers a snapshot refetch. */
+  lastRoomMagicReaction: RoomMagicReactionEvent | null;
   /** Force a manual refetch (e.g. after the host triggers an event). */
   refresh: () => void;
 }
@@ -172,6 +180,8 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const [snapshot, setSnapshot] = useState<TVSnapshot | null>(null);
   const [lastBroadcast, setLastBroadcast] = useState<TVBroadcast | null>(null);
   const [lastFireworksBeat, setLastFireworksBeat] = useState<FireworksBeat | null>(null);
+  const [lastRoomMagicReaction, setLastRoomMagicReaction] =
+    useState<RoomMagicReactionEvent | null>(null);
   const safetyHandle = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const code = roomCodeRaw ? parseRoomCode(roomCodeRaw) : null;
@@ -210,10 +220,12 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   useEffect(() => {
     if (!code) {
       setSnapshot(null);
+      setLastRoomMagicReaction(null);
       setStatus("loading");
       return;
     }
     setStatus("loading");
+    setLastRoomMagicReaction(null);
     void fetchSnapshot();
 
     // Subscribe to the broadcast channel for low-latency wake-ups. Broadcast
@@ -299,6 +311,29 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
           receivedAtMs: Date.now(),
         });
       })
+      .on("broadcast", { event: "room-magic-reaction" }, (msg) => {
+        // Cosmetic room reaction. Surface it separately from lastBroadcast so
+        // TV wake-up/refetch behavior stays reserved for game-state events.
+        const p = msg.payload as Record<string, unknown>;
+        const kind = p.kind;
+        const questionId = p.questionId;
+        const playerId = p.playerId;
+        const serverNow = p.serverNow;
+        if (
+          !isRoomMagicReactionKind(kind) ||
+          typeof questionId !== "string" ||
+          typeof playerId !== "string" ||
+          typeof serverNow !== "string"
+        ) {
+          return;
+        }
+        setLastRoomMagicReaction({
+          kind,
+          questionId,
+          playerId,
+          serverNow,
+        });
+      })
       .subscribe();
 
     // Safety polling for missed broadcasts + slow-moving state (players
@@ -319,6 +354,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     snapshot,
     lastBroadcast,
     lastFireworksBeat,
+    lastRoomMagicReaction,
     refresh: () => {
       void fetchSnapshot();
     },

@@ -6,6 +6,7 @@
 
 "use client";
 
+import type { ReactNode } from "react";
 import {
   useTheme,
   Display,
@@ -40,6 +41,8 @@ export interface PlayerRevealCorrectProps {
   /** Total players who answered correctly — drives the social "You + N others nailed it" line.
    *  Omit to hide the line entirely. */
   correctCount?: number;
+  /** Reveal-only Room Magic controls supplied by the player room state machine. */
+  roomMagicControls?: ReactNode;
 }
 
 export function PlayerRevealCorrect({
@@ -54,6 +57,7 @@ export function PlayerRevealCorrect({
   rankDelta = 4,
   nextHint = "Linda is picking the next category…",
   correctCount,
+  roomMagicControls,
 }: PlayerRevealCorrectProps = {}) {
   const { t } = useTheme();
   const speedBonus = msToLock < 5000;
@@ -179,6 +183,8 @@ export function PlayerRevealCorrect({
           {nailedItLine(correctCount)}
         </div>
       )}
+
+      {roomMagicControls}
 
       <div
         style={{

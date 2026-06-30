@@ -213,6 +213,7 @@ function nightToTVNight(
     closedAt: n.closed_at,
     scheduledAt: n.scheduled_at,
     isLocked: n.is_locked,
+    roomMagicEnabled: n.room_magic_enabled,
   };
 }
 

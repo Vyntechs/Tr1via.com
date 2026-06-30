@@ -39,7 +39,7 @@ export async function GET(
   const { data: night, error: nightError } = await admin
     .from("nights")
     .select(
-      "id, venue_name, theme_key, room_code, opened_at, closed_at, scheduled_at, is_locked, hosts!inner(default_theme_key)",
+      "id, venue_name, theme_key, room_code, opened_at, closed_at, scheduled_at, is_locked, room_magic_enabled, hosts!inner(default_theme_key)",
     )
     .eq("room_code", code)
     .maybeSingle();
@@ -243,6 +243,9 @@ export async function GET(
       closedAt: night.closed_at,
       scheduledAt: night.scheduled_at,
       isLocked: night.is_locked,
+      roomMagicEnabled: Boolean(
+        (night as { room_magic_enabled?: boolean | null }).room_magic_enabled,
+      ),
     },
     games: games.map((g) => ({
       id: g.id,

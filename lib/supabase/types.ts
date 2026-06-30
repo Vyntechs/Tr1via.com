@@ -18,9 +18,6 @@ export type Json =
   | Json[]
 
 export type Database = {
-  __InternalSupabase: {
-    PostgrestVersion: "14.5"
-  }
   public: {
     Tables: {
       adjustments: {
@@ -309,6 +306,7 @@ export type Database = {
           comped_at: string | null
           comped_by: string | null
           created_at: string
+          current_period_end: string | null
           default_theme_key: string
           default_venue: string | null
           display_name: string
@@ -316,7 +314,6 @@ export type Database = {
           is_first_night_complete: boolean
           is_paywall_bypassed: boolean
           role: string
-          current_period_end: string | null
           stripe_customer_id: string | null
           stripe_subscription_id: string | null
           subscription_status: string | null
@@ -327,6 +324,7 @@ export type Database = {
           comped_at?: string | null
           comped_by?: string | null
           created_at?: string
+          current_period_end?: string | null
           default_theme_key?: string
           default_venue?: string | null
           display_name: string
@@ -334,7 +332,6 @@ export type Database = {
           is_first_night_complete?: boolean
           is_paywall_bypassed?: boolean
           role?: string
-          current_period_end?: string | null
           stripe_customer_id?: string | null
           stripe_subscription_id?: string | null
           subscription_status?: string | null
@@ -345,6 +342,7 @@ export type Database = {
           comped_at?: string | null
           comped_by?: string | null
           created_at?: string
+          current_period_end?: string | null
           default_theme_key?: string
           default_venue?: string | null
           display_name?: string
@@ -352,7 +350,6 @@ export type Database = {
           is_first_night_complete?: boolean
           is_paywall_bypassed?: boolean
           role?: string
-          current_period_end?: string | null
           stripe_customer_id?: string | null
           stripe_subscription_id?: string | null
           subscription_status?: string | null
@@ -378,6 +375,7 @@ export type Database = {
           is_locked: boolean
           opened_at: string | null
           room_code: string
+          room_magic_enabled: boolean
           scheduled_at: string | null
           theme_key: string | null
           venue_name: string
@@ -390,6 +388,7 @@ export type Database = {
           is_locked?: boolean
           opened_at?: string | null
           room_code: string
+          room_magic_enabled?: boolean
           scheduled_at?: string | null
           theme_key?: string | null
           venue_name: string
@@ -402,6 +401,7 @@ export type Database = {
           is_locked?: boolean
           opened_at?: string | null
           room_code?: string
+          room_magic_enabled?: boolean
           scheduled_at?: string | null
           theme_key?: string | null
           venue_name?: string
@@ -674,6 +674,75 @@ export type Database = {
           },
         ]
       }
+      room_magic_reactions: {
+        Row: {
+          created_at: string
+          game_id: string
+          id: string
+          kind: string
+          moment: string
+          night_id: string
+          player_id: string
+          question_id: string
+        }
+        Insert: {
+          created_at?: string
+          game_id: string
+          id?: string
+          kind: string
+          moment?: string
+          night_id: string
+          player_id: string
+          question_id: string
+        }
+        Update: {
+          created_at?: string
+          game_id?: string
+          id?: string
+          kind?: string
+          moment?: string
+          night_id?: string
+          player_id?: string
+          question_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "room_magic_reactions_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "room_magic_reactions_night_id_fkey"
+            columns: ["night_id"]
+            isOneToOne: false
+            referencedRelation: "nights"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "room_magic_reactions_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "game_scores"
+            referencedColumns: ["player_id"]
+          },
+          {
+            foreignKeyName: "room_magic_reactions_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "room_magic_reactions_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       topic_suggestions: {
         Row: {
           created_at: string
@@ -772,7 +841,7 @@ export type Database = {
       reset_night_to_setup: { Args: { p_night_id: string }; Returns: Json }
       resolve_question: { Args: { p_question_id: string }; Returns: undefined }
       swap_point_value: {
-        Args: { p_question_id: string; p_point_value: number }
+        Args: { p_point_value: number; p_question_id: string }
         Returns: undefined
       }
     }
@@ -907,7 +976,6 @@ export const Constants = {
     Enums: {},
   },
 } as const
-
 // ─────────────────────────────────────────────────────────────────────────
 // Convenience aliases. The codebase imports `HostRow`, `NightInsert`, etc.
 // directly. These map to the same shapes as Tables<'hosts'>, TablesInsert<...>,
@@ -1007,6 +1075,10 @@ export type RevealInsert = Omit<TablesInsert<"reveals">, "event"> & {
 export type RevealUpdate = Omit<TablesUpdate<"reveals">, "event"> & {
   event?: "reveal" | "undo" | "end-early" | "resolve"
 }
+
+export type RoomMagicReactionRow    = Tables<"room_magic_reactions">
+export type RoomMagicReactionInsert = TablesInsert<"room_magic_reactions">
+export type RoomMagicReactionUpdate = TablesUpdate<"room_magic_reactions">
 
 export type AdjustmentRow      = Tables<"adjustments">
 export type AdjustmentInsert   = TablesInsert<"adjustments">

@@ -40,6 +40,7 @@ import {
   PlayerLobby,
   PlayerLockInBolt,
   PlayerQuestion,
+  RoomMagicReactionControls,
   PlayerLocked,
   PlayerRevealCorrect,
   PlayerRevealCorrectSequence,
@@ -249,6 +250,7 @@ function RoomStateMachine({
   const game2 = snapshot.games.find((g) => g.game_no === 2) ?? null;
   const currentGame = snapshot.currentGame;
   const currentQuestion = snapshot.currentQuestion;
+  const roomMagicEnabled = Boolean(snapshot.night?.room_magic_enabled);
 
   // Resolve the category of the live question so we can color the screen.
   const currentCategory = useMemo<CategoryRow | null>(() => {
@@ -577,6 +579,7 @@ function RoomStateMachine({
             themeKey={themeKey}
             standings={buildGame1Standings(scores ?? [], me.id)}
             totalPlayers={scores && scores.length > 0 ? scores.length : snapshot.players.length}
+            roomMagicEnabled={roomMagicEnabled}
           />
         );
       } else {
@@ -612,6 +615,7 @@ function RoomStateMachine({
           themeKey={themeKey}
           summary={summaryFor(currentQuestion.id)}
           neighborhood={neighborhood}
+          roomMagicEnabled={roomMagicEnabled}
         />
       );
     }
@@ -644,6 +648,7 @@ function RoomStateMachine({
             themeKey={themeKey}
             summary={summaryFor(lastResolvedQuestion.id)}
             neighborhood={neighborhood}
+            roomMagicEnabled={roomMagicEnabled}
           />
         );
       }
@@ -1025,6 +1030,7 @@ function LockedView({
   themeKey,
   standings,
   totalPlayers,
+  roomMagicEnabled,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -1037,6 +1043,7 @@ function LockedView({
   standings?: { top: StandingRow[]; you: StandingRow | null };
   /** Players who can answer this question — denominator for the live bar. */
   totalPlayers: number;
+  roomMagicEnabled: boolean;
 }) {
   // Reuse the same scramble — same player + question = same permutation.
   const scramble = useMemo(
@@ -1098,6 +1105,7 @@ function LockedView({
       lockedCount={lockedCount}
       totalPlayers={totalPlayers}
       standings={standings}
+      roomMagicEnabled={roomMagicEnabled}
     />
   );
 }
@@ -1117,6 +1125,7 @@ function RevealView({
   themeKey,
   summary,
   neighborhood,
+  roomMagicEnabled,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -1138,6 +1147,8 @@ function RevealView({
   summary: ResolveSummary | undefined;
   /** ±4 standings shown as the third reveal beat. */
   neighborhood: Neighborhood;
+  /** Night-level Room Magic flag. Controls still mount only post-resolve. */
+  roomMagicEnabled: boolean;
 }) {
   // 3-beat reveal: celebrate/payoff first, then settle into the ±4 standings for
   // the rest of the between-questions wait. Fireworks live only in the celebrate/
@@ -1186,6 +1197,10 @@ function RevealView({
     | 3
     | 4;
   const correctText = question.options[question.correct_index];
+  const roomMagicControls =
+    roomMagicEnabled && question.finished_at ? (
+      <RoomMagicReactionControls questionId={question.id} enabled={true} />
+    ) : null;
 
   // Source the right/wrong decision from the data already on hand — the
   // player's own chosen_index plus the question's correct_index — rather
@@ -1226,6 +1241,7 @@ function RevealView({
       totalScore,
       rankDelta: 0,
       nextHint: "Hold tight — the next question is on its way.",
+      roomMagicControls,
     };
     // July: a dark fireworks moment (ignited in sync with the TV by the gated
     // conductor) → the bright payoff. Other themes go straight to the payoff.
@@ -1257,6 +1273,7 @@ function RevealView({
       totalScore={totalScore}
       correctCount={summary?.correctCount}
       answeredCount={summary?.answeredCount}
+      roomMagicControls={roomMagicControls}
     />
   );
 }

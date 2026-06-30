@@ -59,6 +59,7 @@ vi.mock("@/lib/hooks/useTVRoom", () => ({
 vi.mock("@/components/tv", () => ({
   TVStateMachine: () => null,
   TVSectionComplete: () => null,
+  TVRoomMagicOverlay: () => null,
 }));
 
 // Audio + lightning touch browser APIs jsdom doesn't have; no-op them so an
@@ -83,6 +84,7 @@ const READY_SNAPSHOT: TVSnapshot = {
     closedAt: null,
     scheduledAt: null,
     isLocked: false,
+    roomMagicEnabled: false,
   },
   games: [],
   currentGameId: null,
