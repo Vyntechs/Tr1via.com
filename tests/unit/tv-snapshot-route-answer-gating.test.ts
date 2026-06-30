@@ -161,6 +161,7 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
     // name + lock time ...
     expect(body.liveAnswers).toHaveLength(1);
     const a = body.liveAnswers[0];
+    expect(a.question_id).toBe("q-live");
     expect(a.player_name).toBe("Bob");
     expect(a.ms_to_lock).toBe(850);
     // ... but the actual pick and its correctness are WITHHELD until resolved.
@@ -184,6 +185,7 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
     // No live question → the TV targets the most-recently-resolved one.
     expect(body.targetQuestionId).toBe("q-resolved");
     expect(body.liveAnswers).toHaveLength(1);
+    expect(body.liveAnswers[0].question_id).toBe("q-resolved");
     // The reveal screen ("who got it right", fastest-five) reads these.
     expect(body.liveAnswers[0].chosen_index).toBe(3);
     expect(body.liveAnswers[0].is_correct).toBe(true);

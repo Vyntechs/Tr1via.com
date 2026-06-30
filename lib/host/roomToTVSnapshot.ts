@@ -50,6 +50,7 @@ import type {
  *  fields the TV reveal/question screens consume. */
 export interface RoomAnswerRow {
   id: string;
+  question_id: string;
   player_id: string;
   ms_to_lock: number;
   is_correct: boolean | null;
@@ -137,9 +138,10 @@ export function roomToTVSnapshot(
   // can't leak into the reveal frame.
   const liveAnswers: TVAnswer[] = targetQuestionId
     ? answers
-        .filter((a) => true)
+        .filter((a) => a.question_id === targetQuestionId)
         .map((a) => ({
           id: a.id,
+          question_id: a.question_id,
           player_id: a.player_id,
           player_name: playerNameById.get(a.player_id) ?? "—",
           ms_to_lock: Number(a.ms_to_lock ?? 0),

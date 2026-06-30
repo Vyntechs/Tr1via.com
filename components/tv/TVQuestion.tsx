@@ -65,7 +65,7 @@ export interface TVQuestionProps {
   totalPlayers?: number;
   /** Room Magic House Lights are cosmetic aggregate lock-in presence. */
   roomMagicEnabled?: boolean;
-  /** Optional deduped count from live answers; falls back to tile count. */
+  /** Optional deduped count from live answers. House Lights hides when absent. */
   houseLightsLockedCount?: number;
   /** Pexels photo attached during generation. Rendered below the category
    *  banner as a wide thumbnail when present. */
@@ -125,7 +125,8 @@ function TVQuestionInner({
 
   const lockedIn = tiles?.length ?? 21;
   const denominator = totalPlayers ?? 32;
-  const houseLightsLockedIn = houseLightsLockedCount ?? lockedIn;
+  const houseLightsLockedIn = houseLightsLockedCount ?? null;
+  const houseLightsTotalPlayers = totalPlayers ?? null;
   const progress = denominator > 0 ? Math.min(1, lockedIn / denominator) : 0;
 
   // Map the live tiles (which carry stable IDs) onto LockInTile shape that
@@ -142,7 +143,7 @@ function TVQuestionInner({
       <TVHouseLights
         roomMagicEnabled={roomMagicEnabled}
         lockedCount={houseLightsLockedIn}
-        totalPlayers={denominator}
+        totalPlayers={houseLightsTotalPlayers}
         accent={cc}
       />
       <TVHeader

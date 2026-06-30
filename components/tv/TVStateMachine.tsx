@@ -468,10 +468,7 @@ function TVQuestionView({
   // diff against previously-seen locks and enqueue ceremony events.
   const lockedAnswers = snapshot.liveAnswers;
   const houseLightsLockedCount = countHouseLightsLocks(
-    lockedAnswers.map((answer) => ({
-      ...answer,
-      question_id: question.id,
-    })),
+    lockedAnswers,
     question.id,
   );
 

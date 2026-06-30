@@ -193,13 +193,21 @@ async function runLockInRehearsal({
     await expect(
       hostPage.getByTestId("host-tv-panel").getByTestId(HOUSE_LIGHTS),
     ).toBeVisible({ timeout: 10_000 });
-    await expect(phones[0].getByTestId(PLAYER_CONFIRMATION)).toBeVisible();
+    await Promise.all(
+      phones.map((phone) =>
+        expect(phone.getByTestId(PLAYER_CONFIRMATION)).toBeVisible(),
+      ),
+    );
   } else {
     await expect(tvPage.getByTestId(HOUSE_LIGHTS)).toHaveCount(0);
     await expect(
       hostPage.getByTestId("host-tv-panel").getByTestId(HOUSE_LIGHTS),
     ).toHaveCount(0);
-    await expect(phones[0].getByTestId(PLAYER_CONFIRMATION)).toHaveCount(0);
+    await Promise.all(
+      phones.map((phone) =>
+        expect(phone.getByTestId(PLAYER_CONFIRMATION)).toHaveCount(0),
+      ),
+    );
   }
 
   screenshots.push(await screenshot(tvPage, `${label}-tv-question`));

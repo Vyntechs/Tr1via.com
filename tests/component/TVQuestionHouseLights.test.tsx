@@ -28,11 +28,24 @@ describe("TVQuestion House Lights", () => {
         roomMagicEnabled
         tiles={tiles}
         totalPlayers={3}
+        houseLightsLockedCount={2}
       />,
     );
 
     expect(screen.getByTestId("tv-house-lights")).toHaveTextContent(
       "2 of 3 locked in",
     );
+  });
+
+  it("does not render House Lights from demo fallback counts", () => {
+    render(
+      <TVQuestion
+        themeKey="house"
+        roomMagicEnabled
+        tiles={tiles}
+      />,
+    );
+
+    expect(screen.queryByTestId("tv-house-lights")).not.toBeInTheDocument();
   });
 });

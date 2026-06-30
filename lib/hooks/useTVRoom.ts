@@ -107,6 +107,7 @@ export interface TVScore {
 
 export interface TVAnswer {
   id: string;
+  question_id: string;
   player_id: string;
   player_name: string;
   ms_to_lock: number;
