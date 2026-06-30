@@ -20,6 +20,7 @@ import {
   useTheme,
 } from "@/components/system";
 import type { LockInTile } from "@/components/tv/lockin/roster";
+import { TVHouseLights } from "@/components/tv/TVHouseLights";
 import {
   TVScoreboardMarquee,
   type MarqueeChip,
@@ -62,6 +63,10 @@ export interface TVQuestionProps {
   tiles?: TVQuestionTile[];
   /** Total number of joined players (denominator for "X of Y locked in"). */
   totalPlayers?: number;
+  /** Room Magic House Lights are cosmetic aggregate lock-in presence. */
+  roomMagicEnabled?: boolean;
+  /** Optional deduped count from live answers; falls back to tile count. */
+  houseLightsLockedCount?: number;
   /** Pexels photo attached during generation. Rendered below the category
    *  banner as a wide thumbnail when present. */
   imageUrl?: string | null;
@@ -99,6 +104,8 @@ function TVQuestionInner({
   marqueeChips,
   spotlightedPlayerId,
   lockInAnnouncement,
+  roomMagicEnabled = false,
+  houseLightsLockedCount,
 }: TVQuestionProps) {
   const { t } = useTheme();
   const cc = categoryColor(category, t.accent);
@@ -118,6 +125,7 @@ function TVQuestionInner({
 
   const lockedIn = tiles?.length ?? 21;
   const denominator = totalPlayers ?? 32;
+  const houseLightsLockedIn = houseLightsLockedCount ?? lockedIn;
   const progress = denominator > 0 ? Math.min(1, lockedIn / denominator) : 0;
 
   // Map the live tiles (which carry stable IDs) onto LockInTile shape that
@@ -131,6 +139,12 @@ function TVQuestionInner({
 
   return (
     <TVStage data-testid="tv-question">
+      <TVHouseLights
+        roomMagicEnabled={roomMagicEnabled}
+        lockedCount={houseLightsLockedIn}
+        totalPlayers={denominator}
+        accent={cc}
+      />
       <TVHeader
         accent={cc}
         left="GAME · LIVE"
@@ -432,4 +446,3 @@ function PileTiles({
     </div>
   );
 }
-

@@ -53,6 +53,7 @@ import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
+import { countHouseLightsLocks } from "@/lib/room-magic/house-lights";
 import { hasCeremony, hasMarquee, lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
 import { shouldHoldReveal } from "@/lib/tv/revealPause";
 import { selectLobbyTopics } from "@/lib/tv/lobbyTopics";
@@ -466,6 +467,13 @@ function TVQuestionView({
   // Track which players have locked in (any answer in liveAnswers) so we can
   // diff against previously-seen locks and enqueue ceremony events.
   const lockedAnswers = snapshot.liveAnswers;
+  const houseLightsLockedCount = countHouseLightsLocks(
+    lockedAnswers.map((answer) => ({
+      ...answer,
+      question_id: question.id,
+    })),
+    question.id,
+  );
 
   const [ceremonyQueue, setCeremonyQueue] = useState<CeremonyEvent[]>([]);
   const [spotlightedPlayerId, setSpotlightedPlayerId] = useState<string | null>(null);
@@ -568,6 +576,8 @@ function TVQuestionView({
         />
       )}
       <TVQuestion
+        roomMagicEnabled={snapshot.night.roomMagicEnabled}
+        houseLightsLockedCount={houseLightsLockedCount}
         category={category}
         value={question.pointValue ?? 100}
         question={question.prompt}
