@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { ThemeProvider } from "@/components/system/ThemeProvider";
 import { PlayerLocked } from "@/components/player/PlayerLocked";
 import type { ReactNode } from "react";
@@ -33,5 +33,12 @@ describe("PlayerLocked — live lock-in count", () => {
   it("does not render the bar when totalPlayers is 0 (no divide-by-zero)", () => {
     const { queryByTestId } = render(wrap(<PlayerLocked lockedCount={0} totalPlayers={0} />));
     expect(queryByTestId("lockin-progress")).toBeNull();
+  });
+
+  it("can show the Room Magic sent line without removing the live lock-in count", () => {
+    render(wrap(<PlayerLocked lockedCount={12} totalPlayers={18} roomMagicEnabled />));
+
+    expect(screen.getByTestId("lockin-progress").textContent).toMatch(/12 of 18 locked in/i);
+    expect(screen.getByText("Sent to the room.")).toBeInTheDocument();
   });
 });
