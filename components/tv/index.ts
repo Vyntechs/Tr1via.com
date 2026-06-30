@@ -7,6 +7,8 @@ export { TVGrid, DEMO_CATEGORIES, DEMO_VALUES } from "./TVGrid";
 export type { TVGridProps, TVGridCell, TVGridLeaderRow } from "./TVGrid";
 export { TVQuestion } from "./TVQuestion";
 export type { TVQuestionProps, TVQuestionOption, TVQuestionTile } from "./TVQuestion";
+export { TVHouseLights } from "./TVHouseLights";
+export type { TVHouseLightsProps } from "./TVHouseLights";
 export { TVReveal, DEMO_FASTEST } from "./TVReveal";
 export type { TVRevealProps, TVRevealFastest } from "./TVReveal";
 export { TVLeaderboard, DEMO_ROWS } from "./TVLeaderboard";

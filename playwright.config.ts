@@ -8,7 +8,10 @@ export default defineConfig({
   fullyParallel: false, // multi-context sync tests share the same dev server
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // The E2E suite shares one local dev server and mutable test auth/data.
+  // Keep it serial everywhere so multi-context game rehearsals cannot race
+  // each other's login/reset state.
+  workers: 1,
   reporter: "list",
   use: {
     baseURL: BASE_URL,

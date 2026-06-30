@@ -15,6 +15,7 @@ import {
   TimerRing,
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import type { StandingRow } from "@/lib/player/betweenGames";
@@ -50,8 +51,59 @@ export interface PlayerLockedProps {
   roomMagicEnabled?: boolean;
 }
 
+interface PlayerLockedStandingsRowProps {
+  row: StandingRow;
+  pinned?: boolean;
+  accent: string;
+  surface: string;
+  ink: string;
+}
+
+function PlayerLockedStandingsRow({
+  row,
+  pinned,
+  accent,
+  surface,
+  ink,
+}: PlayerLockedStandingsRowProps) {
+  return (
+    <div
+      data-testid={row.isYou ? "standings-you" : "standings-row"}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "28px 1fr auto",
+        alignItems: "center",
+        gap: 10,
+        padding: "9px 12px",
+        borderRadius: 10,
+        background: row.isYou ? accent : surface,
+        color: row.isYou ? "#0E0805" : ink,
+        border: pinned ? `1.5px dashed ${accent}` : "none",
+        fontWeight: row.isYou ? 700 : 500,
+      }}
+    >
+      <Numeric size={15} weight={700} color="currentColor">
+        {row.rank}
+      </Numeric>
+      <span
+        style={{
+          fontSize: 14,
+          fontWeight: row.isYou ? 700 : 600,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {row.name}
+      </span>
+      <Numeric size={15} weight={700} color="currentColor">
+        {row.score.toLocaleString()}
+      </Numeric>
+    </div>
+  );
+}
+
 export function PlayerLocked({
-  themeKey: _themeKey,
   category = "Geography",
   value = 100,
   options = ["Florida", "Alaska", "California", "Maine"],
@@ -66,6 +118,10 @@ export function PlayerLocked({
   roomMagicEnabled = false,
 }: PlayerLockedProps = {}) {
   const { t } = useTheme();
+  const reducedMotion = usePrefersReducedMotion();
+  const pulseAnimation = reducedMotion
+    ? "none"
+    : "tr1via-pulse 1.4s ease-in-out infinite";
   const catColor = categoryColor(category, t.accent);
   const secondsToLock = (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock < 5000;
@@ -80,29 +136,6 @@ export function PlayerLocked({
     ? Math.round(Math.min(1, Math.max(0, lockedCount! / totalPlayers!)) * 100)
     : 0;
 
-  function StandingsRow({ row, pinned }: { row: StandingRow; pinned?: boolean }) {
-    return (
-      <div
-        data-testid={row.isYou ? "standings-you" : "standings-row"}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "28px 1fr auto",
-          alignItems: "center",
-          gap: 10,
-          padding: "9px 12px",
-          borderRadius: 10,
-          background: row.isYou ? catColor : t.surface,
-          color: row.isYou ? "#0E0805" : t.ink,
-          border: pinned ? `1.5px dashed ${catColor}` : "none",
-          fontWeight: row.isYou ? 700 : 500,
-        }}
-      >
-        <Numeric size={15} weight={700} color="currentColor">{row.rank}</Numeric>
-        <span style={{ fontSize: 14, fontWeight: row.isYou ? 700 : 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{row.name}</span>
-        <Numeric size={15} weight={700} color="currentColor">{row.score.toLocaleString()}</Numeric>
-      </div>
-    );
-  }
   return (
     <PhoneScreen data-testid="player-locked">
       <div
@@ -153,12 +186,13 @@ export function PlayerLocked({
         <div data-testid="lockin-progress" style={{ marginBottom: 16 }} role="status" aria-live="polite">
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
             <span
+              data-testid="player-lockin-pulse-dot"
               style={{
                 width: 6,
                 height: 6,
                 borderRadius: 99,
                 background: catColor,
-                animation: "tr1via-pulse 1.4s ease-in-out infinite",
+                animation: pulseAnimation,
               }}
             />
             <Eyebrow color={t.inkMid} size={10}>
@@ -196,15 +230,31 @@ export function PlayerLocked({
         <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 6 }}>
           <Eyebrow color={t.inkMute} size={10}>WHERE YOU STAND</Eyebrow>
           {standings!.top.map((row) => (
-            <StandingsRow key={`${row.rank}-${row.name}`} row={row} />
+            <PlayerLockedStandingsRow
+              key={`${row.rank}-${row.name}`}
+              row={row}
+              accent={catColor}
+              surface={t.surface}
+              ink={t.ink}
+            />
           ))}
-          {standings!.you && <StandingsRow row={standings!.you} pinned />}
+          {standings!.you && (
+            <PlayerLockedStandingsRow
+              row={standings!.you}
+              pinned
+              accent={catColor}
+              surface={t.surface}
+              ink={t.ink}
+            />
+          )}
         </div>
       )}
 
       <div style={{ marginTop: "auto", paddingTop: 18, textAlign: "center", color: t.inkMid, fontSize: 13 }}>
         {roomMagicEnabled && (
           <div
+            aria-live="polite"
+            data-testid="player-house-lights-confirmation"
             style={{
               marginBottom: 8,
               color: t.ink,
@@ -217,12 +267,13 @@ export function PlayerLocked({
         )}
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
           <span
+            data-testid="player-waiting-pulse-dot"
             style={{
               width: 5,
               height: 5,
               borderRadius: 99,
               background: catColor,
-              animation: "tr1via-pulse 1.4s ease-in-out infinite",
+              animation: pulseAnimation,
             }}
           />
           Waiting for the room to lock in&hellip;

@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "validate:room-magic": "playwright test tests/e2e/room-magic-house-lights.spec.ts --reporter=list",
     "typegen": "supabase gen types typescript --local --schema public > lib/supabase/types.ts"
   },
   "dependencies": {

@@ -53,6 +53,7 @@ import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
+import { countHouseLightsLocks } from "@/lib/room-magic/house-lights";
 import { hasCeremony, hasMarquee, lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
 import { shouldHoldReveal } from "@/lib/tv/revealPause";
 import { selectLobbyTopics } from "@/lib/tv/lobbyTopics";
@@ -139,31 +140,20 @@ export function TVStateMachine({
   // catches via `liveQuestion && !finishedAt`) OR the game ends.
   const stickyReveal = !!lastResolve && !hostAdvanced;
 
-  // Ceremony-queue pending count — TVQuestionView reports this up via a
-  // ref callback so the reveal branch can hold the transition for up to
-  // 3 s while ceremonies drain (May/Storm only).
-  const pendingCeremonyCountRef = useRef(0);
+  // Ceremony-queue pending count — TVQuestionView reports this up so the
+  // reveal branch can hold the transition for up to 3 s while ceremonies
+  // drain (May/Storm only).
+  const [pendingCeremonyCount, setPendingCeremonyCount] = useState(0);
   const onPendingCountChange = useCallback((count: number) => {
-    pendingCeremonyCountRef.current = count;
+    setPendingCeremonyCount((current) => (current === count ? current : count));
   }, []);
-
-  // Track when the question first resolves (finishedAt becomes non-null)
-  // so shouldHoldReveal can enforce the 3-second hard cap.
-  const resolvedAtRef = useRef<number | null>(null);
-  const lastTargetIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    const resolvedId = targetQuestion?.id ?? null;
-    const resolvedAt = targetQuestion?.finishedAt ?? null;
-    // Reset when a new question becomes the target.
-    if (resolvedId !== lastTargetIdRef.current) {
-      lastTargetIdRef.current = resolvedId;
-      resolvedAtRef.current = null;
-    }
-    // Stamp the moment we first observe finishedAt being set.
-    if (resolvedAt !== null && resolvedAtRef.current === null) {
-      resolvedAtRef.current = Date.now();
-    }
-  });
+  const revealHoldClock = useRevealHoldClock(
+    stickyReveal &&
+      !!targetQuestion?.finishedAt &&
+      pendingCeremonyCount > 0 &&
+      hasCeremony(themeKey),
+    targetQuestion?.id ?? null,
+  );
 
   // ── Lobby branch ──
   if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
@@ -214,9 +204,9 @@ export function TVStateMachine({
     if (stickyReveal && targetQuestion && targetQuestion.finishedAt) {
       const hold = shouldHoldReveal({
         timerExpired: true, // finishedAt being set means the timer has expired
-        pendingCount: pendingCeremonyCountRef.current,
-        expiredAtMs: resolvedAtRef.current,
-        nowMs: Date.now(),
+        pendingCount: pendingCeremonyCount,
+        expiredAtMs: revealHoldClock.startedAtMs,
+        nowMs: revealHoldClock.nowMs,
         ceremonyEnabled: hasCeremony(themeKey),
       });
       if (hold) {
@@ -267,6 +257,45 @@ export function TVStateMachine({
 
   // Default: lobby.
   return <TVLobbyView snapshot={snapshot} welcomeEvent={welcomeEvent} />;
+}
+
+function useRevealHoldClock(active: boolean, key: string | null): {
+  startedAtMs: number | null;
+  nowMs: number;
+} {
+  const [clock, setClock] = useState<{
+    key: string | null;
+    startedAtMs: number | null;
+    nowMs: number;
+  }>({ key: null, startedAtMs: null, nowMs: 0 });
+
+  useEffect(() => {
+    if (!active || key === null) return;
+
+    let cancelled = false;
+    const tick = () => {
+      if (cancelled) return;
+      const now = Date.now();
+      setClock((current) => {
+        const startedAtMs =
+          current.key === key && current.startedAtMs !== null
+            ? current.startedAtMs
+            : now;
+        return { key, startedAtMs, nowMs: now };
+      });
+    };
+
+    const firstTick = setTimeout(tick, 0);
+    const interval = setInterval(tick, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(firstTick);
+      clearInterval(interval);
+    };
+  }, [active, key]);
+
+  if (!active || clock.key !== key) return { startedAtMs: null, nowMs: 0 };
+  return { startedAtMs: clock.startedAtMs, nowMs: clock.nowMs };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -466,13 +495,17 @@ function TVQuestionView({
   // Track which players have locked in (any answer in liveAnswers) so we can
   // diff against previously-seen locks and enqueue ceremony events.
   const lockedAnswers = snapshot.liveAnswers;
+  const houseLightsLockedCount = countHouseLightsLocks(
+    lockedAnswers,
+    question.id,
+  );
 
   const [ceremonyQueue, setCeremonyQueue] = useState<CeremonyEvent[]>([]);
   const [spotlightedPlayerId, setSpotlightedPlayerId] = useState<string | null>(null);
   const [speedBonusPlayerId, setSpeedBonusPlayerId] = useState<string | null>(null);
-  // seenLocksRef tracks player ids we've already queued so snapshot re-fetches
+  // seenLocks tracks player ids we've already queued so snapshot re-fetches
   // (which repeat the full liveAnswers list) don't double-fire ceremonies.
-  const seenLocksRef = useRef<Set<string>>(new Set());
+  const [seenLocks] = useState<Set<string>>(() => new Set());
   // June de-dups its lock-in sky pulse separately from the May ceremony queue.
   const juneSeenLocksRef = useRef<Set<string>>(new Set());
 
@@ -489,20 +522,20 @@ function TVQuestionView({
       }
     }
     if (!hasCeremony(themeKey)) return;
-    const newlyLocked = lockedAnswers.filter((a) => !seenLocksRef.current.has(a.player_id));
-    for (const a of newlyLocked) seenLocksRef.current.add(a.player_id);
+    const newlyLocked = lockedAnswers.filter((a) => !seenLocks.has(a.player_id));
+    for (const a of newlyLocked) seenLocks.add(a.player_id);
     if (newlyLocked.length > 0) {
-      setCeremonyQueue((q) => [
-        ...q,
-        ...newlyLocked.map((a) => ({
-          playerId: a.player_id,
-          tint: playerColorHex(a.player_id),
-          msToLock: a.ms_to_lock,
-          receivedAtMs: Date.now(),
-        })),
-      ]);
+      const events = newlyLocked.map((a) => ({
+        playerId: a.player_id,
+        tint: playerColorHex(a.player_id),
+        msToLock: a.ms_to_lock,
+        receivedAtMs: Date.now(),
+      }));
+      queueMicrotask(() => {
+        setCeremonyQueue((q) => [...q, ...events]);
+      });
     }
-  }, [lockedAnswers, themeKey]);
+  }, [lockedAnswers, seenLocks, themeKey]);
 
   // Polling fallback — catches any lock-ins the realtime channel dropped.
   // Fires onMissed for locks the snapshot hasn't delivered yet; the callback
@@ -510,7 +543,7 @@ function TVQuestionView({
   useLockInSync({
     gameId: snapshot.currentGameId ?? "",
     active: hasCeremony(themeKey) && !!snapshot.currentGameId,
-    acknowledged: seenLocksRef.current,
+    acknowledged: seenLocks,
     onMissed: (lock) => {
       setCeremonyQueue((q) => [
         ...q,
@@ -521,7 +554,7 @@ function TVQuestionView({
           receivedAtMs: Date.now(),
         },
       ]);
-      seenLocksRef.current.add(lock.playerId);
+      seenLocks.add(lock.playerId);
     },
   });
 
@@ -568,6 +601,8 @@ function TVQuestionView({
         />
       )}
       <TVQuestion
+        roomMagicEnabled={snapshot.night.roomMagicEnabled}
+        houseLightsLockedCount={houseLightsLockedCount}
         category={category}
         value={question.pointValue ?? 100}
         question={question.prompt}

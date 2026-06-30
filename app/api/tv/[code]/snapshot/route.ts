@@ -202,6 +202,7 @@ export async function GET(
 
   let liveAnswers: Array<{
     id: string;
+    question_id: string;
     player_id: string;
     player_name: string;
     ms_to_lock: number;
@@ -211,7 +212,7 @@ export async function GET(
   if (targetQuestionId) {
     const { data: ans } = await admin
       .from("answers")
-      .select("id, player_id, ms_to_lock, is_correct, chosen_index")
+      .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
       .eq("question_id", targetQuestionId);
     if (ans && ans.length > 0) {
       const playerMap = new Map(
@@ -219,6 +220,7 @@ export async function GET(
       );
       liveAnswers = ans.map((a) => ({
         id: a.id,
+        question_id: a.question_id,
         player_id: a.player_id,
         player_name: playerMap.get(a.player_id) ?? "—",
         ms_to_lock: Number(a.ms_to_lock ?? 0),

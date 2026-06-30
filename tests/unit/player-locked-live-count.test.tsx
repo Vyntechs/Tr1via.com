@@ -1,8 +1,18 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ThemeProvider } from "@/components/system/ThemeProvider";
 import { PlayerLocked } from "@/components/player/PlayerLocked";
 import type { ReactNode } from "react";
+
+let reducedMotion = false;
+
+vi.mock("@/lib/hooks/usePrefersReducedMotion", () => ({
+  usePrefersReducedMotion: () => reducedMotion,
+}));
+
+afterEach(() => {
+  reducedMotion = false;
+});
 
 function wrap(node: ReactNode) {
   return <ThemeProvider themeKey="june">{node}</ThemeProvider>;
@@ -40,5 +50,25 @@ describe("PlayerLocked — live lock-in count", () => {
 
     expect(screen.getByTestId("lockin-progress").textContent).toMatch(/12 of 18 locked in/i);
     expect(screen.getByText("Sent to the room.")).toBeInTheDocument();
+  });
+
+  it("marks the Room Magic confirmation with a stable test id", () => {
+    render(wrap(<PlayerLocked lockedCount={12} totalPlayers={18} roomMagicEnabled />));
+
+    expect(screen.getByTestId("player-house-lights-confirmation")).toHaveTextContent(
+      "Sent to the room.",
+    );
+  });
+
+  it("suppresses pulse animation in reduced motion mode", () => {
+    reducedMotion = true;
+    render(wrap(<PlayerLocked lockedCount={12} totalPlayers={18} roomMagicEnabled />));
+
+    expect(screen.getByTestId("player-lockin-pulse-dot")).toHaveStyle({
+      animation: "none",
+    });
+    expect(screen.getByTestId("player-waiting-pulse-dot")).toHaveStyle({
+      animation: "none",
+    });
   });
 });
