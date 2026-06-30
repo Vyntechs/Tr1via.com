@@ -92,6 +92,7 @@ function pickCelebration(
     .filter(
       (q) =>
         q.isPicked &&
+        q.pointValue !== null &&
         q.finishedAt !== null &&
         catIdsInGame.has(q.categoryId),
     )
@@ -104,7 +105,10 @@ function pickCelebration(
 
   // Did this question's category just clear out?
   const sameCatPicked = snapshot.questions.filter(
-    (q) => q.categoryId === last.categoryId && q.isPicked,
+    (q) =>
+      q.categoryId === last.categoryId &&
+      q.isPicked &&
+      q.pointValue !== null,
   );
   const unplayedInCat = sameCatPicked.filter((q) => q.finishedAt === null);
   if (unplayedInCat.length > 0) return null;
@@ -114,6 +118,7 @@ function pickCelebration(
   const otherCatHasUnplayed = snapshot.questions.some(
     (q) =>
       q.isPicked &&
+      q.pointValue !== null &&
       q.finishedAt === null &&
       catIdsInGame.has(q.categoryId) &&
       q.categoryId !== last.categoryId,

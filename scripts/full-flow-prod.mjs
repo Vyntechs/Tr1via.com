@@ -451,11 +451,11 @@ async function evaluateSectionCompletePredicate(gameId) {
 
   const { data: qs } = await admin
     .from("questions")
-    .select("id, category_id, is_picked, finished_at")
+    .select("id, category_id, is_picked, point_value, finished_at")
     .in("category_id", catIds);
 
   const finished = (qs ?? [])
-    .filter((q) => q.is_picked && q.finished_at !== null)
+    .filter((q) => q.is_picked && q.point_value !== null && q.finished_at !== null)
     .sort((a, b) => (b.finished_at ?? "").localeCompare(a.finished_at ?? ""));
   const last = finished[0];
   if (!last) return { fire: false, reason: "no finished picked questions yet" };
@@ -464,6 +464,7 @@ async function evaluateSectionCompletePredicate(gameId) {
     (q) =>
       q.category_id === last.category_id &&
       q.is_picked &&
+      q.point_value !== null &&
       q.finished_at === null,
   );
   if (sameCatUnplayed.length > 0) {
@@ -473,6 +474,7 @@ async function evaluateSectionCompletePredicate(gameId) {
     (q) =>
       q.category_id !== last.category_id &&
       q.is_picked &&
+      q.point_value !== null &&
       q.finished_at === null,
   );
   if (otherCatUnplayed.length === 0) {
@@ -1073,11 +1075,14 @@ async function runOnePass(passThemeKey) {
         note(`g${i + 1} category "${cat?.name}" state=${cat?.state ?? "?"}`);
         const { data: qs } = await admin
           .from("questions")
-          .select("point_value, played_at, finished_at")
+          .select("id, source, is_picked, point_value, played_at, finished_at")
           .eq("category_id", categoryId)
           .order("point_value");
         for (const q of qs ?? []) {
-          note(`  Q ${q.point_value}pt played=${!!q.played_at} finished=${!!q.finished_at}`);
+          note(
+            `  Q ${q.id.slice(0, 8)}… source=${q.source} picked=${q.is_picked} ` +
+              `slot=${q.point_value ?? "null"} played=${!!q.played_at} finished=${!!q.finished_at}`,
+          );
         }
       }
     }

@@ -151,6 +151,39 @@ function lastCategorySnapshot(): TVSnapshot {
   });
 }
 
+/** Two-category game where the board is exhausted, plus a stale pre-lock pick. */
+function lastCategoryWithDirtyPickedNullSlot(): TVSnapshot {
+  return snapshot({
+    games: [game({ id: "g1", gameNo: 1, state: "live" })],
+    currentGameId: "g1",
+    categories: [
+      category({ id: "c1", gameId: "g1", name: "First" }),
+      category({ id: "c2", gameId: "g1", name: "Last" }),
+    ],
+    questions: [
+      question({
+        id: "q-c1-board",
+        categoryId: "c1",
+        pointValue: 100,
+        finishedAt: "2026-05-24T00:06:00Z",
+      }),
+      question({
+        id: "q-c2-board",
+        categoryId: "c2",
+        pointValue: 100,
+        finishedAt: "2026-05-24T00:07:00Z",
+      }),
+      question({
+        id: "q-c1-stale-pick",
+        categoryId: "c1",
+        pointValue: null,
+        isPicked: true,
+        finishedAt: null,
+      }),
+    ],
+  });
+}
+
 describe("useSectionCompleteCelebration", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -177,6 +210,13 @@ describe("useSectionCompleteCelebration", () => {
   it("does NOT fire when the LAST category in the game completes (End Game wins)", () => {
     const { result } = renderHook(() =>
       useSectionCompleteCelebration(lastCategorySnapshot(), true),
+    );
+    expect(result.current).toBeNull();
+  });
+
+  it("ignores stale picked rows without board point values when deciding End Game territory", () => {
+    const { result } = renderHook(() =>
+      useSectionCompleteCelebration(lastCategoryWithDirtyPickedNullSlot(), true),
     );
     expect(result.current).toBeNull();
   });
