@@ -37,24 +37,43 @@ describe("TVRoomMagicOverlay", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders aggregate counts instead of one row per tap", () => {
+  it("renders aggregate July effects without printing reaction words", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-30T18:00:00.000Z"));
 
     const { rerender } = render(
-      <TVRoomMagicOverlay enabled event={reaction("wow", "player-1")} />,
+      <TVRoomMagicOverlay enabled event={reaction("wow", "player-1")} themeKey="july" />,
     );
 
     rerender(
       <TVRoomMagicOverlay
         enabled
         event={reaction("wow", "player-2", "2026-06-30T18:00:00.500Z")}
+        themeKey="july"
       />,
     );
 
     const overlay = screen.getByTestId("tv-room-magic-overlay");
-    expect(within(overlay).getAllByText(/Wow/i)).toHaveLength(1);
-    expect(within(overlay).getByText(/Wow\s*x2/i)).toBeInTheDocument();
+    expect(overlay).toHaveAttribute("data-reaction-skin", "july-reaction-glyph");
+    expect(screen.queryByTestId("tv-room-magic-pill-wow")).not.toBeInTheDocument();
+    const effect = screen.getByTestId("tv-room-magic-july-effect-wow");
+    expect(effect).toHaveAttribute("data-reaction-count", "2");
+    expect(effect).not.toHaveTextContent(/wow/i);
+    expect(overlay).not.toHaveTextContent(/wow|nice|bravo|close/i);
+  });
+
+  it("renders a neutral fallback skin for themes without custom reaction art", () => {
+    render(
+      <TVRoomMagicOverlay
+        enabled
+        event={reaction("nice_one", "player-1")}
+        themeKey="august"
+      />,
+    );
+
+    const overlay = screen.getByTestId("tv-room-magic-overlay");
+    expect(overlay).toHaveAttribute("data-reaction-skin", "default");
+    expect(screen.getByTestId("tv-room-magic-default-nice_one")).toHaveTextContent("Nice one");
   });
 
   it("removes events after the short display window", async () => {
@@ -73,7 +92,7 @@ describe("TVRoomMagicOverlay", () => {
   });
 
   it("does not use sound or audio language", () => {
-    render(<TVRoomMagicOverlay enabled event={reaction("applause", "player-1")} />);
+    render(<TVRoomMagicOverlay enabled event={reaction("applause", "player-1")} themeKey="july" />);
 
     const overlay = screen.getByTestId("tv-room-magic-overlay");
     expect(
@@ -82,7 +101,7 @@ describe("TVRoomMagicOverlay", () => {
   });
 
   it("keeps the decorative layer out of pointer hit testing", () => {
-    render(<TVRoomMagicOverlay enabled event={reaction("brutal", "player-1")} />);
+    render(<TVRoomMagicOverlay enabled event={reaction("brutal", "player-1")} themeKey="july" />);
 
     const overlay = screen.getByTestId("tv-room-magic-overlay");
     expect(overlay.style.pointerEvents).toBe("none");

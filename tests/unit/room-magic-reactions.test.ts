@@ -14,7 +14,7 @@ describe("room magic reactions", () => {
       "wow",
       "brutal",
     ]);
-    expect(ROOM_MAGIC_REACTION_LABELS.brutal).toBe("Brutal");
+    expect(ROOM_MAGIC_REACTION_LABELS.brutal).toBe("Close one");
   });
 
   it("rejects unknown values", () => {

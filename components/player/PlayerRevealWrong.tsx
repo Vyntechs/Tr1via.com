@@ -14,11 +14,9 @@ import {
   AnswerCard,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
-import type { ThemeKey } from "@/lib/theme/tokens";
 import { gotItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealWrongProps {
-  themeKey?: ThemeKey;
   category?: string;
   value?: number;
   /** Slot (1..4) the player picked. Pass `null` for "no answer". */
@@ -42,10 +40,11 @@ export interface PlayerRevealWrongProps {
   answeredCount?: number;
   /** Reveal-only Room Magic controls supplied by the player room state machine. */
   roomMagicControls?: ReactNode;
+  /** Compact standings neighborhood that stays on the reveal hold screen. */
+  standingsPanel?: ReactNode;
 }
 
 export function PlayerRevealWrong({
-  themeKey: _themeKey,
   category = "Geography",
   value = 100,
   chosenSlot = 1,
@@ -57,6 +56,7 @@ export function PlayerRevealWrong({
   correctCount,
   answeredCount,
   roomMagicControls,
+  standingsPanel,
 }: PlayerRevealWrongProps = {}) {
   const { t } = useTheme();
   const noAnswer = chosenSlot === null;
@@ -107,6 +107,7 @@ export function PlayerRevealWrong({
       </div>
 
       {roomMagicControls}
+      {standingsPanel}
 
       <div
         style={{

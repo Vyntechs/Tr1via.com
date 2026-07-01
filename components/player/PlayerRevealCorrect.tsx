@@ -13,11 +13,9 @@ import {
   Eyebrow,
   Numeric,
 } from "@/components/system";
-import type { ThemeKey } from "@/lib/theme/tokens";
 import { nailedItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealCorrectProps {
-  themeKey?: ThemeKey;
   category?: string;
   /** Face point value (100..700). */
   value?: number;
@@ -43,10 +41,11 @@ export interface PlayerRevealCorrectProps {
   correctCount?: number;
   /** Reveal-only Room Magic controls supplied by the player room state machine. */
   roomMagicControls?: ReactNode;
+  /** Compact standings neighborhood that stays on the reveal hold screen. */
+  standingsPanel?: ReactNode;
 }
 
 export function PlayerRevealCorrect({
-  themeKey: _themeKey,
   category = "Geography",
   value = 100,
   awardedPoints = 110,
@@ -58,6 +57,7 @@ export function PlayerRevealCorrect({
   nextHint = "Linda is picking the next category…",
   correctCount,
   roomMagicControls,
+  standingsPanel,
 }: PlayerRevealCorrectProps = {}) {
   const { t } = useTheme();
   const speedBonus = msToLock < 5000;
@@ -185,6 +185,7 @@ export function PlayerRevealCorrect({
       )}
 
       {roomMagicControls}
+      {standingsPanel}
 
       <div
         style={{

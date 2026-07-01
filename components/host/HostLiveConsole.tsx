@@ -257,6 +257,7 @@ function HostLiveConsoleInner({
           <TVRoomMagicOverlay
             enabled={roomMagicEnabled}
             event={lastRoomMagicReaction}
+            themeKey={themeKey}
           />
         </div>
 
