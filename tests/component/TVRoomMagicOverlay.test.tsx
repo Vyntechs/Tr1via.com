@@ -59,6 +59,9 @@ describe("TVRoomMagicOverlay", () => {
     const effect = screen.getByTestId("tv-room-magic-july-effect-wow");
     expect(effect).toHaveAttribute("data-reaction-count", "2");
     expect(effect).toHaveAttribute("data-reaction-gesture", "star-crown");
+    expect(effect).toHaveAttribute("data-reaction-presence", "stage-readable");
+    expect(effect).toHaveAttribute("data-reaction-contrast", "dual-ink");
+    expect(screen.getByTestId("tv-room-magic-signature-wow")).toBeInTheDocument();
     expect(effect).not.toHaveTextContent(/wow/i);
     expect(overlay).not.toHaveTextContent(/wow|nice|bravo|close/i);
   });
@@ -114,7 +117,7 @@ describe("TVRoomMagicOverlay", () => {
     expect(screen.getByTestId("tv-room-magic-overlay")).toBeInTheDocument();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_700);
+      await vi.advanceTimersByTimeAsync(3_100);
     });
 
     expect(screen.queryByTestId("tv-room-magic-overlay")).not.toBeInTheDocument();
