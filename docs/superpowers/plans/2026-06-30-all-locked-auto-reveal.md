@@ -621,7 +621,7 @@ git commit -m "feat: schedule all locked auto reveal"
   - `useAllLockedAutoReveal`
   - existing `scores` rows from `game_scores`
   - existing `answers` rows for the live target question
-- Produces: host-driven auto-call to existing `handleEndEarly()`.
+- Produces: host-driven auto-call to `handleEndEarly({ requireAllLocked: true })`, leaving manual host presses on the existing unguarded path.
 
 - [x] **Step 1: Import the helper and hook**
 
@@ -726,7 +726,7 @@ Place this hook call after `handleEndEarly` is in lexical scope and before the c
 useAllLockedAutoReveal({
   questionId: room.currentQuestion?.id ?? null,
   decision: allLockedAutoRevealDecision,
-  onAutoReveal: handleEndEarly,
+  onAutoReveal: () => handleEndEarly({ requireAllLocked: true }),
 });
 ```
 

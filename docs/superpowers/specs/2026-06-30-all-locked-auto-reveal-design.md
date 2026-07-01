@@ -65,7 +65,7 @@ The host client should use that decision in an effect:
 - Only run while a live question is active.
 - When `complete` becomes true, start a grace timer.
 - If completion becomes false, the question changes, the game changes, or the component unmounts, cancel the timer.
-- After the grace timer, call the existing `handleEndEarly`.
+- After the grace timer, call `handleEndEarly({ requireAllLocked: true })` so the route uses the DB-side guarded resolve path.
 - Guard with a per-question latch so the auto-reveal fires once per question.
 
 This keeps scoring, resolving, broadcasting, and anti-cheat behavior on the existing trusted server path.
@@ -79,7 +79,7 @@ This keeps scoring, resolving, broadcasting, and anti-cheat behavior on the exis
 5. The all-locked helper compares eligible players with answer rows for the current question.
 6. If all eligible players are locked, host waits the grace window.
 7. Host calls `POST /api/games/:id/end-early` with the live question id.
-8. The existing route calls `resolve_question`, broadcasts `end-early`, and all surfaces move to reveal.
+8. The route calls `resolve_question_if_all_locked`; if the database confirms every eligible player is locked, it resolves, broadcasts `end-early`, and all surfaces move to reveal.
 
 ## Error Handling
 
