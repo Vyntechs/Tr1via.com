@@ -23,22 +23,38 @@ const PLAYER_ID = "P1";
 
 // Chainable, awaitable query stub. Real columns filter; join-path filters
 // (keys containing ".") are no-ops since the seed rows are already night-scoped.
+// select() records a plain (non-join) column list and projects OUTPUT rows to
+// it — filters still run against the full row, matching real Postgres
+// semantics where a narrower select doesn't hide columns from a later .eq().
 function qb(rows: Record<string, unknown>[]) {
   let data = [...rows];
+  let cols: string | null = null;
+  const project = (rs: Record<string, unknown>[]) => {
+    if (!cols || cols === "*" || cols.includes("!") || cols.includes("(")) return rs;
+    const fields = cols.split(",").map((c) => c.trim());
+    return rs.map((r) => {
+      const out: Record<string, unknown> = {};
+      for (const f of fields) out[f] = r[f];
+      return out;
+    });
+  };
   const apply = (c: string, keep: (r: Record<string, unknown>) => boolean) => {
     if (!c.includes(".")) data = data.filter(keep);
     return b;
   };
   const b: Record<string, unknown> = {
-    select: () => b,
+    select: (c?: string) => {
+      cols = c ?? null;
+      return b;
+    },
     eq: (c: string, v: unknown) => apply(c, (r) => r[c] === v),
     is: (c: string, v: unknown) => apply(c, (r) => (r[c] ?? null) === v),
     not: (c: string, _op: string, v: unknown) => apply(c, (r) => (r[c] ?? null) !== v),
     order: () => b,
     limit: () => b,
-    maybeSingle: () => Promise.resolve({ data: data[0] ?? null, error: null }),
+    maybeSingle: () => Promise.resolve({ data: project(data)[0] ?? null, error: null }),
     then: (onF: (v: { data: unknown; error: null }) => unknown) =>
-      Promise.resolve({ data, error: null }).then(onF),
+      Promise.resolve({ data: project(data), error: null }).then(onF),
   };
   return b;
 }
@@ -174,6 +190,9 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(body.liveAnswers[0].id).toBe("a2");
     // The host needs chosen_index for lock counts / reveal data.
     expect(body.liveAnswers[0].chosen_index).toBe(0);
+    // And question_id, so host fallback mode can still match answers to the
+    // live question when deciding whether every eligible player has locked.
+    expect(body.liveAnswers[0].question_id).toBe("q-live");
   });
 
   it("a signed-in host who does NOT own the night falls through to player auth", async () => {

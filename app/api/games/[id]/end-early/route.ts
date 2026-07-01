@@ -1,10 +1,10 @@
 // POST /api/games/:id/end-early — host short-circuits a question timer (theme-derived; 30s for every theme).
 //
-// Used when "everyone has obviously answered, let's see the result." We
-// reuse resolve_question() to do the scoring + reveals insert + question
-// finish-stamp in one stored-proc call (the same path the first phone's
-// T+0 ping takes). After RPC, broadcast 'end-early' so the rest of the
-// devices skip straight to reveal.
+// Used when "everyone has obviously answered, let's see the result." Manual
+// presses reuse resolve_question(); guarded auto-reveal uses a DB-side
+// check-and-resolve RPC so a late participant cannot slip between app reads
+// and the resolve. After RPC, broadcast 'end-early' so the rest of the devices
+// skip straight to reveal.
 //
 // Note: resolve_question is idempotent. If a phone's timer races us and
 // also calls /api/questions/:id/resolve, only the first call does work
@@ -16,7 +16,6 @@ import { badRequest, ok, forbidden, unauthorized, serverError, notFound, conflic
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastToRoom } from "@/lib/api/broadcast";
-import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
 
 export async function POST(
   req: NextRequest,
@@ -63,48 +62,22 @@ export async function POST(
   if (q.finished_at) return conflict("question is already resolved");
 
   if (parsed.data.requireAllLocked) {
-    const [playersRes, scoresRes, answersRes] = await Promise.all([
-      admin
-        .from("players")
-        .select("id")
-        .eq("night_id", owned.night.id)
-        .is("removed_at", null),
-      admin
-        .from("game_scores")
-        .select("player_id")
-        .eq("game_id", gameId),
-      admin
-        .from("answers")
-        .select("question_id, player_id")
-        .eq("question_id", parsed.data.questionId),
-    ]);
-
-    if (playersRes.error) return serverError(playersRes.error.message);
-    if (scoresRes.error) return serverError(scoresRes.error.message);
-    if (answersRes.error) return serverError(answersRes.error.message);
-
-    const decision = deriveAllLockedAutoRevealDecision({
-      currentGameId: gameId,
-      liveQuestionId: parsed.data.questionId,
-      activePlayerIds: (playersRes.data ?? []).map((player) => player.id),
-      scoreRows: (scoresRes.data ?? []).map((row) => ({
-        player_id: row.player_id,
-      })),
-      answers: (answersRes.data ?? []).map((answer) => ({
-        question_id: answer.question_id,
-        player_id: answer.player_id,
-      })),
-    });
-
-    if (!decision.complete) {
+    const { data: didResolve, error: rpcError } = await admin.rpc(
+      "resolve_question_if_all_locked",
+      {
+        p_question_id: parsed.data.questionId,
+      },
+    );
+    if (rpcError) return serverError(rpcError.message);
+    if (!didResolve) {
       return conflict("not all eligible players are locked");
     }
+  } else {
+    const { error: rpcError } = await admin.rpc("resolve_question", {
+      p_question_id: parsed.data.questionId,
+    });
+    if (rpcError) return serverError(rpcError.message);
   }
-
-  const { error: rpcError } = await admin.rpc("resolve_question", {
-    p_question_id: parsed.data.questionId,
-  });
-  if (rpcError) return serverError(rpcError.message);
 
   // Broadcast end-early as a hint that the reveal is "early"; phones can
   // animate the timer ring "snapping" to 0 rather than naturally winding.

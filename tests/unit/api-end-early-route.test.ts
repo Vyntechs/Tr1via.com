@@ -32,16 +32,23 @@ function makeCtx(gameId = GAME_ID) {
   return { params: Promise.resolve({ id: gameId }) };
 }
 
+// The guarded eligibility decision now lives in the DB (resolve_question_if_all_locked),
+// not the app — so the admin stub only needs the sanity-check reads (questions,
+// categories) plus a table-aware rpc() that returns per-function results.
 function makeAdmin({
-  players,
-  scores,
-  answers,
+  allLockedResult,
 }: {
-  players: Array<{ id: string }>;
-  scores: Array<{ player_id: string | null }>;
-  answers: Array<{ question_id: string | null; player_id: string | null }>;
-}) {
-  const rpc = vi.fn(async () => ({ error: null }));
+  allLockedResult?: boolean | { error: { message: string } };
+} = {}) {
+  const rpc = vi.fn(async (fn: string) => {
+    if (fn === "resolve_question_if_all_locked") {
+      if (allLockedResult && typeof allLockedResult === "object") {
+        return { data: null, error: allLockedResult.error };
+      }
+      return { data: allLockedResult ?? true, error: null };
+    }
+    return { data: null, error: null };
+  });
 
   return {
     rpc,
@@ -76,38 +83,6 @@ function makeAdmin({
           })),
         };
       }
-      if (table === "players") {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              is: vi.fn(async () => ({
-                data: players,
-                error: null,
-              })),
-            })),
-          })),
-        };
-      }
-      if (table === "game_scores") {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(async () => ({
-              data: scores,
-              error: null,
-            })),
-          })),
-        };
-      }
-      if (table === "answers") {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(async () => ({
-              data: answers,
-              error: null,
-            })),
-          })),
-        };
-      }
       throw new Error(`unexpected table ${table}`);
     }),
   };
@@ -123,15 +98,8 @@ describe("POST /api/games/[id]/end-early", () => {
     broadcastMock.broadcastToRoom.mockResolvedValue(undefined);
   });
 
-  it("rejects guarded auto-reveal when a newly eligible participant has not locked", async () => {
-    const admin = makeAdmin({
-      players: [{ id: "p1" }, { id: "p2" }, { id: "p3" }],
-      scores: [{ player_id: "p1" }, { player_id: "p2" }, { player_id: "p3" }],
-      answers: [
-        { question_id: QUESTION_ID, player_id: "p1" },
-        { question_id: QUESTION_ID, player_id: "p2" },
-      ],
-    });
+  it("returns 409 without resolving when resolve_question_if_all_locked reports not everyone locked", async () => {
+    const admin = makeAdmin({ allLockedResult: false });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
 
     const { POST } = await import("@/app/api/games/[id]/end-early/route");
@@ -141,19 +109,17 @@ describe("POST /api/games/[id]/end-early", () => {
     );
 
     expect(res.status).toBe(409);
-    expect(admin.rpc).not.toHaveBeenCalled();
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_if_all_locked", {
+      p_question_id: QUESTION_ID,
+    });
+    expect(admin.rpc).not.toHaveBeenCalledWith(
+      "resolve_question",
+      expect.anything(),
+    );
   });
 
-  it("resolves guarded auto-reveal when every eligible participant has locked", async () => {
-    const admin = makeAdmin({
-      players: [{ id: "p1" }, { id: "p2" }, { id: "p3" }],
-      scores: [{ player_id: "p1" }, { player_id: "p2" }, { player_id: "p3" }],
-      answers: [
-        { question_id: QUESTION_ID, player_id: "p1" },
-        { question_id: QUESTION_ID, player_id: "p2" },
-        { question_id: QUESTION_ID, player_id: "p3" },
-      ],
-    });
+  it("resolves guarded auto-reveal when resolve_question_if_all_locked reports everyone locked", async () => {
+    const admin = makeAdmin({ allLockedResult: true });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
 
     const { POST } = await import("@/app/api/games/[id]/end-early/route");
@@ -163,20 +129,17 @@ describe("POST /api/games/[id]/end-early", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_if_all_locked", {
       p_question_id: QUESTION_ID,
     });
+    expect(admin.rpc).not.toHaveBeenCalledWith(
+      "resolve_question",
+      expect.anything(),
+    );
   });
 
   it("keeps manual end-early behavior intact when the guard flag is absent", async () => {
-    const admin = makeAdmin({
-      players: [{ id: "p1" }, { id: "p2" }, { id: "p3" }],
-      scores: [{ player_id: "p1" }, { player_id: "p2" }, { player_id: "p3" }],
-      answers: [
-        { question_id: QUESTION_ID, player_id: "p1" },
-        { question_id: QUESTION_ID, player_id: "p2" },
-      ],
-    });
+    const admin = makeAdmin();
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
 
     const { POST } = await import("@/app/api/games/[id]/end-early/route");
@@ -186,5 +149,9 @@ describe("POST /api/games/[id]/end-early", () => {
     expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
       p_question_id: QUESTION_ID,
     });
+    expect(admin.rpc).not.toHaveBeenCalledWith(
+      "resolve_question_if_all_locked",
+      expect.anything(),
+    );
   });
 });
