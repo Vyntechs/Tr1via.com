@@ -1,10 +1,10 @@
 // POST /api/games/:id/end-early — host short-circuits a question timer (theme-derived; 30s for every theme).
 //
-// Used when "everyone has obviously answered, let's see the result." We
-// reuse resolve_question() to do the scoring + reveals insert + question
-// finish-stamp in one stored-proc call (the same path the first phone's
-// T+0 ping takes). After RPC, broadcast 'end-early' so the rest of the
-// devices skip straight to reveal.
+// Used when "everyone has obviously answered, let's see the result." Manual
+// presses reuse resolve_question(); guarded auto-reveal uses a DB-side
+// check-and-resolve RPC so a late participant cannot slip between app reads
+// and the resolve. After RPC, broadcast 'end-early' so the rest of the devices
+// skip straight to reveal.
 //
 // Note: resolve_question is idempotent. If a phone's timer races us and
 // also calls /api/questions/:id/resolve, only the first call does work
@@ -61,10 +61,23 @@ export async function POST(
   if (!q.played_at) return conflict("question is not live");
   if (q.finished_at) return conflict("question is already resolved");
 
-  const { error: rpcError } = await admin.rpc("resolve_question", {
-    p_question_id: parsed.data.questionId,
-  });
-  if (rpcError) return serverError(rpcError.message);
+  if (parsed.data.requireAllLocked) {
+    const { data: didResolve, error: rpcError } = await admin.rpc(
+      "resolve_question_if_all_locked",
+      {
+        p_question_id: parsed.data.questionId,
+      },
+    );
+    if (rpcError) return serverError(rpcError.message);
+    if (!didResolve) {
+      return conflict("not all eligible players are locked");
+    }
+  } else {
+    const { error: rpcError } = await admin.rpc("resolve_question", {
+      p_question_id: parsed.data.questionId,
+    });
+    if (rpcError) return serverError(rpcError.message);
+  }
 
   // Broadcast end-early as a hint that the reveal is "early"; phones can
   // animate the timer ring "snapping" to 0 rather than naturally winding.

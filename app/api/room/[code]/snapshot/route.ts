@@ -62,9 +62,10 @@ export async function GET(
   const hostsField = (nightRaw as { hosts?: HostJoin | HostJoin[] }).hosts;
   const hostJoin = Array.isArray(hostsField) ? hostsField[0] : hostsField;
   const hostDefaultThemeKey: string | null = hostJoin?.default_theme_key ?? null;
-  const { hosts: _hosts, ...nightRow } = nightRaw as Record<string, unknown> & {
+  const nightRow = { ...(nightRaw as Record<string, unknown> & {
     hosts?: unknown;
-  };
+  }) };
+  delete nightRow.hosts;
   const night = nightRow as unknown as NightRow;
   const nightId = night.id;
 
@@ -175,7 +176,7 @@ export async function GET(
       mode === "host" && targetQuestionId
         ? admin
             .from("answers")
-            .select("id, player_id, ms_to_lock, is_correct, chosen_index")
+            .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
             .eq("question_id", targetQuestionId)
         : Promise.resolve({ data: [] as AnswerRow[], error: null }),
       mode === "player" && me

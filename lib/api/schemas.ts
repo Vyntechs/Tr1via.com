@@ -90,6 +90,7 @@ export const RevealSchema = z.object({
 
 export const EndEarlySchema = z.object({
   questionId: UuidSchema,
+  requireAllLocked: z.boolean().optional(),
 });
 
 export const SubmitAnswerSchema = z.object({
