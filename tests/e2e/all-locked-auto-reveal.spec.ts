@@ -155,9 +155,9 @@ test.describe("all locked auto-reveal", () => {
     await tvPage.waitForTimeout(2_500);
     await expect(tvPage.getByTestId(TID.tvQuestion.root)).toBeVisible();
     await expect(tvPage.getByTestId(TID.tvReveal.root)).toHaveCount(0);
-    await expect(phone1.getByTestId(TID.playerQuestion.root)).toBeVisible();
-    await expect(phone2.getByTestId(TID.playerQuestion.root)).toBeVisible();
-    await expect(phone3.getByTestId(TID.playerQuestion.root)).toBeVisible();
+    await expect(phone1.getByTestId(TID.playerLocked.root)).toBeVisible();
+    await expect(phone2.getByTestId(TID.playerLocked.root)).toBeVisible();
+    await expect(phone3.getByTestId(TID.playerLocked.root)).toBeVisible();
 
     await fastForwardTimer(hostPage, questionId);
     await Promise.all([
