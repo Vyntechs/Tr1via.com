@@ -146,6 +146,7 @@ export function HostLiveConsoleClient({
       setDirectScoresReadyForGameId(null);
       return;
     }
+    const currentGameId = gameId;
     setDirectScoresReadyForGameId(null);
     const supa = getSupabaseBrowser();
     let cancelled = false;
@@ -153,15 +154,15 @@ export function HostLiveConsoleClient({
       const { data } = await supa
         .from("game_scores")
         .select("*")
-        .eq("game_id", gameId)
+        .eq("game_id", currentGameId)
         .order("score", { ascending: false });
       if (cancelled) return;
       setScores(((data as GameScoreRow[] | null) ?? []));
-      setDirectScoresReadyForGameId(gameId);
+      setDirectScoresReadyForGameId(currentGameId);
     }
     void load();
     const channel = supa
-      .channel(`host-scores:${gameId}`)
+      .channel(`host-scores:${currentGameId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "answers" },
