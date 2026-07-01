@@ -107,7 +107,7 @@ Player and TV surfaces should not need new UI. They already transition on the re
 
 Expected blast radius is confined to host live orchestration and pure lock-count logic.
 
-No production database migration is expected for v1 unless current-game participation data is not already available to the host client. If the implementation discovers missing participation data, prefer a read-only server route or existing snapshot extension over a destructive schema change.
+Final review found a route-level check-then-resolve race that cannot be made fully safe with host-client state alone. The implemented v1 therefore includes one additive migration for a service-role-only guarded resolve RPC. Production rollout must apply that migration through the DB-first release path before app code using the guarded route reaches production.
 
 Do not change:
 
@@ -126,7 +126,7 @@ Do not change:
 - Auto-reveal fires at most once per question.
 - Manual end-early still works.
 - Timer-zero resolve still works.
-- No production database migration is required for the planned v1 path.
+- The additive guarded-resolve migration is applied before production app rollout.
 
 ## Verification Plan
 

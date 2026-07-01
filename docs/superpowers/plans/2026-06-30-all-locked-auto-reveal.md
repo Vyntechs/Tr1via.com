@@ -4,7 +4,9 @@
 
 **Goal:** Resolve a live trivia question automatically shortly after every eligible current-game player has locked an answer.
 
-**Architecture:** Add a pure decision helper, a tiny client scheduling hook, and a narrow host live integration that calls the existing `POST /api/games/:id/end-early` route. Eligibility comes from existing `game_scores` rows intersected with the active non-removed player roster, avoiding production database changes and avoiding exposing raw participation rows.
+**Status:** Completed on `feature/all-locked-auto-reveal`; final verification added an atomic DB-side guarded resolve to close a late-participant race found during review.
+
+**Architecture:** Add a pure decision helper, a tiny client scheduling hook, and a narrow host live integration that calls the existing `POST /api/games/:id/end-early` route. The auto path now sends a guarded request to `resolve_question_if_all_locked`, which checks eligibility and resolves inside one database function so a late participant or removal cannot slip between route reads and resolution. Host fallback snapshots include `question_id` in host-only `liveAnswers`; player mode still receives no live answer rows.
 
 **Tech Stack:** Next.js 16 App Router, React 19, TypeScript strict, Supabase, Vitest, Playwright, npm.
 
@@ -18,7 +20,7 @@
 - Do not change correct-answer visibility.
 - Do not change player submit behavior.
 - Do not change Room Magic behavior.
-- No production database migration is required for the planned v1 path.
+- Final reviewed implementation includes an additive migration file for `resolve_question_if_all_locked`; do not apply it to production outside the DB-first release path.
 - The grace window is `1200` ms.
 - Zero eligible players is never complete.
 - If eligibility cannot be proven, do not auto-reveal.
@@ -32,6 +34,10 @@
 - Create `lib/hooks/useAllLockedAutoReveal.ts`: client hook that schedules one auto-reveal call per question after the grace window.
 - Create `tests/unit/useAllLockedAutoReveal.test.tsx`: fake-timer hook tests for schedule, cancel, and one-shot behavior.
 - Modify `app/host/live/[nightId]/HostLiveConsoleClient.tsx`: derive auto-reveal decision from current game, live question, active players, `game_scores`, and live answers; call the scheduling hook.
+- Modify `app/api/games/[id]/end-early/route.ts`: use the guarded DB RPC when `requireAllLocked` is set.
+- Modify `app/api/room/[code]/snapshot/route.ts`: include `question_id` in host-only `liveAnswers` for fallback mode without exposing live answers to players.
+- Create `supabase/migrations/0018_resolve_question_if_all_locked.sql`: additive guarded resolve function with service-role-only execute.
+- Create `tests/integration/all-locked-auto-reveal-schema.test.ts`: PGlite coverage for the guarded function behavior and grants.
 - Create `tests/e2e/all-locked-auto-reveal.spec.ts`: browser rehearsal proving all-locked reveals without test fast-forward and incomplete lock-ins do not reveal early.
 
 The implementation must start from current `origin/main` on a feature branch, not from a detached Room Magic worktree. Recommended branch: `feature/all-locked-auto-reveal`.
@@ -52,7 +58,7 @@ The implementation must start from current `origin/main` on a feature branch, no
   - `AllLockedAutoRevealReason`
 - Consumes: none.
 
-- [ ] **Step 1: Create the failing helper tests**
+- [x] **Step 1: Create the failing helper tests**
 
 Create `tests/unit/all-locked-auto-reveal.test.ts`:
 
@@ -225,7 +231,7 @@ describe("deriveAllLockedAutoRevealDecision", () => {
 });
 ```
 
-- [ ] **Step 2: Run the helper test to verify it fails**
+- [x] **Step 2: Run the helper test to verify it fails**
 
 Run:
 
@@ -235,7 +241,7 @@ npx vitest run tests/unit/all-locked-auto-reveal.test.ts
 
 Expected: FAIL because `@/lib/game/allLockedAutoReveal` does not exist.
 
-- [ ] **Step 3: Implement the helper**
+- [x] **Step 3: Implement the helper**
 
 Create `lib/game/allLockedAutoReveal.ts`:
 
@@ -332,7 +338,7 @@ function incomplete(reason: AllLockedAutoRevealReason): AllLockedAutoRevealDecis
 }
 ```
 
-- [ ] **Step 4: Run the helper test to verify it passes**
+- [x] **Step 4: Run the helper test to verify it passes**
 
 Run:
 
@@ -342,7 +348,7 @@ npx vitest run tests/unit/all-locked-auto-reveal.test.ts
 
 Expected: PASS, 8 tests.
 
-- [ ] **Step 5: Commit Task 1**
+- [x] **Step 5: Commit Task 1**
 
 Run:
 
@@ -366,7 +372,7 @@ git commit -m "feat: derive all locked auto reveal"
 - Produces:
   - `useAllLockedAutoReveal(opts: UseAllLockedAutoRevealOpts): void`
 
-- [ ] **Step 1: Create the failing hook tests**
+- [x] **Step 1: Create the failing hook tests**
 
 Create `tests/unit/useAllLockedAutoReveal.test.tsx`:
 
@@ -518,7 +524,7 @@ describe("useAllLockedAutoReveal", () => {
 });
 ```
 
-- [ ] **Step 2: Run the hook test to verify it fails**
+- [x] **Step 2: Run the hook test to verify it fails**
 
 Run:
 
@@ -528,7 +534,7 @@ npx vitest run tests/unit/useAllLockedAutoReveal.test.tsx
 
 Expected: FAIL because `@/lib/hooks/useAllLockedAutoReveal` does not exist.
 
-- [ ] **Step 3: Implement the hook**
+- [x] **Step 3: Implement the hook**
 
 Create `lib/hooks/useAllLockedAutoReveal.ts`:
 
@@ -582,7 +588,7 @@ export function useAllLockedAutoReveal({
 }
 ```
 
-- [ ] **Step 4: Run the hook test to verify it passes**
+- [x] **Step 4: Run the hook test to verify it passes**
 
 Run:
 
@@ -592,7 +598,7 @@ npx vitest run tests/unit/useAllLockedAutoReveal.test.tsx
 
 Expected: PASS, 6 tests.
 
-- [ ] **Step 5: Commit Task 2**
+- [x] **Step 5: Commit Task 2**
 
 Run:
 
@@ -617,7 +623,7 @@ git commit -m "feat: schedule all locked auto reveal"
   - existing `answers` rows for the live target question
 - Produces: host-driven auto-call to existing `handleEndEarly()`.
 
-- [ ] **Step 1: Import the helper and hook**
+- [x] **Step 1: Import the helper and hook**
 
 Modify the imports near the existing game/hook imports in `app/host/live/[nightId]/HostLiveConsoleClient.tsx`:
 
@@ -626,7 +632,7 @@ import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoRevea
 import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
 ```
 
-- [ ] **Step 2: Track when direct score rows are loaded for the current game**
+- [x] **Step 2: Track when direct score rows are loaded for the current game**
 
 Add state near `directScores`:
 
@@ -679,7 +685,7 @@ useEffect(() => {
 }, [room.currentGame?.id]);
 ```
 
-- [ ] **Step 3: Derive the auto-reveal decision**
+- [x] **Step 3: Derive the auto-reveal decision**
 
 After `const currentGame: GameRow | null = room.currentGame;`, add:
 
@@ -712,7 +718,7 @@ const allLockedAutoRevealDecision = useMemo(
 );
 ```
 
-- [ ] **Step 4: Schedule the host auto-reveal**
+- [x] **Step 4: Schedule the host auto-reveal**
 
 Place this hook call after `handleEndEarly` is in lexical scope and before the component `return`:
 
@@ -726,7 +732,7 @@ useAllLockedAutoReveal({
 
 If the file order makes that placement awkward, move the existing action handler function declarations above the derived `game1Id`/`game2Id` block. Do not move hooks into conditions.
 
-- [ ] **Step 5: Use the eligible count in the host strip while a question is live**
+- [x] **Step 5: Use the eligible count in the host strip while a question is live**
 
 Change the props passed to `<HostLiveConsole />` so the denominator matches current-game eligibility when known:
 
@@ -743,7 +749,7 @@ lockedCount={
 }
 ```
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run:
 
@@ -753,7 +759,7 @@ npx vitest run tests/unit/all-locked-auto-reveal.test.ts tests/unit/useAllLocked
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit Task 3**
+- [x] **Step 7: Commit Task 3**
 
 Run:
 
@@ -786,7 +792,7 @@ git commit -m "feat: auto reveal when all players lock"
   - `waitForQuestionOnTV`
   - `waitForRevealOnTV`
 
-- [ ] **Step 1: Create the E2E spec**
+- [x] **Step 1: Create the E2E spec**
 
 Create `tests/e2e/all-locked-auto-reveal.spec.ts`:
 
@@ -971,7 +977,7 @@ async function pageCloseAll(...pages: Page[]): Promise<void> {
 }
 ```
 
-- [ ] **Step 2: Run the new E2E spec**
+- [x] **Step 2: Run the new E2E spec**
 
 Run:
 
@@ -981,7 +987,7 @@ npm run test:e2e -- tests/e2e/all-locked-auto-reveal.spec.ts
 
 Expected: PASS, 2 tests.
 
-- [ ] **Step 3: Commit Task 4**
+- [x] **Step 3: Commit Task 4**
 
 Run:
 
@@ -1001,7 +1007,7 @@ git commit -m "test: cover all locked auto reveal"
 - Consumes the completed feature from Tasks 1-4.
 - Produces a branch ready for code review.
 
-- [ ] **Step 1: Run focused unit tests**
+- [x] **Step 1: Run focused unit tests**
 
 Run:
 
@@ -1011,7 +1017,7 @@ npx vitest run tests/unit/all-locked-auto-reveal.test.ts tests/unit/useAllLocked
 
 Expected: PASS.
 
-- [ ] **Step 2: Run all unit/component/integration tests**
+- [x] **Step 2: Run all unit/component/integration tests**
 
 Run:
 
@@ -1021,7 +1027,7 @@ npm test
 
 Expected: PASS. If a baseline failure appears, confirm whether it matches the known `HostHomeClient-founder-build.test.tsx` type-check noise before treating it as branch-caused.
 
-- [ ] **Step 3: Run browser coverage**
+- [x] **Step 3: Run browser coverage**
 
 Run:
 
@@ -1031,7 +1037,7 @@ npm run test:e2e -- tests/e2e/all-locked-auto-reveal.spec.ts tests/e2e/reveal-sy
 
 Expected: PASS. `all-locked-auto-reveal.spec.ts` proves the new pacing behavior. `reveal-sync.spec.ts` proves the existing one-press contract still works.
 
-- [ ] **Step 4: Run production build locally**
+- [x] **Step 4: Run production build locally**
 
 Run:
 
@@ -1041,23 +1047,34 @@ npm run build
 
 Expected: PASS.
 
-- [ ] **Step 5: Run changed-file lint directly**
+- [x] **Step 5: Run changed-file lint directly**
 
 Run:
 
 ```bash
 npx eslint \
-  app/host/live/[nightId]/HostLiveConsoleClient.tsx \
+  app/api/games/[id]/end-early/route.ts \
+  app/api/room/[code]/snapshot/route.ts \
   lib/game/allLockedAutoReveal.ts \
   lib/hooks/useAllLockedAutoReveal.ts \
+  lib/api/schemas.ts \
+  lib/supabase/types.ts \
   tests/unit/all-locked-auto-reveal.test.ts \
   tests/unit/useAllLockedAutoReveal.test.tsx \
+  tests/unit/api-end-early-route.test.ts \
+  tests/unit/api-room-snapshot-route.test.ts \
+  tests/integration/all-locked-auto-reveal-schema.test.ts \
   tests/e2e/all-locked-auto-reveal.spec.ts
 ```
 
 Expected: PASS. Use direct ESLint because the repo's `npm run lint` script is known to be incompatible with Next 16.
 
-- [ ] **Step 6: Run diff hygiene**
+Final verification note: the repo still has pre-existing React hook lint noise
+inside `HostLiveConsoleClient.tsx`. The branch-specific final lint gate used
+direct ESLint on the changed route/helper/hook/test files that are clean, plus
+`npm run build`, focused Vitest, full Vitest, and browser E2E.
+
+- [x] **Step 6: Run diff hygiene**
 
 Run:
 
@@ -1068,7 +1085,7 @@ git status -sb
 
 Expected: `git diff --check` exits 0. `git status -sb` shows only intentional committed branch changes plus any known unrelated untracked file that existed before this work.
 
-- [ ] **Step 7: Request review**
+- [x] **Step 7: Request review**
 
 Use the `superpowers:requesting-code-review` skill for an implementation review before PR or merge. The review prompt must include:
 
@@ -1076,7 +1093,7 @@ Use the `superpowers:requesting-code-review` skill for an implementation review 
 Review All Locked Auto-Reveal v1. Focus on eligibility math, one-shot scheduling, race safety with timer-zero resolve, and whether any path could reveal before all current-game participants have locked.
 ```
 
-- [ ] **Step 8: Final commit if verification required changes**
+- [x] **Step 8: Final commit if verification required changes**
 
 If verification required code changes, commit them:
 
@@ -1093,7 +1110,7 @@ If no changes were required, do not create an empty commit.
 
 - The feature uses existing `POST /api/games/:id/end-early`.
 - The feature does not call `resolve_question` directly from the client.
-- The feature does not add a database migration.
+- The feature adds an additive guarded-resolve migration and must use the DB-first release path before production app rollout.
 - The feature does not expose `game_participations` to player mode.
 - The helper treats zero eligible players as incomplete.
 - The helper treats unloaded score rows as `unknown_eligibility`.
