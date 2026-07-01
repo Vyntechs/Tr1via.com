@@ -1,6 +1,6 @@
 # Room Signs Back Report
 
-- Status: in progress
+- Status: complete
 - Local worktree: `/Users/brandonnichols/.codex/worktrees/b518/tr1via-room-signs-back`
 - Local branch: `staging-room-signs-back-reactions-local`
 - Remote branch target: `staging/room-signs-back-reactions`
@@ -49,14 +49,14 @@
 
 ## Publish
 
-- Commit: pending
-- Push: pending
-- Draft PR: pending
-- Vercel preview: pending
+- Commit: `318dc6c feat: add room signs back reactions`
+- Push: `origin/staging/room-signs-back-reactions`
+- Draft PR: `https://github.com/Vyntechs/Tr1via.com/pull/126`
+- Vercel preview:
+  - Inspector: `https://vercel.com/brandon-nichols-projects-f7e6d2a9/tr1via/8ZisQhvUmrwx55JpQ3Tx33H6Ekap`
+  - Preview URL: `https://tr1via-git-staging-roo-c84435-brandon-nichols-projects-f7e6d2a9.vercel.app`
 
 ## Next Steps
 
-- Commit the staged Room Signs Back changes.
-- Push `HEAD` to `origin/staging/room-signs-back-reactions`.
-- Open a draft PR against `main`.
-- Capture the PR URL and Vercel preview URL in this report.
+- Review the Vercel deployment once the pending status flips green.
+- Use the preview to inspect the TV edge-safe gestures alongside the phone reveal controls.
