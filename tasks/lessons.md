@@ -7,3 +7,8 @@ Reason: TypeScript does not preserve outer narrowing across nested function boun
 Trigger: App read all-locked eligibility, then called resolve_question separately.
 Rule: Put check-and-resolve guards in one DB function with eligibility locks.
 Reason: Participants or removals can change between app reads and later RPCs.
+
+### reaction-art-direction-approval
+Trigger: Room Magic reaction effect looked technically visible but founder rejected the visual direction.
+Rule: Treat visual rejection as stop-and-revert before iterating.
+Reason: Layering more polish on a rejected direction wastes validation time.
