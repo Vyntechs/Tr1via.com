@@ -37,7 +37,7 @@ describe("TVRoomMagicOverlay", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("renders aggregate counts instead of one row per tap", () => {
+  it("renders aggregate July effects without printing reaction words", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-30T18:00:00.000Z"));
 
@@ -54,10 +54,12 @@ describe("TVRoomMagicOverlay", () => {
     );
 
     const overlay = screen.getByTestId("tv-room-magic-overlay");
-    expect(overlay).toHaveAttribute("data-reaction-skin", "july-skywrite");
+    expect(overlay).toHaveAttribute("data-reaction-skin", "july-reaction-glyph");
     expect(screen.queryByTestId("tv-room-magic-pill-wow")).not.toBeInTheDocument();
-    expect(screen.getByTestId("tv-room-magic-skywrite-wow")).toHaveTextContent("WOW");
-    expect(screen.getByTestId("tv-room-magic-count-wow")).toHaveTextContent("2");
+    const effect = screen.getByTestId("tv-room-magic-july-effect-wow");
+    expect(effect).toHaveAttribute("data-reaction-count", "2");
+    expect(effect).not.toHaveTextContent(/wow/i);
+    expect(overlay).not.toHaveTextContent(/wow|nice|bravo|close/i);
   });
 
   it("renders a neutral fallback skin for themes without custom reaction art", () => {

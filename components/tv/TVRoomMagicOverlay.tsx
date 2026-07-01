@@ -11,7 +11,7 @@ import {
   type RoomMagicReactionKind,
 } from "@/lib/room-magic/reactions";
 
-const DISPLAY_MS = 2600;
+const DISPLAY_MS = 2000;
 const STALE_EVENT_MS = 10_000;
 
 interface ActiveReaction {
@@ -34,31 +34,82 @@ export interface TVRoomMagicOverlayProps {
 
 const REACTION_TONES: Record<
   RoomMagicReactionKind,
-  { accent: string; glow: string; skywrite: string; launch: string }
+  { accent: string; glow: string; launch: string }
 > = {
   applause: {
     accent: "#F2C94C",
     glow: "rgba(242,201,76,.28)",
-    skywrite: "BRAVO",
     launch: "fountain",
   },
   nice_one: {
     accent: "#FFD93D",
     glow: "rgba(255,217,61,.30)",
-    skywrite: "NICE",
     launch: "comet",
   },
   wow: {
     accent: "#F9F3E7",
     glow: "rgba(249,243,231,.34)",
-    skywrite: "WOW",
     launch: "rocket",
   },
   brutal: {
     accent: "#FFB3B3",
     glow: "rgba(255,179,179,.27)",
-    skywrite: "SO CLOSE",
     launch: "loop",
+  },
+};
+
+const JULY_REACTION_GLYPHS: Record<
+  RoomMagicReactionKind,
+  {
+    primary: string;
+    secondary: string;
+    plume: string;
+    spark: Array<{ cx: number; cy: number; r: number }>;
+  }
+> = {
+  applause: {
+    primary: "M70 82 C82 56 96 52 108 77 C118 52 136 50 148 82",
+    secondary: "M84 84 C96 96 122 96 135 84",
+    plume: "M38 118 C56 98 72 91 92 83",
+    spark: [
+      { cx: 82, cy: 50, r: 3 },
+      { cx: 110, cy: 42, r: 4 },
+      { cx: 139, cy: 49, r: 3 },
+      { cx: 154, cy: 74, r: 2.5 },
+    ],
+  },
+  nice_one: {
+    primary: "M62 84 C79 104 97 106 122 74 C134 58 148 47 166 42",
+    secondary: "M74 93 C98 83 123 67 156 58",
+    plume: "M42 122 C60 101 78 92 101 83",
+    spark: [
+      { cx: 75, cy: 88, r: 2.5 },
+      { cx: 105, cy: 88, r: 3 },
+      { cx: 139, cy: 57, r: 2.5 },
+      { cx: 166, cy: 42, r: 3.5 },
+    ],
+  },
+  wow: {
+    primary: "M70 82 C78 52 98 48 109 76 C119 49 143 53 150 82",
+    secondary: "M66 76 C86 96 133 96 154 75",
+    plume: "M36 121 C55 101 74 91 98 82",
+    spark: [
+      { cx: 78, cy: 54, r: 3 },
+      { cx: 110, cy: 41, r: 4.5 },
+      { cx: 144, cy: 55, r: 3 },
+      { cx: 159, cy: 83, r: 2.5 },
+    ],
+  },
+  brutal: {
+    primary: "M68 70 C94 40 142 52 143 82 C143 106 104 104 102 84 C100 66 132 66 160 76",
+    secondary: "M76 96 C102 115 142 109 162 89",
+    plume: "M39 121 C58 104 78 92 102 78",
+    spark: [
+      { cx: 77, cy: 68, r: 2.5 },
+      { cx: 116, cy: 53, r: 3.5 },
+      { cx: 145, cy: 83, r: 3 },
+      { cx: 103, cy: 96, r: 2.5 },
+    ],
   },
 };
 
@@ -134,29 +185,39 @@ export function TVRoomMagicOverlay({
   const paper = theme?.t.paper ?? "#0E0805";
   const line = theme?.t.line ?? "rgba(249,243,231,.28)";
   const themeKey = themeKeyProp ?? theme?.themeKey ?? "house";
-  const skin = themeKey === "july" ? "july-skywrite" : "default";
+  const skin = themeKey === "july" ? "july-reaction-glyph" : "default";
 
   return (
     <div
       aria-hidden="true"
       data-testid="tv-room-magic-overlay"
       data-reaction-skin={skin}
-      style={{
-        position: "absolute",
-        top: skin === "july-skywrite" ? "44%" : "7.5%",
-        right: "3.2%",
-        zIndex: 18,
-        width: skin === "july-skywrite" ? "min(44%, 560px)" : "min(32%, 380px)",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "flex-end",
-        gap: skin === "july-skywrite" ? "clamp(10px, 1vw, 16px)" : "clamp(7px, .8vw, 12px)",
-        pointerEvents: "none",
-      }}
+      style={
+        skin === "july-reaction-glyph"
+          ? {
+              position: "absolute",
+              inset: 0,
+              zIndex: 18,
+              pointerEvents: "none",
+              overflow: "hidden",
+            }
+          : {
+              position: "absolute",
+              top: "7.5%",
+              right: "3.2%",
+              zIndex: 18,
+              width: "min(32%, 380px)",
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "flex-end",
+              gap: "clamp(7px, .8vw, 12px)",
+              pointerEvents: "none",
+            }
+      }
     >
       {aggregates.map((item, index) =>
-        skin === "july-skywrite" ? (
-          <JulySkywriteReaction
+        skin === "july-reaction-glyph" ? (
+          <JulyReactionGlyph
             key={item.kind}
             kind={item.kind}
             count={item.count}
@@ -181,7 +242,7 @@ export function TVRoomMagicOverlay({
   );
 }
 
-function JulySkywriteReaction({
+function JulyReactionGlyph({
   kind,
   count,
   index,
@@ -193,107 +254,110 @@ function JulySkywriteReaction({
   reducedMotion: boolean;
 }) {
   const tone = REACTION_TONES[kind];
-  const xOffset = index % 2 === 0 ? 0 : -22;
+  const glyph = JULY_REACTION_GLYPHS[kind];
+  const xOffset = index % 2 === 0 ? -50 : -38;
+  const yOffset = 8 + (index % 3) * 6;
+  const sparkRepeats = Math.min(Math.max(count - 1, 0), 3);
   return (
     <div
-      data-testid={`tv-room-magic-skywrite-${kind}`}
+      data-testid={`tv-room-magic-july-effect-${kind}`}
+      data-reaction-count={count}
       data-reaction-launch={tone.launch}
+      data-reduced-motion={reducedMotion ? "true" : undefined}
       style={{
-        position: "relative",
-        minWidth: "clamp(220px, 26vw, 420px)",
-        minHeight: "clamp(78px, 8vw, 122px)",
-        padding: "clamp(9px, 1vw, 14px) clamp(14px, 1.4vw, 20px)",
-        borderRadius: "clamp(18px, 1.9vw, 28px)",
-        color: "#F9F3E7",
-        transform: `translateX(${xOffset}px)`,
-        filter: `drop-shadow(0 16px 34px ${tone.glow})`,
-        animation: reducedMotion ? undefined : "tr1via-skywrite-card 2600ms ease-out both",
+        position: "absolute",
+        top: `${yOffset}%`,
+        left: `calc(50% + ${xOffset}px)`,
+        width: "clamp(150px, 14vw, 250px)",
+        height: "clamp(96px, 9vw, 152px)",
+        transform: "translateX(-50%)",
+        color: tone.accent,
+        filter: `drop-shadow(0 18px 38px ${tone.glow})`,
+        opacity: reducedMotion ? 0.82 : undefined,
+        animation: reducedMotion ? undefined : "tr1via-july-reaction-hold 2000ms ease-out both",
         boxSizing: "border-box",
       }}
     >
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          borderRadius: "inherit",
-          background:
-            "radial-gradient(70% 90% at 78% 44%, rgba(255,255,255,.13), transparent 58%), linear-gradient(135deg, rgba(14,26,54,.18), rgba(14,26,54,.03))",
-          border: "1px solid rgba(249,243,231,.12)",
-          opacity: 0.92,
-        }}
-      />
       <span
+        className="tr1via-july-launch-core"
         style={{
           position: "absolute",
-          left: "7%",
-          bottom: "15%",
-          width: "78%",
-          height: 2,
-          borderRadius: 999,
-          background: `linear-gradient(90deg, transparent, ${tone.accent}, transparent)`,
-          transform: "rotate(-8deg)",
-          transformOrigin: "left center",
-          opacity: 0.88,
-          animation: reducedMotion ? undefined : "tr1via-skywrite-trail 900ms ease-out both",
-        }}
-      />
-      <span
-        style={{
-          position: "absolute",
-          left: "11%",
-          bottom: "13%",
+          left: "10%",
+          bottom: "10%",
           width: 7,
           height: 7,
           borderRadius: 999,
           background: tone.accent,
           boxShadow: `0 0 18px ${tone.accent}, 0 0 34px ${tone.glow}`,
-          animation: reducedMotion ? undefined : "tr1via-skywrite-rocket 900ms ease-out both",
         }}
       />
-      {count > 1 && (
+      {sparkRepeats > 0 && (
         <span
-          data-testid={`tv-room-magic-count-${kind}`}
+          className="tr1via-july-room-pulse"
           style={{
             position: "absolute",
-            left: "4%",
-            top: "12%",
-            minWidth: 28,
-            height: 28,
+            left: `${14 + sparkRepeats * 3}%`,
+            bottom: `${18 + sparkRepeats * 5}%`,
+            width: `${10 + sparkRepeats * 5}px`,
+            height: `${10 + sparkRepeats * 5}px`,
             borderRadius: 999,
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            background: "rgba(14,26,54,.62)",
             border: `1px solid ${tone.accent}`,
-            color: "#F9F3E7",
-            fontFamily: "var(--font-mono)",
-            fontSize: "clamp(12px, 1vw, 16px)",
-            fontWeight: 900,
-            boxShadow: `0 0 20px ${tone.glow}`,
+            boxShadow: `0 0 22px ${tone.glow}`,
           }}
-        >
-          {count}
-        </span>
+        />
       )}
-      <span
+      <svg
+        aria-hidden="true"
+        className="tr1via-july-reaction-svg"
+        viewBox="0 0 200 140"
         style={{
-          position: "relative",
-          zIndex: 1,
-          display: "block",
-          textAlign: "right",
-          fontFamily: "var(--font-display)",
-          fontSize: tone.skywrite.length > 6 ? "clamp(30px, 4vw, 68px)" : "clamp(42px, 5.4vw, 92px)",
-          fontWeight: 800,
-          lineHeight: 0.9,
-          letterSpacing: tone.skywrite.length > 6 ? "0.05em" : "0.03em",
-          color: "rgba(249,243,231,.92)",
-          textShadow: `0 0 10px rgba(249,243,231,.40), 0 0 26px ${tone.glow}`,
-          WebkitTextStroke: "1px rgba(255,255,255,.20)",
-          animation: reducedMotion ? undefined : "tr1via-skywrite-word 2600ms ease-out both",
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          overflow: "visible",
         }}
       >
-        {tone.skywrite}
-      </span>
+        <path
+          className="tr1via-july-plume"
+          d={glyph.plume}
+          fill="none"
+          stroke={tone.accent}
+          strokeLinecap="round"
+          strokeWidth="2"
+          opacity=".55"
+        />
+        <path
+          className="tr1via-july-glyph-secondary"
+          d={glyph.secondary}
+          fill="none"
+          stroke={tone.accent}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="3"
+          opacity=".42"
+        />
+        <path
+          className="tr1via-july-glyph-primary"
+          d={glyph.primary}
+          fill="none"
+          stroke={tone.accent}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth="4"
+        />
+        {glyph.spark.map((spark, sparkIndex) => (
+          <circle
+            key={`${kind}-${spark.cx}-${spark.cy}`}
+            className="tr1via-july-spark"
+            cx={spark.cx}
+            cy={spark.cy}
+            r={spark.r + (sparkIndex < sparkRepeats ? 1.2 : 0)}
+            fill={tone.accent}
+            opacity={sparkIndex < sparkRepeats ? ".95" : ".78"}
+          />
+        ))}
+      </svg>
     </div>
   );
 }
@@ -364,31 +428,76 @@ function DefaultReaction({
 function TVRoomMagicOverlayStyles() {
   return (
     <style>{`
-      @keyframes tr1via-skywrite-card {
-        0% { opacity: .22; transform: translateY(10px) scale(.97); }
-        10% { opacity: 1; transform: translateY(0) scale(1); }
-        78% { opacity: 1; filter: blur(0); }
-        100% { opacity: 0; transform: translateY(-8px) scale(1.02); filter: blur(3px); }
+      .tr1via-july-reaction-svg {
+        overflow: visible;
       }
-      @keyframes tr1via-skywrite-rocket {
-        0% { transform: translate(0, 0) scale(.65); opacity: 0; }
-        15% { opacity: 1; }
-        100% { transform: translate(76px, -42px) scale(1); opacity: .92; }
+      .tr1via-july-glyph-primary,
+      .tr1via-july-glyph-secondary,
+      .tr1via-july-plume {
+        stroke-dasharray: 240;
+        stroke-dashoffset: 240;
+        filter: drop-shadow(0 0 10px currentColor);
       }
-      @keyframes tr1via-skywrite-trail {
-        0% { opacity: 0; clip-path: inset(0 100% 0 0); }
-        30% { opacity: .95; }
-        100% { opacity: .35; clip-path: inset(0 0 0 0); }
+      .tr1via-july-plume {
+        animation: tr1via-july-draw 620ms cubic-bezier(.2,.72,.24,1) 120ms both,
+          tr1via-july-smoke-fade 2000ms ease-out both;
       }
-      @keyframes tr1via-skywrite-word {
-        0% { opacity: .34; filter: blur(7px); transform: translateY(8px) scale(.98); }
-        12% { opacity: .96; filter: blur(0); transform: translateY(0) scale(1); }
-        78% { opacity: .92; filter: blur(.4px); }
-        100% { opacity: 0; filter: blur(8px); transform: translateY(-8px) scale(1.03); }
+      .tr1via-july-glyph-primary {
+        animation: tr1via-july-draw 760ms cubic-bezier(.16,.82,.22,1) 420ms both,
+          tr1via-july-smoke-fade 2000ms ease-out both;
+      }
+      .tr1via-july-glyph-secondary {
+        animation: tr1via-july-draw 720ms cubic-bezier(.16,.82,.22,1) 540ms both,
+          tr1via-july-smoke-fade 2000ms ease-out both;
+      }
+      .tr1via-july-spark {
+        transform-origin: center;
+        animation: tr1via-july-spark 2000ms ease-out both;
+      }
+      .tr1via-july-launch-core {
+        animation: tr1via-july-launch 720ms cubic-bezier(.2,.82,.22,1) both;
+      }
+      .tr1via-july-room-pulse {
+        animation: tr1via-july-room-pulse 2000ms ease-out both;
+      }
+      @keyframes tr1via-july-reaction-hold {
+        0% { opacity: 0; transform: translateX(-50%) translateY(12px) scale(.9); filter: blur(1px); }
+        10% { opacity: .92; }
+        62% { opacity: .9; transform: translateX(-50%) translateY(0) scale(1); filter: blur(0); }
+        100% { opacity: 0; transform: translateX(-50%) translateY(-8px) scale(1.04); filter: blur(3px); }
+      }
+      @keyframes tr1via-july-launch {
+        0% { opacity: 0; transform: translate(0, 0) scale(.58); }
+        14% { opacity: 1; }
+        100% { opacity: .88; transform: translate(74px, -56px) scale(1); }
+      }
+      @keyframes tr1via-july-draw {
+        0% { stroke-dashoffset: 240; opacity: 0; }
+        18% { opacity: .95; }
+        100% { stroke-dashoffset: 0; }
+      }
+      @keyframes tr1via-july-smoke-fade {
+        0%, 58% { filter: blur(0) drop-shadow(0 0 10px currentColor); }
+        100% { opacity: 0; filter: blur(7px) drop-shadow(0 0 20px currentColor); }
+      }
+      @keyframes tr1via-july-spark {
+        0%, 30% { opacity: 0; transform: scale(.4); }
+        48% { opacity: .98; transform: scale(1.1); }
+        100% { opacity: 0; transform: translateY(-5px) scale(.65); }
+      }
+      @keyframes tr1via-july-room-pulse {
+        0%, 24% { opacity: 0; transform: scale(.3); }
+        46% { opacity: .9; transform: scale(1); }
+        100% { opacity: 0; transform: scale(1.8); }
       }
       @media (prefers-reduced-motion: reduce) {
-        [data-reaction-skin="july-skywrite"] * {
+        [data-reaction-skin="july-reaction-glyph"] *,
+        [data-reduced-motion="true"] * {
           animation: none !important;
+        }
+        [data-reaction-skin="july-reaction-glyph"] path,
+        [data-reduced-motion="true"] path {
+          stroke-dashoffset: 0 !important;
         }
       }
     `}</style>

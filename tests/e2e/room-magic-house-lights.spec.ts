@@ -29,7 +29,7 @@ const PLAYER_CONFIRMATION = "player-house-lights-confirmation";
 const ROOM_MAGIC_CONTROLS = "room-magic-reaction-controls";
 const TV_ROOM_MAGIC_OVERLAY = "tv-room-magic-overlay";
 const TV_ROOM_MAGIC_WOW_EFFECT =
-  '[data-testid="tv-room-magic-default-wow"], [data-testid="tv-room-magic-skywrite-wow"]';
+  '[data-testid="tv-room-magic-default-wow"], [data-testid="tv-room-magic-july-effect-wow"]';
 
 type ScoreRow = {
   display_name: string;
@@ -236,7 +236,8 @@ async function runLockInRehearsal({
     await expect(controls.getByText("Sent to the room")).toBeVisible();
     const overlay = tvPage.getByTestId(TV_ROOM_MAGIC_OVERLAY);
     await expect(overlay).toBeVisible({ timeout: 8_000 });
-    await expect(overlay.locator(TV_ROOM_MAGIC_WOW_EFFECT)).toContainText(/wow/i);
+    await expect(overlay.locator(TV_ROOM_MAGIC_WOW_EFFECT)).toBeVisible();
+    await expect(overlay).not.toContainText(/wow/i);
     await tvPage.waitForTimeout(650);
     screenshots.push(await screenshot(tvPage, `${label}-tv-reaction-wow`));
     screenshots.push(await screenshot(phones[0], `${label}-phone-reaction-wow`));
