@@ -84,12 +84,23 @@ describe("RoomMagicReactionControls", () => {
     );
     renderControls();
 
-    fireEvent.click(screen.getByRole("button", { name: "Nice one" }));
+    fireEvent.click(screen.getByRole("button", { name: "Nice" }));
 
     expect(await screen.findByText("Not sent")).toBeInTheDocument();
     expect(screen.queryByText(/error|problem|try again|failed/i)).not.toBeInTheDocument();
     for (const button of screen.getAllByRole("button")) {
       expect(button).toBeDisabled();
     }
+  });
+
+  it("keeps the approved concise player affordance labels", () => {
+    renderControls();
+
+    expect(screen.getByRole("button", { name: "Wow" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Applause" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Nice" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Nice one" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Close one" })).not.toBeInTheDocument();
   });
 });
