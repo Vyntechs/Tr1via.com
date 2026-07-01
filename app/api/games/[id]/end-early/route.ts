@@ -16,6 +16,7 @@ import { badRequest, ok, forbidden, unauthorized, serverError, notFound, conflic
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastToRoom } from "@/lib/api/broadcast";
+import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
 
 export async function POST(
   req: NextRequest,
@@ -60,6 +61,45 @@ export async function POST(
   if (cat.game_id !== gameId) return forbidden("question is not in this game");
   if (!q.played_at) return conflict("question is not live");
   if (q.finished_at) return conflict("question is already resolved");
+
+  if (parsed.data.requireAllLocked) {
+    const [playersRes, scoresRes, answersRes] = await Promise.all([
+      admin
+        .from("players")
+        .select("id")
+        .eq("night_id", owned.night.id)
+        .is("removed_at", null),
+      admin
+        .from("game_scores")
+        .select("player_id")
+        .eq("game_id", gameId),
+      admin
+        .from("answers")
+        .select("question_id, player_id")
+        .eq("question_id", parsed.data.questionId),
+    ]);
+
+    if (playersRes.error) return serverError(playersRes.error.message);
+    if (scoresRes.error) return serverError(scoresRes.error.message);
+    if (answersRes.error) return serverError(answersRes.error.message);
+
+    const decision = deriveAllLockedAutoRevealDecision({
+      currentGameId: gameId,
+      liveQuestionId: parsed.data.questionId,
+      activePlayerIds: (playersRes.data ?? []).map((player) => player.id),
+      scoreRows: (scoresRes.data ?? []).map((row) => ({
+        player_id: row.player_id,
+      })),
+      answers: (answersRes.data ?? []).map((answer) => ({
+        question_id: answer.question_id,
+        player_id: answer.player_id,
+      })),
+    });
+
+    if (!decision.complete) {
+      return conflict("not all eligible players are locked");
+    }
+  }
 
   const { error: rpcError } = await admin.rpc("resolve_question", {
     p_question_id: parsed.data.questionId,

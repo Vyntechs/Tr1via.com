@@ -89,6 +89,10 @@ export function HostLiveConsoleClient({
   const [addingLatecomer, setAddingLatecomer] = useState(false);
   const [removingPlayerId, setRemovingPlayerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const activePlayerIdSignature = useMemo(
+    () => [...room.players.map((p) => p.id)].sort().join(","),
+    [room.players],
+  );
 
   // ── host board freshness on WiFi recovery (#3) ───────────────────────
   // While degraded, the host reads from the route payload (kept current by the
@@ -147,10 +151,14 @@ export function HostLiveConsoleClient({
       return;
     }
     const currentGameId = gameId;
+    const eligibilityKey = `${currentGameId}:${activePlayerIdSignature}`;
     setDirectScoresReadyForGameId(null);
     const supa = getSupabaseBrowser();
     let cancelled = false;
-    async function load() {
+    async function load(markStaleFirst = false) {
+      if (markStaleFirst && !cancelled) {
+        setDirectScoresReadyForGameId(null);
+      }
       const { data } = await supa
         .from("game_scores")
         .select("*")
@@ -158,7 +166,7 @@ export function HostLiveConsoleClient({
         .order("score", { ascending: false });
       if (cancelled) return;
       setScores(((data as GameScoreRow[] | null) ?? []));
-      setDirectScoresReadyForGameId(currentGameId);
+      setDirectScoresReadyForGameId(eligibilityKey);
     }
     void load();
     const channel = supa
@@ -173,12 +181,22 @@ export function HostLiveConsoleClient({
         { event: "*", schema: "public", table: "adjustments" },
         () => void load(),
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "game_participations",
+          filter: `game_id=eq.${currentGameId}`,
+        },
+        () => void load(true),
+      )
       .subscribe();
     return () => {
       cancelled = true;
       void supa.removeChannel(channel);
     };
-  }, [room.currentGame?.id]);
+  }, [activePlayerIdSignature, room.currentGame?.id]);
 
   // ── subscribe to answers for the current OR most-recently-resolved
   //    question ─────────────────────────────────────────────────────────
@@ -280,9 +298,11 @@ export function HostLiveConsoleClient({
   );
 
   const currentGame: GameRow | null = room.currentGame;
-  const scoresReadyForGameId =
+  const directScoresEligibilityKey =
+    currentGame ? `${currentGame.id}:${activePlayerIdSignature}` : null;
+  const scoresReadyEligibilityKey =
     backupMode && fallbackPayload
-      ? currentGame?.id ?? null
+      ? directScoresEligibilityKey
       : directScoresReadyForGameId;
   const allLockedAutoRevealDecision = useMemo(
     () =>
@@ -291,7 +311,9 @@ export function HostLiveConsoleClient({
         liveQuestionId: room.currentQuestion?.id ?? null,
         activePlayerIds: room.players.map((p) => p.id),
         scoreRows:
-          currentGame && scoresReadyForGameId === currentGame.id
+          currentGame &&
+          directScoresEligibilityKey !== null &&
+          scoresReadyEligibilityKey === directScoresEligibilityKey
             ? scores
             : null,
         answers,
@@ -299,10 +321,11 @@ export function HostLiveConsoleClient({
     [
       answers,
       currentGame,
+      directScoresEligibilityKey,
       room.currentQuestion?.id,
       room.players,
       scores,
-      scoresReadyForGameId,
+      scoresReadyEligibilityKey,
     ],
   );
   const titleSuffix = currentGame
@@ -380,21 +403,33 @@ export function HostLiveConsoleClient({
       setError(err instanceof Error ? err.message : "Undo failed.");
     }
   }
-  async function handleEndEarly() {
-    if (!currentGame || !room.currentQuestion) return;
+  async function handleEndEarly({
+    requireAllLocked = false,
+  }: {
+    requireAllLocked?: boolean;
+  } = {}): Promise<boolean> {
+    if (!currentGame || !room.currentQuestion) return false;
     setError(null);
     try {
       const res = await fetch(`/api/games/${currentGame.id}/end-early`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId: room.currentQuestion.id }),
+        body: JSON.stringify({
+          questionId: room.currentQuestion.id,
+          ...(requireAllLocked ? { requireAllLocked: true } : {}),
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (requireAllLocked && res.status === 409) {
+          return false;
+        }
         throw new Error(body.error ?? "end-early failed");
       }
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-early failed.");
+      return true;
     }
   }
   async function handleStartGame(gameId: string | null) {
@@ -493,7 +528,7 @@ export function HostLiveConsoleClient({
   useAllLockedAutoReveal({
     questionId: room.currentQuestion?.id ?? null,
     decision: allLockedAutoRevealDecision,
-    onAutoReveal: handleEndEarly,
+    onAutoReveal: () => handleEndEarly({ requireAllLocked: true }),
   });
 
   // Identify game 1 / game 2 ids so the control strip can route Start CTAs.

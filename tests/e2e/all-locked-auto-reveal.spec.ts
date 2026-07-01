@@ -124,6 +124,43 @@ test.describe("all locked auto-reveal", () => {
 
     await closePages(hostPage, tvPage, phone1, phone2, phone3);
   });
+
+  test("does not auto-reveal if a latecomer joins during the grace window", async () => {
+    const hostPage = await host.newPage();
+    const tvPage = await tv.newPage();
+    const phone1 = await p1.newPage();
+    const phone2 = await p2.newPage();
+    const phone3 = await p3.newPage();
+
+    const { seed, questionId } = await setupLiveQuestion({
+      hostPage,
+      tvPage,
+      phone1,
+      phone2,
+      phone3,
+      emailPrefix: "latecomer-grace",
+    });
+
+    await Promise.all([tapAnswerSlot(phone1, 1), tapAnswerSlot(phone2, 2)]);
+    await hostPage.request.post(`/api/nights/${seed.nightId}/players`, {
+      data: { displayName: "Dana" },
+    });
+
+    await tvPage.waitForTimeout(2_500);
+    await expect(tvPage.getByTestId(TID.tvQuestion.root)).toBeVisible();
+    await expect(tvPage.getByTestId(TID.tvReveal.root)).toHaveCount(0);
+    await expect(phone3.getByTestId(TID.playerQuestion.root)).toBeVisible();
+
+    await fastForwardTimer(hostPage, questionId);
+    await Promise.all([
+      waitForRevealOnTV(tvPage, 10_000),
+      awaitReveal(phone1, 10_000),
+      awaitReveal(phone2, 10_000),
+      awaitReveal(phone3, 10_000),
+    ]);
+
+    await closePages(hostPage, tvPage, phone1, phone2, phone3);
+  });
 });
 
 async function setupLiveQuestion({

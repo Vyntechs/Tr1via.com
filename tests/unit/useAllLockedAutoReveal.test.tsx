@@ -122,6 +122,31 @@ describe("useAllLockedAutoReveal", () => {
     expect(onAutoReveal).toHaveBeenCalledTimes(1);
   });
 
+  it("does not mark the question fired when auto reveal returns false", async () => {
+    vi.useFakeTimers();
+    const onAutoReveal = vi
+      .fn<() => Promise<boolean | void>>()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(undefined);
+
+    renderHook(() =>
+      useAllLockedAutoReveal({
+        questionId: "q1",
+        decision: completeDecision,
+        onAutoReveal,
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(1200);
+    expect(onAutoReveal).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1199);
+    expect(onAutoReveal).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onAutoReveal).toHaveBeenCalledTimes(2);
+  });
+
   it("can fire again for a new question", () => {
     vi.useFakeTimers();
     const onAutoReveal = vi.fn();
