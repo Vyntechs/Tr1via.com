@@ -11,7 +11,7 @@ export const ROOM_MAGIC_REACTION_LABELS: Record<RoomMagicReactionKind, string> =
   applause: "Applause",
   nice_one: "Nice one",
   wow: "Wow",
-  brutal: "Brutal",
+  brutal: "Close one",
 };
 
 export interface RoomMagicReactionEvent {

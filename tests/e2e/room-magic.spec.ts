@@ -26,7 +26,8 @@ type ScoreRow = {
 const PLAYERS = ["Alex", "Brooke"] as const;
 const ROOM_MAGIC_CONTROLS = "room-magic-reaction-controls";
 const TV_ROOM_MAGIC_OVERLAY = "tv-room-magic-overlay";
-const TV_ROOM_MAGIC_WOW_PILL = "tv-room-magic-pill-wow";
+const TV_ROOM_MAGIC_WOW_EFFECT =
+  '[data-testid="tv-room-magic-default-wow"], [data-testid="tv-room-magic-skywrite-wow"]';
 
 test.describe("room magic — default-off Classic safety and bounded TV reactions", () => {
   test.setTimeout(180_000);
@@ -108,7 +109,9 @@ test.describe("room magic — default-off Classic safety and bounded TV reaction
     await expect(tvPage.getByTestId(TV_ROOM_MAGIC_OVERLAY)).toBeVisible({
       timeout: 8_000,
     });
-    await expect(tvPage.getByTestId(TV_ROOM_MAGIC_WOW_PILL)).toContainText("Wow");
+    await expect(
+      tvPage.getByTestId(TV_ROOM_MAGIC_OVERLAY).locator(TV_ROOM_MAGIC_WOW_EFFECT),
+    ).toContainText(/wow/i);
 
     const duplicate = await phone1.request.post("/api/room-magic/reactions", {
       data: { questionId: magicQuestionId, kind: "brutal" },

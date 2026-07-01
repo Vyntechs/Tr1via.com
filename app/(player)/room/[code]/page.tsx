@@ -44,10 +44,10 @@ import {
   PlayerLocked,
   PlayerRevealCorrect,
   PlayerRevealCorrectSequence,
+  PlayerRevealStandingsPanel,
   PlayerRevealWrong,
   PlayerJoinGame2,
   PlayerBetweenGames,
-  PlayerStandingsNeighborhood,
   type PlayerQuestionSlot,
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
@@ -1145,23 +1145,11 @@ function RevealView({
   themeKey: ThemeKey;
   /** Per-question resolve counts (correct/answered) for the social lines. */
   summary: ResolveSummary | undefined;
-  /** ±4 standings shown as the third reveal beat. */
+  /** ±4 standings shown inside the reveal hold. */
   neighborhood: Neighborhood;
   /** Night-level Room Magic flag. Controls still mount only post-resolve. */
   roomMagicEnabled: boolean;
 }) {
-  // 3-beat reveal: celebrate/payoff first, then settle into the ±4 standings for
-  // the rest of the between-questions wait. Fireworks live only in the celebrate/
-  // payoff beat, so they never overlap the standings. Resets per question.
-  const [beatPhase, setBeatPhase] = useState<"reveal" | "standings">("reveal");
-  // Advance to the standings beat after the celebration/payoff plays. RevealView
-  // is keyed by question id at the call site, so a new question remounts it and
-  // resets the phase via initial state — no synchronous setState in the effect.
-  useEffect(() => {
-    const h = window.setTimeout(() => setBeatPhase("standings"), 3200);
-    return () => window.clearTimeout(h);
-  }, []);
-
   // Use the player's saved scramble when we have an answer; otherwise compute
   // it deterministically so the correct slot still maps correctly.
   const scramble = myAnswer?.scramble ?? scrambleFor(question.id, player.id);
@@ -1177,18 +1165,6 @@ function RevealView({
   // instant), and this re-renders into the real reveal.
   if (typeof question.correct_index !== "number") {
     return <RevealPendingView category={category.name} />;
-  }
-
-  // Beat 3: once the celebration/payoff has played, settle into "where you
-  // stand" for the rest of the wait (fireworks are already done — no overlap).
-  if (beatPhase === "standings") {
-    return (
-      <PlayerStandingsNeighborhood
-        rows={neighborhood.rows}
-        meRank={neighborhood.meRank}
-        total={neighborhood.total}
-      />
-    );
   }
 
   const correctSlot = correctSlotFor(scramble as number[], question.correct_index) as
@@ -1221,6 +1197,14 @@ function RevealView({
       myAnswer.chosen_index === question.correct_index);
 
   if (wasCorrect && myAnswer) {
+    const standingsPanel = (
+      <PlayerRevealStandingsPanel
+        rows={neighborhood.rows}
+        meRank={neighborhood.meRank}
+        total={neighborhood.total}
+        surface="payoff"
+      />
+    );
     const awarded =
       myAnswer.awarded_points ??
       awardPoints({
@@ -1242,6 +1226,7 @@ function RevealView({
       rankDelta: 0,
       nextHint: "Hold tight — the next question is on its way.",
       roomMagicControls,
+      standingsPanel,
     };
     // July: a dark fireworks moment (ignited in sync with the TV by the gated
     // conductor) → the bright payoff. Other themes go straight to the payoff.
@@ -1261,6 +1246,14 @@ function RevealView({
     : null;
   const chosenText = myAnswer ? question.options[myAnswer.chosen_index] ?? "" : "";
   const totalScore = sumAwardedForGame(myAnswers, game?.id ?? null, questionGameMap);
+  const standingsPanel = (
+    <PlayerRevealStandingsPanel
+      rows={neighborhood.rows}
+      meRank={neighborhood.meRank}
+      total={neighborhood.total}
+      surface="theme"
+    />
+  );
   return (
     <PlayerRevealWrong
       category={category.name}
@@ -1274,6 +1267,7 @@ function RevealView({
       correctCount={summary?.correctCount}
       answeredCount={summary?.answeredCount}
       roomMagicControls={roomMagicControls}
+      standingsPanel={standingsPanel}
     />
   );
 }

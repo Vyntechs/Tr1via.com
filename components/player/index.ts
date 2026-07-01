@@ -22,6 +22,8 @@ export { PlayerBetweenGames } from "./PlayerBetweenGames";
 export type { PlayerBetweenGamesProps } from "./PlayerBetweenGames";
 export { PlayerStandingsNeighborhood } from "./PlayerStandingsNeighborhood";
 export type { PlayerStandingsNeighborhoodProps } from "./PlayerStandingsNeighborhood";
+export { PlayerRevealStandingsPanel } from "./PlayerRevealStandingsPanel";
+export type { PlayerRevealStandingsPanelProps } from "./PlayerRevealStandingsPanel";
 export { PlayerLockInBolt } from "./PlayerLockInBolt";
 export { PlayerWinnerCard } from "./PlayerWinnerCard";
 export type { PlayerWinnerCardProps, PlayerWinnerCardStat } from "./PlayerWinnerCard";

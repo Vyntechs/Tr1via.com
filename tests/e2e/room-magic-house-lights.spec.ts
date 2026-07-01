@@ -26,6 +26,10 @@ const ARTIFACT_DIR = path.join(
 const PLAYERS = ["Alex", "Brooke", "Casey"] as const;
 const HOUSE_LIGHTS = "tv-house-lights";
 const PLAYER_CONFIRMATION = "player-house-lights-confirmation";
+const ROOM_MAGIC_CONTROLS = "room-magic-reaction-controls";
+const TV_ROOM_MAGIC_OVERLAY = "tv-room-magic-overlay";
+const TV_ROOM_MAGIC_WOW_EFFECT =
+  '[data-testid="tv-room-magic-default-wow"], [data-testid="tv-room-magic-skywrite-wow"]';
 
 type ScoreRow = {
   display_name: string;
@@ -112,6 +116,7 @@ test.describe("room magic house lights validation", () => {
 
     const magicSeed = await seedNight(hostPage, hostId, {
       roomMagicEnabled: true,
+      themeKey: "july",
     });
     const magic = await runLockInRehearsal({
       label: "room-magic-on",
@@ -131,6 +136,7 @@ test.describe("room magic house lights validation", () => {
         {
           classicDisabledUnchanged: true,
           roomMagicEnabledHouseLightsVisible: true,
+          roomMagicReactionVisible: true,
           scoresMatched: true,
           consoleErrors,
           screenshots: [...classic.screenshots, ...magic.screenshots],
@@ -222,6 +228,19 @@ async function runLockInRehearsal({
 
   const scores = await scoresByName(tvPage, seed.roomCode, PLAYERS);
   screenshots.push(await screenshot(tvPage, `${label}-tv-reveal`));
+
+  if (expectHouseLights) {
+    const controls = phones[0].getByTestId(ROOM_MAGIC_CONTROLS);
+    await expect(controls).toBeVisible({ timeout: 10_000 });
+    await controls.getByRole("button", { name: "Wow" }).click();
+    await expect(controls.getByText("Sent to the room")).toBeVisible();
+    const overlay = tvPage.getByTestId(TV_ROOM_MAGIC_OVERLAY);
+    await expect(overlay).toBeVisible({ timeout: 8_000 });
+    await expect(overlay.locator(TV_ROOM_MAGIC_WOW_EFFECT)).toContainText(/wow/i);
+    await tvPage.waitForTimeout(650);
+    screenshots.push(await screenshot(tvPage, `${label}-tv-reaction-wow`));
+    screenshots.push(await screenshot(phones[0], `${label}-phone-reaction-wow`));
+  }
 
   return { label, scores, screenshots };
 }
