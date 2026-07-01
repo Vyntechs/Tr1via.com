@@ -9,9 +9,19 @@ export type RoomMagicReactionKind = (typeof ROOM_MAGIC_REACTION_KINDS)[number];
 
 export const ROOM_MAGIC_REACTION_LABELS: Record<RoomMagicReactionKind, string> = {
   applause: "Applause",
-  nice_one: "Nice one",
+  nice_one: "Nice",
   wow: "Wow",
-  brutal: "Close one",
+  brutal: "Close",
+};
+
+export const ROOM_MAGIC_REACTION_GESTURES: Record<
+  RoomMagicReactionKind,
+  "glitter-fan" | "comet-nod" | "star-crown" | "ember-loop"
+> = {
+  applause: "glitter-fan",
+  nice_one: "comet-nod",
+  wow: "star-crown",
+  brutal: "ember-loop",
 };
 
 export interface RoomMagicReactionEvent {

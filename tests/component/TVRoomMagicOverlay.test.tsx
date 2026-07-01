@@ -58,22 +58,51 @@ describe("TVRoomMagicOverlay", () => {
     expect(screen.queryByTestId("tv-room-magic-pill-wow")).not.toBeInTheDocument();
     const effect = screen.getByTestId("tv-room-magic-july-effect-wow");
     expect(effect).toHaveAttribute("data-reaction-count", "2");
+    expect(effect).toHaveAttribute("data-reaction-gesture", "star-crown");
     expect(effect).not.toHaveTextContent(/wow/i);
     expect(overlay).not.toHaveTextContent(/wow|nice|bravo|close/i);
   });
 
-  it("renders a neutral fallback skin for themes without custom reaction art", () => {
+  it("maps each TV reaction to its anonymous gesture signature", () => {
+    const expected = [
+      { kind: "wow", gesture: "star-crown" },
+      { kind: "applause", gesture: "glitter-fan" },
+      { kind: "nice_one", gesture: "comet-nod" },
+      { kind: "brutal", gesture: "ember-loop" },
+    ] as const;
+
+    for (const item of expected) {
+      const { unmount } = render(
+        <TVRoomMagicOverlay enabled event={reaction(item.kind, `${item.kind}-player`)} themeKey="july" />,
+      );
+
+      expect(
+        screen.getByTestId(`tv-room-magic-july-effect-${item.kind}`),
+      ).toHaveAttribute("data-reaction-gesture", item.gesture);
+      expect(screen.getByTestId("tv-room-magic-overlay")).not.toHaveTextContent(
+        /wow|nice|applause|close/i,
+      );
+
+      unmount();
+    }
+  });
+
+  it("renders a neutral fallback skin without printing reaction words", () => {
     render(
       <TVRoomMagicOverlay
         enabled
         event={reaction("nice_one", "player-1")}
         themeKey="august"
-      />,
-    );
+        />,
+      );
 
     const overlay = screen.getByTestId("tv-room-magic-overlay");
-    expect(overlay).toHaveAttribute("data-reaction-skin", "default");
-    expect(screen.getByTestId("tv-room-magic-default-nice_one")).toHaveTextContent("Nice one");
+    expect(overlay).toHaveAttribute("data-reaction-skin", "theme-reaction-glyph");
+    expect(screen.getByTestId("tv-room-magic-default-nice_one")).toHaveAttribute(
+      "data-reaction-gesture",
+      "comet-nod",
+    );
+    expect(overlay).not.toHaveTextContent(/wow|nice|applause|close/i);
   });
 
   it("removes events after the short display window", async () => {
