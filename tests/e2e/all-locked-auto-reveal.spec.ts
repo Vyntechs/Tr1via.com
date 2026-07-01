@@ -141,14 +141,22 @@ test.describe("all locked auto-reveal", () => {
       emailPrefix: "latecomer-grace",
     });
 
-    await Promise.all([tapAnswerSlot(phone1, 1), tapAnswerSlot(phone2, 2)]);
-    await hostPage.request.post(`/api/nights/${seed.nightId}/players`, {
+    await Promise.all([
+      tapAnswerSlot(phone1, 1),
+      tapAnswerSlot(phone2, 2),
+      tapAnswerSlot(phone3, 3),
+    ]);
+
+    const latecomerRes = await hostPage.request.post(`/api/nights/${seed.nightId}/players`, {
       data: { displayName: "Dana" },
     });
+    expect(latecomerRes.ok()).toBe(true);
 
     await tvPage.waitForTimeout(2_500);
     await expect(tvPage.getByTestId(TID.tvQuestion.root)).toBeVisible();
     await expect(tvPage.getByTestId(TID.tvReveal.root)).toHaveCount(0);
+    await expect(phone1.getByTestId(TID.playerQuestion.root)).toBeVisible();
+    await expect(phone2.getByTestId(TID.playerQuestion.root)).toBeVisible();
     await expect(phone3.getByTestId(TID.playerQuestion.root)).toBeVisible();
 
     await fastForwardTimer(hostPage, questionId);

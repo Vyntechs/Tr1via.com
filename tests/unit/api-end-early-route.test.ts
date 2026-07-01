@@ -144,6 +144,30 @@ describe("POST /api/games/[id]/end-early", () => {
     expect(admin.rpc).not.toHaveBeenCalled();
   });
 
+  it("resolves guarded auto-reveal when every eligible participant has locked", async () => {
+    const admin = makeAdmin({
+      players: [{ id: "p1" }, { id: "p2" }, { id: "p3" }],
+      scores: [{ player_id: "p1" }, { player_id: "p2" }, { player_id: "p3" }],
+      answers: [
+        { question_id: QUESTION_ID, player_id: "p1" },
+        { question_id: QUESTION_ID, player_id: "p2" },
+        { question_id: QUESTION_ID, player_id: "p3" },
+      ],
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/games/[id]/end-early/route");
+    const res = await POST(
+      makeRequest({ questionId: QUESTION_ID, requireAllLocked: true }),
+      makeCtx(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
+      p_question_id: QUESTION_ID,
+    });
+  });
+
   it("keeps manual end-early behavior intact when the guard flag is absent", async () => {
     const admin = makeAdmin({
       players: [{ id: "p1" }, { id: "p2" }, { id: "p3" }],
