@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useReducer } from "react";
+import { useEffect, useMemo, useReducer, useRef } from "react";
 import { useOptionalTheme } from "@/components/system/ThemeProvider";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -11,8 +11,9 @@ import {
   type RoomMagicReactionKind,
 } from "@/lib/room-magic/reactions";
 
-const DISPLAY_MS = 2000;
-const STALE_EVENT_MS = 10_000;
+const DISPLAY_MS = 5000;
+const STALE_EVENT_MS = 30_000;
+const EMPTY_REACTION_EVENTS: RoomMagicReactionEvent[] = [];
 
 interface ActiveReaction {
   id: string;
@@ -29,6 +30,7 @@ type ReactionAction =
 export interface TVRoomMagicOverlayProps {
   enabled: boolean;
   event: RoomMagicReactionEvent | null;
+  events?: RoomMagicReactionEvent[];
   themeKey?: ThemeKey;
 }
 
@@ -116,36 +118,44 @@ const JULY_REACTION_GLYPHS: Record<
 export function TVRoomMagicOverlay({
   enabled,
   event,
+  events = EMPTY_REACTION_EVENTS,
   themeKey: themeKeyProp,
 }: TVRoomMagicOverlayProps) {
   const theme = useOptionalTheme();
   const reducedMotion = usePrefersReducedMotion();
   const [reactions, dispatch] = useReducer(reactionReducer, []);
+  const seenReactionIds = useRef(new Set<string>());
 
   useEffect(() => {
     if (!enabled) {
+      seenReactionIds.current.clear();
       dispatch({ type: "clear" });
     }
   }, [enabled]);
 
   useEffect(() => {
-    if (!enabled || !isUsableReactionEvent(event)) return;
-    const eventAt = Date.parse(event.serverNow);
-    if (!Number.isFinite(eventAt)) return;
     const now = Date.now();
-    if (now - eventAt > STALE_EVENT_MS) return;
+    const incoming = event ? [event, ...events] : events;
+    for (const item of incoming) {
+      if (!enabled || !isUsableReactionEvent(item)) continue;
+      const eventAt = Date.parse(item.serverNow);
+      if (!Number.isFinite(eventAt)) continue;
+      if (now - eventAt > STALE_EVENT_MS) continue;
 
-    const id = `${event.questionId}:${event.playerId}:${event.serverNow}`;
-    dispatch({
-      type: "add",
-      reaction: {
-        id,
-        kind: event.kind,
-        expiresAt: now + DISPLAY_MS,
-        receivedAt: now,
-      },
-    });
-  }, [enabled, event]);
+      const id = `${item.questionId}:${item.playerId}:${item.serverNow}`;
+      if (seenReactionIds.current.has(id)) continue;
+      seenReactionIds.current.add(id);
+      dispatch({
+        type: "add",
+        reaction: {
+          id,
+          kind: item.kind,
+          expiresAt: now + DISPLAY_MS,
+          receivedAt: now,
+        },
+      });
+    }
+  }, [enabled, event, events]);
 
   useEffect(() => {
     if (reactions.length === 0) return;
@@ -274,7 +284,7 @@ function JulyReactionGlyph({
         color: tone.accent,
         filter: `drop-shadow(0 18px 38px ${tone.glow})`,
         opacity: reducedMotion ? 0.82 : undefined,
-        animation: reducedMotion ? undefined : "tr1via-july-reaction-hold 2000ms ease-out both",
+        animation: reducedMotion ? undefined : `tr1via-july-reaction-hold ${DISPLAY_MS}ms ease-out both`,
         boxSizing: "border-box",
       }}
     >
@@ -440,25 +450,25 @@ function TVRoomMagicOverlayStyles() {
       }
       .tr1via-july-plume {
         animation: tr1via-july-draw 620ms cubic-bezier(.2,.72,.24,1) 120ms both,
-          tr1via-july-smoke-fade 2000ms ease-out both;
+          tr1via-july-smoke-fade 5000ms ease-out both;
       }
       .tr1via-july-glyph-primary {
         animation: tr1via-july-draw 760ms cubic-bezier(.16,.82,.22,1) 420ms both,
-          tr1via-july-smoke-fade 2000ms ease-out both;
+          tr1via-july-smoke-fade 5000ms ease-out both;
       }
       .tr1via-july-glyph-secondary {
         animation: tr1via-july-draw 720ms cubic-bezier(.16,.82,.22,1) 540ms both,
-          tr1via-july-smoke-fade 2000ms ease-out both;
+          tr1via-july-smoke-fade 5000ms ease-out both;
       }
       .tr1via-july-spark {
         transform-origin: center;
-        animation: tr1via-july-spark 2000ms ease-out both;
+        animation: tr1via-july-spark 5000ms ease-out both;
       }
       .tr1via-july-launch-core {
         animation: tr1via-july-launch 720ms cubic-bezier(.2,.82,.22,1) both;
       }
       .tr1via-july-room-pulse {
-        animation: tr1via-july-room-pulse 2000ms ease-out both;
+        animation: tr1via-july-room-pulse 5000ms ease-out both;
       }
       @keyframes tr1via-july-reaction-hold {
         0% { opacity: 0; transform: translateX(-50%) translateY(12px) scale(.9); filter: blur(1px); }

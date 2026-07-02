@@ -76,6 +76,26 @@ describe("TVRoomMagicOverlay", () => {
     expect(screen.getByTestId("tv-room-magic-default-nice_one")).toHaveTextContent("Nice one");
   });
 
+  it("renders replayed durable events when the live broadcast was missed", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-30T18:00:05.000Z"));
+
+    render(
+      <TVRoomMagicOverlay
+        enabled
+        event={null}
+        events={[
+          reaction("wow", "player-1", "2026-06-30T18:00:01.000Z"),
+          reaction("nice_one", "player-2", "2026-06-30T18:00:02.000Z"),
+        ]}
+        themeKey="may"
+      />,
+    );
+
+    expect(screen.getByTestId("tv-room-magic-default-wow")).toHaveTextContent("Wow");
+    expect(screen.getByTestId("tv-room-magic-default-nice_one")).toHaveTextContent("Nice one");
+  });
+
   it("removes events after the short display window", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-30T18:00:00.000Z"));
@@ -85,7 +105,7 @@ describe("TVRoomMagicOverlay", () => {
     expect(screen.getByTestId("tv-room-magic-overlay")).toBeInTheDocument();
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_700);
+      await vi.advanceTimersByTimeAsync(5_700);
     });
 
     expect(screen.queryByTestId("tv-room-magic-overlay")).not.toBeInTheDocument();
@@ -112,7 +132,7 @@ describe("TVRoomMagicOverlay", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-30T18:00:00.000Z"));
 
-    const stale = reaction("wow", "player-1", "2026-06-30T17:59:40.000Z");
+    const stale = reaction("wow", "player-1", "2026-06-30T17:59:20.000Z");
     const { container, rerender } = render(
       <TVRoomMagicOverlay enabled event={stale} />,
     );

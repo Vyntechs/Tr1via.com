@@ -35,6 +35,7 @@ import { formatRoomCode } from "@/lib/game/room-code";
 import { useTVRoom, type TVBroadcast, type TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { useRoomMagicReactionReplay } from "@/lib/hooks/useRoomMagicReactionReplay";
 import { playWelcomeChime } from "@/lib/audio/welcomeChime";
 
 export default function TVPage({
@@ -58,6 +59,10 @@ export default function TVPage({
   //  meant it was skipped while loading and suddenly ran once ready — the hook
   //  count changed between renders and React crashed the whole TV (React #310).
   const welcomeEvent = useTVWelcomeEvent(lastBroadcast, snapshot?.players ?? []);
+  const replayedRoomMagicReactions = useRoomMagicReactionReplay(
+    code,
+    snapshot?.night.roomMagicEnabled ?? false,
+  );
 
   if (status === "loading") {
     return <TVMessageStage title="Loading..." subtitle="" />;
@@ -106,6 +111,7 @@ export default function TVPage({
         <TVRoomMagicOverlay
           enabled={snapshot.night.roomMagicEnabled}
           event={lastRoomMagicReaction}
+          events={replayedRoomMagicReactions}
           themeKey={themeKey}
         />
         {/* Schedules the July firework beat so this TV ignites the same burst

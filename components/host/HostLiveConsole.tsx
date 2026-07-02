@@ -27,6 +27,7 @@ import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { deriveHostMode } from "@/lib/host/deriveHostMode";
 import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
+import { useRoomMagicReactionReplay } from "@/lib/hooks/useRoomMagicReactionReplay";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { useReachability } from "@/lib/realtime/reachability";
 import { RemovePlayerButton } from "./RemovePlayerButton";
@@ -170,6 +171,10 @@ function HostLiveConsoleInner({
   const { t } = useTheme();
   const totalPlayers = playersTotal ?? players.length;
   const locks = lockedCount ?? players.filter((p) => p.locked).length;
+  const replayedRoomMagicReactions = useRoomMagicReactionReplay(
+    roomCode,
+    roomMagicEnabled,
+  );
   // Build the QR URL off the origin the laptop is actually serving from —
   // so previews encode the preview URL, prod encodes prod, local tunnels
   // encode the tunnel. SSR fallback only matters before hydration.
@@ -257,6 +262,7 @@ function HostLiveConsoleInner({
           <TVRoomMagicOverlay
             enabled={roomMagicEnabled}
             event={lastRoomMagicReaction}
+            events={replayedRoomMagicReactions}
             themeKey={themeKey}
           />
         </div>
