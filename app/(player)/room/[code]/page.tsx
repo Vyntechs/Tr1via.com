@@ -66,7 +66,7 @@ import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { selectBetweenGamesView, buildGame1Standings, type StandingRow } from "@/lib/player/betweenGames";
-import { buildNeighborhood, type Neighborhood } from "@/lib/player/standings";
+import { buildNeighborhood, buildNightStandings, type Neighborhood } from "@/lib/player/standings";
 import { summarizeResolve, type ResolveSummary } from "@/lib/player/celebrationCopy";
 import { gateBeatForPlayer, playerWasCorrect } from "@/lib/game/revealOutcome";
 import { selectLobbyTopicsFromRoom, type LobbyTopic } from "@/lib/tv/lobbyTopics";
@@ -170,21 +170,19 @@ function RoomBody({
   useAppSwitchTracking(me?.id ?? null);
 
   // ── Side effect: redirect to /won or /recap when the night closes ──
-  const finalGame = useMemo<GameRow | null>(() => {
-    if (snapshot.games.length === 0) return null;
-    const last = [...snapshot.games].sort((a, b) => b.game_no - a.game_no)[0];
-    return last ?? null;
+  const finalGameIds = useMemo<string[]>(() => {
+    return snapshot.games.map((game) => game.id);
   }, [snapshot.games]);
 
   useEffect(() => {
     if (!snapshot.night?.closed_at) return;
-    if (!me || !finalGame) return;
-    // We need a leaderboard to know who's #1. We fire a small query rather
-    // than threading it through useRoom — happens once on close.
+    if (!me || finalGameIds.length === 0) return;
+    // We need a night-wide leaderboard to know who's #1. We fire a small query
+    // rather than threading it through useRoom — happens once on close.
     let cancelled = false;
     void (async () => {
       try {
-        const winnerId = await fetchWinnerId(finalGame.id);
+        const winnerId = await fetchWinnerId(finalGameIds);
         if (cancelled) return;
         const path = winnerId === me.id ? "won" : "recap";
         router.replace(`/room/${roomCode}/${path}`);
@@ -195,7 +193,7 @@ function RoomBody({
     return () => {
       cancelled = true;
     };
-  }, [snapshot.night?.closed_at, me, finalGame, roomCode, router]);
+  }, [snapshot.night?.closed_at, me, finalGameIds, roomCode, router]);
 
   // ── Unreachable: the browser→Supabase reads are blocked (restrictive venue
   //    WiFi). Show an actionable "switch to a hotspot" screen instead of an
@@ -2015,14 +2013,13 @@ function summarizeGame(
 
 // ─── WINNER LOOKUP ───────────────────────────────────────────────────────
 
-async function fetchWinnerId(gameId: string): Promise<string | null> {
+async function fetchWinnerId(gameIds: string[]): Promise<string | null> {
   const supa = getSupabaseBrowser();
   const { data } = await supa
     .from("game_scores")
-    .select("player_id, score")
-    .eq("game_id", gameId)
-    .order("score", { ascending: false })
-    .limit(1);
+    .select("*")
+    .in("game_id", gameIds);
   if (!data || data.length === 0) return null;
-  return (data[0] as { player_id: string }).player_id;
+  const [winner] = buildNightStandings(data as GameScoreRow[]);
+  return winner?.player_id ?? null;
 }

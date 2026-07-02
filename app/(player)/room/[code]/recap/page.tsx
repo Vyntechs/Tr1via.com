@@ -17,6 +17,7 @@ import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { AnswerRow, CategoryRow, GameScoreRow, GameRow, PlayerRow } from "@/lib/supabase/types";
 import { categoryColor } from "@/lib/theme/categories";
+import { buildNightStandings } from "@/lib/player/standings";
 
 export default function PlayerRecapPage() {
   const params = useParams<{ code: string }>();
@@ -48,6 +49,10 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
     if (snapshot.games.length === 0) return null;
     return [...snapshot.games].sort((a, b) => b.game_no - a.game_no)[0] ?? null;
   }, [snapshot.games]);
+  const finalGameIds = useMemo<string[]>(
+    () => snapshot.games.map((game) => game.id),
+    [snapshot.games],
+  );
 
   // Tri-state: `null` means "we haven't completed a fetch yet" — the loading
   // guard below uses this to gate render so we never paint "#0" while the
@@ -60,25 +65,23 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
   const [answers, setAnswers] = useState<AnswerRow[]>([]);
 
   useEffect(() => {
-    if (!finalGame) return;
-    const gameId = finalGame.id;
+    if (finalGameIds.length === 0) return;
     let cancelled = false;
     const supa = getSupabaseBrowser();
     async function load() {
       const { data } = await supa
         .from("game_scores")
         .select("*")
-        .eq("game_id", gameId)
-        .order("score", { ascending: false });
+        .in("game_id", finalGameIds);
       if (cancelled) return;
-      setScores((data as GameScoreRow[] | null) ?? []);
+      setScores(buildNightStandings((data as GameScoreRow[] | null) ?? []));
     }
     void load();
     // Same load+subscribe pattern HostLiveConsoleClient uses for its own
     // game_scores read (the view is derived, so we listen to the underlying
     // tables rather than the view itself).
     const channel = supa
-      .channel(`recap-scores:${gameId}`)
+      .channel(`recap-scores:${finalGameIds.join(",")}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "answers" },
@@ -99,7 +102,7 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
       cancelled = true;
       void supa.removeChannel(channel);
     };
-  }, [finalGame?.id]);
+  }, [finalGameIds]);
 
   useEffect(() => {
     if (!me) return;
