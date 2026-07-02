@@ -15,6 +15,7 @@ import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { AnswerRow, CategoryRow, GameScoreRow, GameRow, PlayerRow } from "@/lib/supabase/types";
+import { buildNightStandings } from "@/lib/player/standings";
 
 export default function PlayerWonPage() {
   const params = useParams<{ code: string }>();
@@ -47,27 +48,30 @@ function PlayerWonInner({ roomCode }: { roomCode: string }) {
     if (snapshot.games.length === 0) return null;
     return [...snapshot.games].sort((a, b) => b.game_no - a.game_no)[0] ?? null;
   }, [snapshot.games]);
+  const finalGameIds = useMemo<string[]>(
+    () => snapshot.games.map((game) => game.id),
+    [snapshot.games],
+  );
 
   const [scores, setScores] = useState<GameScoreRow[]>([]);
   const [answers, setAnswers] = useState<AnswerRow[]>([]);
 
   useEffect(() => {
-    if (!finalGame) return;
+    if (finalGameIds.length === 0) return;
     let cancelled = false;
     const supa = getSupabaseBrowser();
     void supa
       .from("game_scores")
       .select("*")
-      .eq("game_id", finalGame.id)
-      .order("score", { ascending: false })
+      .in("game_id", finalGameIds)
       .then(({ data }) => {
         if (cancelled) return;
-        setScores((data as GameScoreRow[] | null) ?? []);
+        setScores(buildNightStandings((data as GameScoreRow[] | null) ?? []));
       });
     return () => {
       cancelled = true;
     };
-  }, [finalGame]);
+  }, [finalGameIds]);
 
   useEffect(() => {
     if (!me) return;

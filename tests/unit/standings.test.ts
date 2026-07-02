@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildNeighborhood } from "@/lib/player/standings";
+import { buildNeighborhood, buildNightStandings } from "@/lib/player/standings";
 import type { GameScoreRow } from "@/lib/supabase/types";
 
 function scores(n: number): GameScoreRow[] {
@@ -37,5 +37,76 @@ describe("buildNeighborhood", () => {
     expect(nb.meRank).toBeNull();
     expect(nb.rows).toEqual([]);
     expect(nb.total).toBe(5);
+  });
+});
+
+describe("buildNightStandings", () => {
+  it("aggregates every finished game so final standings are night-wide", () => {
+    const rows = [
+      {
+        game_id: "game1",
+        player_id: "p1",
+        display_name: "Alex",
+        score: 500,
+        correct_count: 5,
+        answered_count: 6,
+      },
+      {
+        game_id: "game2",
+        player_id: "p1",
+        display_name: "Alex",
+        score: 0,
+        correct_count: 0,
+        answered_count: 2,
+      },
+      {
+        game_id: "game1",
+        player_id: "p2",
+        display_name: "Brooke",
+        score: 0,
+        correct_count: 0,
+        answered_count: 0,
+      },
+      {
+        game_id: "game2",
+        player_id: "p2",
+        display_name: "Brooke",
+        score: 400,
+        correct_count: 4,
+        answered_count: 6,
+      },
+      {
+        game_id: "game1",
+        player_id: "p3",
+        display_name: "Casey",
+        score: 100,
+        correct_count: 1,
+        answered_count: 6,
+      },
+      {
+        game_id: "game2",
+        player_id: "p3",
+        display_name: "Casey",
+        score: 600,
+        correct_count: 6,
+        answered_count: 6,
+      },
+    ] as unknown as GameScoreRow[];
+
+    const standings = buildNightStandings(rows);
+
+    expect(standings.map((row) => [row.player_id, row.score])).toEqual([
+      ["p3", 700],
+      ["p1", 500],
+      ["p2", 400],
+    ]);
+    expect(standings.find((row) => row.player_id === "p1")).toMatchObject({
+      correct_count: 5,
+      answered_count: 8,
+    });
+    expect(buildNeighborhood(standings, "p1", 4)).toMatchObject({
+      meRank: 2,
+      total: 3,
+    });
   });
 });
