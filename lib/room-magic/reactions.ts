@@ -15,9 +15,8 @@ export const ROOM_MAGIC_REACTION_LABELS: Record<RoomMagicReactionKind, string> =
 };
 
 export interface RoomMagicReactionEvent {
+  id: string;
   kind: RoomMagicReactionKind;
-  questionId: string;
-  playerId: string;
   serverNow: string;
 }
 

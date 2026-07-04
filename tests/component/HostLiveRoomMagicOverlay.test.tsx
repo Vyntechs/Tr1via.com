@@ -31,9 +31,8 @@ const TV_SNAPSHOT: TVSnapshot = {
 
 function roomMagicEvent(): RoomMagicReactionEvent {
   return {
+    id: "reaction-1",
     kind: "wow",
-    questionId: "question-1",
-    playerId: "player-1",
     serverNow: new Date().toISOString(),
   };
 }

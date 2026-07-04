@@ -588,6 +588,7 @@ export function HostLiveConsoleClient({
         welcomeEvent={welcomeEvent}
         roomMagicEnabled={Boolean(room.night?.room_magic_enabled)}
         lastRoomMagicReaction={room.lastRoomMagicReaction}
+        roomMagicReactions={room.roomMagicReactions ?? []}
       />
       {adjusting && (
         <AdjustPointsModal

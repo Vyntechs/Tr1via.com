@@ -142,6 +142,7 @@ export interface TVSnapshot {
   scores: TVScore[];
   liveAnswers: TVAnswer[];
   reveals: TVReveal[];
+  roomMagicReactions?: RoomMagicReactionEvent[];
 }
 
 export interface TVBroadcast {
@@ -317,22 +318,19 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         // Cosmetic room reaction. Surface it separately from lastBroadcast so
         // TV wake-up/refetch behavior stays reserved for game-state events.
         const p = msg.payload as Record<string, unknown>;
+        const id = p.id;
         const kind = p.kind;
-        const questionId = p.questionId;
-        const playerId = p.playerId;
         const serverNow = p.serverNow;
         if (
+          typeof id !== "string" ||
           !isRoomMagicReactionKind(kind) ||
-          typeof questionId !== "string" ||
-          typeof playerId !== "string" ||
           typeof serverNow !== "string"
         ) {
           return;
         }
         setLastRoomMagicReaction({
+          id,
           kind,
-          questionId,
-          playerId,
           serverNow,
         });
       })

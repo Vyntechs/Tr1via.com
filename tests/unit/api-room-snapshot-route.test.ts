@@ -50,6 +50,7 @@ function qb(rows: Record<string, unknown>[]) {
     eq: (c: string, v: unknown) => apply(c, (r) => r[c] === v),
     is: (c: string, v: unknown) => apply(c, (r) => (r[c] ?? null) === v),
     not: (c: string, _op: string, v: unknown) => apply(c, (r) => (r[c] ?? null) !== v),
+    gte: () => b,
     order: () => b,
     limit: () => b,
     maybeSingle: () => Promise.resolve({ data: project(data)[0] ?? null, error: null }),
@@ -77,7 +78,7 @@ function makeAdmin() {
     nights: [{
       id: NIGHT_ID, venue_name: "V", theme_key: "house", room_code: CODE,
       host_id: HOST_ID, opened_at: null, closed_at: null, scheduled_at: null,
-      is_locked: false, hosts: { default_theme_key: "house" },
+      is_locked: false, room_magic_enabled: true, hosts: { default_theme_key: "house" },
     }],
     games: [{
       id: "G1", game_no: 1, state: "live", started_at: null, ended_at: null,
@@ -107,6 +108,14 @@ function makeAdmin() {
       is_correct: null, awarded_points: null, locked_at: "2026-06-07T00:00:05Z",
     }],
     game_participations: [{ id: "gp1", player_id: PLAYER_ID, game_id: "G1" }],
+    room_magic_reactions: [{
+      id: "reaction-1",
+      night_id: NIGHT_ID,
+      question_id: "q-resolved",
+      player_id: PLAYER_ID,
+      kind: "wow",
+      created_at: "2026-06-07T00:00:22Z",
+    }],
   };
   return { from: vi.fn((table: string) => qb(seed[table] ?? [])) };
 }
@@ -152,6 +161,7 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(body.me.id).toBe(PLAYER_ID);
     expect(body.myAnswers).toHaveLength(1);
     expect(body.myParticipations).toHaveLength(1);
+    expect(body.roomMagicReactions).toEqual([]);
   });
 
   it("HOST mode: owning host gets room state with the same gating", async () => {
@@ -165,6 +175,15 @@ describe("GET /api/room/[code]/snapshot", () => {
     // Host mode carries no player-scoped data.
     expect(body.me).toBeNull();
     expect(body.myAnswers).toEqual([]);
+    expect(body.roomMagicReactions).toEqual([
+      {
+        id: "reaction-1",
+        kind: "wow",
+        serverNow: "2026-06-07T00:00:22Z",
+      },
+    ]);
+    expect(JSON.stringify(body.roomMagicReactions)).not.toContain("player");
+    expect(JSON.stringify(body.roomMagicReactions)).not.toContain("question");
   });
 
   it("PLAYER mode: withholds OTHER players' answers on a LIVE question (liveAnswers empty)", async () => {

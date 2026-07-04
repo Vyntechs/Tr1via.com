@@ -114,6 +114,8 @@ export interface HostLiveConsoleProps {
   welcomeEvent?: TVLobbyWelcomeEvent | null;
   /** Cosmetic Room Magic reaction for the patron-visible embedded TV layer. */
   lastRoomMagicReaction?: RoomMagicReactionEvent | null;
+  /** Durable Room Magic reactions from server-route fallback mode. */
+  roomMagicReactions?: RoomMagicReactionEvent[];
   /** Per-night Room Magic toggle. Default false preserves Heather's Classic. */
   roomMagicEnabled?: boolean;
 }
@@ -164,6 +166,7 @@ function HostLiveConsoleInner({
   tvLastBroadcastServerNow = null,
   welcomeEvent = null,
   lastRoomMagicReaction = null,
+  roomMagicReactions = [],
   roomMagicEnabled = false,
   themeKey,
 }: HostLiveConsoleProps) {
@@ -257,6 +260,7 @@ function HostLiveConsoleInner({
           <TVRoomMagicOverlay
             enabled={roomMagicEnabled}
             event={lastRoomMagicReaction}
+            events={roomMagicReactions}
             themeKey={themeKey}
           />
         </div>

@@ -19,6 +19,7 @@ function qb(rows: Record<string, unknown>[]) {
       data = data.filter((r) => (r[c] ?? null) === v);
       return b;
     },
+    gte: () => b,
     not: () => b,
     order: () => b,
     limit: () => b,
@@ -52,6 +53,24 @@ function makeAdmin(roomMagicEnabled: boolean) {
     reveals: [],
     game_scores: [],
     answers: [],
+    room_magic_reactions: [
+      {
+        id: "reaction-1",
+        night_id: NIGHT_ID,
+        question_id: "question-1",
+        player_id: "player-1",
+        kind: "wow",
+        created_at: "2026-07-02T01:54:31.000Z",
+      },
+      {
+        id: "reaction-2",
+        night_id: NIGHT_ID,
+        question_id: "question-1",
+        player_id: "player-2",
+        kind: "nice_one",
+        created_at: "2026-07-02T01:54:36.000Z",
+      },
+    ],
   };
   return { from: vi.fn((table: string) => qb(seed[table] ?? [])) };
 }
@@ -74,6 +93,29 @@ describe("GET /api/tv/[code]/snapshot — Room Magic", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.night.roomMagicEnabled).toBe(true);
+  });
+
+  it("returns recent replay reactions through the TV snapshot without player or question ids", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin(true));
+
+    const res = await callRoute();
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.roomMagicReactions).toEqual([
+      {
+        id: "reaction-1",
+        kind: "wow",
+        serverNow: "2026-07-02T01:54:31.000Z",
+      },
+      {
+        id: "reaction-2",
+        kind: "nice_one",
+        serverNow: "2026-07-02T01:54:36.000Z",
+      },
+    ]);
+    expect(JSON.stringify(body.roomMagicReactions)).not.toContain("player");
+    expect(JSON.stringify(body.roomMagicReactions)).not.toContain("question");
   });
 
   it("defaults the TV payload to false when the flag is missing", async () => {

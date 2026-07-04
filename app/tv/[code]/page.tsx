@@ -106,6 +106,7 @@ export default function TVPage({
         <TVRoomMagicOverlay
           enabled={snapshot.night.roomMagicEnabled}
           event={lastRoomMagicReaction}
+          events={snapshot.roomMagicReactions ?? []}
           themeKey={themeKey}
         />
         {/* Schedules the July firework beat so this TV ignites the same burst
