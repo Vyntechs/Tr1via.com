@@ -23,6 +23,7 @@
 
 import { ok, badRequest, forbidden, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
+import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthedHost, getDeviceId } from "@/lib/api/auth";
 import { serializeRoomQuestion } from "@/lib/room/roomSnapshotPayload";
@@ -37,6 +38,9 @@ import type {
   QuestionRow,
   RevealRow,
 } from "@/lib/supabase/types";
+
+const RECENT_REACTION_WINDOW_MS = 30_000;
+const RECENT_REACTION_LIMIT = 25;
 
 export async function GET(
   _req: Request,
@@ -159,7 +163,7 @@ export async function GET(
   const targetQuestionId = currentQuestionRaw?.id ?? lastResolvedRaw?.id ?? null;
 
   // ── Aux reads: scores + target-question answers + the player's own data ───
-  const [scoresRes, liveAnswersRes, myAnswersRes, myParticipationsRes] =
+  const [scoresRes, liveAnswersRes, myAnswersRes, myParticipationsRes, roomMagicReactionsRes] =
     await Promise.all([
       currentGame
         ? admin
@@ -189,12 +193,31 @@ export async function GET(
       mode === "player" && me
         ? admin.from("game_participations").select("*").eq("player_id", me.id)
         : Promise.resolve({ data: [] as ParticipationRow[], error: null }),
+      mode === "host" && night.room_magic_enabled === true
+        ? admin
+            .from("room_magic_reactions")
+            .select("id, kind, created_at")
+            .eq("night_id", nightId)
+            .gte(
+              "created_at",
+              new Date(Date.now() - RECENT_REACTION_WINDOW_MS).toISOString(),
+            )
+            .order("created_at", { ascending: true })
+            .limit(RECENT_REACTION_LIMIT)
+        : Promise.resolve({ data: [], error: null }),
     ]);
 
   const scores = (scoresRes.data ?? []) as GameScoreRow[];
   const liveAnswers = (liveAnswersRes.data ?? []) as AnswerRow[];
   const myAnswers = (myAnswersRes.data ?? []) as AnswerRow[];
   const myParticipations = (myParticipationsRes.data ?? []) as ParticipationRow[];
+  const roomMagicReactions = (roomMagicReactionsRes.data ?? [])
+    .filter((row) => isRoomMagicReactionKind(row.kind))
+    .map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      serverNow: row.created_at,
+    }));
 
   return ok({
     night,
@@ -212,6 +235,7 @@ export async function GET(
     myParticipations,
     scores,
     liveAnswers,
+    roomMagicReactions,
   });
 }
 

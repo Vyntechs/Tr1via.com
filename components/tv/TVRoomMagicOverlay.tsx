@@ -142,7 +142,7 @@ export function TVRoomMagicOverlay({
       if (!Number.isFinite(eventAt)) continue;
       if (now - eventAt > STALE_EVENT_MS) continue;
 
-      const id = `${item.questionId}:${item.playerId}:${item.serverNow}`;
+      const id = item.id;
       if (seenReactionIds.current.has(id)) continue;
       seenReactionIds.current.add(id);
       dispatch({
@@ -536,11 +536,9 @@ function isUsableReactionEvent(
 ): event is RoomMagicReactionEvent {
   return (
     !!event &&
+    typeof event.id === "string" &&
+    event.id.length > 0 &&
     isRoomMagicReactionKind(event.kind) &&
-    typeof event.questionId === "string" &&
-    event.questionId.length > 0 &&
-    typeof event.playerId === "string" &&
-    event.playerId.length > 0 &&
     typeof event.serverNow === "string" &&
     event.serverNow.length > 0
   );

@@ -87,6 +87,8 @@ export interface RoomSnapshot {
   /** Most recent Room Magic reaction. Cosmetic-only: never updates
    *  lastBroadcast or triggers a data refetch. */
   lastRoomMagicReaction: RoomMagicReactionEvent | null;
+  /** Durable Room Magic reactions carried only by server-route fallback. */
+  roomMagicReactions?: RoomMagicReactionEvent[];
   /** True while the initial snapshot fetch is in flight. */
   isLoading: boolean;
 }
@@ -132,6 +134,7 @@ const EMPTY: RoomSnapshot = {
   lastBroadcast: null,
   lastFireworksBeat: null,
   lastRoomMagicReaction: null,
+  roomMagicReactions: [],
   isLoading: true,
 };
 
@@ -709,6 +712,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
         lastBroadcast: null,
         lastFireworksBeat: null,
         lastRoomMagicReaction: null,
+        roomMagicReactions: [],
         isLoading: false,
       });
 
@@ -875,14 +879,12 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           // answer/score refetch keys only move for real game-state events.
           if (cancelled) return;
           const p = msg.payload as Record<string, unknown>;
+          const id = p.id;
           const kind = p.kind;
-          const questionId = p.questionId;
-          const playerId = p.playerId;
           const serverNow = p.serverNow;
           if (
+            typeof id !== "string" ||
             !isRoomMagicReactionKind(kind) ||
-            typeof questionId !== "string" ||
-            typeof playerId !== "string" ||
             typeof serverNow !== "string"
           ) {
             return;
@@ -891,9 +893,8 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           setSnapshot((prev) => ({
             ...prev,
             lastRoomMagicReaction: {
+              id,
               kind,
-              questionId,
-              playerId,
               serverNow,
             },
           }));

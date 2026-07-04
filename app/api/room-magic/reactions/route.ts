@@ -108,7 +108,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   if (participationError) return serverError(participationError.message);
   if (!participation) return forbidden("not in this game");
 
-  const { error: insertError } = await admin
+  const { data: insertedReaction, error: insertError } = await admin
     .from("room_magic_reactions")
     .insert({
       night_id: night.id,
@@ -116,7 +116,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       question_id: question.id,
       player_id: player.id,
       kind: parsed.data.kind,
-    });
+    })
+    .select("id, created_at")
+    .single();
 
   if (insertError) {
     if (insertError.code === "23505") {
@@ -124,14 +126,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     }
     return serverError(insertError.message);
   }
+  if (!insertedReaction?.id || !insertedReaction.created_at) {
+    return serverError("room magic reaction insert returned no receipt");
+  }
 
-  const serverNow = new Date().toISOString();
   try {
     await broadcastRoomMagicReaction(night.room_code, {
+      id: insertedReaction.id,
       kind: parsed.data.kind,
-      questionId: question.id,
-      playerId: player.id,
-      serverNow,
+      serverNow: insertedReaction.created_at,
     });
     return ok({ accepted: true, broadcasted: true });
   } catch (error) {

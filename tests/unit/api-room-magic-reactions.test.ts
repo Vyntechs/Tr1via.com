@@ -21,6 +21,8 @@ const GAME_ID = "33333333-3333-3333-3333-333333333333";
 const NIGHT_ID = "44444444-4444-4444-4444-444444444444";
 const PLAYER_ID = "55555555-5555-5555-5555-555555555555";
 const DEVICE_ID = "66666666-6666-6666-6666-666666666666";
+const REACTION_ID = "88888888-8888-8888-8888-888888888888";
+const REACTION_CREATED_AT = "2026-06-30T12:00:30.000Z";
 
 function makeRequest(body: unknown) {
   return new NextRequest("http://test/api/room-magic/reactions", {
@@ -84,9 +86,18 @@ function makeAdmin(opts: FakeAdminOptions = {}) {
   };
 
   const reactionInserts: unknown[] = [];
-  const insertReaction = vi.fn(async (row: unknown) => {
+  const insertReaction = vi.fn((row: unknown) => {
     reactionInserts.push(row);
-    return { error: opts.insertError ?? null };
+    const builder = {
+      select: vi.fn(() => builder),
+      single: vi.fn(async () => ({
+        data: opts.insertError
+          ? null
+          : { id: REACTION_ID, created_at: REACTION_CREATED_AT },
+        error: opts.insertError ?? null,
+      })),
+    };
+    return builder;
   });
 
   const client = {
@@ -188,10 +199,9 @@ describe("POST /api/room-magic/reactions", () => {
     expect(broadcastMock.broadcastRoomMagicReaction).toHaveBeenCalledWith(
       "DEMO42",
       {
+        id: REACTION_ID,
         kind: "wow",
-        questionId: QUESTION_ID,
-        playerId: PLAYER_ID,
-        serverNow: "2026-06-30T12:00:30.000Z",
+        serverNow: REACTION_CREATED_AT,
       },
     );
   });

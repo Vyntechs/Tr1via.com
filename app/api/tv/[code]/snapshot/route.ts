@@ -18,11 +18,15 @@
 
 import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
+import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import {
   serializeBoardQuestion,
   type TVBoardQuestionRow,
 } from "@/lib/tv/serializeBoardQuestion";
+
+const RECENT_REACTION_WINDOW_MS = 30_000;
+const RECENT_REACTION_LIMIT = 25;
 
 export async function GET(
   _req: Request,
@@ -46,6 +50,9 @@ export async function GET(
   if (nightError) return serverError(nightError.message);
   if (!night) return notFound("room not found");
   const nightId = night.id;
+  const roomMagicEnabled = Boolean(
+    (night as { room_magic_enabled?: boolean | null }).room_magic_enabled,
+  );
   // Supabase returns the joined `hosts` field as either an object or an
   // array depending on relationship inference. Normalize to one object.
   const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
@@ -59,6 +66,7 @@ export async function GET(
     pickedQuestionsRes,
     liveQuestionRes,
     recentRevealsRes,
+    recentRoomMagicReactionsRes,
   ] = await Promise.all([
     admin
       .from("games")
@@ -100,6 +108,18 @@ export async function GET(
       .select("id, game_id, question_id, event, occurred_at, metadata")
       .order("occurred_at", { ascending: false })
       .limit(50),
+    roomMagicEnabled
+      ? admin
+          .from("room_magic_reactions")
+          .select("id, kind, created_at")
+          .eq("night_id", nightId)
+          .gte(
+            "created_at",
+            new Date(Date.now() - RECENT_REACTION_WINDOW_MS).toISOString(),
+          )
+          .order("created_at", { ascending: true })
+          .limit(RECENT_REACTION_LIMIT)
+      : Promise.resolve({ data: [], error: null }),
   ]);
 
   if (gamesRes.error) return serverError(gamesRes.error.message);
@@ -107,6 +127,9 @@ export async function GET(
   if (categoriesRes.error) return serverError(categoriesRes.error.message);
   if (pickedQuestionsRes.error) return serverError(pickedQuestionsRes.error.message);
   if (recentRevealsRes.error) return serverError(recentRevealsRes.error.message);
+  if (recentRoomMagicReactionsRes.error) {
+    return serverError(recentRoomMagicReactionsRes.error.message);
+  }
 
   const games = gamesRes.data ?? [];
   const gameIds = new Set(games.map((g) => g.id));
@@ -129,6 +152,13 @@ export async function GET(
 
   // Recent reveals belonging to this night, newest first.
   const reveals = (recentRevealsRes.data ?? []).filter((r) => gameIds.has(r.game_id));
+  const roomMagicReactions = (recentRoomMagicReactionsRes.data ?? [])
+    .filter((row) => isRoomMagicReactionKind(row.kind))
+    .map((row) => ({
+      id: row.id,
+      kind: row.kind,
+      serverNow: row.created_at,
+    }));
 
   // Current game = first 'live'; falls back to most-recent 'done', then a
   // 'ready' game (so the TV shows the lobby/grid even between hands).
@@ -245,9 +275,7 @@ export async function GET(
       closedAt: night.closed_at,
       scheduledAt: night.scheduled_at,
       isLocked: night.is_locked,
-      roomMagicEnabled: Boolean(
-        (night as { room_magic_enabled?: boolean | null }).room_magic_enabled,
-      ),
+      roomMagicEnabled,
     },
     games: games.map((g) => ({
       id: g.id,
@@ -289,5 +317,6 @@ export async function GET(
       occurredAt: r.occurred_at,
       metadata: r.metadata,
     })),
+    roomMagicReactions,
   });
 }

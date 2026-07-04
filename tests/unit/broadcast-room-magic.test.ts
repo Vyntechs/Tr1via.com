@@ -21,9 +21,8 @@ describe("broadcastRoomMagicReaction", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     await broadcastRoomMagicReaction("DEMO42", {
+      id: "reaction-1",
       kind: "wow",
-      questionId: "question-1",
-      playerId: "player-1",
       serverNow: "2026-06-30T12:00:00.000Z",
     });
 
@@ -37,9 +36,8 @@ describe("broadcastRoomMagicReaction", () => {
               topic: "room:DEMO42",
               event: "room-magic-reaction",
               payload: {
+                id: "reaction-1",
                 kind: "wow",
-                questionId: "question-1",
-                playerId: "player-1",
                 serverNow: "2026-06-30T12:00:00.000Z",
               },
             },

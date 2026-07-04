@@ -19,6 +19,7 @@ import type {
   RevealRow,
 } from "@/lib/supabase/types";
 import type { RoomSnapshot } from "@/lib/hooks/useRoom";
+import type { RoomMagicReactionEvent } from "@/lib/room-magic/reactions";
 import { pickCurrentGame } from "./pickCurrentGame";
 
 export interface RoomSnapshotPayload {
@@ -47,6 +48,8 @@ export interface RoomSnapshotPayload {
    *  by the HOST console for lock counts + the reveal "X of N got it". Same data
    *  the public TV feed already exposes; the player surface ignores it. */
   liveAnswers: AnswerRow[];
+  /** Host-fallback-only display-safe Room Magic reactions. */
+  roomMagicReactions?: RoomMagicReactionEvent[];
 }
 
 /**
@@ -81,6 +84,7 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
     // firework beat is a transient broadcast, never reconstructed from a poll.
     lastFireworksBeat: null,
     lastRoomMagicReaction: null,
+    roomMagicReactions: payload.roomMagicReactions ?? [],
     isLoading: false,
   };
 }

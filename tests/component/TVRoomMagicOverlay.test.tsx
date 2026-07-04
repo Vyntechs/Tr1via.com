@@ -5,13 +5,12 @@ import type { RoomMagicReactionEvent } from "@/lib/room-magic/reactions";
 
 function reaction(
   kind: RoomMagicReactionEvent["kind"],
-  playerId: string,
+  id: string,
   serverNow = new Date(Date.now()).toISOString(),
 ): RoomMagicReactionEvent {
   return {
+    id,
     kind,
-    questionId: "question-1",
-    playerId,
     serverNow,
   };
 }

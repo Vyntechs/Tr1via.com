@@ -117,9 +117,8 @@ import { useRoom } from "@/lib/hooks/useRoom";
 import { useTVRoom } from "@/lib/hooks/useTVRoom";
 
 const roomMagicEvent = {
+  id: "reaction-1",
   kind: "wow",
-  questionId: "11111111-1111-1111-1111-111111111111",
-  playerId: "22222222-2222-2222-2222-222222222222",
   serverNow: "2026-06-30T12:00:30.000Z",
 };
 
@@ -209,8 +208,7 @@ describe("Room Magic broadcast hooks", () => {
     act(() => {
       supaMock.client.broadcast("room-magic-reaction", {
         kind: "chat",
-        questionId: roomMagicEvent.questionId,
-        playerId: roomMagicEvent.playerId,
+        id: roomMagicEvent.id,
         serverNow: roomMagicEvent.serverNow,
       });
     });
