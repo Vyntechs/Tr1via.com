@@ -1,9 +1,9 @@
 // Thin top-of-screen ribbon that surfaces network trouble. Renders only
 // when the connection isn't healthy, so the happy path has zero pixels.
 //
-// Visual character: amber for "reconnecting" (recoverable, transient),
-// red-ish for "offline" (user-actionable). Themed via the current theme
-// tokens so it sits inside any palette.
+// Visual character: amber for recoverable catch-up states, red-ish for
+// user-actionable outages. Themed via the current theme tokens so it sits
+// inside any palette.
 
 "use client";
 
@@ -26,14 +26,14 @@ export function ConnectionRibbon({ status }: ConnectionRibbonProps) {
   const calm = backup || reconnecting;
   const bg = calm ? t.pop : t.wrong;
   const label = backup
-    ? "Slow connection"
+    ? "Catching up"
     : reconnecting
       ? "Reconnecting…"
       : unreachable
         ? "Can't reach the server"
         : "You're offline";
   const tail = backup
-    ? "The game is still live — running on a backup connection. Hang tight."
+    ? "Game is still live. Keep playing; updates may take a moment."
     : reconnecting
       ? "We'll send your answer as soon as the signal comes back."
       : unreachable

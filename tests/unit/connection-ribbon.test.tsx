@@ -32,6 +32,16 @@ describe("ConnectionRibbon", () => {
     expect(screen.getByTestId(TID.connection.ribbon)).toBeInTheDocument();
   });
 
+  it("frames backup mode as a calm catch-up state", () => {
+    render(wrap(<ConnectionRibbon status="backup" />));
+    const ribbon = screen.getByRole("status");
+    expect(ribbon).toHaveTextContent(/catching up/i);
+    expect(ribbon).toHaveTextContent(/game is still live/i);
+    expect(ribbon).toHaveTextContent(/keep playing/i);
+    expect(ribbon).not.toHaveTextContent(/slow/i);
+    expect(ribbon).not.toHaveTextContent(/backup connection/i);
+  });
+
   it("keeps the unreachable message distinct from 'reconnecting'", () => {
     render(wrap(<ConnectionRibbon status="reconnecting" />));
     const ribbon = screen.getByRole("status");
