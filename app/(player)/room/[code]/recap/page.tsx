@@ -118,18 +118,16 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
     };
   }, [me]);
 
-  const handleSuggestTopic = useCallback(async () => {
-    const text = prompt("Suggest a topic for next week (one phrase):");
-    if (!text?.trim()) return;
-    try {
-      await fetch("/api/topic-suggestions", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: text.trim() }),
-      });
-    } catch (e) {
-      console.warn("topic suggestion failed", e);
+  const handleSuggestTopic = useCallback(async (text: string) => {
+    const res = await fetch("/api/topic-suggestions", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? "Could not save topic suggestion.");
     }
   }, []);
 
@@ -197,7 +195,7 @@ function Placeholder({ roomCode }: { roomCode: string }) {
   const { t } = useTheme();
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow={`ROOM · ${formatRoomCode(roomCode)}`} />
+      <PhoneHeader eyebrow={`NIGHT · ${formatRoomCode(roomCode)}`} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <Display size={48} color={t.ink}>
           Adding

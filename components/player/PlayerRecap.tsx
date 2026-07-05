@@ -1,10 +1,11 @@
 // Player phone — RECAP (everyone else).
 // Warm personal recap for the non-winners. No leaderboard pressure — stats
 // are private to this player. Closes with a "next Wednesday" reminder and a
-// soft "suggest a topic" CTA to keep the room engaged between nights.
+// soft "suggest a topic" CTA to keep players engaged between nights.
 
 "use client";
 
+import { useState } from "react";
 import {
   useTheme,
   Display,
@@ -37,8 +38,8 @@ export interface PlayerRecapProps {
   blurb?: string;
   /** "Stayed in the top ten all night" headline blurb (optional). */
   highlight?: string;
-  /** Action to take when the player taps "Suggest a topic". */
-  onSuggestTopic?: () => void;
+  /** Action to take when the player saves a topic idea. */
+  onSuggestTopic?: (text: string) => void | Promise<void>;
 }
 
 export function PlayerRecap({
@@ -53,6 +54,9 @@ export function PlayerRecap({
   onSuggestTopic,
 }: PlayerRecapProps = {}) {
   const { t } = useTheme();
+  const [suggestionText, setSuggestionText] = useState("");
+  const [suggestionState, setSuggestionState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const canSubmitSuggestion = Boolean(onSuggestTopic) && suggestionText.trim().length > 0 && suggestionState !== "saving";
   const defaultStats: PlayerRecapStat[] = [
     { label: "GOT RIGHT",      value: "28 / 42",      color: t.correct },
     { label: "BEST CATEGORY",  value: "Music · 7/7",  color: categoryColor("Music", t.accent) },
@@ -60,6 +64,19 @@ export function PlayerRecap({
     { label: "LONGEST STREAK", value: "× 4",          color: t.accent },
   ];
   const rows = stats ?? defaultStats;
+
+  async function handleSubmitSuggestion() {
+    const trimmed = suggestionText.trim();
+    if (!trimmed || !onSuggestTopic) return;
+    setSuggestionState("saving");
+    try {
+      await onSuggestTopic(trimmed);
+      setSuggestionText(trimmed);
+      setSuggestionState("saved");
+    } catch {
+      setSuggestionState("error");
+    }
+  }
 
   return (
     <PhoneScreen data-testid="player-recap">
@@ -146,23 +163,80 @@ export function PlayerRecap({
             </div>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onSuggestTopic}
+        <div
           style={{
-            background: "transparent",
-            color: t.ink,
-            border: `1px solid ${t.line}`,
+            padding: "12px 14px",
             borderRadius: 14,
-            padding: "12px 0",
-            fontSize: 13,
-            fontWeight: 600,
-            fontFamily: "var(--font-sans)",
-            cursor: onSuggestTopic ? "pointer" : "default",
+            border: `1px solid ${suggestionState === "saved" ? t.correct : t.line}`,
+            background: "transparent",
           }}
         >
-          Suggest a topic for next week
-        </button>
+          <label
+            htmlFor="next-week-topic"
+            style={{ display: "block", fontSize: 11, color: t.inkMid, fontWeight: 700 }}
+          >
+            Suggest one topic for next week
+          </label>
+          <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
+            <input
+              id="next-week-topic"
+              type="text"
+              value={suggestionText}
+              maxLength={100}
+              onChange={(e) => {
+                setSuggestionText(e.target.value);
+                if (suggestionState !== "saving") setSuggestionState("idle");
+              }}
+              placeholder="Movies from the 2000s"
+              disabled={!onSuggestTopic || suggestionState === "saving"}
+              style={{
+                minWidth: 0,
+                flex: 1,
+                background: t.surface,
+                border: `1px solid ${t.line}`,
+                borderRadius: 10,
+                color: t.ink,
+                fontFamily: "var(--font-sans)",
+                fontSize: 13,
+                padding: "10px 11px",
+                outline: "none",
+              }}
+            />
+            <button
+              type="button"
+              onClick={handleSubmitSuggestion}
+              disabled={!canSubmitSuggestion}
+              style={{
+                border: "none",
+                borderRadius: 10,
+                background: canSubmitSuggestion ? t.ink : t.surface,
+                color: canSubmitSuggestion ? t.paper : t.inkMute,
+                fontSize: 12,
+                fontWeight: 800,
+                fontFamily: "var(--font-sans)",
+                padding: "0 12px",
+                cursor: canSubmitSuggestion ? "pointer" : "not-allowed",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {suggestionState === "saving"
+                ? "Saving..."
+                : suggestionState === "error"
+                  ? "Try again"
+                  : "Save idea"}
+            </button>
+          </div>
+          {suggestionState === "saved" && (
+            <div style={{ marginTop: 7, fontSize: 11, color: t.correct, fontWeight: 700 }}>
+              Saved for next week.
+            </div>
+          )}
+          {suggestionState === "error" && (
+            <div style={{ marginTop: 7, fontSize: 11, color: t.wrong, fontWeight: 700 }}>
+              Could not save. Try again.
+            </div>
+          )}
+        </div>
       </div>
     </PhoneScreen>
   );
