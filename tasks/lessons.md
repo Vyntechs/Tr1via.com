@@ -12,3 +12,8 @@ Reason: Participants or removals can change between app reads and later RPCs.
 Trigger: PR was framed as keepable before performance and architecture lenses were convened.
 Rule: For live-game reliability PRs, pressure-test cost, product, and abuse risk before merge guidance.
 Reason: Cosmetic fixes can still add persistent load or public surface area.
+
+### reaction-art-direction-approval
+Trigger: Room Magic reaction effect looked technically visible but founder rejected the visual direction.
+Rule: Treat visual rejection as stop-and-revert before iterating.
+Reason: Layering more polish on a rejected direction wastes validation time.
