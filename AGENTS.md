@@ -82,12 +82,12 @@ LLM models (from `lib/ai/`): generation `DEFAULT_MODEL = "claude-sonnet-4-6"`; v
 - `scripts/` holds prod validation + model-benchmark utilities (`.mjs`).
 
 ## Gotchas
-- **Deploy/merge/migration/push-to-main are the founder's call only — PR-first, real users. Never deploy during a live Wednesday show** (per HANDOFF.md).
+- **Deploy/merge/migration/push-to-main are the founder's call only — PR-first, real users. Never deploy during a live Wednesday show.**
 - `lib/supabase/admin.ts` bypasses RLS — **server-only, never import into a Client Component**. Use `server.ts`/`client.ts` (RLS-on) for anything client-facing.
 - `lib/supabase/types.ts` is generated — change schema via a migration in `supabase/migrations/`, then `npm run typegen`. Do not hand-edit.
 - Browser env vars must be referenced as literal `process.env.NEXT_PUBLIC_X` — dynamic `process.env[name]` lookups are NOT inlined by the bundler and come back `undefined` in the browser (see `lib/supabase/client.ts`).
 - `api/_test/*` routes require BOTH `TEST_AUTH_ENABLED=1` and a matching `x-test-secret` header (== `TEST_SECRET`); missing either → 404 (deny existence). Never enabled in prod.
 - `MOCK_EXTERNAL=1` is set only by the test orchestration — never set it locally or in CI by hand; it reroutes Anthropic/Pexels to MSW.
 - Realtime uses the REST broadcast endpoint (not WebSocket `channel.send()`) because the subscribe round-trip costs ~1-1.5s from a serverless function — don't "simplify" it back.
-- Current branch at handoff: `fix/rls-correct-index-leak` (commit-only, not pushed/merged). In-flight effort: "July pyrotechnics" 4-phase plan in `tasks/july-pyrotechnics-plan.md` — hard-gated, one phase per session; do not auto-advance phases.
-- `npx tsc --noEmit` has 2 known pre-existing errors in `HostHomeClient-founder-build.test.tsx` (unrelated baseline noise per HANDOFF.md).
+- Product north star and scope live in `docs/product/tr1via-product-vision-and-scope.md`; use that over old handoff/todo notes when choosing new work.
+- `npx tsc --noEmit` has 2 known pre-existing errors in `HostHomeClient-founder-build.test.tsx` (baseline noise until that test fixture is updated).
