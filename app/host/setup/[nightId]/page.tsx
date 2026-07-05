@@ -32,7 +32,7 @@ export default async function SetupOverviewPage({
   const { night, host } = owned;
 
   const admin = getSupabaseAdmin();
-  const [{ data: gameRows }, { data: catRows }, { data: playerRows }] = await Promise.all([
+  const [{ data: gameRows }, { data: catRows }, { data: recentNightRows }] = await Promise.all([
     admin
       .from("games")
       .select("*")
@@ -54,13 +54,23 @@ export default async function SetupOverviewPage({
         .order("position", { ascending: true });
     })(),
     admin
-      .from("players")
+      .from("nights")
       .select("id")
-      .eq("night_id", night.id)
-      .is("removed_at", null),
+      .eq("host_id", host.id)
+      .order("created_at", { ascending: false })
+      .limit(8),
   ]);
   const games = (gameRows ?? []) as GameRow[];
   const categories = (catRows ?? []) as CategoryRow[];
+  const recentNightIds = ((recentNightRows ?? []) as Array<{ id: string }>).map((n) => n.id);
+  const { data: playerRows } =
+    recentNightIds.length === 0
+      ? { data: [] }
+      : await admin
+          .from("players")
+          .select("id")
+          .in("night_id", recentNightIds)
+          .is("removed_at", null);
   const playerIds = ((playerRows ?? []) as Array<{ id: string }>).map((p) => p.id);
   const { data: suggestionRows } =
     playerIds.length === 0

@@ -203,12 +203,6 @@ function HostGenOverviewInner({
             <div style={{ marginTop: 8, fontSize: 12, color: "rgba(14,8,5,.7)" }}>{readyLabel}</div>
           </div>
 
-          <div style={{ padding: "16px 18px", borderRadius: 14, border: `1px solid ${t.line}` }}>
-            <Eyebrow color={t.inkMute} size={10}>OPTIONAL · PLAYER VOTE</Eyebrow>
-            <div style={{ marginTop: 8, fontSize: 14, color: t.ink, fontWeight: 600, letterSpacing: "-0.005em" }}>Open player vote</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid, lineHeight: 1.45 }}>~2 min. Players pick tonight&apos;s topics from their phones.</div>
-          </div>
-
           <div style={{ padding: "16px 18px", borderRadius: 14, background: t.surface }}>
             <Eyebrow color={t.inkMute} size={10}>PLAYER IDEAS FOR NEXT WEEK</Eyebrow>
             <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>

@@ -36,6 +36,7 @@ describe("HostGenOverview player ideas", () => {
     render(<HostGenOverview themeKey="july" topSuggestions={[]} />);
     expect(screen.queryByText(/suggested by the room/i)).toBeNull();
     expect(screen.queryByText(/let the room pick/i)).toBeNull();
+    expect(screen.queryByText(/player vote/i)).toBeNull();
     expect(screen.queryByRole("button", { name: /open the room/i })).toBeNull();
   });
 });
