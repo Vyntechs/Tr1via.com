@@ -267,6 +267,7 @@ export function HostSetupOverviewClient({
         readyLabel={`${lockedCount} of 12 categories locked.`}
         onAddTopic={handleAddTopic}
         topSuggestions={topSuggestions}
+        onUseSuggestion={handleUseSuggestion}
         onOpenSlot={handleOpenSlot}
         onRenameCategory={handleRenameCategory}
         onDeleteCategory={handleDeleteCategory}
