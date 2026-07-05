@@ -391,21 +391,52 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       correctIndexHint?: number,
     ): Promise<void> {
       if (cancelled) return;
-      const [gamesRes, qRes] = await Promise.all([
-        supa
-          .from("games")
-          .select("*")
-          .eq("night_id", nightId)
-          .order("game_no", { ascending: true }),
-        questionId
-          ? supa
-              .from("questions")
-              .select(PLAYER_QUESTION_COLUMNS)
-              .eq("id", questionId)
-              .maybeSingle()
-          : Promise.resolve({ data: null, error: null }),
-      ]);
+      type GamesQueryResult = { data: GameRow[] | null; error: unknown };
+      type QuestionQueryResult = { data: QuestionRow | null; error: unknown };
+      let gamesRes: GamesQueryResult;
+      let qRes: QuestionQueryResult;
+      try {
+        [gamesRes, qRes] = await withTimeout(
+          Promise.all([
+            supa
+              .from("games")
+              .select("*")
+              .eq("night_id", nightId)
+              .order("game_no", { ascending: true }),
+            questionId
+              ? supa
+                  .from("questions")
+                  .select(PLAYER_QUESTION_COLUMNS)
+                  .eq("id", questionId)
+                  .maybeSingle()
+              : Promise.resolve({ data: null, error: null }),
+          ]),
+          BOOTSTRAP_TIMEOUT_MS,
+          "refreshLiveState",
+        );
+      } catch {
+        // A hung/dropped direct read (venue WiFi blip) — treat the same as a
+        // query-level error below rather than leaving state untouched.
+        gamesRes = { data: null, error: "timeout" };
+        qRes = { data: null, error: "timeout" };
+      }
       if (cancelled) return;
+
+      // A real read failure for a TARGETED question fetch (RLS hiccup,
+      // timeout, dropped connection) is not the same as "no question" — the
+      // caller asked about a specific questionId from a broadcast that just
+      // fired. Silently falling through to the "no question" branch below
+      // leaves currentQuestion stale with no explanation — exactly the bug
+      // where a device sticks on the previous screen after a reveal/resolve.
+      // Fall back to the resilient server route (same one bootstrap uses):
+      // it re-derives the full snapshot — including currentQuestion — from a
+      // path that doesn't depend on this device's direct Supabase line, and
+      // surfaces the existing calm "backup" banner instead of silence.
+      if (questionId && qRes.error) {
+        await tryRouteFallback();
+        return;
+      }
+
       const nextGames = (gamesRes.data ?? null) as GameRow[] | null;
       let nextQ = (qRes.data ?? null) as QuestionRow | null;
       // The fetch above omits correct_index. Once the question is FINISHED the
