@@ -5,9 +5,9 @@
 // "Bond movies (Daniel Craig)" comes through cleanly). The host's setup
 // screen aggregates these as a tally ("17 people suggested X this week").
 //
-// One submission per request; the player can submit multiple over the
-// night. We don't dedupe in-DB on (player, text) — fuzzy duplicates ("80s
-// movies" vs "80's movies") are the host's call to merge.
+// One visible suggestion per player; resubmitting edits it. We don't dedupe
+// in-DB by text — fuzzy duplicates ("80s movies" vs "80's movies") are the
+// host's call to merge.
 
 import type { NextRequest } from "next/server";
 import { TopicSuggestionSchema } from "@/lib/api/schemas";
@@ -59,6 +59,30 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (!player) return forbidden("not in any active night");
 
+  const { data: existing } = await admin
+    .from("topic_suggestions")
+    .select("id, text, created_at")
+    .eq("player_id", player.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (existing?.id) {
+    const { data, error } = await admin
+      .from("topic_suggestions")
+      .update({ text: cleaned })
+      .eq("id", existing.id)
+      .select("id, text, created_at")
+      .single();
+    if (error || !data) return serverError(error?.message ?? "could not update suggestion");
+    return ok({
+      suggestionId: data.id,
+      text: data.text,
+      createdAt: data.created_at,
+      updated: true,
+    });
+  }
+
   const { data, error } = await admin
     .from("topic_suggestions")
     .insert({ player_id: player.id, text: cleaned })
@@ -69,5 +93,10 @@ export async function POST(req: NextRequest) {
   // delete on night close); surface it cleanly rather than spinning.
   if (!data.id) return notFound("suggestion did not persist");
 
-  return ok({ suggestionId: data.id, text: data.text, createdAt: data.created_at }, 201);
+  return ok({
+    suggestionId: data.id,
+    text: data.text,
+    createdAt: data.created_at,
+    updated: false,
+  }, 201);
 }

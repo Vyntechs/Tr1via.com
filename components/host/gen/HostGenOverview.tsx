@@ -72,9 +72,11 @@ export interface HostGenOverviewProps {
   /** Called when the host confirms deleting a category. Returns a promise
    *  so the slot can show an error if the DELETE fails. */
   onDeleteCategory?: (categoryId: string) => Promise<void>;
-  /** Called when the host taps "Open the room". Disabled until ready. */
+  /** Called when the host taps "Open the night". Disabled until ready. */
   onOpenRoom?: () => void;
-  /** True if Open the room is enabled (all 12 categories ready). */
+  /** Called when the host starts a category from a player idea. */
+  onUseSuggestion?: (topic: string) => void;
+  /** True if Open the night is enabled (all 12 categories ready). */
   isReadyToOpen?: boolean;
   /** True while the open-room POST is in flight. */
   isOpening?: boolean;
@@ -139,6 +141,7 @@ function HostGenOverviewInner({
   onRenameCategory,
   onDeleteCategory,
   onOpenRoom,
+  onUseSuggestion,
   isReadyToOpen = false,
   isOpening = false,
 }: Omit<HostGenOverviewProps, "themeKey">) {
@@ -200,22 +203,45 @@ function HostGenOverviewInner({
             <div style={{ marginTop: 8, fontSize: 12, color: "rgba(14,8,5,.7)" }}>{readyLabel}</div>
           </div>
 
-          <div style={{ padding: "16px 18px", borderRadius: 14, border: `1px solid ${t.line}` }}>
-            <Eyebrow color={t.inkMute} size={10}>OPTIONAL · LET THE ROOM PICK</Eyebrow>
-            <div style={{ marginTop: 8, fontSize: 14, color: t.ink, fontWeight: 600, letterSpacing: "-0.005em" }}>Open audience vote</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid, lineHeight: 1.45 }}>~2 min. Majority wins. Players pick tonight&apos;s topics from their phones.</div>
-          </div>
-
           <div style={{ padding: "16px 18px", borderRadius: 14, background: t.surface }}>
-            <Eyebrow color={t.inkMute} size={10}>SUGGESTED BY THE ROOM</Eyebrow>
-            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+            <Eyebrow color={t.inkMute} size={10}>PLAYER IDEAS FOR NEXT WEEK</Eyebrow>
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
               {topSuggestions.length === 0 ? (
-                <div style={{ fontSize: 12, color: t.inkMute }}>No suggestions yet.</div>
+                <div style={{ fontSize: 12, color: t.inkMute }}>No player ideas yet.</div>
               ) : (
                 topSuggestions.map((s) => (
-                  <div key={s.name} style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <span style={{ fontSize: 13, color: t.ink, fontWeight: 500 }}>{s.name}</span>
+                  <div
+                    key={s.name}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "1fr auto auto",
+                      alignItems: "center",
+                      gap: 8,
+                    }}
+                  >
+                    <span style={{ minWidth: 0, fontSize: 13, color: t.ink, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {s.name}
+                    </span>
                     <Numeric size={12} color={t.inkMid}>{s.count}</Numeric>
+                    <button
+                      type="button"
+                      aria-label={`Use ${s.name}`}
+                      onClick={() => onUseSuggestion?.(s.name)}
+                      disabled={!onUseSuggestion}
+                      style={{
+                        border: `1px solid ${t.line}`,
+                        borderRadius: 8,
+                        background: "transparent",
+                        color: t.ink,
+                        fontFamily: "var(--font-sans)",
+                        fontSize: 11,
+                        fontWeight: 800,
+                        padding: "5px 7px",
+                        cursor: onUseSuggestion ? "pointer" : "default",
+                      }}
+                    >
+                      Use
+                    </button>
                   </div>
                 ))
               )}
@@ -243,10 +269,10 @@ function HostGenOverviewInner({
             }}
           >
             {isOpening
-              ? "Opening the room…"
+              ? "Opening the night..."
               : isReadyToOpen
-                ? "Open the room  →"
-                : "Open the room · finish setup first"}
+                ? "Open the night ->"
+                : "Open the night · finish setup first"}
           </button>
         </div>
       </div>
