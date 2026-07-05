@@ -76,7 +76,7 @@ export interface HostGenOverviewProps {
   onOpenRoom?: () => void;
   /** Called when the host starts a category from a player idea. */
   onUseSuggestion?: (topic: string) => void;
-  /** True if Open the room is enabled (all 12 categories ready). */
+  /** True if Open the night is enabled (all 12 categories ready). */
   isReadyToOpen?: boolean;
   /** True while the open-room POST is in flight. */
   isOpening?: boolean;
