@@ -17,6 +17,7 @@ export interface HostSetupTopicClientProps {
   gameNo: number;
   position: number;
   themeKey: string;
+  initialTopic?: string;
 }
 
 export function HostSetupTopicClient({
@@ -25,6 +26,7 @@ export function HostSetupTopicClient({
   gameNo,
   position,
   themeKey,
+  initialTopic = "",
 }: HostSetupTopicClientProps) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
@@ -86,6 +88,7 @@ export function HostSetupTopicClient({
         eyebrow={`GAME ${gameNo} · SLOT ${position} OF 6`}
         onSubmit={handleSubmit}
         isSubmitting={submitting}
+        initialTopic={initialTopic}
       />
       {error && (
         <div

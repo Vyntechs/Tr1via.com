@@ -20,6 +20,7 @@ export const dynamic = "force-dynamic";
 interface SearchParams {
   game?: string;
   position?: string;
+  topic?: string;
 }
 
 export default async function SetupTopicPage({
@@ -40,6 +41,10 @@ export default async function SetupTopicPage({
   if (!gameId || Number.isNaN(position) || position < 1 || position > 6) {
     redirect(`/host/setup/${nightId}`);
   }
+  const initialTopic =
+    typeof qs.topic === "string"
+      ? qs.topic.trim().replace(/\s+/g, " ").slice(0, 100)
+      : "";
 
   // Verify the game belongs to this night (defensive; the API route also
   // checks). This catches a malicious query-string before we render the
@@ -61,6 +66,7 @@ export default async function SetupTopicPage({
       gameNo={game.game_no}
       position={position}
       themeKey={resolveTheme(owned.night, owned.host)}
+      initialTopic={initialTopic}
     />
   );
 }
