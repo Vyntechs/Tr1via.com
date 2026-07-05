@@ -3,7 +3,7 @@
 //   • taps an empty slot → topic entry → POST /api/categories
 //   • taps a slot mid-generation → /pick/[categoryId]
 //   • taps a locked / review slot → /pick/[categoryId] (to keep editing)
-//   • taps "Open the room" → POST /api/nights/[id]/open → /host/live/[id]
+//   • taps "Open the night" → POST /api/nights/[id]/open → /host/live/[id]
 //
 // Server Component: pulls the night + games + categories so the first
 // paint already has the full shape. Hands off to HostSetupOverviewClient
@@ -12,6 +12,7 @@
 import { notFound, redirect } from "next/navigation";
 import { requireOwnedNight } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { buildTopTopicSuggestions, type TopicSuggestionSourceRow } from "@/lib/host/topicSuggestions";
 import type { CategoryRow, GameRow } from "@/lib/supabase/types";
 import { HostSetupOverviewClient } from "./HostSetupOverviewClient";
 
@@ -31,7 +32,7 @@ export default async function SetupOverviewPage({
   const { night, host } = owned;
 
   const admin = getSupabaseAdmin();
-  const [{ data: gameRows }, { data: catRows }] = await Promise.all([
+  const [{ data: gameRows }, { data: catRows }, { data: playerRows }] = await Promise.all([
     admin
       .from("games")
       .select("*")
@@ -52,9 +53,26 @@ export default async function SetupOverviewPage({
         .in("game_id", gameIds)
         .order("position", { ascending: true });
     })(),
+    admin
+      .from("players")
+      .select("id")
+      .eq("night_id", night.id)
+      .is("removed_at", null),
   ]);
   const games = (gameRows ?? []) as GameRow[];
   const categories = (catRows ?? []) as CategoryRow[];
+  const playerIds = ((playerRows ?? []) as Array<{ id: string }>).map((p) => p.id);
+  const { data: suggestionRows } =
+    playerIds.length === 0
+      ? { data: [] }
+      : await admin
+          .from("topic_suggestions")
+          .select("player_id, text, created_at")
+          .in("player_id", playerIds)
+          .order("created_at", { ascending: false });
+  const topSuggestions = buildTopTopicSuggestions(
+    (suggestionRows ?? []) as TopicSuggestionSourceRow[],
+  );
 
   return (
     <HostSetupOverviewClient
@@ -66,6 +84,7 @@ export default async function SetupOverviewPage({
       initialThemeKey={night.theme_key}
       hostDefaultThemeKey={host.default_theme_key}
       initialRoomMagicEnabled={Boolean(night.room_magic_enabled)}
+      topSuggestions={topSuggestions}
     />
   );
 }

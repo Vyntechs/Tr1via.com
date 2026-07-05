@@ -10,6 +10,7 @@ import { HostGenOverview, type GameOverviewData, type CategorySlotData } from "@
 import { PalettePeek } from "@/components/shared/PalettePeek";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
+import type { HostTopicSuggestion } from "@/lib/host/topicSuggestions";
 import type { CategoryRow, GameRow } from "@/lib/supabase/types";
 
 export interface HostSetupOverviewClientProps {
@@ -25,6 +26,7 @@ export interface HostSetupOverviewClientProps {
   hostDefaultThemeKey: string;
   /** Night-level cosmetic player reaction toggle. Default false for Classic. */
   initialRoomMagicEnabled: boolean;
+  topSuggestions?: HostTopicSuggestion[];
 }
 
 const SLOTS_PER_GAME = 6;
@@ -38,6 +40,7 @@ export function HostSetupOverviewClient({
   initialThemeKey,
   hostDefaultThemeKey,
   initialRoomMagicEnabled,
+  topSuggestions = [],
 }: HostSetupOverviewClientProps) {
   const router = useRouter();
   const [opening, setOpening] = useState(false);
@@ -165,9 +168,31 @@ export function HostSetupOverviewClient({
     }
   }
 
-  function handleAddTopic(gameId: string, position: number) {
-    const url = `/host/setup/${nightId}/topic?game=${encodeURIComponent(gameId)}&position=${position}`;
-    router.push(url);
+  function firstEmptySlot() {
+    if (!overview) return null;
+    for (const game of overview) {
+      const idx = game.rows.findIndex((row) => row.status === "empty");
+      if (idx >= 0) return { gameId: game.gameId, position: idx + 1 };
+    }
+    return null;
+  }
+
+  function handleAddTopic(gameId: string, position: number, topic?: string) {
+    const params = new URLSearchParams({
+      game: gameId,
+      position: String(position),
+    });
+    if (topic?.trim()) params.set("topic", topic.trim());
+    router.push(`/host/setup/${nightId}/topic?${params.toString()}`);
+  }
+
+  function handleUseSuggestion(topic: string) {
+    const slot = firstEmptySlot();
+    if (!slot) {
+      setError("All topic slots are filled.");
+      return;
+    }
+    handleAddTopic(slot.gameId, slot.position, topic);
   }
 
   function handleOpenSlot(categoryId: string) {
@@ -241,6 +266,7 @@ export function HostSetupOverviewClient({
         readyPct={pct}
         readyLabel={`${lockedCount} of 12 categories locked.`}
         onAddTopic={handleAddTopic}
+        topSuggestions={topSuggestions}
         onOpenSlot={handleOpenSlot}
         onRenameCategory={handleRenameCategory}
         onDeleteCategory={handleDeleteCategory}
