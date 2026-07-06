@@ -17,3 +17,18 @@ Reason: Cosmetic fixes can still add persistent load or public surface area.
 Trigger: Room Magic reaction effect looked technically visible but founder rejected the visual direction.
 Rule: Treat visual rejection as stop-and-revert before iterating.
 Reason: Layering more polish on a rejected direction wastes validation time.
+
+### weekly-prod-readiness-is-not-launch-readiness
+Trigger: Brandon asks whether tr1via is ready for host at the next scheduled game.
+Rule: Treat it as a weekly live system; answer prep, risk, alert, and rollback state.
+Reason: The product is already used in production, not waiting for first launch.
+
+### prod-smoke-budget-matches-host-flow
+Trigger: Prod smoke times out while live generation keeps heartbeating in the host flow.
+Rule: Match smoke timeouts to the live UX budget before calling it an outage.
+Reason: Alerts should catch broken production, not expected long generation.
+
+### room-magic-copy-no-role-labels
+Trigger: Room Magic marketing visual uses unexplained role labels like TV, Marn, or Host.
+Rule: Use explicit room-effect copy and player reactions instead of internal stage labels.
+Reason: Hosts judge the feature by screenshot clarity before reading docs.
