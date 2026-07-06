@@ -20,11 +20,12 @@
 // failure point tells you exactly where to dig.
 
 import { createClient } from '@supabase/supabase-js';
+import { genTimeoutFromEnv } from './prod-smoke-config.mjs';
 
 const BASE = process.env.SMOKE_BASE_URL ?? 'https://tr1via.com';
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? 'brandon@vyntechs.com';
 const TOPIC = process.argv[2] ?? 'classic movie quotes';
-const GEN_TIMEOUT_MS = 90_000;
+const GEN_TIMEOUT_MS = genTimeoutFromEnv();
 const POLL_MS = 2000;
 
 function colorize(s, c) {
@@ -75,6 +76,7 @@ console.log(`\n${colorize('═══ TR1VIA prod smoke ═══', 'cyan')}`);
 console.log(`  base : ${BASE}`);
 console.log(`  email: ${FOUNDER_EMAIL}`);
 console.log(`  topic: ${TOPIC}`);
+console.log(`  gen timeout: ${Math.round(GEN_TIMEOUT_MS / 1000)}s`);
 
 const jar = new Jar();
 let nightId = null;

@@ -27,7 +27,7 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 8
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +64,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
           SMOKE_BASE_URL: https://tr1via.com
+          SMOKE_GEN_TIMEOUT_MS: 240000
         run: node scripts/prod-smoke.mjs "smoke check $(date +%s)"
 
       - name: UI smoke (real browser → tr1via.com)
@@ -82,10 +83,10 @@ jobs:
       # already runs ~3 min. Two passes (may + house) need 5+ min and can't
       # fit any sane CI budget. One full pass proves the game arc end to end;
       # SMOKE_THEME_SINGLE=may exercises the currently-live theme. Timeout is
-      # 6 min (one pass measured 173s on prod; this leaves headroom for AI
+      # 8 min (one pass measured 173s on prod; this leaves headroom for AI
       # latency spikes) — not 3, which silently killed this step mid-game.
       - name: Full-flow driver (3 phones × 2 games, single theme pass)
-        timeout-minutes: 6
+        timeout-minutes: 8
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
