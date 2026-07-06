@@ -32,7 +32,7 @@ describe("ThemeCharacterBand", () => {
     expect(screen.getByText(/players tap reactions/i)).toBeTruthy();
     expect(band.textContent).not.toMatch(/\bMarn\b/);
     expect(band.textContent).not.toMatch(/\bTV\b/);
-    expect(band.textContent).not.toMatch(/\bHost\b/);
+    expect(band.textContent).not.toMatch(/\bhost\b/i);
   });
 
   it("marks itself decorative so product copy remains the accessible focus", () => {

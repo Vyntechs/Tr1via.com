@@ -125,7 +125,7 @@ export function ThemeCharacterBand({
             })}
           </span>
           <span className="grid grid-cols-3 gap-2">
-            {["player taps", "host sees", "screen blooms"].map((label) => (
+            {["player taps", "room reacts", "screen blooms"].map((label) => (
               <span
                 key={label}
                 className="rounded-xl px-2 py-2 text-center text-[9px] font-semibold leading-tight"
