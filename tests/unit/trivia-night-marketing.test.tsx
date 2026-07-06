@@ -40,6 +40,7 @@ describe("/trivia-night marketing landing", () => {
     expect(screen.getAllByText(/three surfaces/i).length).toBeGreaterThan(0);
     expect(screen.getByTestId("landing-surface-stage")).toBeTruthy();
     expect(screen.getByText(/seasonal room system/i)).toBeTruthy();
+    expect(screen.getByText(/preview Room Magic/i)).toBeTruthy();
   });
 
   it("renders the Heather trust proof on the landing page", () => {
