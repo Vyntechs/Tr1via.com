@@ -1,7 +1,7 @@
 # TR1VIA Product Vision, Scope, and Development Doctrine
 
 **Status:** canonical product scope draft
-**Last updated:** 2026-06-29
+**Last updated:** 2026-07-07
 
 ## 1. Product Doctrine
 
@@ -26,6 +26,38 @@ Every future TR1VIA mode must preserve the product grammar:
 - Heather's Classic stays protected.
 
 TR1VIA expands by adding modes around Classic, not by eroding Classic.
+
+### CEO Operating Doctrine
+
+TR1VIA has two non-negotiable truths:
+
+- Heather's product stays personal, familiar, and dependable.
+- The company still aims to capture a very large market.
+
+Those are not opposing goals. Heather's live night is the proof that the product
+works in a real room. Market-capture work should preserve that proof and build
+commercial leverage around it.
+
+The default strategy is:
+
+- keep Heather's Classic flow stable unless she explicitly opts into a change
+- turn her comfort into the product's reliability benchmark
+- add venue, host, content, pricing, onboarding, and GTM layers around Classic
+- make new game formats separate modes, not surprise changes to Classic
+- let Heather keep using TR1VIA as her personal product while the business grows
+
+The agent operating posture is delegated execution with gated authority. Brandon
+sets the CEO intent and hard gates; agents should drive discovery, planning,
+implementation, proof, and PRs without waiting for Brandon to micromanage. Agents
+still stop for production deploys, money/pricing commitments, risky data/auth
+changes, public claims, and anything that would materially alter Heather's live
+flow.
+
+Business ambition should be treated seriously. TR1VIA is not just a nice tool for
+one host; it should be built like a category-defining room-game platform. The
+way to pursue that ambition is not to destabilize the host who made it real. The
+way is to make Heather's working product the protected center and compound
+market expansion around it.
 
 ## 2. Heather's Classic
 
