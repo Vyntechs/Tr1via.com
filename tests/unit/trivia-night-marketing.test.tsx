@@ -50,10 +50,31 @@ describe("/trivia-night marketing landing", () => {
         name: /host live trivia\. players answer on phones/i,
       }),
     ).toBeTruthy();
-    expect(screen.getByText(/big screen shows question/i)).toBeTruthy();
-    expect(screen.getAllByText(/players answer on phones/i).length).toBeGreaterThan(0);
-    expect(screen.getByText(/host runs the night/i)).toBeTruthy();
-    expect(screen.getByText(/no app or buzzers/i)).toBeTruthy();
+    const roleMap = screen.getByTestId("landing-role-map");
+    expect(within(roleMap).getByText(/host laptop/i)).toBeTruthy();
+    expect(within(roleMap).getByText(/venue tv/i)).toBeTruthy();
+    expect(within(roleMap).getByText(/player phones/i)).toBeTruthy();
+    expect(within(roleMap).getByText(/no extra gear/i)).toBeTruthy();
+    expect(
+      within(roleMap).getByText(/no app download, buzzers, tablets, or paper answer sheets/i),
+    ).toBeTruthy();
+    expect(screen.getByText(/for venues/i)).toBeTruthy();
+    expect(screen.getByText(/for weekly hosts/i)).toBeTruthy();
+  });
+
+  it("labels the hero product diagram with real-world roles", () => {
+    renderPage();
+    const stage = screen.getByTestId("landing-surface-stage");
+    expect(stage.getAttribute("aria-label")).toMatch(/host laptop/i);
+    expect(stage.getAttribute("aria-label")).toMatch(/venue TV/i);
+    expect(stage.getAttribute("aria-label")).toMatch(/player/i);
+    expect(stage.textContent).not.toMatch(/live room map/i);
+    expect(stage.textContent).not.toMatch(/one host tap/i);
+    expect(stage.textContent).not.toMatch(/phone [abc]/i);
+    expect(screen.getByText(/what the room sees/i)).toBeTruthy();
+    expect(screen.getByText(/one host controls it/i)).toBeTruthy();
+    expect(screen.getByText(/tap once to reveal/i)).toBeTruthy();
+    expect(screen.getAllByText(/player 1 phone/i).length).toBeGreaterThan(0);
   });
 
   it("renders the Heather trust proof on the landing page", () => {
