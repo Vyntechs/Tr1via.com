@@ -121,6 +121,24 @@ const ROOM_ROLES = [
     body: "No app download, buzzers, tablets, or paper answer sheets.",
   },
 ];
+const VENUE_SETUP_POINTS = [
+  {
+    title: "Laptop to TV",
+    body: "Open TR1VIA on the host laptop, then mirror or plug into the screen the room already watches.",
+  },
+  {
+    title: "Players join by QR",
+    body: "Guests scan the room code from their seats and play on their own phones without installing an app.",
+  },
+  {
+    title: "One host runs the pace",
+    body: "The host controls reveals, timers, scoring, and the board from one familiar place.",
+  },
+  {
+    title: "Keep the weekly format",
+    body: "Start with one test night, then keep the room rhythm your regulars learn week after week.",
+  },
+];
 
 function MiniAnswer({ answer }: { answer: string }) {
   const correct = answer === "Paris";
@@ -411,6 +429,83 @@ function HeatherProofBar() {
   );
 }
 
+function VenueBuyerPath() {
+  return (
+    <div
+      data-testid="venue-buyer-path"
+      className="mx-auto grid max-w-[1120px] items-start gap-10 px-6 py-24 sm:py-28 lg:grid-cols-[0.92fr_1.08fr]"
+    >
+      <div>
+        <Eyebrow color="var(--accent)" size={12}>
+          For bars and venues
+        </Eyebrow>
+        <Display
+          size="clamp(34px, 5vw, 58px)"
+          tracking={0}
+          style={{ display: "block", lineHeight: 1, marginTop: 16 }}
+        >
+          Run a weekly trivia night without buying gear.
+        </Display>
+        <p className="mt-6 max-w-[560px] text-[17px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
+          TR1VIA fits the room you already have: one host laptop, one venue TV,
+          and the phones guests brought with them. Start with one test night and
+          keep the format regulars can learn.
+        </p>
+        <div className="mt-7 flex flex-wrap gap-3">
+          <Link
+            href="/login"
+            className="rounded-2xl bg-accent px-7 py-4 text-[16px] font-bold text-white no-underline"
+            style={{ boxShadow: "0 14px 30px -10px var(--accent)" }}
+          >
+            Start a test night — free →
+          </Link>
+          <Link
+            href="/pricing"
+            className="rounded-2xl px-7 py-4 text-[16px] font-semibold text-[color:var(--ink)] no-underline"
+            style={{ border: "1px solid var(--line)", background: "var(--surface)" }}
+          >
+            See hosting options
+          </Link>
+        </div>
+      </div>
+
+      <div className="grid gap-3">
+        <p className="font-[family-name:var(--font-mono)] text-[11px] font-bold uppercase tracking-[0.14em]" style={{ color: "var(--accent)" }}>
+          What the room needs
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {VENUE_SETUP_POINTS.map((point) => (
+            <div
+              key={point.title}
+              className="rounded-lg p-4"
+              style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
+            >
+              <h3 className="text-[17px] font-black leading-tight text-[color:var(--ink)]">{point.title}</h3>
+              <p className="mt-2 text-[14px] font-semibold leading-relaxed" style={{ color: "var(--ink-mid)" }}>
+                {point.body}
+              </p>
+            </div>
+          ))}
+        </div>
+        <div
+          className="grid gap-2 rounded-lg p-4 sm:grid-cols-3"
+          style={{ background: "color-mix(in srgb, var(--surface) 70%, transparent)", border: "1px solid var(--line)" }}
+        >
+          {["No app download", "No buzzers", "No paper scoring"].map((label) => (
+            <span
+              key={label}
+              className="font-[family-name:var(--font-mono)] text-[11px] font-black uppercase tracking-[0.1em]"
+              style={{ color: "var(--ink)" }}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Step({ n, title, body }: { n: string; title: string; body: string }) {
   return (
     <li className="flex gap-4">
@@ -578,6 +673,10 @@ export default function TriviaNightPage() {
       <YearInOneTouch ssrThemeKey={resolveTheme(null, null)}>
         <Hero />
       </YearInOneTouch>
+
+      <ThemedSection themeKey="october">
+        <VenueBuyerPath />
+      </ThemedSection>
 
       <ThemedSection themeKey="july">
         <TheMoment />
