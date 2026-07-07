@@ -57,3 +57,8 @@ Reason: Lesson capture must not be skipped because local ignore rules block norm
 Trigger: Brandon challenges a fast PR merge as unbelievable.
 Rule: Audit patch scope, live rendering, tests, and unresolved product gaps before defending the PR.
 Reason: Green checks prove mechanics, not that the product concern was actually solved.
+
+### room-magic-not-core-promise
+Trigger: Room Magic was proposed as a buyer PR but founder called it gimmicky.
+Rule: Sell live-room reliability, venue flow, and host confidence first; use Room Magic only as optional proof.
+Reason: Gimmicks can decorate retention; buyer trust comes from the core night working.
