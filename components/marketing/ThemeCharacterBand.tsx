@@ -29,6 +29,10 @@ function isMonthlyThemeKey(themeKey: ThemeKey): themeKey is MonthlyThemeKey {
   return themeKey !== "house" && themeKey !== "daylight";
 }
 
+function monthName(themeKey: MonthlyThemeKey) {
+  return `${themeKey.charAt(0).toUpperCase()}${themeKey.slice(1)}`;
+}
+
 export function ThemeCharacterBand({
   themeKey,
   activeIndex,
@@ -42,10 +46,12 @@ export function ThemeCharacterBand({
 
   const preview = ROOM_MAGIC_PREVIEWS[themeKey];
   const isHome = activeIndex === homeIndex;
+  const month = monthName(themeKey);
 
   return (
     <div
-      aria-hidden="true"
+      aria-label="Room Magic preview"
+      role="region"
       data-testid="theme-character-band"
       data-theme-character={themeKey}
       className="pointer-events-none mx-auto mt-6 grid max-w-[1140px] grid-cols-1 items-end gap-3 px-6 sm:mt-8 sm:grid-cols-[1fr_auto_1fr]"
@@ -71,18 +77,18 @@ export function ThemeCharacterBand({
 
         <span className="grid gap-2 text-left">
           <span className="font-[family-name:var(--font-mono)] text-[10px] font-bold uppercase tracking-[0.18em]" style={{ color: "var(--accent)" }}>
-            Room Magic
+            Room Magic preview
           </span>
           <span className="text-[22px] font-black leading-[1.02] tracking-normal sm:text-[28px]" style={{ color: "var(--ink)" }}>
-            Players tap reactions. The room answers back.
+            Host turns on Room Magic. Players light up the big screen.
           </span>
           <span
             className="text-[12px] font-semibold leading-snug"
             style={{ color: "var(--ink-mid)" }}
           >
             {isHome
-              ? "This is the live month preview."
-              : `This month previews ${preview.cue}.`}
+              ? `Players tap reactions on their phones. The big screen turns them into ${month} room effects.`
+              : `Players tap reactions on their phones. The big screen turns them into ${month} ${preview.cue}.`}
           </span>
         </span>
 
@@ -95,17 +101,17 @@ export function ThemeCharacterBand({
         >
           <span className="flex items-center justify-between gap-3">
             <span className="font-[family-name:var(--font-mono)] text-[9px] font-bold uppercase tracking-[0.16em]" style={{ color: "var(--correct)" }}>
-              Venue screen
+              Big screen room effect
             </span>
             <span
               className="rounded-full px-2.5 py-1 font-[family-name:var(--font-mono)] text-[8px] font-bold uppercase tracking-[0.12em]"
               style={{ background: "rgba(255,255,255,0.1)", color: "var(--ink)" }}
             >
-              Live room
+              Player reactions
             </span>
           </span>
           <span className="text-[18px] font-black leading-tight text-white sm:text-[20px]">
-            {preview.effect} hits the screen.
+            {preview.effect} fills the screen.
           </span>
           <span className="flex flex-wrap gap-2">
             {["yes", preview.reaction, "no way"].map((reaction, index) => {
@@ -125,7 +131,7 @@ export function ThemeCharacterBand({
             })}
           </span>
           <span className="grid grid-cols-3 gap-2">
-            {["player taps", "room reacts", "screen blooms"].map((label) => (
+            {["host turns it on", "players tap phones", "big screen reacts"].map((label) => (
               <span
                 key={label}
                 className="rounded-xl px-2 py-2 text-center text-[9px] font-semibold leading-tight"
@@ -147,7 +153,7 @@ export function ThemeCharacterBand({
               color: "var(--ink-mid)",
             }}
           >
-            {preview.cue}
+            Does not change scores or slow the game.
           </span>
         </span>
       </div>

@@ -28,15 +28,23 @@ describe("ThemeCharacterBand", () => {
     render(<ThemeCharacterBand themeKey="september" activeIndex={8} homeIndex={6} />);
     const band = screen.getByTestId("theme-character-band");
 
-    expect(screen.getByText(/room magic/i)).toBeTruthy();
+    expect(screen.getAllByText(/room magic/i).length).toBeGreaterThan(0);
     expect(screen.getByText(/players tap reactions/i)).toBeTruthy();
     expect(band.textContent).not.toMatch(/\bMarn\b/);
     expect(band.textContent).not.toMatch(/\bTV\b/);
-    expect(band.textContent).not.toMatch(/\bhost\b/i);
+    expect(band.textContent).not.toMatch(/venue screen/i);
+    expect(band.textContent).not.toMatch(/screen blooms/i);
   });
 
-  it("marks itself decorative so product copy remains the accessible focus", () => {
+  it("explains Room Magic to a first-time visitor", () => {
     render(<ThemeCharacterBand themeKey="december" activeIndex={11} homeIndex={6} />);
-    expect(screen.getByTestId("theme-character-band")).toHaveAttribute("aria-hidden", "true");
+    const band = screen.getByTestId("theme-character-band");
+
+    expect(band).not.toHaveAttribute("aria-hidden", "true");
+    expect(screen.getByRole("region", { name: /room magic preview/i })).toBe(band);
+    expect(screen.getByText(/host turns on room magic/i)).toBeTruthy();
+    expect(screen.getByText(/players tap reactions on their phones/i)).toBeTruthy();
+    expect(screen.getByText(/big screen turns them into december/i)).toBeTruthy();
+    expect(screen.getByText(/does not change scores or slow the game/i)).toBeTruthy();
   });
 });
