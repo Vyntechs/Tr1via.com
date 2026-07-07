@@ -99,9 +99,15 @@ const HEATHER_ATTRIBUTION = "Heather, weekly trivia host";
 const SCREEN = "#070812";
 const SCREEN_SOFT = "#111321";
 const SURFACE_PHONES: { label: string; answers: string[] }[] = [
-  { label: "Player A", answers: ["Paris", "Lyon", "Rome", "Nice"] },
-  { label: "Player B", answers: ["Rome", "Nice", "Paris", "Lyon"] },
-  { label: "Player C", answers: ["Lyon", "Paris", "Nice", "Rome"] },
+  { label: "Phone A", answers: ["Paris", "Lyon", "Rome", "Nice"] },
+  { label: "Phone B", answers: ["Rome", "Nice", "Paris", "Lyon"] },
+  { label: "Phone C", answers: ["Lyon", "Paris", "Nice", "Rome"] },
+];
+const ROOM_STEPS = [
+  "Big screen shows question",
+  "Players answer on phones",
+  "Host runs the night",
+  "No app or buzzers",
 ];
 
 function MiniAnswer({ answer }: { answer: string }) {
@@ -141,13 +147,13 @@ function SurfacePhone({ label, answers }: { label: string; answers: string[] }) 
   );
 }
 
-function SurfaceChip({ title, value }: { title: string; value: string }) {
+function SurfaceChip({ n, title, value }: { n: string; title: string; value: string }) {
   return (
-    <div className="rounded-lg px-3 py-2" style={{ background: "rgba(255,255,255,0.07)" }}>
+    <div className="grid gap-1 rounded-lg px-3 py-2" style={{ background: "rgba(255,255,255,0.07)" }}>
       <p className="font-[family-name:var(--font-mono)] text-[9px] font-bold uppercase" style={{ color: "rgba(255,255,255,0.48)" }}>
-        {title}
+        {n} · {title}
       </p>
-      <p className="mt-1 text-[13px] font-bold text-white">{value}</p>
+      <p className="text-[13px] font-bold text-white">{value}</p>
     </div>
   );
 }
@@ -177,10 +183,10 @@ function LandingSurfaceStage() {
       >
         <div className="flex items-center justify-between gap-4">
           <Eyebrow color="var(--pop)" size={10}>
-            Live reveal
+            Live room map
           </Eyebrow>
           <span className="rounded-full px-3 py-1 font-[family-name:var(--font-mono)] text-[9px] font-bold uppercase text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
-            one press
+            one host tap
           </span>
         </div>
 
@@ -188,7 +194,7 @@ function LandingSurfaceStage() {
           <section className="rounded-lg p-4" style={{ background: SCREEN, border: "1px solid rgba(255,255,255,0.1)" }}>
             <div className="flex items-center justify-between">
               <Eyebrow color="var(--correct)" size={9}>
-                Venue TV
+                Big screen in the room
               </Eyebrow>
               <span className="font-[family-name:var(--font-mono)] text-[9px] font-bold uppercase" style={{ color: "rgba(255,255,255,0.44)" }}>
                 00:18
@@ -222,13 +228,13 @@ function LandingSurfaceStage() {
           <div className="grid gap-3">
             <section className="rounded-lg p-4" style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.12)" }}>
               <Eyebrow color="var(--pop)" size={9}>
-                Host console
+                Host laptop
               </Eyebrow>
               <div className="mt-3 flex items-end justify-between gap-3">
                 <div>
-                  <p className="text-[22px] font-black leading-none text-white">Reveal sent</p>
+                  <p className="text-[22px] font-black leading-none text-white">Runs the night</p>
                   <p className="mt-1 text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.58)" }}>
-                    TV and phones move together.
+                    The big screen and phones move together.
                   </p>
                 </div>
                 <span className="rounded-md px-2.5 py-2 font-[family-name:var(--font-mono)] text-[10px] font-bold uppercase" style={{ background: "var(--accent)", color: "#fff" }}>
@@ -246,9 +252,9 @@ function LandingSurfaceStage() {
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-2">
-          <SurfaceChip title="TV" value="Big question" />
-          <SurfaceChip title="Host" value="One tap" />
-          <SurfaceChip title="Phones" value="Shuffled" />
+          <SurfaceChip n="1" title="Big screen" value="Shows the question" />
+          <SurfaceChip n="2" title="Player phones" value="Answer privately" />
+          <SurfaceChip n="3" title="Host laptop" value="Runs reveal" />
         </div>
       </div>
     </div>
@@ -286,25 +292,34 @@ function Hero() {
       <div className="mx-auto grid max-w-[1180px] items-center gap-12 px-6 pb-12 pt-8 sm:pt-14 lg:grid-cols-[0.92fr_1.08fr]">
         <div>
           <Eyebrow color="var(--accent)" size={12}>
-            Seasonal room system · tap the month rail
+            Free live trivia hosting
           </Eyebrow>
-          <Display
-            size="clamp(46px, 6.4vw, 78px)"
-            tracking={0}
-            style={{ display: "block", lineHeight: 0.95, marginTop: 18 }}
-          >
-            One press.
-            <br />
-            <span style={{ color: "var(--accent)" }}>Three surfaces.</span>
-            <br />
-            A room that feels alive.
-          </Display>
-          <p className="mt-7 max-w-[590px] text-[18px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
-            Tap Reveal once. The venue TV, your host console, and every player
-            phone snap into the same moment. Answers shuffle on each phone, so
-            nobody can cheat; the room gets the show.
+          <h1 className="mt-5">
+            <Display
+              size="clamp(42px, 6vw, 74px)"
+              tracking={0}
+              style={{ display: "block", lineHeight: 0.96 }}
+            >
+              Host live trivia. Players answer on phones.
+            </Display>
+          </h1>
+          <p className="mt-5 max-w-[590px] text-[17px] leading-relaxed" style={{ color: "var(--ink-mid)" }}>
+            TR1VIA puts questions on the big screen, gives every player a
+            private phone answer card, and lets the host run the night from one
+            laptop. Answers shuffle so nobody can cheat.
           </p>
-          <div className="mt-9 flex flex-wrap items-center gap-3">
+          <ul className="mt-5 grid grid-cols-2 gap-2 text-[13px] font-semibold" style={{ color: "var(--ink)" }}>
+            {ROOM_STEPS.map((step) => (
+              <li
+                key={step}
+                className="rounded-lg px-3 py-2"
+                style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
+              >
+                {step}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-6 flex flex-wrap items-center gap-3">
             <Link
               href="/login"
               data-testid="marketing-cta-host"
@@ -322,6 +337,9 @@ function Hero() {
               Got a code? Join a game
             </Link>
           </div>
+          <p className="mt-4 font-[family-name:var(--font-mono)] text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--ink-mid)" }}>
+            One press · three surfaces · answers shuffled per phone
+          </p>
         </div>
         <div className="flex justify-center lg:justify-end">
           <LandingSurfaceStage />

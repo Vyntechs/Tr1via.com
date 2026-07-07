@@ -114,7 +114,7 @@ export function YearInOneTouch({
           className="font-[family-name:var(--font-mono)] text-[11px] font-semibold uppercase tracking-[0.16em]"
           style={{ color: "var(--ink-mid)" }}
         >
-          Tap a month - preview Room Magic
+          Tap a month - preview Room Magic in the seasonal room system
         </p>
       </div>
       <div

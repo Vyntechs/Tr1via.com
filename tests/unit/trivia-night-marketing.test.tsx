@@ -43,6 +43,19 @@ describe("/trivia-night marketing landing", () => {
     expect(screen.getByText(/preview Room Magic/i)).toBeTruthy();
   });
 
+  it("explains the live room to a first-time visitor before the visual showpiece", () => {
+    renderPage();
+    expect(
+      screen.getByRole("heading", {
+        name: /host live trivia\. players answer on phones/i,
+      }),
+    ).toBeTruthy();
+    expect(screen.getByText(/big screen shows question/i)).toBeTruthy();
+    expect(screen.getAllByText(/players answer on phones/i).length).toBeGreaterThan(0);
+    expect(screen.getByText(/host runs the night/i)).toBeTruthy();
+    expect(screen.getByText(/no app or buzzers/i)).toBeTruthy();
+  });
+
   it("renders the Heather trust proof on the landing page", () => {
     renderPage();
     expect(screen.getAllByText(/Heather/i).length).toBeGreaterThan(0);

@@ -32,3 +32,8 @@ Reason: Alerts should catch broken production, not expected long generation.
 Trigger: Room Magic marketing visual uses unexplained role labels like TV, Marn, or Host.
 Rule: Use explicit room-effect copy and player reactions instead of internal stage labels.
 Reason: Hosts judge the feature by screenshot clarity before reading docs.
+
+### marketing-screenshots-cold-visitor-check
+Trigger: Brandon cannot verify a supplied marketing screenshot without being an avid TR1VIA user.
+Rule: Judge screenshots by whether a cold visitor understands product, roles, action, and value in five seconds.
+Reason: Rendered and polished is not enough; homepage proof must explain itself.
