@@ -62,6 +62,23 @@ describe("/trivia-night marketing landing", () => {
     expect(screen.getByText(/for weekly hosts/i)).toBeTruthy();
   });
 
+  it("gives venue buyers a concrete setup path without hard business claims", () => {
+    renderPage();
+    const buyerPath = screen.getByTestId("venue-buyer-path");
+    expect(within(buyerPath).getByText(/for bars and venues/i)).toBeTruthy();
+    expect(within(buyerPath).getByText(/run a weekly trivia night without buying gear/i)).toBeTruthy();
+    expect(within(buyerPath).getByText(/laptop to tv/i)).toBeTruthy();
+    expect(within(buyerPath).getByText(/players join by qr/i)).toBeTruthy();
+    expect(within(buyerPath).getByText(/start with one test night/i)).toBeTruthy();
+    expect(within(buyerPath).getByText(/no app download/i)).toBeTruthy();
+    expect(within(buyerPath).getByText(/no buzzers/i)).toBeTruthy();
+
+    const testNightCta = within(buyerPath).getByRole("link", { name: /start a test night/i });
+    expect(testNightCta.getAttribute("href")).toBe("/login");
+    expect(buyerPath.textContent).not.toMatch(/revenue/i);
+    expect(buyerPath.textContent).not.toMatch(/guarantee/i);
+  });
+
   it("labels the hero product diagram with real-world roles", () => {
     renderPage();
     const stage = screen.getByTestId("landing-surface-stage");
