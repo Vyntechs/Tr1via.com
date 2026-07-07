@@ -99,15 +99,27 @@ const HEATHER_ATTRIBUTION = "Heather, weekly trivia host";
 const SCREEN = "#070812";
 const SCREEN_SOFT = "#111321";
 const SURFACE_PHONES: { label: string; answers: string[] }[] = [
-  { label: "Phone A", answers: ["Paris", "Lyon", "Rome", "Nice"] },
-  { label: "Phone B", answers: ["Rome", "Nice", "Paris", "Lyon"] },
-  { label: "Phone C", answers: ["Lyon", "Paris", "Nice", "Rome"] },
+  { label: "Player 1 phone", answers: ["Paris", "Lyon", "Rome", "Nice"] },
+  { label: "Player 2 phone", answers: ["Rome", "Nice", "Paris", "Lyon"] },
+  { label: "Player 3 phone", answers: ["Lyon", "Paris", "Nice", "Rome"] },
 ];
-const ROOM_STEPS = [
-  "Big screen shows question",
-  "Players answer on phones",
-  "Host runs the night",
-  "No app or buzzers",
+const ROOM_ROLES = [
+  {
+    title: "Host laptop",
+    body: "Tap reveal, run the timer, and keep control of the night.",
+  },
+  {
+    title: "Venue TV",
+    body: "Everyone sees the same question, board, timer, and payoff.",
+  },
+  {
+    title: "Player phones",
+    body: "Each person gets a private answer card with shuffled choices.",
+  },
+  {
+    title: "No extra gear",
+    body: "No app download, buzzers, tablets, or paper answer sheets.",
+  },
 ];
 
 function MiniAnswer({ answer }: { answer: string }) {
@@ -162,6 +174,7 @@ function LandingSurfaceStage() {
   return (
     <div
       data-testid="landing-surface-stage"
+      aria-label="Diagram showing one host laptop controlling the venue TV and every player's phone"
       className="relative w-full max-w-[650px] overflow-hidden rounded-lg p-3 sm:p-5"
       style={{
         background: `linear-gradient(140deg, var(--ink), ${SCREEN_SOFT})`,
@@ -183,10 +196,10 @@ function LandingSurfaceStage() {
       >
         <div className="flex items-center justify-between gap-4">
           <Eyebrow color="var(--pop)" size={10}>
-            Live room map
+            What the room sees
           </Eyebrow>
           <span className="rounded-full px-3 py-1 font-[family-name:var(--font-mono)] text-[9px] font-bold uppercase text-white" style={{ background: "rgba(255,255,255,0.1)" }}>
-            one host tap
+            one host controls it
           </span>
         </div>
 
@@ -232,9 +245,9 @@ function LandingSurfaceStage() {
               </Eyebrow>
               <div className="mt-3 flex items-end justify-between gap-3">
                 <div>
-                  <p className="text-[22px] font-black leading-none text-white">Runs the night</p>
+                  <p className="text-[22px] font-black leading-none text-white">Tap once to reveal</p>
                   <p className="mt-1 text-[11px] font-semibold" style={{ color: "rgba(255,255,255,0.58)" }}>
-                    The big screen and phones move together.
+                    TV and phones move together in the room.
                   </p>
                 </div>
                 <span className="rounded-md px-2.5 py-2 font-[family-name:var(--font-mono)] text-[10px] font-bold uppercase" style={{ background: "var(--accent)", color: "#fff" }}>
@@ -252,12 +265,26 @@ function LandingSurfaceStage() {
         </div>
 
         <div className="mt-3 grid grid-cols-3 gap-2">
-          <SurfaceChip n="1" title="Big screen" value="Shows the question" />
-          <SurfaceChip n="2" title="Player phones" value="Answer privately" />
-          <SurfaceChip n="3" title="Host laptop" value="Runs reveal" />
+          <SurfaceChip n="1" title="Host" value="Taps reveal" />
+          <SurfaceChip n="2" title="TV" value="Room watches" />
+          <SurfaceChip n="3" title="Phones" value="Players answer" />
         </div>
       </div>
     </div>
+  );
+}
+
+function RoleCard({ title, body }: { title: string; body: string }) {
+  return (
+    <li
+      className="rounded-lg px-3 py-2.5 sm:py-3"
+      style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
+    >
+      <h3 className="text-[13px] font-black leading-tight text-[color:var(--ink)]">{title}</h3>
+      <p className="mt-1 text-[11px] font-semibold leading-snug sm:text-[12px]" style={{ color: "var(--ink-mid)" }}>
+        {body}
+      </p>
+    </li>
   );
 }
 
@@ -308,17 +335,6 @@ function Hero() {
             private phone answer card, and lets the host run the night from one
             laptop. Answers shuffle so nobody can cheat.
           </p>
-          <ul className="mt-5 grid grid-cols-2 gap-2 text-[13px] font-semibold" style={{ color: "var(--ink)" }}>
-            {ROOM_STEPS.map((step) => (
-              <li
-                key={step}
-                className="rounded-lg px-3 py-2"
-                style={{ background: "var(--surface)", border: "1px solid var(--line)" }}
-              >
-                {step}
-              </li>
-            ))}
-          </ul>
           <div className="mt-6 flex flex-wrap items-center gap-3">
             <Link
               href="/login"
@@ -340,6 +356,31 @@ function Hero() {
           <p className="mt-4 font-[family-name:var(--font-mono)] text-[11px] font-semibold uppercase tracking-[0.12em]" style={{ color: "var(--ink-mid)" }}>
             One press · three surfaces · answers shuffled per phone
           </p>
+          <div
+            data-testid="landing-role-map"
+            className="mt-5 rounded-lg p-3"
+            style={{ background: "color-mix(in srgb, var(--surface) 72%, transparent)", border: "1px solid var(--line)" }}
+          >
+            <p className="font-[family-name:var(--font-mono)] text-[10px] font-bold uppercase tracking-[0.14em]" style={{ color: "var(--accent)" }}>
+              The whole setup
+            </p>
+            <ul className="mt-3 grid grid-cols-2 gap-2">
+              {ROOM_ROLES.map((role) => (
+                <RoleCard key={role.title} title={role.title} body={role.body} />
+              ))}
+            </ul>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {["For venues", "For weekly hosts", "Ready for a live room"].map((label) => (
+              <span
+                key={label}
+                className="rounded-full px-3 py-1.5 text-[12px] font-bold"
+                style={{ background: "var(--surface)", border: "1px solid var(--line)", color: "var(--ink)" }}
+              >
+                {label}
+              </span>
+            ))}
+          </div>
         </div>
         <div className="flex justify-center lg:justify-end">
           <LandingSurfaceStage />

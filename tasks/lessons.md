@@ -42,3 +42,18 @@ Reason: Rendered and polished is not enough; homepage proof must explain itself.
 Trigger: Brandon wants market capture without making Heather relearn the product.
 Rule: Treat Heather's Classic as the protected proof core; build commercial layers and new modes around it.
 Reason: Heather's comfort is the reliability benchmark while TR1VIA scales beyond one host.
+
+### product-intent-requires-product-surface
+Trigger: Brandon approves doctrine but asks whether agents will actually work in the product.
+Rule: For market-capture intent, ship a bounded product-surface improvement unless Brandon asks for docs only.
+Reason: Durable doctrine is useful only when it drives visible product progress.
+
+### force-stage-project-lessons
+Trigger: Git refuses to stage tracked project lessons because the repo ignores the tasks directory.
+Rule: Use git add -f tasks/lessons.md when committing project lesson updates.
+Reason: Lesson capture must not be skipped because local ignore rules block normal staging.
+
+### fast-pr-needs-product-audit
+Trigger: Brandon challenges a fast PR merge as unbelievable.
+Rule: Audit patch scope, live rendering, tests, and unresolved product gaps before defending the PR.
+Reason: Green checks prove mechanics, not that the product concern was actually solved.
