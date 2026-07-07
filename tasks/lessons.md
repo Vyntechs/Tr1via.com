@@ -37,3 +37,8 @@ Reason: Hosts judge the feature by screenshot clarity before reading docs.
 Trigger: Brandon cannot verify a supplied marketing screenshot without being an avid TR1VIA user.
 Rule: Judge screenshots by whether a cold visitor understands product, roles, action, and value in five seconds.
 Reason: Rendered and polished is not enough; homepage proof must explain itself.
+
+### heather-classic-market-expansion
+Trigger: Brandon wants market capture without making Heather relearn the product.
+Rule: Treat Heather's Classic as the protected proof core; build commercial layers and new modes around it.
+Reason: Heather's comfort is the reliability benchmark while TR1VIA scales beyond one host.
