@@ -5,8 +5,8 @@
 // `useAutoFitText` + removing the WebkitLineClamp — these tests pin that
 // behavior so a future "just clip it at 3 lines" refactor can't sneak past.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { fireEvent, render, screen, cleanup, waitFor } from "@testing-library/react";
 import { PlayerQuestion } from "@/components/player/PlayerQuestion";
 import { ThemeProvider } from "@/components/system/ThemeProvider";
 
@@ -69,6 +69,41 @@ describe("PlayerQuestion", () => {
     const img = screen.getByTestId("player-question-image") as HTMLImageElement;
     expect(img).toBeInTheDocument();
     expect(img.alt).toBe("");
+  });
+
+  it("removes the thumbnail if the external image fails to load", () => {
+    renderInTheme(
+      <PlayerQuestion
+        prompt="Short."
+        imageUrl="https://images.pexels.com/photos/missing.jpeg"
+      />,
+    );
+    const img = screen.getByTestId("player-question-image");
+    fireEvent.error(img);
+    expect(screen.queryByTestId("player-question-image")).not.toBeInTheDocument();
+  });
+
+  it("removes an already-broken thumbnail after mount", async () => {
+    const complete = vi
+      .spyOn(HTMLImageElement.prototype, "complete", "get")
+      .mockReturnValue(true);
+    const naturalWidth = vi
+      .spyOn(HTMLImageElement.prototype, "naturalWidth", "get")
+      .mockReturnValue(0);
+    try {
+      renderInTheme(
+        <PlayerQuestion
+          prompt="Short."
+          imageUrl="https://images.pexels.com/photos/cached-missing.jpeg"
+        />,
+      );
+      await waitFor(() =>
+        expect(screen.queryByTestId("player-question-image")).not.toBeInTheDocument(),
+      );
+    } finally {
+      complete.mockRestore();
+      naturalWidth.mockRestore();
+    }
   });
 
   it("omits the prompt block entirely when prompt is empty (legacy preview)", () => {

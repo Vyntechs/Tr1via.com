@@ -383,7 +383,7 @@ function HostControlStrip({
       <div style={{ display: "flex", gap: 8, alignItems: "center", flex: 1 }}>
         {mode === "lobby" && onStartGame1 && (
           <PrimaryButton onClick={onStartGame1} testId="host-start-game-1-btn">
-            Start Game 1
+            Start round 1
           </PrimaryButton>
         )}
         {mode === "intermission" && onStartGame2 && (
@@ -393,22 +393,22 @@ function HostControlStrip({
             disabled={startGame2Disabled}
             disabledTitle={startGame2DisabledReason}
           >
-            Start Game 2
+            Start round 2
           </PrimaryButton>
         )}
         {mode === "question-live" && onEndEarly && (
           <PrimaryButton onClick={onEndEarly} testId="host-end-early-btn">
-            End early · reveal
+            Show answer now
           </PrimaryButton>
         )}
         {mode === "reveal-sticky" && onPickNext && (
           <PrimaryButton onClick={onPickNext} testId="host-pick-next-btn">
-            Pick next →
+            Next question →
           </PrimaryButton>
         )}
         {mode === "picking" && canEndGame && onEndGame && (
           <PrimaryButton onClick={onEndGame} testId="host-end-game-btn">
-            End Game →
+            Finish round →
           </PrimaryButton>
         )}
         {mode === "picking" && !canEndGame && (
@@ -426,7 +426,7 @@ function HostControlStrip({
         )}
         {mode === "finale" && onCloseNight && (
           <PrimaryButton onClick={onCloseNight} testId="host-close-night-btn">
-            Done
+            Close night
           </PrimaryButton>
         )}
         {mode === "loading" && (
@@ -460,11 +460,11 @@ function HostControlStrip({
         {onAdjustPoints &&
           (mode === "picking" || mode === "reveal-sticky" || mode === "intermission") && (
             <SecondaryButton onClick={onAdjustPoints} testId="host-adjust-btn">
-              Adjust
+              Scores
             </SecondaryButton>
           )}
         <SecondaryButton onClick={onOpenPlayers} testId="host-players-btn">
-          Players ({totalPlayers})
+          Room ({totalPlayers})
         </SecondaryButton>
       </div>
     </div>

@@ -14,6 +14,7 @@
 
 "use client";
 
+import { useEffect, useRef, useState } from "react";
 import {
   useTheme,
   Eyebrow,
@@ -84,6 +85,21 @@ export function PlayerQuestion({
   const { t } = useTheme();
   const catColor = categoryColor(category, t.accent);
   const slots: PlayerQuestionSlot[] = [1, 2, 3, 4];
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const showImage = !!imageUrl && !imageFailed;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!showImage || !image) return;
+    if (image.complete && image.naturalWidth === 0) {
+      setImageFailed(true);
+    }
+  }, [imageUrl, showImage]);
 
   useAnswerKeyboard({
     enabled: !!onTap && !disabled,
@@ -153,15 +169,17 @@ export function PlayerQuestion({
           >
             {prompt}
           </div>
-          {imageUrl && (
+          {showImage && (
             // eslint-disable-next-line @next/next/no-img-element -- Pexels
             // URLs are external; no /api/image proxy + this is a small,
             // non-LCP decorative thumbnail. Skipping next/image here.
             <img
+              ref={imageRef}
               src={imageUrl}
               alt=""
               aria-hidden="true"
               data-testid="player-question-image"
+              onError={() => setImageFailed(true)}
               style={{
                 width: 72,
                 height: 72,

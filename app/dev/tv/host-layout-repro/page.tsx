@@ -67,9 +67,9 @@ export default function HostLayoutReproPage() {
             fontSize: 12,
           }}
         >
-          <span>End early · reveal</span>
+          <span>Show answer now</span>
           <span>0 / 2 locked</span>
-          <span>Players (2)</span>
+          <span>Room (2)</span>
         </div>
       </div>
     </LaptopShell>

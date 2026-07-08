@@ -75,9 +75,9 @@ export default function LobbyLayoutReproPage() {
             fontSize: 13,
           }}
         >
-          <span>Start Game 1</span>
+          <span>Start round 1</span>
           <span>0 players</span>
-          <span>Players (0)</span>
+          <span>Room (0)</span>
         </div>
       </div>
     </LaptopShell>

@@ -579,7 +579,7 @@ export function HostLiveConsoleClient({
         onStartGame1={game1Id ? () => void handleStartGame(game1Id) : undefined}
         onStartGame2={game2Id ? () => void handleStartGame(game2Id) : undefined}
         startGame2Disabled={!!game2Id && !isGame2Ready}
-        startGame2DisabledReason="Game 2 has no questions yet — set up its categories first"
+        startGame2DisabledReason="Round 2 has no questions yet — set up its categories first"
         onEndGame={() => void handleEndGame()}
         onCloseNight={() => void handleCloseNight()}
         tvSnapshot={tvSnapshot}

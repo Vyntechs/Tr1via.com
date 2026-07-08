@@ -1,6 +1,6 @@
 // tests/component/TVQuestion-marquee-swap.test.tsx
-import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { TVQuestion } from "@/components/tv/TVQuestion";
 
 const baseProps = {
@@ -38,5 +38,42 @@ describe("TVQuestion bottom-strip swap", () => {
     render(<TVQuestion {...baseProps} themeKey="may" />);
     expect(screen.queryByTestId("tv-scoreboard-marquee")).toBeNull();
     expect(screen.getByTestId("tv-question-pile")).toBeInTheDocument();
+  });
+
+  it("removes the public image panel if the external image fails to load", () => {
+    const { container } = render(
+      <TVQuestion
+        {...baseProps}
+        themeKey="house"
+        imageUrl="https://images.pexels.com/photos/missing.jpeg"
+      />,
+    );
+    const img = container.querySelector("img");
+    if (!img) throw new Error("expected TV question image to render before error");
+    expect(img).toBeInTheDocument();
+    fireEvent.error(img);
+    expect(container.querySelector("img")).not.toBeInTheDocument();
+  });
+
+  it("removes an already-broken public image after mount", async () => {
+    const complete = vi
+      .spyOn(HTMLImageElement.prototype, "complete", "get")
+      .mockReturnValue(true);
+    const naturalWidth = vi
+      .spyOn(HTMLImageElement.prototype, "naturalWidth", "get")
+      .mockReturnValue(0);
+    try {
+      const { container } = render(
+        <TVQuestion
+          {...baseProps}
+          themeKey="house"
+          imageUrl="https://images.pexels.com/photos/cached-missing.jpeg"
+        />,
+      );
+      await waitFor(() => expect(container.querySelector("img")).not.toBeInTheDocument());
+    } finally {
+      complete.mockRestore();
+      naturalWidth.mockRestore();
+    }
   });
 });
