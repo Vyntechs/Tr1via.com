@@ -9,7 +9,7 @@
 
 "use client";
 
-import type { RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { TVStage, TVHeader } from "@/components/shells";
 import {
   Eyebrow,
@@ -109,12 +109,28 @@ function TVQuestionInner({
 }: TVQuestionProps) {
   const { t } = useTheme();
   const cc = categoryColor(category, t.accent);
+  const [imageFailed, setImageFailed] = useState(false);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const showImage = !!imageUrl && !imageFailed;
+
+  useEffect(() => {
+    setImageFailed(false);
+  }, [imageUrl]);
+
+  useEffect(() => {
+    const image = imageRef.current;
+    if (!showImage || !image) return;
+    if (image.complete && image.naturalWidth === 0) {
+      setImageFailed(true);
+    }
+  }, [imageUrl, showImage]);
+
   // Shrink the prompt only as much as needed to keep the answer cards on
   // screen — the host's HDMI'd laptop drives the venue TV, so the actual
   // pixel viewport varies night to night. Measurement (not media queries) is
   // what guarantees fit.
   const { frameRef, textRef, fontSize: questionFontSize } = useAutoFitText({
-    sizes: imageUrl ? QUESTION_SIZES_WITH_IMAGE : QUESTION_SIZES_NO_IMAGE,
+    sizes: showImage ? QUESTION_SIZES_WITH_IMAGE : QUESTION_SIZES_NO_IMAGE,
   });
   const opts: TVQuestionOption[] = options ?? [
     { n: 1, text: "Florida" },
@@ -182,7 +198,7 @@ function TVQuestionInner({
           minHeight: 0,
           padding: "28px 56px 0",
           display: "grid",
-          gridTemplateColumns: imageUrl ? "260px 1fr 180px" : "1fr 180px",
+          gridTemplateColumns: showImage ? "260px 1fr 180px" : "1fr 180px",
           // Lock the one grid row to the container's height. Without this,
           // the image's intrinsic 260px (with alignSelf: flex-start) bullies
           // the row taller than the container in short viewports — the frame
@@ -198,7 +214,7 @@ function TVQuestionInner({
           overflow: "hidden",
         }}
       >
-        {imageUrl ? (
+        {showImage ? (
           <div
             style={{
               width: 260,
@@ -217,8 +233,11 @@ function TVQuestionInner({
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              ref={imageRef}
               src={imageUrl}
               alt=""
+              data-testid="tv-question-image"
+              onError={() => setImageFailed(true)}
               style={{ width: "100%", height: "100%", objectFit: "cover", display: "block" }}
             />
           </div>

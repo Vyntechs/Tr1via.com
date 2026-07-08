@@ -57,3 +57,13 @@ Reason: Lesson capture must not be skipped because local ignore rules block norm
 Trigger: Brandon challenges a fast PR merge as unbelievable.
 Rule: Audit patch scope, live rendering, tests, and unresolved product gaps before defending the PR.
 Reason: Green checks prove mechanics, not that the product concern was actually solved.
+
+### live-night-check-means-content-audit
+Trigger: Brandon asks to "see" a built host night before a real show.
+Rule: Audit question content/readiness, not just row counts. Check correctness, ambiguity, reveal blurbs, category fit, unfinished picks.
+Reason: I reported Heather's night readiness counts when Brandon wanted question quality and correctness reviewed.
+
+### trace-product-flow-before-planning
+Trigger: Planning host/player/TV experience or support flow from conversation context.
+Rule: Trace actual routes, screens, and state transitions before proposing flow changes. Do not infer public/private surfaces from mental model.
+Reason: I assumed a separate TV/laptop flow; Brandon corrected that the real mirrored flow differs.

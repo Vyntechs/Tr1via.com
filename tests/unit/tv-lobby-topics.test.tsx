@@ -29,4 +29,11 @@ describe("TVLobbyTopics", () => {
     render(wrap(<TVLobbyTopics topics={[]} />));
     expect(screen.queryByTestId("tv-lobby-topics")).not.toBeInTheDocument();
   });
+
+  it("renders inside a readability layer for the mirrored host lobby", () => {
+    render(wrap(<TVLobbyTopics topics={TOPICS} />));
+    const panel = screen.getByTestId("tv-lobby-topics");
+    expect(panel).toHaveAttribute("data-readability", "scrim");
+    expect(panel.style.background).toContain("linear-gradient");
+  });
 });

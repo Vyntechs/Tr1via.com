@@ -27,7 +27,22 @@ export function TVLobbyTopics({ topics }: { topics: LobbyTopic[] }) {
   if (topics.length === 0) return null;
 
   return (
-    <div data-testid="tv-lobby-topics" style={{ marginTop: "clamp(12px, 2vh, 40px)", maxWidth: 580 }}>
+    <div
+      data-testid="tv-lobby-topics"
+      data-readability="scrim"
+      style={{
+        marginTop: "clamp(12px, 2vh, 40px)",
+        marginLeft: "clamp(-18px, -1.6vw, -10px)",
+        maxWidth: 620,
+        padding: "clamp(8px, 1.4vh, 14px) clamp(12px, 1.8vw, 18px)",
+        borderRadius: 8,
+        background: t.dark
+          ? "linear-gradient(90deg, rgba(14,8,5,.78) 0%, rgba(14,8,5,.48) 70%, rgba(14,8,5,0) 100%)"
+          : "linear-gradient(90deg, rgba(255,255,255,.78) 0%, rgba(255,255,255,.48) 70%, rgba(255,255,255,0) 100%)",
+        backdropFilter: "blur(2px)",
+        WebkitBackdropFilter: "blur(2px)",
+      }}
+    >
       <Eyebrow color={t.inkMute} size={11}>TONIGHT&apos;S TOPICS</Eyebrow>
       <div
         style={{

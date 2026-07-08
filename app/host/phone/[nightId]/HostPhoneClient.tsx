@@ -150,6 +150,15 @@ export function HostPhoneClient({
     setBusy(true);
     setError(null);
     try {
+      if (room.currentGame.state === "draft" || room.currentGame.state === "ready") {
+        const startRes = await fetch(`/api/games/${room.currentGame.id}/start`, {
+          method: "POST",
+        });
+        if (!startRes.ok) {
+          const body = (await startRes.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "could not start the game");
+        }
+      }
       const res = await fetch(`/api/games/${room.currentGame.id}/reveal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
