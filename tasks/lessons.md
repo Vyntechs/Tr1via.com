@@ -28,6 +28,11 @@ Trigger: Prod smoke times out while live generation keeps heartbeating in the ho
 Rule: Match smoke timeouts to the live UX budget before calling it an outage.
 Reason: Alerts should catch broken production, not expected long generation.
 
+### generation-poll-must-finish-and-outlive-worker
+Trigger: Host sees generation failed while production logs show a completed background job.
+Rule: Polling must emit completed on review/ready, and silent timeout must exceed server maxDuration.
+Reason: Missed Realtime plus 45s timeout false-failed a healthy 69s job; retry duplicated 20 questions.
+
 ### room-magic-copy-no-role-labels
 Trigger: Room Magic marketing visual uses unexplained role labels like TV, Marn, or Host.
 Rule: Use explicit room-effect copy and player reactions instead of internal stage labels.

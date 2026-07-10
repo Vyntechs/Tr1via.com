@@ -32,7 +32,10 @@ import {
 } from "@/components/host/gen";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { QuestionRow, CategoryRow } from "@/lib/supabase/types";
-import { useGenerationStatus } from "@/lib/hooks/useGenerationStatus";
+import {
+  GENERATION_STALL_TIMEOUT_MS,
+  useGenerationStatus,
+} from "@/lib/hooks/useGenerationStatus";
 import type { CategoryDonePayload, GenerationPhase } from "@/lib/api/broadcast";
 import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
 import {
@@ -368,11 +371,20 @@ export function HostSetupPickClient({
     // question landed. The server heartbeats every ~12s while writing/checking,
     // so a healthy slow run stays armed; a dead worker still surfaces.
     lastActivityAt,
-    timeoutMs: 45_000,
+    timeoutMs: GENERATION_STALL_TIMEOUT_MS,
     pollIntervalMs: 5_000,
   });
 
   useEffect(() => {
+    if (watchStatus.kind === "completed") {
+      setGenerationFailureMessage(null);
+      setGenPhase(null);
+      setState(watchStatus.state);
+      setRegenerating(false);
+      void refetchQuestions();
+      void refetchAuditSummary();
+      return;
+    }
     const nextMessage =
       watchStatus.kind === "timeout" && !generationFailureMessage
         ? explainGenerationFailure({
