@@ -34,7 +34,10 @@ vi.mock("@/lib/supabase/client", () => ({
   getSupabaseBrowser: supaMock.getSupabaseBrowser,
 }));
 
-import { useGenerationStatus } from "@/lib/hooks/useGenerationStatus";
+import {
+  GENERATION_STALL_TIMEOUT_MS,
+  useGenerationStatus,
+} from "@/lib/hooks/useGenerationStatus";
 
 describe("useGenerationStatus", () => {
   beforeEach(() => {
@@ -43,6 +46,10 @@ describe("useGenerationStatus", () => {
   });
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("waits beyond the route's 300-second ceiling before declaring a silent worker dead", () => {
+    expect(GENERATION_STALL_TIMEOUT_MS).toBeGreaterThan(300_000);
   });
 
   it("returns 'ok' when the parent state is not 'generating'", () => {
@@ -118,6 +125,23 @@ describe("useGenerationStatus", () => {
     );
     await waitFor(() => {
       expect(result.current.kind).toBe("rolled-back");
+    });
+  });
+
+  it("reports completion when polling sees review after the done broadcast was missed", async () => {
+    supaMock.setNextState("review");
+    const { result } = renderHook(() =>
+      useGenerationStatus({
+        categoryId: "cat-1",
+        state: "generating",
+        loadedCount: 0,
+        timeoutMs: 60_000,
+        pollIntervalMs: 100,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current).toEqual({ kind: "completed", state: "review" });
     });
   });
 

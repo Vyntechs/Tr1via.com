@@ -35,7 +35,12 @@ import type { CategoryRow } from "@/lib/supabase/types";
 export type GenerationStatus =
   | { kind: "ok" }
   | { kind: "timeout" }
-  | { kind: "rolled-back" };
+  | { kind: "rolled-back" }
+  | { kind: "completed"; state: "review" | "ready" };
+
+// The route can legitimately run for up to 300 seconds. Only call the worker
+// dead after that server-side ceiling plus a small finalization/polling margin.
+export const GENERATION_STALL_TIMEOUT_MS = 330_000;
 
 export interface UseGenerationStatusOptions {
   /** The category we're watching. Stop watching when null. */
@@ -55,7 +60,7 @@ export interface UseGenerationStatusOptions {
    * window. Omit/0 → measured from window start.
    */
   lastActivityAt?: number;
-  /** Override the idle safety timeout. Default 45 000ms of silence. */
+  /** Override the idle safety timeout. Defaults beyond the route's 300s ceiling. */
   timeoutMs?: number;
   /** Override the polling interval. Default 5 000ms. */
   pollIntervalMs?: number;
@@ -68,7 +73,7 @@ export function useGenerationStatus({
   state,
   loadedCount,
   lastActivityAt,
-  timeoutMs = 45_000,
+  timeoutMs = GENERATION_STALL_TIMEOUT_MS,
   pollIntervalMs = 5_000,
   disabled = false,
 }: UseGenerationStatusOptions): GenerationStatus {
@@ -130,9 +135,9 @@ export function useGenerationStatus({
           return;
         }
         if (dbState === "review" || dbState === "ready") {
-          // The job finished but we missed the broadcast. Surface 'ok'
-          // so the parent's broadcast handler / refetch fires.
-          setStatus({ kind: "ok" });
+          // The job finished but we missed the broadcast. Tell the parent to
+          // refetch durable rows and leave the loading screen.
+          setStatus({ kind: "completed", state: dbState });
           return;
         }
       } catch {

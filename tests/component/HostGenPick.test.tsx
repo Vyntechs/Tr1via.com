@@ -196,6 +196,31 @@ describe("HostGenPick sidebar — clump-heavy regression (32bb985)", () => {
 });
 
 describe("HostSetupPickClient audit summary recovery", () => {
+  it("recovers from a missed done broadcast when DB polling sees review", async () => {
+    supa = createSupabaseMock({
+      questions: questionRows(),
+      report: null,
+      categoryState: "review",
+    });
+
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Condiments"
+        categoryTopic="Condiments"
+        initialState="generating"
+        initialQuestions={[]}
+        themeKey="house"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("Question 0")).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/generation didn't work/i)).not.toBeInTheDocument();
+  });
+
   it("clears the old audit summary as soon as an in-place reroll starts", async () => {
     supa = createSupabaseMock({
       questions: questionRows(),
@@ -312,6 +337,7 @@ function questionRows(): QuestionRow[] {
 function createSupabaseMock(input: {
   questions: QuestionRow[];
   report: Record<string, unknown> | null;
+  categoryState?: "draft" | "generating" | "review" | "ready";
 }) {
   const handlers = new Map<string, (msg: { payload: unknown }) => void>();
 
@@ -339,7 +365,7 @@ function createSupabaseMock(input: {
       if (table === "question_generation_reports") {
         return createReportQuery(input.report);
       }
-      return createCategoriesQuery();
+      return createCategoriesQuery(input.categoryState ?? "review");
     }),
   };
 }
@@ -366,11 +392,11 @@ function createReportQuery(report: Record<string, unknown> | null) {
   };
 }
 
-function createCategoriesQuery() {
+function createCategoriesQuery(state: "draft" | "generating" | "review" | "ready") {
   return {
     select: vi.fn(() => ({
       eq: vi.fn(() => ({
-        maybeSingle: vi.fn(async () => ({ data: { state: "review" } })),
+        maybeSingle: vi.fn(async () => ({ data: { state } })),
       })),
     })),
   };
