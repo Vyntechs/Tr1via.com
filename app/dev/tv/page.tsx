@@ -152,10 +152,10 @@ export default function TVGallery() {
               upNext={{ category: "Food", value: 300, sub: "standing by to reveal" }}
             />
           </Frame>
-          <Frame label="03 · Question">
+          <Frame label="03 · Question" previewKey="question">
             <TVQuestion />
           </Frame>
-          <Frame label="03a · Question · May/Storm — marquee + 30s timer">
+          <Frame label="03a · Question · May/Storm — stationary lock status + 30s timer">
             <TVQuestion
               themeKey="may"
               seconds={18}
@@ -207,10 +207,10 @@ export default function TVGallery() {
               lockInAnnouncement="Priya locked in"
             />
           </Frame>
-          <Frame label="04 · Reveal · correct">
+          <Frame label="04 · Reveal · correct" previewKey="reveal">
             <TVReveal
               headerEyebrow="GAME 1 · GEOGRAPHY · 100 PTS"
-              question="Which U.S. state has the\nlongest coastline?"
+              question="Which U.S. state has the longest coastline?"
               correctNumber={2}
               correctText="Alaska"
               fact="33,904 miles of tidal coastline — more than all other states combined."
@@ -286,7 +286,15 @@ export default function TVGallery() {
   );
 }
 
-function Frame({ label, children }: { label: string; children: ReactNode }) {
+function Frame({
+  label,
+  children,
+  previewKey,
+}: {
+  label: string;
+  children: ReactNode;
+  previewKey?: string;
+}) {
   const { t } = useTheme();
   return (
     <section>
@@ -294,6 +302,7 @@ function Frame({ label, children }: { label: string; children: ReactNode }) {
         {label}
       </Eyebrow>
       <div
+        data-tv-preview-frame={previewKey}
         style={{
           width: 1280,
           height: 720,

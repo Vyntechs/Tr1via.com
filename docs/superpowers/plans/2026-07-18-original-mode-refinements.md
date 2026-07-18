@@ -279,35 +279,35 @@ Expected: tests pass and the script emits a complete state matrix with no overfl
 - Consumes: existing `tiles`, `playersTotal`, `scoreChips`, question, options, reveal answer, fact, and fastest-five data.
 - Produces: one stationary question lock indicator and a high-contrast reveal hierarchy.
 
-- [ ] **Step 1: Write failing TV question tests**
+- [x] **Step 1: Write failing TV question tests**
 
 Assert `TVQuestion` never renders `tv-scoreboard-marquee`, renders `N OF M LOCKED IN`, and answer text uses the venue-legibility style token.
 
-- [ ] **Step 2: Run the question test and confirm RED**
+- [x] **Step 2: Run the question test and confirm RED**
 
 Run: `npx vitest run tests/component/TVQuestion-marquee-swap.test.tsx`
 
 Expected: FAIL because May currently renders the moving marquee.
 
-- [ ] **Step 3: Implement the stationary question hierarchy**
+- [x] **Step 3: Implement the stationary question hierarchy**
 
-Remove the marquee branch. Keep a stationary lock count/progress bar for every theme, preserve House Lights ceremony data, and raise answer text to a `clamp(28px, 2vw, 34px)` venue token. Keep question auto-fit between 48 and 72px.
+Remove the marquee branch. Keep a stationary lock count/progress bar for every theme, preserve House Lights ceremony data, and raise answer text to a viewport-height-aware `clamp(32px, 4vmin, 44px)` venue token. Keep question auto-fit between 48 and 72px.
 
-- [ ] **Step 4: Write failing reveal legibility tests**
+- [x] **Step 4: Write failing reveal legibility tests**
 
 Assert the reveal root uses the dark reading surface, the correct color is an accent rather than the full background, the fact uses at least 30px, and fastest-player names use at least 28px.
 
-- [ ] **Step 5: Run the reveal test and confirm RED**
+- [x] **Step 5: Run the reveal test and confirm RED**
 
 Run: `npx vitest run tests/component/TVReveal-legibility.test.tsx`
 
 Expected: FAIL because the current reveal uses the full correct color and 22px fact/name text.
 
-- [ ] **Step 6: Implement the reveal hierarchy**
+- [x] **Step 6: Implement the reveal hierarchy**
 
-Use theme paper/ink for the reading surface, a controlled correct-color rail/card, a 72–96px responsive answer treatment, 30–34px fact, 28–32px names, and sufficient contrast in both light and dark themes. Keep the fastest-five list stationary.
+Use theme paper/ink for the reading surface, a controlled correct-color rail/card, a height-aware responsive answer treatment, 30–38px fact, 28–34px names, and sufficient contrast in both light and dark themes. Keep the fastest-five list stationary.
 
-- [ ] **Step 7: Verify the slice**
+- [x] **Step 7: Verify the slice**
 
 Run: `npx vitest run tests/component/TVQuestion-marquee-swap.test.tsx tests/component/TVQuestionHouseLights.test.tsx tests/component/TVReveal-legibility.test.tsx tests/component/TVScoreboardMarquee.test.tsx`
 

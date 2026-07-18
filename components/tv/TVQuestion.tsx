@@ -3,9 +3,8 @@
 // The TV always shows numbers — each phone gets its own private order
 // (scramble enforced server-side).
 //
-// When `tiles` is supplied, the lower section renders the live LockInPileUp
-// pile (each landed answer becomes a tile). When omitted, the older static
-// "21 of 32 locked in" progress strip is used (so the gallery still reads).
+// Live lock-ins are summarized as one stationary count and progress bar. The
+// room can feel active without making distant players chase moving names.
 
 "use client";
 
@@ -19,15 +18,10 @@ import {
   TVTimerArc,
   useTheme,
 } from "@/components/system";
-import type { LockInTile } from "@/components/tv/lockin/roster";
 import { TVHouseLights } from "@/components/tv/TVHouseLights";
-import {
-  TVScoreboardMarquee,
-  type MarqueeChip,
-} from "@/components/tv/TVScoreboardMarquee";
+import type { MarqueeChip } from "@/components/tv/TVScoreboardMarquee";
 import { useAutoFitText } from "@/lib/hooks/useAutoFitText";
 import { categoryColor } from "@/lib/theme/categories";
-import { hasMarquee } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 // Candidate font sizes for the question prompt — picked so that the longest
@@ -35,8 +29,8 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 // the question region while short prompts get the full editorial hero size.
 // The image variant has less horizontal room because the 260px thumbnail
 // claims its column, so its ceiling is a notch lower.
-const QUESTION_SIZES_NO_IMAGE = [44, 52, 60, 68, 76, 86] as const;
-const QUESTION_SIZES_WITH_IMAGE = [36, 44, 52, 60, 68, 72] as const;
+const QUESTION_SIZES_NO_IMAGE = [48, 54, 60, 66, 72] as const;
+const QUESTION_SIZES_WITH_IMAGE = [48, 54, 60, 66, 72] as const;
 
 export interface TVQuestionOption {
   n: number;
@@ -59,7 +53,7 @@ export interface TVQuestionProps {
   value?: number;
   question?: string;
   options?: TVQuestionOption[];
-  /** Live lock-in tiles. When provided, the pile-up renders below the answers. */
+  /** Live lock-ins. Only the count is shown publicly during the question. */
   tiles?: TVQuestionTile[];
   /** Total number of joined players (denominator for "X of Y locked in"). */
   totalPlayers?: number;
@@ -70,9 +64,9 @@ export interface TVQuestionProps {
   /** Pexels photo attached during generation. Rendered below the category
    *  banner as a wide thumbnail when present. */
   imageUrl?: string | null;
-  // --- May/Storm marquee props ---
-  /** When supplied alongside a marquee-enabled theme, replaces the lock-in
-   *  pile with the auto-scrolling scoreboard strip. */
+  // Retained for caller compatibility; Original mode deliberately does not
+  // render moving player chips while a question must be read across a venue.
+  /** @deprecated Player chips are no longer shown during a question. */
   marqueeChips?: MarqueeChip[];
   /** Player whose chip is spotlighted (just locked in). */
   spotlightedPlayerId?: string | null;
@@ -100,9 +94,6 @@ function TVQuestionInner({
   tiles,
   totalPlayers,
   imageUrl,
-  themeKey,
-  marqueeChips,
-  spotlightedPlayerId,
   lockInAnnouncement,
   roomMagicEnabled = false,
   houseLightsLockedCount,
@@ -144,15 +135,6 @@ function TVQuestionInner({
   const houseLightsLockedIn = houseLightsLockedCount ?? null;
   const houseLightsTotalPlayers = totalPlayers ?? null;
   const progress = denominator > 0 ? Math.min(1, lockedIn / denominator) : 0;
-
-  // Map the live tiles (which carry stable IDs) onto LockInTile shape that
-  // LockInPileUp expects. Tiles already arrive newest-last so the pile
-  // "lands" the most recent answers with the entrance animation.
-  const pileTiles: LockInTile[] | undefined = tiles?.map((tile) => ({
-    name: tile.name,
-    t: tile.t,
-    isYou: tile.isYou,
-  }));
 
   return (
     <TVStage data-testid="tv-question">
@@ -307,163 +289,90 @@ function TVQuestionInner({
             <Numeric size={84} weight={700} color={cc} tracking={-0.05} style={{ lineHeight: 1 }}>
               {o.n}
             </Numeric>
-            <span style={{ fontSize: 22, color: t.inkMid, fontWeight: 500, letterSpacing: "-0.005em" }}>
+            <span
+              data-testid="tv-question-option-text"
+              style={{
+                fontSize: "clamp(32px, 4vmin, 44px)",
+                color: t.ink,
+                fontWeight: 650,
+                lineHeight: 1.08,
+                letterSpacing: "-0.012em",
+              }}
+            >
               {o.text}
             </span>
           </div>
         ))}
       </div>
 
-      {/* May/Storm: swap in the scrolling scoreboard strip when theme + chips are both present.
-          All other themes (and May without chips) fall through to the existing lock-in pile. */}
-      {themeKey && hasMarquee(themeKey) && marqueeChips ? (
-        <div
-          style={{
-            padding: "20px 56px 16px",
-            marginTop: "auto",
-            position: "relative",
-            zIndex: 1,
-            flexShrink: 0,
-          }}
-        >
-          <TVScoreboardMarquee
-            chips={marqueeChips}
-            spotlightedPlayerId={spotlightedPlayerId ?? null}
-            announcement={lockInAnnouncement}
-          />
-        </div>
-      ) : pileTiles && pileTiles.length > 0 ? (
-        // Live pile-up of locked-in answer tiles. We render only the pile body
-        // here (not the LockInBase scaffold) so it lives inside the existing
-        // TVQuestion stage and shares its question/timer/answers.
-        <div
-          data-testid="tv-question-pile"
-          style={{
-            padding: "20px 56px 16px",
-            position: "relative",
-            zIndex: 1,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            marginTop: "auto",
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
-            <Eyebrow color={t.inkMid} size={11}>
-              {lockedIn} OF {denominator} LOCKED IN
-            </Eyebrow>
-            <Eyebrow color={t.inkMute} size={10}>READ HERE · TAP ON YOUR PHONE</Eyebrow>
-          </div>
+      {/* One stationary status for every theme. Player names and scores do not
+          move while the room is trying to read the question from a distance. */}
+      <div
+        data-testid="tv-question-pile"
+        style={{
+          padding: "18px 56px 24px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 32,
+          marginTop: "auto",
+          position: "relative",
+          zIndex: 1,
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
           <div
+            data-testid="tv-question-lock-status"
             style={{
-              position: "relative",
-              overflow: "hidden",
-              background: t.dark ? "rgba(244,230,196,.03)" : "rgba(27,19,12,.03)",
-              borderRadius: 14,
-              padding: 16,
-              maxHeight: 220,
+              display: "flex",
+              alignItems: "baseline",
+              justifyContent: "space-between",
+              gap: 24,
             }}
           >
-            <PileTiles tiles={pileTiles} accent={cc} ink={t.ink} />
-          </div>
-        </div>
-      ) : (
-        <div
-          data-testid="tv-question-pile"
-          style={{
-            padding: "16px 56px 24px",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            marginTop: "auto",
-            position: "relative",
-            zIndex: 1,
-            flexShrink: 0,
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
             <span
               style={{
-                width: 8,
-                height: 8,
-                borderRadius: 99,
-                background: cc,
-                animation: "tr1via-pulse 1s ease-in-out infinite",
+                fontFamily: "var(--font-mono)",
+                fontSize: "clamp(24px, 1.8vw, 30px)",
+                fontWeight: 750,
+                letterSpacing: "0.025em",
+                color: t.ink,
               }}
-            />
-            <Eyebrow color={t.inkMid} size={11}>{lockedIn} OF {denominator} LOCKED IN</Eyebrow>
-            <div style={{ width: 200, height: 4, background: t.line, borderRadius: 99, overflow: "hidden" }}>
-              <div style={{ width: `${Math.round(progress * 100)}%`, height: "100%", background: cc }} />
-            </div>
+            >
+              {lockedIn} OF {denominator} LOCKED IN
+            </span>
+            <Eyebrow color={t.inkMute} size={11}>READ HERE · TAP ON YOUR PHONE</Eyebrow>
           </div>
-          <Eyebrow color={t.inkMute} size={10}>READ HERE · TAP ON YOUR PHONE</Eyebrow>
-        </div>
-      )}
-    </TVStage>
-  );
-}
-
-/**
- * Trimmed-down pile renderer matching LockInPileUp's tile choreography.
- *
- * We don't reuse LockInPileUp directly here because that component owns the
- * LockInBase scaffold (header + answers + timer); on the live TVQuestion we
- * only want the pile body, not a second copy of the question card. The
- * styling intentionally mirrors LockInPileUp tile-by-tile.
- */
-function PileTiles({
-  tiles,
-  accent,
-  ink,
-}: {
-  tiles: LockInTile[];
-  accent: string;
-  ink: string;
-}) {
-  const seedRot = (i: number) => ((i * 2654435761) % 7) - 3;
-  const seedX = (i: number) => ((i * 16807) % 9) - 4;
-  const landThreshold = Math.max(0, tiles.length - 3);
-  return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignContent: "flex-end" }}>
-      {tiles.map((p, i) => {
-        const rot = seedRot(i);
-        const x = seedX(i);
-        const finalTransform = `translate3d(${x}px, 0, 0) rotate(${rot}deg)`;
-        const animate = i >= landThreshold;
-        return (
           <div
-            key={`${p.name}-${i}`}
             style={{
-              padding: "7px 12px",
-              borderRadius: 8,
-              background: accent,
-              color: "#0E0805",
-              fontSize: 14,
-              fontWeight: 700,
-              letterSpacing: "-0.005em",
-              display: "flex",
-              alignItems: "center",
-              gap: 7,
-              transform: finalTransform,
-              boxShadow: `0 4px 10px -3px ${accent}66`,
-              ...({ "--tile-final": finalTransform } as React.CSSProperties),
-              animation: animate
-                ? `tr1via-tile-land .45s cubic-bezier(.2,.7,.3,1) ${(i - landThreshold) * 80}ms both`
-                : "none",
-              outline: p.isYou ? `2px solid ${ink}` : "none",
-              outlineOffset: p.isYou ? 2 : 0,
+              width: "100%",
+              height: 10,
+              background: t.line,
+              borderRadius: 99,
+              overflow: "hidden",
             }}
           >
-            {p.name}
-            {p.t && (
-              <Numeric size={10} weight={600} color="rgba(14,8,5,.6)">
-                {p.t}
-              </Numeric>
-            )}
+            <div
+              style={{
+                width: `${Math.round(progress * 100)}%`,
+                height: "100%",
+                background: cc,
+                borderRadius: 99,
+                transition: "width .25s ease",
+              }}
+            />
           </div>
-        );
-      })}
-    </div>
+        </div>
+        {lockInAnnouncement ? (
+          <span
+            aria-live="polite"
+            style={{ position: "absolute", width: 1, height: 1, overflow: "hidden", clip: "rect(0 0 0 0)" }}
+          >
+            {lockInAnnouncement}
+          </span>
+        ) : null}
+      </div>
+    </TVStage>
   );
 }

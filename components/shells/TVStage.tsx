@@ -10,8 +10,7 @@ import { Weather } from "@/components/system/Weather";
 
 export interface TVStageProps {
   children: ReactNode;
-  /** Override the background — used by TVReveal to paint the whole stage in
-   *  the correct-color. */
+  /** Override the theme background for deliberately special TV moments. */
   bg?: string;
   weather?: boolean;
   weatherIntensity?: number;
@@ -22,6 +21,8 @@ export interface TVStageProps {
   /** Forwarded data-testid for E2E tests. Applied to the outer container so
    *  Playwright can target any TV screen by its top-level id. */
   "data-testid"?: string;
+  /** Optional semantic marker used by visual regression checks. */
+  "data-reading-surface"?: string;
 }
 
 export function TVStage({
@@ -32,11 +33,13 @@ export function TVStage({
   lightningTriggerCount = 0,
   style,
   "data-testid": dataTestId,
+  "data-reading-surface": dataReadingSurface,
 }: TVStageProps) {
   const { t, themeKey } = useTheme();
   return (
     <div
       data-testid={dataTestId}
+      data-reading-surface={dataReadingSurface}
       style={{
         width: "100%",
         height: "100%",
