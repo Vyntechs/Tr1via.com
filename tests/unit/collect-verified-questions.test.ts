@@ -6,9 +6,17 @@ import type { AnswerVerdict } from "@/lib/ai/verify-answers";
 function q(prompt: string): GeneratedQuestion {
   return { prompt, options: ["a", "b", "c", "d"], correctIndex: 0, difficulty: 4, factBlurb: "blurb here", photoQuery: "q" };
 }
-const ok = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: true, ambiguous: false });
-const wrong = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: false, ambiguous: false });
-const ambig = (i: number): AnswerVerdict => ({ index: i, markedAnswerIsCorrect: true, ambiguous: true });
+const ok = (i: number): AnswerVerdict => ({
+  index: i,
+  markedAnswerIsCorrect: true,
+  ambiguous: false,
+  factBlurbIsCorrect: true,
+  answerableWithoutImage: true,
+});
+const wrong = (i: number): AnswerVerdict => ({ ...ok(i), markedAnswerIsCorrect: false });
+const ambig = (i: number): AnswerVerdict => ({ ...ok(i), ambiguous: true });
+const badFact = (i: number): AnswerVerdict => ({ ...ok(i), factBlurbIsCorrect: false });
+const needsImage = (i: number): AnswerVerdict => ({ ...ok(i), answerableWithoutImage: false });
 
 it("keeps only correct, non-ambiguous questions", async () => {
   const batch = [q("k1"), q("wrong"), q("amb"), q("k2")];
@@ -46,7 +54,7 @@ it("reports verifier rejection reasons for a completed round", async () => {
       ok(0),
       wrong(1),
       ambig(2),
-      { index: 4, markedAnswerIsCorrect: false, ambiguous: true },
+      { ...ok(4), markedAnswerIsCorrect: false, ambiguous: true },
     ],
     onRoundComplete: (event) => events.push(event),
   });
@@ -69,6 +77,45 @@ it("reports verifier rejection reasons for a completed round", async () => {
       ],
     },
   ]);
+});
+
+it("rejects a wrong fact blurb even when the marked answer is correct", async () => {
+  const out = await collectVerifiedQuestions({
+    target: 1,
+    maxRounds: 1,
+    verifyPasses: 1,
+    generate: async () => [q("stable answer, bad fact")],
+    verify: async () => [badFact(0)],
+  });
+
+  expect(out).toEqual([]);
+});
+
+it("rejects a question the verifier says needs an image", async () => {
+  const out = await collectVerifiedQuestions({
+    target: 1,
+    maxRounds: 1,
+    verifyPasses: 1,
+    generate: async () => [q("What does the pictured sign mean?")],
+    verify: async () => [needsImage(0)],
+  });
+
+  expect(out).toEqual([]);
+});
+
+it("rejects obviously visual-dependent wording before it can enter Original mode", async () => {
+  const events: Array<{ rejected: Array<{ reasons: string[] }> }> = [];
+  const out = await collectVerifiedQuestions({
+    target: 1,
+    maxRounds: 1,
+    verifyPasses: 1,
+    generate: async () => [q("What does this sign mean?")],
+    verify: async () => [ok(0)],
+    onRoundComplete: (event) => events.push(event),
+  });
+
+  expect(out).toEqual([]);
+  expect(events[0]?.rejected[0]?.reasons).toContain("deterministic_risk");
 });
 
 it("reports empty generation rounds before stopping", async () => {
@@ -197,4 +244,57 @@ it("requires ALL verify passes to agree — drops a question one pass flags (ver
     },
   });
   expect(out.map((x) => x.prompt)).toEqual(["agree"]); // "split" dropped — passes disagreed
+});
+
+it("resumes from already-certified choices and requests only the shortfall", async () => {
+  const needs: number[] = [];
+  const avoids: string[][] = [];
+  const saved = q("already safe");
+  const out = await collectVerifiedQuestions({
+    target: 2,
+    maxRounds: 2,
+    initialClean: [saved],
+    generate: async (avoid, need) => {
+      avoids.push(avoid);
+      needs.push(need);
+      return [q("new safe")];
+    },
+    verify: async () => [ok(0)],
+  });
+
+  expect(needs).toEqual([1]);
+  expect(avoids[0]).toContain("already safe");
+  expect(out.map((item) => item.prompt)).toEqual(["already safe", "new safe"]);
+});
+
+it("reports each newly certified batch so callers can persist it immediately", async () => {
+  const acceptedBatches: string[][] = [];
+  await collectVerifiedQuestions({
+    target: 2,
+    maxRounds: 2,
+    generate: async (_avoid, need) =>
+      Array.from({ length: need }, (_, index) => q(`safe-${index}`)),
+    verify: async (items) => items.map((_, index) => ok(index)),
+    onAccepted: async (items) => {
+      acceptedBatches.push(items.map((item) => item.prompt));
+    },
+  });
+
+  expect(acceptedBatches).toEqual([["safe-0", "safe-1"]]);
+});
+
+it("never persists a model buffer beyond the requested target", async () => {
+  const acceptedBatches: string[][] = [];
+  const out = await collectVerifiedQuestions({
+    target: 2,
+    maxRounds: 1,
+    generate: async () => [q("safe-1"), q("safe-2"), q("buffer")],
+    verify: async (items) => items.map((_, index) => ok(index)),
+    onAccepted: (items) => {
+      acceptedBatches.push(items.map((item) => item.prompt));
+    },
+  });
+
+  expect(out.map((item) => item.prompt)).toEqual(["safe-1", "safe-2"]);
+  expect(acceptedBatches).toEqual([["safe-1", "safe-2"]]);
 });

@@ -457,6 +457,89 @@ export type Database = {
           },
         ]
       }
+      question_generation_jobs: {
+        Row: {
+          attempt: number
+          category_id: string
+          certified_count: number
+          created_at: string
+          game_id: string
+          heartbeat_at: string
+          host_id: string
+          id: string
+          image_count: number
+          last_error: string | null
+          night_id: string
+          phase: string
+          target_count: number
+          updated_at: string
+          written_count: number
+        }
+        Insert: {
+          attempt?: number
+          category_id: string
+          certified_count?: number
+          created_at?: string
+          game_id: string
+          heartbeat_at?: string
+          host_id: string
+          id?: string
+          image_count?: number
+          last_error?: string | null
+          night_id: string
+          phase?: string
+          target_count?: number
+          updated_at?: string
+          written_count?: number
+        }
+        Update: {
+          attempt?: number
+          category_id?: string
+          certified_count?: number
+          created_at?: string
+          game_id?: string
+          heartbeat_at?: string
+          host_id?: string
+          id?: string
+          image_count?: number
+          last_error?: string | null
+          night_id?: string
+          phase?: string
+          target_count?: number
+          updated_at?: string
+          written_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "question_generation_jobs_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: true
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_jobs_game_id_fkey"
+            columns: ["game_id"]
+            isOneToOne: false
+            referencedRelation: "games"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_jobs_host_id_fkey"
+            columns: ["host_id"]
+            isOneToOne: false
+            referencedRelation: "hosts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "question_generation_jobs_night_id_fkey"
+            columns: ["night_id"]
+            isOneToOne: false
+            referencedRelation: "nights"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       question_generation_reports: {
         Row: {
           accepted_count: number

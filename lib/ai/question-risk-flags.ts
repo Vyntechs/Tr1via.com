@@ -5,7 +5,8 @@ export type QuestionRiskFlag =
   | "ranking_or_superlative"
   | "geography_sensitive"
   | "subjective_wording"
-  | "multiple_answer_risk";
+  | "multiple_answer_risk"
+  | "image_required";
 
 type RiskScanQuestion = Pick<
   GeneratedQuestion,
@@ -33,6 +34,11 @@ const RULES: Array<{ flag: QuestionRiskFlag; pattern: RegExp }> = [
     flag: "multiple_answer_risk",
     pattern: /\b(except|not|all of these|both|either|neither|which of these)\b/i,
   },
+  {
+    flag: "image_required",
+    pattern:
+      /\b(?:this|that|the|pictured|shown)\s+(?:sign|image|photo|picture|logo|flag|symbol|map|chart)\b|\b(?:shown|pictured|visible)\s+(?:above|below|here)\b/i,
+  },
 ];
 
 function scanText(question: RiskScanQuestion): string {
@@ -48,5 +54,16 @@ export function riskFlagsForQuestion(
   const text = scanText(question);
   return RULES.filter((rule) => rule.pattern.test(text)).map(
     (rule) => rule.flag,
+  );
+}
+
+/** Deterministic risks that cannot be made safe by verifier confidence alone.
+ * Other flags remain evidence for the audit ledger and are explicitly checked
+ * by the verifier for adequate date/metric/geography context. */
+export function blockingRiskFlagsForQuestion(
+  question: RiskScanQuestion,
+): QuestionRiskFlag[] {
+  return riskFlagsForQuestion(question).filter(
+    (flag) => flag === "image_required" || flag === "subjective_wording",
   );
 }

@@ -311,7 +311,6 @@ export function HostSetupPickClient({
             fromRollback: true,
           }),
         );
-        setState("draft");
         setRegenerating(false);
       })
       .subscribe();
@@ -384,6 +383,13 @@ export function HostSetupPickClient({
       void refetchQuestions();
       void refetchAuditSummary();
       return;
+    }
+    if (watchStatus.kind === "needs-attention") {
+      const id = window.setTimeout(() => {
+        setGenerationFailureMessage(watchStatus.progress.statusLine);
+        setGenPhase("needs_attention");
+      }, 0);
+      return () => window.clearTimeout(id);
     }
     const nextMessage =
       watchStatus.kind === "timeout" && !generationFailureMessage
@@ -861,6 +867,10 @@ export function HostSetupPickClient({
 
   const showGenerationFailure =
     generationFailureMessage !== null && state !== "review" && state !== "ready";
+  const durableProgress =
+    watchStatus.kind === "progress" || watchStatus.kind === "needs-attention"
+      ? watchStatus.progress
+      : null;
 
   // ── mapped data for the components ───────────────────────────────────
   const loadingList = useMemo<HostGenLoadingQuestion[]>(
@@ -904,7 +914,7 @@ export function HostSetupPickClient({
       {showGenerationFailure ? (
         <HostGenError
           themeKey={themeKey as ThemeKey}
-          shellTitle={`generation didn't work · ${categoryName.toLowerCase()}`}
+          shellTitle={`generation paused · ${categoryName.toLowerCase()}`}
           topic={categoryName}
           message={generationFailureMessage}
           onRetry={() => void handleRetryGeneration()}
@@ -920,11 +930,12 @@ export function HostSetupPickClient({
           loaded={loadingList}
           total={20}
           statusLine={
-            genPhase === "checking"
+            durableProgress?.statusLine ??
+            (genPhase === "checking"
               ? "Fact-checking every answer for accuracy — this part takes a moment."
               : genPhase === "writing"
                 ? "Writing your questions…"
-                : undefined
+                : undefined)
           }
           onCancel={() => router.push(`/host/setup/${nightId}`)}
           onBack={() => router.push(`/host/setup/${nightId}`)}

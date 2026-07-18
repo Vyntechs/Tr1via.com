@@ -177,6 +177,14 @@ The host is a real person whose name is on the night. A wrong answer
 costs her trust with paying players. Skip a question rather than emit
 one you are not certain of.
 
+## Original mode must work without an image
+
+Every question must be fully answerable without seeing an image or photo.
+Photos are optional atmosphere in Original mode — never evidence. Do not ask
+"What does this sign mean?", "Who is pictured?", "Which logo is shown?", or
+anything else that depends on a visual the player may not receive. If the
+prompt cannot stand alone as plain text with its four options, regenerate it.
+
 ## Difficulty rating (1..7, internal)
 
 Rate each question 1 (an average regular gets it cold) to 7 (only someone
@@ -195,7 +203,9 @@ whole batch unreachable.
 
 For every question, write a ONE-SENTENCE blurb the host's TV will show
 the moment the answer is revealed. It explains WHY the answer is the
-answer, in a way that lands. Make players nod. Avoid academic phrasing.
+answer, in a way that lands. The fact blurb must be accurate and fact-checkable
+independently from the marked answer; do not add a colorful claim you are less
+certain about than the answer itself. Make players nod. Avoid academic phrasing.
 
 Examples:
   Question: "Which U.S. state has more tidal coastline than all the

@@ -1,6 +1,6 @@
-// TV — reveal. Drenched in the theme's correct-color. The whole stage paints
-// itself, a massive answer numeral + word fill the left, the first-five-in
-// rail on the right. Designed to feel like a curtain drop.
+// TV — reveal. A stable theme reading surface with one correct-color answer
+// rail, a large fact, and a stationary fastest-five list. Designed for the
+// oldest eyes at the farthest table—not for a laptop viewed up close.
 //
 // Driven by props so the live `/tv/[code]` route can paint the actual answer
 // and the actual fastest-five from `answers`. Demo defaults preserved for
@@ -85,38 +85,52 @@ function TVRevealInner({
   const { t } = useTheme();
 
   return (
-    <TVStage bg={t.correct} data-testid="tv-reveal">
+    <TVStage
+      data-testid="tv-reveal"
+      data-reading-surface="theme-paper"
+      weather={false}
+    >
       <div
+        data-testid="tv-reveal-header"
         style={{
-          padding: "32px 56px 0",
+          padding: "clamp(22px, 2vw, 32px) clamp(36px, 3vw, 64px) 0",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           position: "relative",
           zIndex: 1,
+          flexShrink: 0,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-          <Wordmark size={24} accent="#0E0805" ink="#0E0805" />
-          <span style={{ width: 1, height: 16, background: "rgba(14,8,5,.2)" }} />
-          <Eyebrow color="rgba(14,8,5,.65)" size={11}>{headerEyebrow}</Eyebrow>
+          <Wordmark size={24} accent={t.correct} ink={t.ink} />
+          <span style={{ width: 1, height: 18, background: t.line }} />
+          <Eyebrow color={t.inkMid} size={12}>{headerEyebrow}</Eyebrow>
         </div>
-        <Eyebrow color="rgba(14,8,5,.65)" size={11}>REVEAL</Eyebrow>
+        <Eyebrow color={t.correct} size={12}>CORRECT ANSWER</Eyebrow>
       </div>
 
       <div
         style={{
           flex: 1,
-          padding: "24px 56px 0",
+          minHeight: 0,
+          padding: "clamp(20px, 2.2vw, 36px) clamp(36px, 3vw, 64px) clamp(26px, 2.4vw, 44px)",
           display: "grid",
-          gridTemplateColumns: "1.6fr 1fr",
-          gap: 56,
+          gridTemplateColumns: "minmax(0, 1.45fr) minmax(360px, .75fr)",
+          gap: "clamp(34px, 4vw, 72px)",
           position: "relative",
           zIndex: 1,
+          overflow: "hidden",
         }}
       >
-        <div>
-          <Display size={56} color="rgba(14,8,5,.55)" weight={500} tracking={-0.025}>
+        <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <Display
+            size="clamp(36px, 5vmin, 54px)"
+            color={t.ink}
+            weight={560}
+            tracking={-0.025}
+            style={{ lineHeight: 1.02 }}
+          >
             {question.split("\n").map((line, i, arr) => (
               <span key={i}>
                 {line}
@@ -125,62 +139,97 @@ function TVRevealInner({
             ))}
           </Display>
 
-          <div style={{ marginTop: 36, display: "flex", alignItems: "baseline", gap: 28 }}>
+          <div
+            data-testid="tv-reveal-answer-card"
+            style={{
+              marginTop: "clamp(22px, 2.5vw, 42px)",
+              display: "flex",
+              alignItems: "center",
+              gap: "clamp(20px, 2vw, 36px)",
+              minWidth: 0,
+              padding: "clamp(18px, 1.8vw, 30px) clamp(24px, 2.2vw, 40px)",
+              borderRadius: 18,
+              border: `1px solid ${t.line}`,
+              borderLeft: `14px solid ${t.correct}`,
+              background: t.surface,
+            }}
+          >
             <Numeric
-              size={220}
+              size={78}
               weight={700}
-              color="#0E0805"
+              color={t.correct}
               tracking={-0.05}
-              style={{ lineHeight: 0.85 }}
+              style={{
+                fontSize: "clamp(78px, 9vmin, 110px)",
+                lineHeight: 0.82,
+                flex: "none",
+              }}
             >
               {correctNumber}
             </Numeric>
-            <span data-testid="tv-reveal-correct">
-              <Display size={140} color="#0E0805" weight={700}>{correctText}</Display>
+            <span data-testid="tv-reveal-correct" style={{ minWidth: 0 }}>
+              <Display
+                size="clamp(64px, 8vmin, 100px)"
+                color={t.ink}
+                weight={700}
+                style={{ lineHeight: 0.9, overflowWrap: "anywhere" }}
+              >
+                {correctText}
+              </Display>
             </span>
           </div>
 
           {fact && (
             <div
+              data-testid="tv-reveal-fact"
               style={{
-                marginTop: 18,
-                fontSize: 22,
-                color: "rgba(14,8,5,.7)",
-                lineHeight: 1.35,
-                maxWidth: 700,
+                marginTop: "clamp(18px, 2vw, 32px)",
+                fontSize: "clamp(30px, 3.5vmin, 38px)",
+                color: t.ink,
+                lineHeight: 1.28,
+                maxWidth: 880,
+                fontWeight: 560,
               }}
             >
               {fact}
             </div>
           )}
 
-          <div style={{ marginTop: 36, display: "flex", gap: 48 }}>
+          <div
+            data-testid="tv-reveal-stats"
+            style={{
+              marginTop: "auto",
+              paddingTop: "clamp(22px, 2.2vw, 38px)",
+              display: "flex",
+              gap: "clamp(34px, 4vw, 72px)",
+            }}
+          >
             <div>
-              <Eyebrow color="rgba(14,8,5,.55)" size={10}>GOT IT</Eyebrow>
+              <Eyebrow color={t.inkMute} size={11}>GOT IT</Eyebrow>
               <div
                 style={{
                   marginTop: 4,
                   fontFamily: "var(--font-mono)",
-                  fontSize: 44,
+                  fontSize: "clamp(36px, 4vmin, 44px)",
                   fontWeight: 700,
-                  color: "#0E0805",
+                  color: t.ink,
                   letterSpacing: "-0.03em",
                   lineHeight: 1,
                 }}
               >
                 {gotIt}
-                <span style={{ fontSize: 22, fontWeight: 500, opacity: 0.55 }}> / {ofTotal}</span>
+                <span style={{ fontSize: 24, fontWeight: 500, color: t.inkMid }}> / {ofTotal}</span>
               </div>
             </div>
             <div>
-              <Eyebrow color="rgba(14,8,5,.55)" size={10}>FASTEST</Eyebrow>
+              <Eyebrow color={t.inkMute} size={11}>FASTEST</Eyebrow>
               <div
                 style={{
                   marginTop: 4,
                   fontFamily: "var(--font-mono)",
-                  fontSize: 44,
+                  fontSize: "clamp(36px, 4vmin, 44px)",
                   fontWeight: 700,
-                  color: "#0E0805",
+                  color: t.ink,
                   letterSpacing: "-0.03em",
                   lineHeight: 1,
                 }}
@@ -189,14 +238,14 @@ function TVRevealInner({
               </div>
             </div>
             <div>
-              <Eyebrow color="rgba(14,8,5,.55)" size={10}>SPEED BONUS</Eyebrow>
+              <Eyebrow color={t.inkMute} size={11}>SPEED BONUS</Eyebrow>
               <div
                 style={{
                   marginTop: 4,
                   fontFamily: "var(--font-mono)",
-                  fontSize: 44,
+                  fontSize: "clamp(36px, 4vmin, 44px)",
                   fontWeight: 700,
-                  color: "#0E0805",
+                  color: t.ink,
                   letterSpacing: "-0.03em",
                   lineHeight: 1,
                 }}
@@ -207,45 +256,60 @@ function TVRevealInner({
           </div>
         </div>
 
-        <div>
-          <Eyebrow color="rgba(14,8,5,.55)" size={10}>FIRST FIVE IN</Eyebrow>
-          <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+        <div style={{ minWidth: 0 }}>
+          <Eyebrow color={t.inkMute} size={11}>FIRST FIVE IN</Eyebrow>
+          <div
+            data-testid="tv-reveal-fastest-list"
+            style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 10 }}
+          >
             {fastestFive.map((p, i) => (
               <div
                 key={`${p.name}-${i}`}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "40px 1fr 80px",
+                  gridTemplateColumns: "44px minmax(0, 1fr) auto",
                   alignItems: "center",
                   gap: 14,
-                  padding: "14px 18px",
-                  background: i === 0 ? "#0E0805" : "transparent",
-                  color: i === 0 ? t.correct : "#0E0805",
+                  padding: "clamp(14px, 1.2vw, 20px) clamp(16px, 1.4vw, 24px)",
+                  background: t.surface,
+                  color: t.ink,
                   borderRadius: 12,
-                  border: i === 0 ? "none" : "1px solid rgba(14,8,5,.18)",
+                  border: `2px solid ${i === 0 ? t.correct : t.line}`,
                 }}
               >
                 <Numeric
-                  size={20}
+                  size={24}
                   weight={700}
-                  color={i === 0 ? t.correct : "rgba(14,8,5,.6)"}
+                  color={i === 0 ? t.correct : t.inkMid}
                 >
                   {i + 1}
                 </Numeric>
-                <span style={{ fontSize: 22, fontWeight: 700, letterSpacing: "-0.01em" }}>
+                <span
+                  data-testid="tv-reveal-fastest-name"
+                  style={{
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    fontSize: "clamp(28px, 3vmin, 34px)",
+                    fontWeight: 700,
+                    letterSpacing: "-0.01em",
+                  }}
+                >
                   {p.name}
                 </span>
                 <Numeric
-                  size={16}
+                  size={22}
                   weight={600}
-                  color={i === 0 ? t.correct : "rgba(14,8,5,.55)"}
+                  color={i === 0 ? t.correct : t.inkMid}
+                  style={{ fontSize: "clamp(22px, 2.4vmin, 28px)" }}
                 >
                   {p.time}
                 </Numeric>
               </div>
             ))}
             {fastestFive.length === 0 && (
-              <div style={{ fontSize: 14, color: "rgba(14,8,5,.6)" }}>
+              <div style={{ fontSize: 24, color: t.inkMid }}>
                 Nobody locked in yet.
               </div>
             )}
@@ -253,21 +317,6 @@ function TVRevealInner({
         </div>
       </div>
 
-      <div
-        style={{
-          padding: "20px 56px 28px",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          position: "relative",
-          zIndex: 1,
-        }}
-      >
-        <Eyebrow color="rgba(14,8,5,.55)" size={10}>
-          SPEED BONUS REWARDS FAST CORRECT — NEVER GUESSING
-        </Eyebrow>
-        <Eyebrow color="rgba(14,8,5,.55)" size={10}>NEXT IN A MOMENT</Eyebrow>
-      </div>
     </TVStage>
   );
 }

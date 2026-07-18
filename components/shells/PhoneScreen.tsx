@@ -21,6 +21,8 @@ export interface PhoneScreenProps {
   weather?: boolean;
   /** Weather intensity 0-2.2 (>1 for the finale). */
   weatherIntensity?: number;
+  /** Dense states scroll on short phones; timed question input stays locked. */
+  scroll?: "auto" | "locked";
   style?: CSSProperties;
   /** Forwarded data-testid for E2E tests. Applied to the outer container so
    *  Playwright can target any phone screen by its top-level id. */
@@ -33,6 +35,7 @@ export function PhoneScreen({
   fillColor,
   weather = true,
   weatherIntensity = 0.5,
+  scroll = "auto",
   style,
   "data-testid": dataTestId,
 }: PhoneScreenProps) {
@@ -56,10 +59,19 @@ export function PhoneScreen({
         fontFamily: "var(--font-sans)",
         display: "flex",
         flexDirection: "column",
-        padding: "14px 22px 26px",
+        paddingTop: 14,
+        paddingRight: 22,
+        paddingBottom: "max(26px, env(safe-area-inset-bottom))",
+        paddingLeft: 22,
         boxSizing: "border-box",
-        overflow: "hidden",
+        overflowX: "hidden",
+        overflowY: scroll === "auto" ? "auto" : "hidden",
+        overscrollBehaviorY: scroll === "auto" ? "contain" : "none",
+        WebkitOverflowScrolling: scroll === "auto" ? "touch" : undefined,
         position: "relative",
+        // Player typography can size against the actual phone surface (cqw),
+        // not the browser/TV viewport that happens to contain it.
+        containerType: "inline-size",
         ...style,
       }}
     >

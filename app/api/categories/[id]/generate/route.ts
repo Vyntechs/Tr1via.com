@@ -49,6 +49,12 @@ import { persistQuestionGenerationReport } from "@/lib/ai/question-generation-re
 import { costUsd, type TokenUsage } from "@/lib/ai/usage-cost";
 import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
+import {
+  beginGenerationJob,
+  readGenerationJob,
+  updateGenerationJob,
+  type GenerationJobClient,
+} from "@/lib/ai/generation-job";
 import { rerollPlan } from "@/lib/host/rerollPlan";
 import {
   pickQuestionsForCategory,
@@ -96,19 +102,55 @@ export async function POST(
     );
   }
 
-  // Idempotency / race guard: refuse if the category is mid-generation or
-  // already complete. Host can re-run from 'draft' or 'review' (regenerate).
-  if (category.state === "generating") {
-    return conflict("already generating");
-  }
   if (category.state === "ready") {
     return conflict("category already locked; reset to regenerate");
+  }
+
+  const admin = getSupabaseAdmin();
+  const jobClient = admin as unknown as GenerationJobClient;
+  let existingJob = null;
+  if (category.state === "generating") {
+    try {
+      existingJob = await readGenerationJob(jobClient, categoryId);
+    } catch {
+      // If durable progress cannot prove the job stopped, the safest response
+      // is still the existing duplicate-click guard—not a second AI worker.
+      return conflict("already generating");
+    }
+    if (existingJob?.phase !== "needs_attention") {
+      return conflict("already generating");
+    }
   }
 
   const parsed = GenerateCategoryBodySchema.safeParse(await safeJson(req));
   if (!parsed.success) return badRequest(parsed.error);
 
-  const admin = getSupabaseAdmin();
+  // A stopped first run is resumable: its certified rows stay in place and a
+  // retry asks only for the missing choices. Every other generating state is
+  // still a duplicate-click/race and remains blocked.
+  const resume =
+    category.state === "generating" &&
+    existingJob?.phase === "needs_attention" &&
+    !parsed.data.keptIds;
+  if (category.state === "generating" && !resume) {
+    return conflict("already generating");
+  }
+
+  try {
+    await beginGenerationJob(jobClient, {
+      categoryId,
+      gameId: category.game_id,
+      nightId: owned.night.id,
+      hostId: owned.host.id,
+      targetCount: 20,
+      resume,
+      existing: existingJob,
+    });
+  } catch (error) {
+    return badRequest(
+      error instanceof Error ? error.message : "could not start generation progress",
+    );
+  }
 
   // Mark generating + remember the flavor so we can regenerate identically.
   // The schema's strict shape -> Json roundtrip is safe (only strings + a
@@ -158,30 +200,42 @@ export async function POST(
       themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,
       keptIds: parsed.data.keptIds,
       autoPick: parsed.data.autoPick,
+      resume,
       reportContext,
     }).catch(async (err) => {
-      // Rollback + broadcast on any unexpected failure inside the job.
-      // (Per-question failures are handled inside runGenerationJob.)
-      const message =
+      const internalMessage =
         err instanceof Error ? err.message : "unknown generation error";
-      console.error("[generate] job failed:", message);
-      // First-gen failure rolls back to 'draft' (no questions exist yet). A
-      // reroll (keptIds present) failed from 'review' with the host's pool +
-      // picks intact — generate-first ordering means nothing was deleted — so
-      // restore 'review', not 'draft', or a hard reload would look empty.
-      const rollbackState = parsed.data.keptIds ? "review" : "draft";
+      console.error("[generate] job failed:", internalMessage);
+      const hostMessage = parsed.data.keptIds
+        ? "Another set could not be finished. Your usable questions are still safe."
+        : "The question builder paused before it finished.";
+
+      // First-run failures remain resumable in `generating`: certified rows
+      // are durable and the next click fills only the shortfall. Rerolls keep
+      // their older atomic behavior because the host already has a complete,
+      // usable pool and should stay on it.
+      if (parsed.data.keptIds) {
+        try {
+          await admin
+            .from("categories")
+            .update({ state: "review" })
+            .eq("id", categoryId);
+        } catch {
+          /* best-effort */
+        }
+      }
       try {
-        await admin
-          .from("categories")
-          .update({ state: rollbackState })
-          .eq("id", categoryId);
+        await updateGenerationJob(jobClient, categoryId, {
+          phase: "needs_attention",
+          last_error: hostMessage,
+        });
       } catch {
         /* best-effort */
       }
       try {
         await broadcastToCategory(categoryId, "error", {
           serverNow: new Date().toISOString(),
-          error: message,
+          error: hostMessage,
         });
       } catch {
         /* best-effort */
@@ -220,9 +274,12 @@ async function runGenerationJob(opts: {
   // When true: after photos, auto-pick 7 (spread across difficulty) and flip
   // to 'ready' instead of 'review'. Founder build-a-full-game path.
   autoPick?: boolean;
+  /** Resume a stopped first run from its already-certified question rows. */
+  resume?: boolean;
   reportContext: QuestionGenerationReportContext;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
+  const jobClient = admin as unknown as GenerationJobClient;
   const qualityReport = createQuestionGenerationReportAccumulator({
     requestedCount: 20,
     verifyPasses: 2,
@@ -247,6 +304,45 @@ async function runGenerationJob(opts: {
     reroll = { deleteIds: plan.deleteIds, avoidPrompts: plan.avoidPrompts };
   }
 
+  // A first-run retry restores only questions that already passed every
+  // certification gate. They are the durable checkpoint; generation asks for
+  // the shortfall and never charges/waits for those choices twice.
+  const storedQuestions: Array<{
+    id: string;
+    q: GeneratedQuestion;
+    hasImage: boolean;
+  }> = [];
+  if (opts.resume && !opts.keptIds) {
+    const { data, error } = await admin
+      .from("questions")
+      .select("id, prompt, options, correct_index, difficulty, fact_blurb, image_url")
+      .eq("category_id", opts.categoryId)
+      .eq("source", "ai")
+      .eq("is_picked", false);
+    if (error) {
+      throw new Error(`resume: failed to load certified questions: ${error.message}`);
+    }
+    for (const row of data ?? []) {
+      if (!row.fact_blurb) {
+        throw new Error("resume: a certified question is missing its fact note");
+      }
+      storedQuestions.push({
+        id: row.id,
+        q: {
+          prompt: row.prompt,
+          options: row.options as [string, string, string, string],
+          correctIndex: row.correct_index as 0 | 1 | 2 | 3,
+          difficulty: row.difficulty as 1 | 2 | 3 | 4 | 5 | 6 | 7,
+          factBlurb: row.fact_blurb,
+          // Images are optional in Original mode; the topic is a safe fallback
+          // query because the original generated query is not persisted.
+          photoQuery: opts.topic,
+        },
+        hasImage: Boolean(row.image_url),
+      });
+    }
+  }
+
   // Step 1: generate, then independently fact-check every answer on Opus —
   // TWICE (verifyPasses: 2), keeping only questions both passes agree are
   // correct AND unambiguous (a single check has wobble on borderline ones;
@@ -267,6 +363,8 @@ async function runGenerationJob(opts: {
   // broadcast every HEARTBEAT_MS carrying the current phase; the client arms
   // its timeout off the last heartbeat, so only a truly dead worker trips it.
   let phase: GenerationPhase = "writing";
+  let writtenCount = storedQuestions.length;
+  let certifiedCount = storedQuestions.length;
   const emitProgress = () => {
     const payload: CategoryProgressPayload = {
       serverNow: new Date().toISOString(),
@@ -279,6 +377,7 @@ async function runGenerationJob(opts: {
   void emitProgress();
   const heartbeat = setInterval(() => {
     void emitProgress();
+    void updateGenerationJob(jobClient, opts.categoryId, { phase });
   }, GENERATION_HEARTBEAT_MS);
 
   // Accumulate real token spend across every generate + verify call this job
@@ -297,19 +396,65 @@ async function runGenerationJob(opts: {
     qualityReport.recordUsage(model, u);
   };
 
+  const insertedQuestions = [...storedQuestions];
+  const persistCertifiedBatch = async (batch: GeneratedQuestion[]) => {
+    const insertRows = batch.map((q) => ({
+      category_id: opts.categoryId,
+      prompt: q.prompt,
+      options: q.options as unknown as [string, string, string, string],
+      correct_index: q.correctIndex,
+      difficulty: q.difficulty,
+      fact_blurb: q.factBlurb,
+      source: "ai" as const,
+      is_picked: false,
+    }));
+    const { data, error } = await admin
+      .from("questions")
+      .insert(insertRows)
+      .select("id, prompt");
+    if (error) throw new Error(`failed to save certified questions: ${error.message}`);
+    if (!data || data.length !== batch.length) {
+      throw new Error("certified question checkpoint returned an incomplete result");
+    }
+    for (let index = 0; index < data.length; index += 1) {
+      insertedQuestions.push({
+        id: data[index]!.id,
+        q: batch[index]!,
+        hasImage: false,
+      });
+      await broadcastToCategory(opts.categoryId, "question_added", {
+        serverNow: new Date().toISOString(),
+        questionId: data[index]!.id,
+      }).catch(() => undefined);
+    }
+    certifiedCount += batch.length;
+    await updateGenerationJob(jobClient, opts.categoryId, {
+      phase: certifiedCount >= 20 ? "images" : "repairing",
+      certified_count: certifiedCount,
+      written_count: Math.max(writtenCount, certifiedCount),
+    });
+  };
+
   let generated: GeneratedQuestion[];
   try {
+    await updateGenerationJob(jobClient, opts.categoryId, {
+      phase: "writing",
+      written_count: writtenCount,
+      certified_count: certifiedCount,
+    });
     generated = await collectVerifiedQuestions({
       target: 20,
+      initialClean: storedQuestions.map((item) => item.q),
       // Up to 4 rounds to top back up to 20. Almost always 1; an occasional
       // rejected question takes a cheap 2nd round. The bound caps worst-case
       // latency if the model keeps producing borderline answers.
       maxRounds: 4,
       verifyPasses: 2,
-      generate: (avoid, need) => {
+      generate: async (avoid, need) => {
         phase = "writing";
         void emitProgress();
-        return generateQuestions({
+        await updateGenerationJob(jobClient, opts.categoryId, { phase: "writing" });
+        const batch = await generateQuestions({
           topic: opts.topic,
           flavor: opts.flavor,
           difficulty: opts.difficulty,
@@ -326,6 +471,14 @@ async function runGenerationJob(opts: {
             );
           },
         });
+        writtenCount = Math.min(20, certifiedCount + batch.length);
+        phase = "checking";
+        await updateGenerationJob(jobClient, opts.categoryId, {
+          phase: "checking",
+          written_count: writtenCount,
+        });
+        void emitProgress();
+        return batch;
       },
       verify: (qs) => {
         phase = "checking";
@@ -343,7 +496,18 @@ async function runGenerationJob(opts: {
             reasons: item.reasons,
           })),
         });
+        if (certifiedCount < 20) {
+          phase = "repairing";
+          void updateGenerationJob(jobClient, opts.categoryId, {
+            phase: "repairing",
+            written_count: writtenCount,
+            certified_count: certifiedCount,
+          });
+        }
       },
+      // First runs checkpoint every certified batch. Rerolls remain atomic so
+      // the host's complete current pool never mixes with a partial new one.
+      onAccepted: opts.keptIds ? undefined : persistCertifiedBatch,
     });
   } finally {
     clearInterval(heartbeat);
@@ -353,33 +517,24 @@ async function runGenerationJob(opts: {
       `llmCalls=${cost.calls} tokensIn=${cost.tokensIn} tokensOut=${cost.tokensOut} ` +
       `estUsd=${cost.usd.toFixed(4)}`,
   );
-  if (generated.length === 0) {
-    throw new Error("no questions passed the answer check");
+  if (generated.length < 20) {
+    throw new Error(
+      `${20 - generated.length} certified question choices are still needed`,
+    );
   }
   qualityReport.recordAcceptedQuestions(generated);
 
   // Step 2: insert all rows up front so the UI can render them immediately.
   // Photos backfill afterwards.
-  const insertRows = generated.map((q) => ({
-    category_id: opts.categoryId,
+  if (opts.keptIds) {
+    await persistCertifiedBatch(generated);
+  }
+  const inserted = insertedQuestions.map(({ id, q, hasImage }) => ({
+    id,
     prompt: q.prompt,
-    options: q.options as unknown as [string, string, string, string],
-    correct_index: q.correctIndex,
-    difficulty: q.difficulty,
-    fact_blurb: q.factBlurb,
-    source: "ai" as const,
-    is_picked: false,
+    q,
+    hasImage,
   }));
-  const { data: inserted, error: insertError } = await admin
-    .from("questions")
-    .insert(insertRows)
-    .select("id, prompt");
-  if (insertError) {
-    throw new Error(`failed to insert questions: ${insertError.message}`);
-  }
-  if (!inserted) {
-    throw new Error("insert returned no rows");
-  }
 
   // Reroll cleanup: the fresh batch is safely inserted, so now remove the
   // previously-shown unpicked candidates. Picked rows were spared by the plan.
@@ -396,14 +551,6 @@ async function runGenerationJob(opts: {
     }
   }
 
-  // Broadcast question_added for each row so HostGenLoading can populate.
-  for (const row of inserted) {
-    await broadcastToCategory(opts.categoryId, "question_added", {
-      serverNow: new Date().toISOString(),
-      questionId: row.id,
-    }).catch(() => undefined);
-  }
-
   // Pick BEFORE photos on the auto-build path. The founder "build a full game"
   // tool keeps only 7 of the 20 generated questions, so photographing all 20
   // then discarding 13 does ~3x the Pexels work for nothing — and 12 categories
@@ -411,12 +558,19 @@ async function runGenerationJob(opts: {
   // first lets us fetch photos for just the 7 keepers: ~3x fewer lookups, under
   // the limit, and FASTER (less work, no added wait). Manual review still
   // photographs all 20 so the host's swap UI has the full pool.
-  let photoTargets = inserted.map((row, i) => ({ id: row.id, q: generated[i]! }));
+  phase = "images";
+  await updateGenerationJob(jobClient, opts.categoryId, {
+    phase: "images",
+    certified_count: generated.length,
+  });
+  let photoTargets = inserted
+    .filter((row) => !row.hasImage)
+    .map((row) => ({ id: row.id, q: row.q }));
   if (opts.autoPick) {
     const ids = selectSpreadQuestionIds(
-      inserted.map((row, i) => ({
+      inserted.map((row) => ({
         id: row.id,
-        difficulty: generated[i]!.difficulty,
+        difficulty: row.q.difficulty,
       })),
       7,
     );
@@ -432,6 +586,7 @@ async function runGenerationJob(opts: {
   // Step 3: attach photos. Sequential within a category because Pexels' free
   // tier is 200 req/hr — bursting risks brittleness without measurable
   // user-side latency benefit (the UI is already populated).
+  let imageCount = inserted.filter((row) => row.hasImage).length;
   for (const { id, q } of photoTargets) {
     try {
       const photo = await autoAttachPhoto(q, { topic: opts.topic });
@@ -451,6 +606,11 @@ async function runGenerationJob(opts: {
           );
         } else {
           qualityReport.recordImageAttached();
+          imageCount += 1;
+          await updateGenerationJob(jobClient, opts.categoryId, {
+            phase: "images",
+            image_count: imageCount,
+          });
         }
       }
       await broadcastToCategory(opts.categoryId, "photo_attached", {
@@ -491,6 +651,13 @@ async function runGenerationJob(opts: {
       .update({ state: "review" })
       .eq("id", opts.categoryId);
   }
+  await updateGenerationJob(jobClient, opts.categoryId, {
+    phase: "ready",
+    written_count: 20,
+    certified_count: 20,
+    image_count: imageCount,
+    last_error: null,
+  });
   const donePayload: CategoryDonePayload = {
     serverNow: new Date().toISOString(),
     count: inserted.length,

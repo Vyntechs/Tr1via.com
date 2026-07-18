@@ -81,10 +81,13 @@ export function PlayerBetweenGames({
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 14, position: "relative" }}>
         <Display size={44} color={t.ink}>
-          You&apos;re <span style={{ color: t.pop }}>in Game 2.</span>
+          Round 2 is starting.
         </Display>
         <div style={{ marginTop: 6, fontSize: 14, color: t.inkMid }}>
-          Game 1 standings — fresh board starts when the host says go.
+          You&apos;re in Game 2.
+        </div>
+        <div style={{ marginTop: 3, fontSize: 14, color: t.inkMid }}>
+          Waiting for Heather to choose the first question.
         </div>
 
         <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 8 }}>

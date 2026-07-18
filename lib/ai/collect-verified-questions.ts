@@ -16,11 +16,15 @@
 
 import type { GeneratedQuestion } from "./generate-questions";
 import type { AnswerVerdict } from "./verify-answers";
+import { blockingRiskFlagsForQuestion } from "./question-risk-flags";
 
 export type CollectVerifiedRejectionReason =
   | "verifier_wrong"
   | "verifier_ambiguous"
-  | "missing_verdict";
+  | "missing_verdict"
+  | "fact_blurb_wrong"
+  | "image_required"
+  | "deterministic_risk";
 
 export interface CollectVerifiedRejectedCandidate {
   prompt: string;
@@ -38,6 +42,8 @@ export interface CollectVerifiedRoundEvent {
 export interface CollectVerifiedOptions {
   target: number;
   maxRounds: number;
+  /** Previously certified questions restored from durable storage. */
+  initialClean?: GeneratedQuestion[];
   /** Independent verify passes that must ALL agree a question is clean. Default 2. */
   verifyPasses?: number;
   /**
@@ -47,6 +53,8 @@ export interface CollectVerifiedOptions {
    */
   generate: (avoidPrompts: string[], need: number) => Promise<GeneratedQuestion[]>;
   verify: (questions: GeneratedQuestion[]) => Promise<AnswerVerdict[]>;
+  /** Persist each newly accepted batch before the next refill round starts. */
+  onAccepted?: (questions: GeneratedQuestion[]) => void | Promise<void>;
   /** Optional: observe per-round verification quality. No-op if omitted. */
   onRoundComplete?: (event: CollectVerifiedRoundEvent) => void;
 }
@@ -55,8 +63,11 @@ export async function collectVerifiedQuestions(
   opts: CollectVerifiedOptions,
 ): Promise<GeneratedQuestion[]> {
   const passes = opts.verifyPasses ?? 2;
-  const clean: GeneratedQuestion[] = [];
-  const seenPrompts: string[] = [];
+  const clean: GeneratedQuestion[] = (opts.initialClean ?? []).slice(
+    0,
+    opts.target,
+  );
+  const seenPrompts: string[] = clean.map((question) => question.prompt);
 
   for (let round = 0; round < opts.maxRounds && clean.length < opts.target; round++) {
     // Refill rounds only ask for the remaining gap, so topping 19 -> 20 costs
@@ -87,13 +98,19 @@ export async function collectVerifiedQuestions(
     const rejected: CollectVerifiedRejectedCandidate[] = [];
     batch.forEach((q, i) => {
       const reasons = rejectionReasonsForIndex(verdictsByPass, i);
-      if (reasons.length === 0) {
+      if (blockingRiskFlagsForQuestion(q).length > 0) {
+        reasons.push("deterministic_risk");
+      }
+      if (reasons.length === 0 && clean.length < opts.target) {
         clean.push(q);
         accepted.push(q);
-      } else {
+      } else if (reasons.length > 0) {
         rejected.push({ prompt: q.prompt, reasons });
       }
     });
+    if (accepted.length > 0) {
+      await opts.onAccepted?.(accepted);
+    }
     opts.onRoundComplete?.({
       round: round + 1,
       requested: need,
@@ -113,6 +130,8 @@ function rejectionReasonsForIndex(
   let verifierWrong = false;
   let verifierAmbiguous = false;
   let missingVerdict = false;
+  let factBlurbWrong = false;
+  let imageRequired = false;
 
   for (const byIndex of verdictsByPass) {
     const verdict = byIndex.get(index);
@@ -122,11 +141,15 @@ function rejectionReasonsForIndex(
     }
     if (!verdict.markedAnswerIsCorrect) verifierWrong = true;
     if (verdict.ambiguous) verifierAmbiguous = true;
+    if (!verdict.factBlurbIsCorrect) factBlurbWrong = true;
+    if (!verdict.answerableWithoutImage) imageRequired = true;
   }
 
   const reasons: CollectVerifiedRejectionReason[] = [];
   if (verifierWrong) reasons.push("verifier_wrong");
   if (verifierAmbiguous) reasons.push("verifier_ambiguous");
   if (missingVerdict) reasons.push("missing_verdict");
+  if (factBlurbWrong) reasons.push("fact_blurb_wrong");
+  if (imageRequired) reasons.push("image_required");
   return reasons;
 }

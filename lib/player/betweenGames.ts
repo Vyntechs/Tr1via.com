@@ -66,6 +66,27 @@ export function selectBetweenGamesView(args: {
   return null; // joined, but game 2 is live → question flow owns the screen
 }
 
+/**
+ * Game 2 can be live for a few seconds before the host chooses its first
+ * question. During that exact gap, keep the intentional waiting screen—even
+ * if a reconnect still carries Game 1's last question in memory.
+ */
+export function isWaitingForGame2FirstQuestion(args: {
+  game1State: string | null;
+  game2State: string | null;
+  inGame2: boolean;
+  game2Id: string | null;
+  currentQuestionGameId: string | null;
+}): boolean {
+  return (
+    args.game1State === "done" &&
+    args.game2State === "live" &&
+    args.inGame2 &&
+    args.game2Id !== null &&
+    args.currentQuestionGameId !== args.game2Id
+  );
+}
+
 function questionBelongsToDoneGame(
   q: QuestionRow | null,
   categories: CategoryRow[],

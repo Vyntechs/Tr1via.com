@@ -112,7 +112,7 @@ export function PlayerQuestion({
   const { frameRef, textRef, fontSize } = useAutoFitText();
 
   return (
-    <PhoneScreen data-testid="player-question">
+    <PhoneScreen data-testid="player-question" scroll="locked">
       {/* Category banner — full bleed across top */}
       <div
         style={{

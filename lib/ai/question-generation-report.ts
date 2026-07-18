@@ -16,6 +16,9 @@ export type QuestionRejectionReason =
   | "verifier_wrong"
   | "verifier_ambiguous"
   | "missing_verdict"
+  | "fact_blurb_wrong"
+  | "image_required"
+  | "deterministic_risk"
   | "duplicate_prompt"
   | "generation_empty"
   | "max_rounds_exhausted";

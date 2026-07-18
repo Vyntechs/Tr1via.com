@@ -28,6 +28,14 @@ describe("PlayerBetweenGames", () => {
     expect(screen.getByText(/in game 2/i)).toBeInTheDocument();
   });
 
+  it("explains the exact waiting state before Heather chooses the first question", () => {
+    render(wrap(<PlayerBetweenGames playerName="You" top={TOP} you={null} />));
+    expect(screen.getByText("Round 2 is starting.")).toBeInTheDocument();
+    expect(
+      screen.getByText("Waiting for Heather to choose the first question."),
+    ).toBeInTheDocument();
+  });
+
   it("renders the standings with exactly one highlighted 'you' row", () => {
     render(wrap(<PlayerBetweenGames playerName="You" top={TOP} you={null} />));
     expect(screen.getAllByTestId("standings-row")).toHaveLength(2); // non-you rows

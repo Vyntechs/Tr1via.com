@@ -41,6 +41,13 @@ describe("SYSTEM_PROMPT", () => {
   it("instructs Claude to call the emit_questions tool", () => {
     expect(SYSTEM_PROMPT).toMatch(/emit_questions/);
   });
+
+  it("forbids image-dependent Original questions and requires a checked fact blurb", () => {
+    expect(SYSTEM_PROMPT).toMatch(
+      /answerable without (?:seeing )?(?:an? )?(?:image|photo)/i,
+    );
+    expect(SYSTEM_PROMPT).toMatch(/fact blurb.*(accurate|fact-check)/i);
+  });
 });
 
 describe("userPromptFor", () => {

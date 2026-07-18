@@ -70,7 +70,14 @@ export interface RoomMagicReactionPayload extends BroadcastPayload {
  * Phase of the background generation job, carried by `progress` heartbeats.
  * Single source of truth so the server send site and the host UI can't drift.
  */
-export type GenerationPhase = "writing" | "checking";
+export type GenerationPhase =
+  | "queued"
+  | "writing"
+  | "checking"
+  | "repairing"
+  | "images"
+  | "ready"
+  | "needs_attention";
 
 /** Payload for the `progress` heartbeat event. */
 export interface CategoryProgressPayload extends CategoryBroadcastPayload {

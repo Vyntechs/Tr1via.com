@@ -22,22 +22,25 @@ const marqueeChips = [
 ];
 
 describe("TVQuestion bottom-strip swap", () => {
-  it("renders the marquee when themeKey is 'may' and marqueeChips provided", () => {
+  it("never renders a moving scoreboard during the question", () => {
     render(<TVQuestion {...baseProps} themeKey="may" marqueeChips={marqueeChips} />);
-    expect(screen.getByTestId("tv-scoreboard-marquee")).toBeInTheDocument();
-    expect(screen.queryByTestId("tv-question-pile")).toBeNull();
+    expect(screen.queryByTestId("tv-scoreboard-marquee")).toBeNull();
+    expect(screen.getByTestId("tv-question-lock-status")).toHaveTextContent(
+      "21 OF 32 LOCKED IN",
+    );
   });
 
-  it("renders the existing pile when themeKey is not 'may'", () => {
+  it("renders the same stationary lock status in every theme", () => {
     render(<TVQuestion {...baseProps} themeKey="house" />);
     expect(screen.queryByTestId("tv-scoreboard-marquee")).toBeNull();
-    expect(screen.getByTestId("tv-question-pile")).toBeInTheDocument();
+    expect(screen.getByTestId("tv-question-lock-status")).toBeInTheDocument();
   });
 
-  it("falls back to the pile if themeKey is 'may' but no marqueeChips provided", () => {
-    render(<TVQuestion {...baseProps} themeKey="may" />);
-    expect(screen.queryByTestId("tv-scoreboard-marquee")).toBeNull();
-    expect(screen.getByTestId("tv-question-pile")).toBeInTheDocument();
+  it("uses the venue-legibility size for every answer", () => {
+    render(<TVQuestion {...baseProps} themeKey="house" />);
+    for (const option of screen.getAllByTestId("tv-question-option-text")) {
+      expect(option.style.fontSize).toBe("clamp(32px, 4vmin, 44px)");
+    }
   });
 
   it("removes the public image panel if the external image fails to load", () => {

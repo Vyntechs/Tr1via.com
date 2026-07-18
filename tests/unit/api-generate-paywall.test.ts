@@ -14,8 +14,20 @@ import { NextRequest } from "next/server";
 
 const authMock = vi.hoisted(() => ({ requireOwnedCategory: vi.fn() }));
 const genMock = vi.hoisted(() => ({ generateQuestions: vi.fn() }));
+const adminMock = vi.hoisted(() => ({
+  getSupabaseAdmin: vi.fn(() => ({
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          maybeSingle: vi.fn(async () => ({ data: null, error: null })),
+        })),
+      })),
+    })),
+  })),
+}));
 
 vi.mock("@/lib/api/auth", () => authMock);
+vi.mock("@/lib/supabase/admin", () => adminMock);
 // Mock every lib/ai entry the route imports so (a) module import is side-effect
 // free and (b) we can assert the pipeline is never touched for a blocked host.
 vi.mock("@/lib/ai/generate-questions", () => ({

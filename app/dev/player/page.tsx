@@ -161,7 +161,7 @@ export default function PlayerGallery() {
           }}
         >
           {SCREENS.map(({ key, title, Component }) => (
-            <PhoneFrame key={key} title={title} themeKey={themeKey}>
+            <PhoneFrame key={key} screenKey={key} title={title} themeKey={themeKey}>
               <Component />
             </PhoneFrame>
           ))}
@@ -227,10 +227,12 @@ function GalleryHeader({
 // screen reads as a phone, not a card. Notch + rounded bezel are decorative;
 // the inner area is the live render surface.
 function PhoneFrame({
+  screenKey,
   title,
   themeKey,
   children,
 }: {
+  screenKey: string;
   title: string;
   themeKey: ThemeKey;
   children: React.ReactNode;
@@ -239,6 +241,7 @@ function PhoneFrame({
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <Eyebrow color="rgba(244,230,196,.6)" size={10}>{title}</Eyebrow>
       <div
+        data-player-preview-frame={screenKey}
         style={{
           width: 380,
           height: 780,
