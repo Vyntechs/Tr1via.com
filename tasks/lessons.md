@@ -72,3 +72,63 @@ Reason: I reported Heather's night readiness counts when Brandon wanted question
 Trigger: Planning host/player/TV experience or support flow from conversation context.
 Rule: Trace actual routes, screens, and state transitions before proposing flow changes. Do not infer public/private surfaces from mental model.
 Reason: I assumed a separate TV/laptop flow; Brandon corrected that the real mirrored flow differs.
+
+### pregame-qa-must-be-pre-display
+Trigger: Brandon rejects after-the-fact correction notices for host-generated game content.
+Rule: Certify questions, answers, facts, and images before showing them as ready; never rely on post-build correction notices.
+Reason: Hosts plan from displayed content; later corrections break trust and may never be seen.
+
+### host-waits-need-background-progress
+Trigger: Heather waits on generation or verification during venue preparation.
+Rule: Keep work running in background; make waits beautiful and calm with real phases, counts, elapsed or estimated time, and safe navigation.
+Reason: Unbounded loading erodes trust and wastes host preparation time even when the worker is healthy.
+
+### venue-tv-is-signage-not-desktop
+Trigger: Mirrored host laptop is unreadable on the venue TV, especially answer options and moving player names.
+Rule: Design live TV typography for older viewers at room distance; minimize density and continuous motion, then verify on a real venue-sized display.
+Reason: Desktop-sized text can fit technically yet fail the actual audience.
+
+### heather-laptop-is-primary-live-control
+Trigger: Designing venue mode for Heather's mirrored laptop and optional host phone.
+Rule: Keep every live control operable from the laptop; treat the phone as optional until clear pairing and onboarding make it trustworthy.
+Reason: Heather runs shows from her laptop and does not use an undiscoverable phone route.
+
+### game-boundaries-must-reset-visible-history
+Trigger: Game 2 starts before its first question while phones still hold Game 1 reveal history.
+Rule: Scope visible question and reveal state to the active game; show an explicit synchronized starting state when no active-game question exists.
+Reason: Historical fallback across game boundaries makes different players see stale right-or-wrong results and mistake the game for frozen.
+
+### original-mode-questions-must-be-text-complete
+Trigger: An Original-mode question asks players to identify a pictured sign.
+Rule: Certify Original questions without images; generate image-dependent prompts only after the host explicitly selects Visual mode with guaranteed delivery.
+Reason: Small, cropped, slow, or failed images otherwise make a valid question unfair for only some players.
+
+### game-mode-is-a-complete-experience
+Trigger: Discussing Visual mode as though it were an option inside Original setup.
+Rule: Design each selected mode as its own setup, content, certification, live-play, scoring, reveal, recovery, and completion flow.
+Reason: Different rules require a coherent player promise, not a hidden content toggle that surprises hosts or players.
+
+### refine-original-build-new-modes-separately
+Trigger: Planning Original improvements alongside the first new game mode.
+Rule: Apply compatible reliability, fairness, pacing, and readability refinements to Original; build each new mode as a separate end-to-end product flow.
+Reason: Rebuilding Original risks Heather's familiar game, while partial mode overlays create inconsistent rules and incomplete screens.
+
+### classic-refinements-require-zero-retraining
+Trigger: Planning reliability and experience refinements for Heather's existing Original flow.
+Rule: Preserve sequence, controls, and responsibilities; explain visible benefits once, while keeping optional details and new capabilities out of Heather's required path.
+Reason: Improvements should remove known pain without making Heather relearn, supervise, or fear the familiar game she already runs.
+
+### north-star-centers-frictionless-use
+Trigger: A product North Star overstates “the room” and visually resembles the current product.
+Rule: Center intended users completing the experience with minimal effort, uncertainty, waiting, setup, and recovery—not a metaphor or cosmetic restyle.
+Reason: Strategic visuals must reveal a meaningfully easier future state, not repackage today’s interface.
+
+### alignment-statements-must-name-observable-behavior
+Trigger: Brandon cannot align with a strategy statement because it uses generic product language.
+Rule: Name the exact people, device, action, timing, failure protection, and observable success before using North Star language.
+Reason: Abstract outcomes hide disagreements; an operating contract exposes them before planning or design proceeds.
+
+### do-not-transfer-routine-product-judgment
+Trigger: Brandon is asked to approve a sequence of reversible details that research, code, tests, or prior decisions can answer.
+Rule: Decide routine details autonomously and present one consolidated recommendation; ask only genuine business, authority, or irreversible gates.
+Reason: Serial approval questions make Brandon perform the agent’s product work and conceal whether the design is actually coherent.
