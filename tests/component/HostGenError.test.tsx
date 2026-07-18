@@ -1,5 +1,5 @@
 // HostGenError — failure UI when Claude generation didn't finish.
-// Two primary actions: Try again + Enter manually. Also a Back to setup
+// Two primary actions: Continue + Enter manually. Also a Back to setup
 // button when the parent provides onBack.
 
 import { describe, it, expect, vi, afterEach } from "vitest";
@@ -19,7 +19,7 @@ describe("HostGenError", () => {
       />,
     );
     expect(
-      screen.getByText(/generation didn.t work/i),
+      screen.getByText(/your finished work is safe/i),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/anthropic is busy/i),
@@ -31,14 +31,14 @@ describe("HostGenError", () => {
       <HostGenError themeKey="house" shellTitle="failed · pixar movies" />,
     );
     expect(
-      screen.getByText(/something went sideways/i),
+      screen.getByText(/question builder paused/i),
     ).toBeInTheDocument();
   });
 
-  it("invokes onRetry when 'Try again' is clicked", () => {
+  it("invokes onRetry when 'Continue' is clicked", () => {
     const onRetry = vi.fn();
     render(<HostGenError themeKey="house" onRetry={onRetry} />);
-    fireEvent.click(screen.getByRole("button", { name: /try again/i }));
+    fireEvent.click(screen.getByRole("button", { name: /continue/i }));
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
@@ -53,9 +53,9 @@ describe("HostGenError", () => {
     expect(onEnter).toHaveBeenCalledTimes(1);
   });
 
-  it("disables 'Try again' while a retry is in flight", () => {
+  it("disables 'Continue' while a retry is in flight", () => {
     render(<HostGenError themeKey="house" isRetrying />);
-    const button = screen.getByRole("button", { name: /trying/i });
+    const button = screen.getByRole("button", { name: /continuing/i });
     expect(button).toBeDisabled();
   });
 

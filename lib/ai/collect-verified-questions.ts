@@ -42,6 +42,8 @@ export interface CollectVerifiedRoundEvent {
 export interface CollectVerifiedOptions {
   target: number;
   maxRounds: number;
+  /** Previously certified questions restored from durable storage. */
+  initialClean?: GeneratedQuestion[];
   /** Independent verify passes that must ALL agree a question is clean. Default 2. */
   verifyPasses?: number;
   /**
@@ -51,6 +53,8 @@ export interface CollectVerifiedOptions {
    */
   generate: (avoidPrompts: string[], need: number) => Promise<GeneratedQuestion[]>;
   verify: (questions: GeneratedQuestion[]) => Promise<AnswerVerdict[]>;
+  /** Persist each newly accepted batch before the next refill round starts. */
+  onAccepted?: (questions: GeneratedQuestion[]) => void | Promise<void>;
   /** Optional: observe per-round verification quality. No-op if omitted. */
   onRoundComplete?: (event: CollectVerifiedRoundEvent) => void;
 }
@@ -59,8 +63,11 @@ export async function collectVerifiedQuestions(
   opts: CollectVerifiedOptions,
 ): Promise<GeneratedQuestion[]> {
   const passes = opts.verifyPasses ?? 2;
-  const clean: GeneratedQuestion[] = [];
-  const seenPrompts: string[] = [];
+  const clean: GeneratedQuestion[] = (opts.initialClean ?? []).slice(
+    0,
+    opts.target,
+  );
+  const seenPrompts: string[] = clean.map((question) => question.prompt);
 
   for (let round = 0; round < opts.maxRounds && clean.length < opts.target; round++) {
     // Refill rounds only ask for the remaining gap, so topping 19 -> 20 costs
@@ -94,13 +101,16 @@ export async function collectVerifiedQuestions(
       if (blockingRiskFlagsForQuestion(q).length > 0) {
         reasons.push("deterministic_risk");
       }
-      if (reasons.length === 0) {
+      if (reasons.length === 0 && clean.length < opts.target) {
         clean.push(q);
         accepted.push(q);
-      } else {
+      } else if (reasons.length > 0) {
         rejected.push({ prompt: q.prompt, reasons });
       }
     });
+    if (accepted.length > 0) {
+      await opts.onAccepted?.(accepted);
+    }
     opts.onRoundComplete?.({
       round: round + 1,
       requested: need,

@@ -245,3 +245,56 @@ it("requires ALL verify passes to agree — drops a question one pass flags (ver
   });
   expect(out.map((x) => x.prompt)).toEqual(["agree"]); // "split" dropped — passes disagreed
 });
+
+it("resumes from already-certified choices and requests only the shortfall", async () => {
+  const needs: number[] = [];
+  const avoids: string[][] = [];
+  const saved = q("already safe");
+  const out = await collectVerifiedQuestions({
+    target: 2,
+    maxRounds: 2,
+    initialClean: [saved],
+    generate: async (avoid, need) => {
+      avoids.push(avoid);
+      needs.push(need);
+      return [q("new safe")];
+    },
+    verify: async () => [ok(0)],
+  });
+
+  expect(needs).toEqual([1]);
+  expect(avoids[0]).toContain("already safe");
+  expect(out.map((item) => item.prompt)).toEqual(["already safe", "new safe"]);
+});
+
+it("reports each newly certified batch so callers can persist it immediately", async () => {
+  const acceptedBatches: string[][] = [];
+  await collectVerifiedQuestions({
+    target: 2,
+    maxRounds: 2,
+    generate: async (_avoid, need) =>
+      Array.from({ length: need }, (_, index) => q(`safe-${index}`)),
+    verify: async (items) => items.map((_, index) => ok(index)),
+    onAccepted: async (items) => {
+      acceptedBatches.push(items.map((item) => item.prompt));
+    },
+  });
+
+  expect(acceptedBatches).toEqual([["safe-0", "safe-1"]]);
+});
+
+it("never persists a model buffer beyond the requested target", async () => {
+  const acceptedBatches: string[][] = [];
+  const out = await collectVerifiedQuestions({
+    target: 2,
+    maxRounds: 1,
+    generate: async () => [q("safe-1"), q("safe-2"), q("buffer")],
+    verify: async (items) => items.map((_, index) => ok(index)),
+    onAccepted: (items) => {
+      acceptedBatches.push(items.map((item) => item.prompt));
+    },
+  });
+
+  expect(out.map((item) => item.prompt)).toEqual(["safe-1", "safe-2"]);
+  expect(acceptedBatches).toEqual([["safe-1", "safe-2"]]);
+});

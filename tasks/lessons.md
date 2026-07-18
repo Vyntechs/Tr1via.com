@@ -132,3 +132,8 @@ Reason: Abstract outcomes hide disagreements; an operating contract exposes them
 Trigger: Brandon is asked to approve a sequence of reversible details that research, code, tests, or prior decisions can answer.
 Rule: Decide routine details autonomously and present one consolidated recommendation; ask only genuine business, authority, or irreversible gates.
 Reason: Serial approval questions make Brandon perform the agent’s product work and conceal whether the design is actually coherent.
+
+### protect-generated-types-when-local-services-are-offline
+Trigger: A type-generation command redirects output while its required local database or Docker service is unavailable.
+Rule: Verify dependencies first and generate to a temporary destination before replacing the tracked types file.
+Reason: CLI errors can be redirected into the generated file and silently erase valid types.

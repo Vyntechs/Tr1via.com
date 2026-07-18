@@ -33,7 +33,7 @@
 - Consumes: authenticated `/host` rendering and `HostHomeClient.isFirstNightComplete`.
 - Produces: `HostWhatsNew({ open, onClose })` and version key `tr1via-host-whats-new-original-v1`.
 
-- [ ] **Step 1: Write the failing component test**
+- [x] **Step 1: Write the failing component test**
 
 ```tsx
 render(<HostWhatsNew open onClose={onClose} />);
@@ -44,17 +44,17 @@ fireEvent.click(screen.getByRole("button", { name: /got it/i }));
 expect(onClose).toHaveBeenCalledOnce();
 ```
 
-- [ ] **Step 2: Run the test and confirm RED**
+- [x] **Step 2: Run the test and confirm RED**
 
 Run: `npx vitest run tests/component/HostWhatsNew.test.tsx`
 
 Expected: FAIL because `HostWhatsNew` does not exist.
 
-- [ ] **Step 3: Implement the notice**
+- [x] **Step 3: Implement the notice**
 
 Create a modal/card with a restrained “certified question ticket” signature: a vertical stamped rule with `CHECKED`, `RECOVERABLE`, and `CLEARER AT THE VENUE`. Use existing theme tokens and typography; no new dependency. Render the approved support copy exactly and expose `Got it` plus a close control.
 
-- [ ] **Step 4: Write the failing host-home visibility and persistence tests**
+- [x] **Step 4: Write the failing host-home visibility and persistence tests**
 
 ```tsx
 localStorage.clear();
@@ -67,17 +67,17 @@ fireEvent.click(screen.getByRole("button", { name: /what's new/i }));
 expect(screen.getByRole("dialog")).toBeVisible();
 ```
 
-- [ ] **Step 5: Run the host-home test and confirm RED**
+- [x] **Step 5: Run the host-home test and confirm RED**
 
 Run: `npx vitest run tests/unit/HostHomeClient-whats-new.test.tsx`
 
 Expected: FAIL because the dashboard has no versioned notice state or reopen control.
 
-- [ ] **Step 6: Wire the host-only notice and make both tests GREEN**
+- [x] **Step 6: Wire the host-only notice and make both tests GREEN**
 
 Initialize notice visibility in an effect after mount, write the versioned dismissal to local storage, and render a quiet fixed dashboard button labelled `What's new`. Do not add the component to layouts shared by player or TV routes.
 
-- [ ] **Step 7: Verify the slice**
+- [x] **Step 7: Verify the slice**
 
 Run: `npx vitest run tests/component/HostWhatsNew.test.tsx tests/unit/HostHomeClient-whats-new.test.tsx tests/unit/HostHomeClient-founder-build.test.tsx`
 
@@ -101,35 +101,35 @@ Expected: all tests pass.
 - Consumes: `GeneratedQuestion.prompt`, `options`, `correctIndex`, `factBlurb`, and `photoQuery`.
 - Produces: `AnswerVerdict` fields `markedAnswerIsCorrect`, `ambiguous`, `factBlurbIsCorrect`, and `answerableWithoutImage`.
 
-- [ ] **Step 1: Write failing verifier tests**
+- [x] **Step 1: Write failing verifier tests**
 
 Add assertions that the verifier payload includes `factBlurb`, the tool requires both new boolean fields, and returned verdicts preserve them.
 
-- [ ] **Step 2: Run the verifier tests and confirm RED**
+- [x] **Step 2: Run the verifier tests and confirm RED**
 
 Run: `npx vitest run tests/unit/verify-answers.test.ts`
 
 Expected: FAIL because the new fields are absent.
 
-- [ ] **Step 3: Extend the verifier contract**
+- [x] **Step 3: Extend the verifier contract**
 
 Pass the fact/tip and photo-independent requirement to the verifier. Accept a candidate only when all four truth conditions are satisfied. Partial/malformed output remains fail-closed.
 
-- [ ] **Step 4: Write failing collector and risk tests**
+- [x] **Step 4: Write failing collector and risk tests**
 
 Add rejection reasons `fact_blurb_wrong`, `image_required`, and `deterministic_risk`. Prove a clean candidate passes; each new failure condition is rejected; and prompts such as “What does this sign mean?” receive an `image_required` risk flag.
 
-- [ ] **Step 5: Run the collector/risk tests and confirm RED**
+- [x] **Step 5: Run the collector/risk tests and confirm RED**
 
 Run: `npx vitest run tests/unit/collect-verified-questions.test.ts tests/unit/question-risk-flags.test.ts`
 
 Expected: FAIL on the missing rejection reasons and visual-dependency rule.
 
-- [ ] **Step 6: Implement the fail-closed gate**
+- [x] **Step 6: Implement the fail-closed gate**
 
 Add `image_required` to `QuestionRiskFlag`. Feed deterministic flags into collection through `validateCandidate`; reject subjective, time-sensitive, ranking, geography, multiple-answer, or image-required candidates unless the prompt contains explicit stabilizing context. Update generation prompts to prohibit image-dependent questions and require the fact/tip to be independently supportable.
 
-- [ ] **Step 7: Verify the slice**
+- [x] **Step 7: Verify the slice**
 
 Run: `npx vitest run tests/unit/verify-answers.test.ts tests/unit/collect-verified-questions.test.ts tests/unit/question-risk-flags.test.ts tests/unit/ai-prompts.test.ts`
 
@@ -140,7 +140,7 @@ Expected: all tests pass.
 ### Task 3: Persisted generation jobs and partial recovery
 
 **Files:**
-- Create: `supabase/migrations/0017_question_generation_jobs.sql`
+- Create: `supabase/migrations/0019_question_generation_jobs.sql`
 - Regenerate: `lib/supabase/types.ts`
 - Create: `lib/ai/generation-job.ts`
 - Modify: `lib/ai/collect-verified-questions.ts`
@@ -158,37 +158,37 @@ Expected: all tests pass.
 - Produces: `GenerationJobProgress { phase, targetCount, writtenCount, certifiedCount, imageCount, remainingCount, message, updatedAt }`.
 - Consumes: existing category ownership and generation route authentication.
 
-- [ ] **Step 1: Write the failing schema test**
+- [x] **Step 1: Write the failing schema test**
 
 Prove the migration creates `question_generation_jobs`, enforces one current job per category, defaults counts to zero, enables RLS, grants owning hosts read access, and denies anonymous table access.
 
-- [ ] **Step 2: Run the schema test and confirm RED**
+- [x] **Step 2: Run the schema test and confirm RED**
 
 Run: `npx vitest run tests/integration/question-generation-jobs-schema.test.ts`
 
 Expected: FAIL because migration 0017 and the table do not exist.
 
-- [ ] **Step 3: Add the additive schema and regenerate types**
+- [x] **Step 3: Add the additive schema and prepare type regeneration**
 
-The table stores UUID id, category/game/night/host ids, phase, target/written/certified/image counts, attempt, last_error, heartbeat_at, created_at, and updated_at. Use foreign keys with `on delete cascade`, count checks, phase check, and an owning-host SELECT policy. Only service role writes.
+The table stores UUID id, category/game/night/host ids, phase, target/written/certified/image counts, attempt, last_error, heartbeat_at, created_at, and updated_at. Use foreign keys with `on delete cascade`, count checks, phase check, and an owning-host SELECT policy. Only service role writes. Migration 0019 follows the existing 0018 migration.
 
-Run: `npm run typegen`
+Local Docker is unavailable in this worktree, so do not overwrite the tracked generated file. Use a narrow typed repository for migration 0019 during the PR. After the migration exists in an approved Supabase environment, generate to a temporary file, validate it, then replace `lib/supabase/types.ts` via `npm run typegen` or the Supabase MCP type generator.
 
-- [ ] **Step 4: Write failing pure progress tests**
+- [x] **Step 4: Write failing pure progress tests**
 
 Prove job rows map to exact human status lines, stale nonterminal heartbeats map to `needs_attention`, ready never appears below the target, and image count never controls question certification.
 
-- [ ] **Step 5: Run pure progress tests and confirm RED**
+- [x] **Step 5: Run pure progress tests and confirm RED**
 
 Run: `npx vitest run tests/unit/generation-job.test.ts`
 
 Expected: FAIL because `lib/ai/generation-job.ts` does not exist.
 
-- [ ] **Step 6: Implement job mapping and route persistence**
+- [x] **Step 6: Implement job mapping and route persistence**
 
 Create/upsert a job before `after()`. Update heartbeat and phase at each real transition. Extend the collector with `initialClean` and `onAccepted` so each verified round is inserted immediately with stable positions while the category stays `generating`. On retry, load existing generated questions, request only `20 - existingCount`, and never delete certified rows. Mark `needs_attention` with a safe message on failure; mark `ready` only when the target is reached. Attach photos after certification and update `image_count` independently.
 
-- [ ] **Step 7: Write and run failing hook/component tests**
+- [x] **Step 7: Write and run failing hook/component tests**
 
 Prove the hook prefers persisted job progress, restores exact counts after remount, surfaces stale jobs as Needs attention, and the loading component renders real phase/count copy without a percentage or ETA.
 
@@ -196,11 +196,11 @@ Run: `npx vitest run tests/unit/useGenerationStatus.test.tsx tests/component/Hos
 
 Expected: FAIL on missing job progress behavior.
 
-- [ ] **Step 8: Wire the hook and loading/error surfaces**
+- [x] **Step 8: Wire the hook and loading/error surfaces**
 
 Poll the owning host's latest job alongside category/questions. Render `Queued`, `Writing`, `Checking`, `Repairing`, `Adding optional images`, `Ready`, or `Needs attention` with exact counts. Preserve existing Back to setup, Retry, and Enter manually actions.
 
-- [ ] **Step 9: Verify the slice**
+- [x] **Step 9: Verify the slice**
 
 Run: `npx vitest run tests/integration/question-generation-jobs-schema.test.ts tests/unit/generation-job.test.ts tests/unit/useGenerationStatus.test.tsx tests/component/HostGenLoading.test.tsx tests/unit/category-generate-report-summary.test.ts tests/unit/collect-verified-questions.test.ts`
 

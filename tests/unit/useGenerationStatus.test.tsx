@@ -9,15 +9,24 @@ import type { CategoryRow } from "@/lib/supabase/types";
 
 const supaMock = vi.hoisted(() => {
   let nextState: CategoryRow["state"] | null = "generating";
+  let nextJob: Record<string, unknown> | null = null;
   const setNextState = (s: CategoryRow["state"] | null) => {
     nextState = s;
   };
+  const setNextJob = (job: Record<string, unknown> | null) => {
+    nextJob = job;
+  };
   const client = {
-    from: vi.fn(() => ({
+    from: vi.fn((table: string) => ({
       select: vi.fn(() => ({
         eq: vi.fn(() => ({
           maybeSingle: vi.fn(async () => ({
-            data: nextState ? { state: nextState } : null,
+            data:
+              table === "question_generation_jobs"
+                ? nextJob
+                : nextState
+                  ? { state: nextState }
+                  : null,
             error: null,
           })),
         })),
@@ -27,6 +36,7 @@ const supaMock = vi.hoisted(() => {
   return {
     getSupabaseBrowser: () => client,
     setNextState,
+    setNextJob,
   };
 });
 
@@ -43,6 +53,7 @@ describe("useGenerationStatus", () => {
   beforeEach(() => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     supaMock.setNextState("generating");
+    supaMock.setNextJob(null);
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -142,6 +153,79 @@ describe("useGenerationStatus", () => {
 
     await waitFor(() => {
       expect(result.current).toEqual({ kind: "completed", state: "review" });
+    });
+  });
+
+  it("restores exact persisted certification progress after the screen mounts", async () => {
+    supaMock.setNextJob({
+      id: "job-1",
+      category_id: "cat-1",
+      game_id: "game-1",
+      night_id: "night-1",
+      host_id: "host-1",
+      phase: "checking",
+      target_count: 20,
+      written_count: 16,
+      certified_count: 12,
+      image_count: 0,
+      attempt: 1,
+      last_error: null,
+      heartbeat_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const { result } = renderHook(() =>
+      useGenerationStatus({
+        categoryId: "cat-1",
+        state: "generating",
+        loadedCount: 12,
+        pollIntervalMs: 100,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current).toMatchObject({
+        kind: "progress",
+        progress: {
+          phase: "checking",
+          statusLine: "12 of 20 question choices certified",
+        },
+      });
+    });
+  });
+
+  it("surfaces a persisted stopped job with the certified work preserved", async () => {
+    supaMock.setNextJob({
+      id: "job-1",
+      category_id: "cat-1",
+      game_id: "game-1",
+      night_id: "night-1",
+      host_id: "host-1",
+      phase: "needs_attention",
+      target_count: 20,
+      written_count: 11,
+      certified_count: 9,
+      image_count: 0,
+      attempt: 1,
+      last_error: "The question builder paused before it finished.",
+      heartbeat_at: new Date().toISOString(),
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    const { result } = renderHook(() =>
+      useGenerationStatus({
+        categoryId: "cat-1",
+        state: "generating",
+        loadedCount: 9,
+        pollIntervalMs: 100,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current).toMatchObject({
+        kind: "needs-attention",
+        progress: { certifiedCount: 9 },
+      });
     });
   });
 

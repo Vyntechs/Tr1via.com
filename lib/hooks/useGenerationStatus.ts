@@ -31,11 +31,19 @@
 import { useEffect, useRef, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import type { CategoryRow } from "@/lib/supabase/types";
+import {
+  generationProgressFromRow,
+  readGenerationJob,
+  type GenerationJobClient,
+  type GenerationJobProgress,
+} from "@/lib/ai/generation-job";
 
 export type GenerationStatus =
   | { kind: "ok" }
   | { kind: "timeout" }
   | { kind: "rolled-back" }
+  | { kind: "progress"; progress: GenerationJobProgress }
+  | { kind: "needs-attention"; progress: GenerationJobProgress }
   | { kind: "completed"; state: "review" | "ready" };
 
 // The route can legitimately run for up to 300 seconds. Only call the worker
@@ -143,6 +151,28 @@ export function useGenerationStatus({
       } catch {
         // Best-effort. A network blip here doesn't escalate to a failure
         // banner on its own — the timeout below will catch it.
+      }
+
+      // Durable progress is the host-facing truth. It survives reloads,
+      // missed broadcasts, browser changes, and interrupted server workers.
+      try {
+        const job = await readGenerationJob(
+          supa as unknown as GenerationJobClient,
+          categoryId,
+        );
+        if (cancelled) return;
+        if (job) {
+          const progress = generationProgressFromRow(job);
+          if (progress.phase === "needs_attention") {
+            setStatus({ kind: "needs-attention", progress });
+          } else {
+            setStatus({ kind: "progress", progress });
+          }
+          return;
+        }
+      } catch {
+        // Older environments may not have the additive progress table yet.
+        // Preserve the existing category-state and idle-timeout fallback.
       }
 
       if (since >= timeoutMs && loadedCount === 0) {

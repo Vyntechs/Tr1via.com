@@ -58,7 +58,7 @@ export function HostGenError(props: HostGenErrorProps) {
 }
 
 function HostGenErrorInner({
-  shellTitle = "generation didn't work",
+  shellTitle = "generation paused",
   topic = "Pixar Movies",
   message,
   onRetry,
@@ -71,7 +71,7 @@ function HostGenErrorInner({
   const friendlyMessage =
     message?.trim().length
       ? message
-      : "Something went sideways while pulling your questions. It happens — usually a quick retry sorts it.";
+      : "The question builder paused before it finished. Your completed work is safe.";
   return (
     <LaptopShell>
       <div
@@ -106,7 +106,7 @@ function HostGenErrorInner({
               }}
             />
             <Eyebrow color={cc} size={11}>
-              {topic.toUpperCase()} · GENERATION FAILED
+              {topic.toUpperCase()} · GENERATION PAUSED
             </Eyebrow>
           </div>
 
@@ -116,7 +116,7 @@ function HostGenErrorInner({
             tracking={-0.03}
             style={{ display: "block" }}
           >
-            Generation didn&rsquo;t work.
+            Your finished work is safe.
           </Display>
 
           <div
@@ -149,10 +149,10 @@ function HostGenErrorInner({
           >
             <li>
               <strong style={{ color: t.ink, fontWeight: 600 }}>
-                Try again
+                Continue
               </strong>{" "}
-              — the usual cause is a slow upstream. A second attempt almost
-              always works.
+              — pick up from the certified choices already finished. TR1VIA
+              will build and check only what is still missing.
             </li>
             <li>
               <strong style={{ color: t.ink, fontWeight: 600 }}>
@@ -190,7 +190,7 @@ function HostGenErrorInner({
                 boxShadow: `0 12px 26px -12px ${t.accent}88`,
               }}
             >
-              {isRetrying ? "Trying…" : "Try again  ↻"}
+              {isRetrying ? "Continuing…" : "Continue  ↻"}
             </button>
             <button
               type="button"
