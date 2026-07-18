@@ -353,11 +353,13 @@ Confirm the diff contains no secrets, production environment changes, player-fac
 
 Result: confirmed. Migration 0019 is additive and RLS-protected; generated Supabase types were not hand-edited; no production environment or secret file is included.
 
-- [ ] **Step 4: Commit and push the branch**
+- [x] **Step 4: Commit and push the branch**
 
 Create focused commits for host notice, content/generation reliability, phone recovery, and TV legibility. Push `codex/original-mode-refinements` and open a ready-for-review PR against `main`.
 
-- [ ] **Step 5: Stop at Brandon's merge gate**
+Result: branch pushed and mergeable ready-for-review PR #143 opened against the latest `main`; Vercel preview and GitGuardian checks passed.
+
+- [x] **Step 5: Stop at Brandon's merge gate**
 
 Report the PR, visual proof, tests, additive migration, rollback path, and exact post-merge production verification. Do not merge, deploy, or apply the migration.
 
