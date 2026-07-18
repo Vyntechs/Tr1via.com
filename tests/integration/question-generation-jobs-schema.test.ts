@@ -14,8 +14,19 @@ const MIGRATION_PATH = path.join(
   MIGRATIONS_DIR,
   "0019_question_generation_jobs.sql",
 );
+const ADVISOR_FIX_PATH = path.join(
+  MIGRATIONS_DIR,
+  "0020_question_generation_jobs_advisor_fixes.sql",
+);
+const GENERATED_TYPES_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../lib/supabase/types.ts",
+);
 const migrationSql = existsSync(MIGRATION_PATH)
   ? readFileSync(MIGRATION_PATH, "utf8")
+  : "";
+const advisorFixSql = existsSync(ADVISOR_FIX_PATH)
+  ? readFileSync(ADVISOR_FIX_PATH, "utf8")
   : "";
 
 async function freshDb(): Promise<PGlite> {
@@ -38,6 +49,7 @@ async function freshDb(): Promise<PGlite> {
     grant all on all tables in schema public to service_role;
   `);
   await db.exec(migrationSql);
+  if (advisorFixSql) await db.exec(advisorFixSql);
   return db;
 }
 
@@ -106,6 +118,28 @@ describe("question_generation_jobs schema", () => {
 
   test("the additive migration exists", () => {
     expect(migrationSql).toContain("create table question_generation_jobs");
+  });
+
+  test("the follow-up migration indexes the remaining foreign keys", async () => {
+    expect(advisorFixSql).toContain(
+      "create index question_generation_jobs_game_id_idx",
+    );
+    expect(advisorFixSql).toContain(
+      "create index question_generation_jobs_night_id_idx",
+    );
+  });
+
+  test("the host-read policy evaluates auth identity once per query", () => {
+    expect(advisorFixSql).toContain("to authenticated");
+    expect(advisorFixSql).toContain("(select auth.uid())");
+  });
+
+  test("the tracked database types include generation jobs", () => {
+    const generatedTypes = readFileSync(GENERATED_TYPES_PATH, "utf8");
+    expect(generatedTypes).toContain("question_generation_jobs: {");
+    expect(generatedTypes).toContain(
+      'foreignKeyName: "question_generation_jobs_category_id_fkey"',
+    );
   });
 
   test("the table enables RLS and defaults real progress counts to zero", async () => {
