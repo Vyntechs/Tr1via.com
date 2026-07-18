@@ -327,7 +327,7 @@ Expected: tests pass and screenshots at 1280×720 and 1920×1080 show no clippin
 - Consumes: every prior task's verified slice.
 - Produces: a reviewable branch and PR; no merge or deploy.
 
-- [ ] **Step 1: Run static and unit verification**
+- [x] **Step 1: Run static and unit verification**
 
 Run: `npm test`
 
@@ -337,15 +337,21 @@ Run: `npm run build`
 
 Expected: tests/build pass; the two documented pre-existing HostHome fixture type errors may remain only if unchanged from `origin/main`.
 
+Result: 1,053 active tests passed and the production build passed. Standalone `tsc` reports only the unchanged HostHome and production-smoke test-fixture errors already present on `origin/main`; changed product code is clean.
+
 - [ ] **Step 2: Run end-to-end verification**
 
 Run: `npm run test:e2e -- tests/e2e/full-game.spec.ts tests/e2e/reveal-sync.spec.ts tests/e2e/connection-degraded.spec.ts tests/e2e/connection-unreachable.spec.ts`
 
 Expected: Game 1, intermission refresh, Game 2, reveal sync, and connection recovery pass.
 
-- [ ] **Step 3: Review the diff and safety boundary**
+Blocked safely: the isolated worktree has no local Supabase environment. The only existing shared environment is remote, so the destructive test reset route was not pointed at it. The browser run stopped at test login before any game behavior; unit/integration coverage and both visual matrices passed.
+
+- [x] **Step 3: Review the diff and safety boundary**
 
 Confirm the diff contains no secrets, production environment changes, player-facing What's New component, new game mode, host-phone requirement, destructive SQL, generated-file hand edits, or unrelated refactor.
+
+Result: confirmed. Migration 0019 is additive and RLS-protected; generated Supabase types were not hand-edited; no production environment or secret file is included.
 
 - [ ] **Step 4: Commit and push the branch**
 
