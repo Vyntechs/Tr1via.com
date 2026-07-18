@@ -19,7 +19,10 @@ describe("PhoneScreen adaptive height", () => {
   it("scrolls dense screens vertically without allowing horizontal drift", () => {
     const phone = renderScreen();
     expect(phone).toHaveStyle({ overflowY: "auto", overflowX: "hidden" });
-    expect(phone.style.webkitOverflowScrolling).toBe("touch");
+    expect(phone).toHaveAttribute(
+      "style",
+      expect.stringContaining("-webkit-overflow-scrolling: touch"),
+    );
     expect(phone.style.overscrollBehaviorY).toBe("contain");
   });
 

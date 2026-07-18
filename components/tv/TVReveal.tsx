@@ -155,11 +155,15 @@ function TVRevealInner({
             }}
           >
             <Numeric
-              size="clamp(78px, 9vmin, 110px)"
+              size={78}
               weight={700}
               color={t.correct}
               tracking={-0.05}
-              style={{ lineHeight: 0.82, flex: "none" }}
+              style={{
+                fontSize: "clamp(78px, 9vmin, 110px)",
+                lineHeight: 0.82,
+                flex: "none",
+              }}
             >
               {correctNumber}
             </Numeric>
@@ -295,9 +299,10 @@ function TVRevealInner({
                   {p.name}
                 </span>
                 <Numeric
-                  size="clamp(22px, 2.4vmin, 28px)"
+                  size={22}
                   weight={600}
                   color={i === 0 ? t.correct : t.inkMid}
+                  style={{ fontSize: "clamp(22px, 2.4vmin, 28px)" }}
                 >
                   {p.time}
                 </Numeric>
