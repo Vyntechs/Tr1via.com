@@ -13,6 +13,7 @@ import {
   Eyebrow,
   Numeric,
 } from "@/components/system";
+import { PhoneScreen } from "@/components/shells";
 import { nailedItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealCorrectProps {
@@ -66,19 +67,13 @@ export function PlayerRevealCorrect({
     : 0;
   const seconds = (msToLock / 1000).toFixed(1);
   return (
-    <div
+    <PhoneScreen
       data-testid="player-reveal-correct"
+      fill
+      fillColor={t.correct}
+      weather={false}
       style={{
-        width: "100%",
-        height: "100%",
-        background: t.correct,
         color: "#0E0805",
-        fontFamily: "var(--font-sans)",
-        display: "flex",
-        flexDirection: "column",
-        padding: "14px 22px 26px",
-        boxSizing: "border-box",
-        overflow: "hidden",
         animation: "tr1via-correct-flash .6s cubic-bezier(.2,.7,.3,1) both",
       }}
     >
@@ -114,7 +109,7 @@ export function PlayerRevealCorrect({
       </div>
 
       <div role="alert" aria-live="assertive">
-        <Display size={72} color="#0E0805" weight={700}>
+        <Display size="clamp(52px, 18cqw, 72px)" color="#0E0805" weight={700}>
           Correct.
         </Display>
       </div>
@@ -130,7 +125,7 @@ export function PlayerRevealCorrect({
           marginTop: 4,
           fontFamily: "var(--font-mono)",
           fontWeight: 700,
-          fontSize: 168,
+          fontSize: "clamp(84px, 34cqw, 168px)",
           letterSpacing: "-0.06em",
           lineHeight: 1,
           color: "#0E0805",
@@ -219,6 +214,6 @@ export function PlayerRevealCorrect({
       <div style={{ marginTop: 10, color: "rgba(14,8,5,.7)", fontSize: 12, textAlign: "center" }}>
         {nextHint}
       </div>
-    </div>
+    </PhoneScreen>
   );
 }

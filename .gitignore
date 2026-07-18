@@ -49,6 +49,7 @@ supabase/.branches
 supabase/.temp
 
 # misc artifacts
+/artifacts/
 *.log
 *.pem
 .cache

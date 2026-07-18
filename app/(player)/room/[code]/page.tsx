@@ -65,7 +65,12 @@ import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { playerColorHex } from "@/lib/player/playerColor";
-import { selectBetweenGamesView, buildGame1Standings, type StandingRow } from "@/lib/player/betweenGames";
+import {
+  selectBetweenGamesView,
+  isWaitingForGame2FirstQuestion,
+  buildGame1Standings,
+  type StandingRow,
+} from "@/lib/player/betweenGames";
 import { buildNeighborhood, type Neighborhood } from "@/lib/player/standings";
 import { summarizeResolve, type ResolveSummary } from "@/lib/player/celebrationCopy";
 import { gateBeatForPlayer, playerWasCorrect } from "@/lib/game/revealOutcome";
@@ -534,7 +539,14 @@ function RoomStateMachine({
     game2State: game2?.state ?? null,
     inGame2,
   });
-  if (betweenView && game1 && game2) {
+  const waitingForGame2FirstQuestion = isWaitingForGame2FirstQuestion({
+    game1State: game1?.state ?? null,
+    game2State: game2?.state ?? null,
+    inGame2,
+    game2Id: game2?.id ?? null,
+    currentQuestionGameId: currentCategory?.game_id ?? null,
+  });
+  if ((betweenView || waitingForGame2FirstQuestion) && game1 && game2) {
     inner = (
       <PlayerBetweenGamesWired
         roomCode={roomCode}
@@ -544,7 +556,7 @@ function RoomStateMachine({
         playerName={me.display_name}
         myAnswers={myAnswers}
         categories={snapshot.categories}
-        joined={betweenView === "waiting"}
+        joined={betweenView === "waiting" || waitingForGame2FirstQuestion}
         onJoinSuccess={() => setOptimisticInGame2(true)}
         // The same "Tonight's Topics" the TV/lobby show — here it resolves to the
         // UPCOMING game 2's ready categories (selectLobbyTopicsFromRoom skips the

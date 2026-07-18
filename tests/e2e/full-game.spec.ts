@@ -151,8 +151,28 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     expect(await phone1.getByTestId(TID.playerBetweenGames.topic).count())
       .toBeGreaterThan(0);
 
+    // A reload during intermission must rebuild the intentional waiting state
+    // from durable participation/game data—not revive Game 1's last answer.
+    await phone1.reload();
+    await expect(phone1.getByTestId(TID.playerBetweenGames.root))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(phone1.getByTestId(TID.playerRevealCorrect.root)).toHaveCount(0);
+    await expect(phone1.getByTestId(TID.playerRevealWrong.root)).toHaveCount(0);
+
     // ── Game 2: 7 reveals (1 category × 7) ────────────────────────────
     await startGame(hostPage, seed.game2.id);
+    // Starting the game and choosing its first question are separate host
+    // actions. Phones keep a clear Round-2 waiting screen in that gap—even
+    // after another reload—rather than displaying a historical answer.
+    await phone1.reload();
+    await expect(phone1.getByTestId(TID.playerBetweenGames.root))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(phone1.getByText("Round 2 is starting.")).toBeVisible();
+    await expect(
+      phone1.getByText("Waiting for Heather to choose the first question."),
+    ).toBeVisible();
+    await expect(phone1.getByTestId(TID.playerRevealCorrect.root)).toHaveCount(0);
+    await expect(phone1.getByTestId(TID.playerRevealWrong.root)).toHaveCount(0);
     for (const cat of seed.game2Categories) {
       for (const qid of cat.question_ids) {
         await revealViaApi(hostPage, seed.game2.id, qid);

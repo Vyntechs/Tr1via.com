@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   buildGame1Standings,
   selectBetweenGamesView,
+  isWaitingForGame2FirstQuestion,
   clearEndedGameQuestions,
 } from "@/lib/player/betweenGames";
 import type {
@@ -84,6 +85,32 @@ describe("selectBetweenGamesView", () => {
 
   it("returns null when there is no game 2", () => {
     expect(selectBetweenGamesView({ game1State: "done", game2State: null, inGame2: false })).toBeNull();
+  });
+});
+
+describe("isWaitingForGame2FirstQuestion", () => {
+  const base = {
+    game1State: "done",
+    game2State: "live",
+    inGame2: true,
+    game2Id: "g2",
+    currentQuestionGameId: null,
+  };
+
+  it("holds the waiting screen after Game 2 starts but before its first question", () => {
+    expect(isWaitingForGame2FirstQuestion(base)).toBe(true);
+  });
+
+  it("overrides a stale Game 1 question instead of showing its old reveal", () => {
+    expect(
+      isWaitingForGame2FirstQuestion({ ...base, currentQuestionGameId: "g1" }),
+    ).toBe(true);
+  });
+
+  it("hands control to the question flow once Game 2 has a question", () => {
+    expect(
+      isWaitingForGame2FirstQuestion({ ...base, currentQuestionGameId: "g2" }),
+    ).toBe(false);
   });
 });
 

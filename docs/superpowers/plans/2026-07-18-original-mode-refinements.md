@@ -226,35 +226,35 @@ Expected: all tests pass.
 - Produces: `PhoneScreen.scroll?: "auto" | "locked"`, defaulting to `auto` for dense states.
 - Consumes: the existing server-authoritative between-games selector and `clearEndedGameQuestions` guard.
 
-- [ ] **Step 1: Write failing shell tests**
+- [x] **Step 1: Write failing shell tests**
 
 Assert default phone screens use vertical auto overflow, hide horizontal overflow, honor safe-area padding, and `scroll="locked"` retains fit-to-viewport behavior for the live question screen.
 
-- [ ] **Step 2: Run shell tests and confirm RED**
+- [x] **Step 2: Run shell tests and confirm RED**
 
 Run: `npx vitest run tests/component/PhoneScreen.test.tsx`
 
 Expected: FAIL because PhoneScreen always uses `overflow: hidden` and has no scroll mode.
 
-- [ ] **Step 3: Implement adaptive shell behavior**
+- [x] **Step 3: Implement adaptive shell behavior**
 
 Add the scroll prop, safe-area bottom padding, `overscrollBehavior`, and `WebkitOverflowScrolling`. Pass `scroll="locked"` from PlayerQuestion. Let locked, standings, intermission, and recap states scroll on short screens.
 
-- [ ] **Step 4: Write failing Game 2 copy/recovery tests**
+- [x] **Step 4: Write failing Game 2 copy/recovery tests**
 
 Assert opted-in waiting copy says `Round 2 is starting` and `Waiting for Heather to choose the first question.` Extend the E2E flow to reload an opted-in phone before the first Game 2 question and prove the waiting screen returns without the previous reveal.
 
-- [ ] **Step 5: Run the focused tests and confirm RED**
+- [x] **Step 5: Run the focused tests and confirm RED**
 
 Run: `npx vitest run tests/unit/player-between-games.test.tsx tests/unit/betweenGames.test.ts`
 
 Expected: the new exact copy assertion fails before implementation.
 
-- [ ] **Step 6: Implement copy and matrix harness**
+- [x] **Step 6: Implement copy and matrix harness**
 
 Update only the waiting copy. Add a screenshot script that visits every `/dev/player` state at 280, 320, 360, 390, 430, and 480 widths plus representative landscape sizes, and throws on horizontal overflow, clipped focused controls, or body/screen height disagreement.
 
-- [ ] **Step 7: Verify the slice**
+- [x] **Step 7: Verify the slice**
 
 Run: `npx vitest run tests/component/PhoneScreen.test.tsx tests/unit/player-locked-standings.test.tsx tests/unit/player-between-games.test.tsx tests/unit/betweenGames.test.ts`
 
