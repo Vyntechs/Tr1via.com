@@ -18,6 +18,8 @@
 - Do not edit generated `lib/supabase/types.ts`; this slice changes privileges and wire DTOs, not schema columns.
 - No deploy, merge to `main`, production mutation, or Heather enablement is part of this plan.
 
+Before Task 1, capture the exact `npm test`, `npx tsc --noEmit`, and `npm run build` baseline from the branch. Each task must preserve that baseline or improve it; record exact remaining error paths rather than relying on a stale documented count.
+
 ---
 
 ## File Map
@@ -37,6 +39,7 @@
 - `app/api/players/route.ts`
 - `app/api/nights/[id]/players/route.ts`
 - `app/api/room/[code]/snapshot/route.ts`
+- `app/api/tv/[code]/snapshot/route.ts`
 - `lib/room/roomSnapshotPayload.ts`
 - `lib/room/fetchRoomSnapshot.ts`
 - `lib/room/roomFallbackStore.ts`
@@ -106,7 +109,7 @@ Query `information_schema.routine_privileges` and prove `resolve_question`, `res
 
 **Step 2: Add two-player route leak cases**
 
-Seed sentinel `device_id`, `scramble`, live `correct_index`, and another-player choices. Assert no host or player response contains `device_id`; player mode contains only signed-player self state and own answers; host-only `liveAnswers` is absent from player mode; live answer keys are absent.
+Seed sentinel `device_id`, `scramble`, live `correct_index`, another-player choices, and raw database error text. Assert no host or player response contains `device_id`; player mode contains only signed-player self state and own answers; host-only `liveAnswers` is absent from player mode; live answer keys are absent. Assert both the public room and TV routes map database failures to a generic typed response without the sentinel error text.
 
 **Step 3: Add fail-closed serializer cases**
 
@@ -131,7 +134,7 @@ git commit -m "test: pin live player identity boundary"
 
 ### Task 2: Replace raw room rows with audience-shaped DTOs
 
-**Files:** Create `lib/room/roomAudience.ts`; modify the room snapshot route/payload/fetch/store, the normal player join route, the host latecomer route, and their tests.
+**Files:** Create `lib/room/roomAudience.ts`; modify the room and TV snapshot routes, room payload/fetch/store, the normal player join route, the host latecomer route, and their tests.
 
 **Step 1: Implement explicit serializers**
 
@@ -153,7 +156,7 @@ type RoomSnapshotPayload =
   | { audience: "host"; self: null; myAnswers?: never; myParticipations?: never; liveAnswers: HostLiveAnswer[] };
 ```
 
-Public/player failures return generic typed messages, never raw `error.message`.
+Public/player failures return generic typed messages, never raw `error.message`. Apply the same fail-closed error mapping to the public TV snapshot route so database text cannot cross either anonymous boundary.
 
 **Step 3: Make join responses safe**
 
@@ -162,51 +165,14 @@ Keep database behavior unchanged; return only serialized safe player fields from
 **Step 4: Verify and commit**
 
 ```bash
-npx vitest run tests/unit/api-room-snapshot-route.test.ts tests/unit/roomSnapshotPayload.test.ts
-git add -- lib/room/roomAudience.ts 'app/api/room/[code]/snapshot/route.ts' lib/room/roomSnapshotPayload.ts lib/room/fetchRoomSnapshot.ts lib/room/roomFallbackStore.ts app/api/players/route.ts 'app/api/nights/[id]/players/route.ts' tests/unit/api-room-snapshot-route.test.ts tests/unit/roomSnapshotPayload.test.ts
+npx vitest run tests/unit/api-room-snapshot-route.test.ts tests/unit/tv-snapshot-route-answer-gating.test.ts tests/unit/roomSnapshotPayload.test.ts
+git add -- lib/room/roomAudience.ts 'app/api/room/[code]/snapshot/route.ts' 'app/api/tv/[code]/snapshot/route.ts' lib/room/roomSnapshotPayload.ts lib/room/fetchRoomSnapshot.ts lib/room/roomFallbackStore.ts app/api/players/route.ts 'app/api/nights/[id]/players/route.ts' tests/unit/api-room-snapshot-route.test.ts tests/unit/tv-snapshot-route-answer-gating.test.ts tests/unit/roomSnapshotPayload.test.ts
 git commit -m "fix: shape live room data by audience"
 ```
 
 ---
 
-### Task 3: Remove raw device identity from browser JavaScript
-
-**Files:** Modify session init, device hook, browser Supabase client, player join page, and answer tests; create `tests/unit/device-session.test.tsx`.
-
-**Step 1: Write the hook regression**
-
-Seed `localStorage.tr1via_device_id = "stolen-value"`, mock session init as `{ ready: true }`, and assert the key is deleted and the hook exposes only `{ isReady, isLoading }`.
-
-**Step 2: Change the session contract**
-
-The route still verifies/mints the HTTP-only cookie, but returns only `{ ready: true }`. The hook removes stale storage and returns:
-
-```ts
-export interface DeviceSession {
-  isReady: boolean;
-  isLoading: boolean;
-}
-```
-
-**Step 3: Remove the mutable Supabase header**
-
-Delete `fetchWithDeviceHeader`, its storage key, and the custom fetch from `lib/supabase/client.ts`. Authenticated hosts continue using their Supabase session.
-
-**Step 4: Update join and answer checks**
-
-Join gates on `isReady`. Answer tests assert `credentials: "same-origin"` and no body/header contains `deviceId`, `playerId`, or `x-tr1via-device`.
-
-**Step 5: Verify and commit**
-
-```bash
-npx vitest run tests/unit/device-session.test.tsx tests/unit/answer-submit.test.tsx
-git add -- app/api/session/init/route.ts lib/hooks/useDeviceSession.ts lib/supabase/client.ts 'app/(player)/join/page.tsx' tests/unit/device-session.test.tsx tests/unit/answer-submit.test.tsx
-git commit -m "fix: keep player identity in signed cookie"
-```
-
----
-
-### Task 4: Make signed-cookie snapshots the normal player path
+### Task 3: Make signed-cookie snapshots the normal player path
 
 **Files:** Modify `lib/hooks/useRoom.ts`, all three player room pages, and the two host `useRoom` call sites.
 
@@ -230,7 +196,7 @@ For player audience, bootstrap and recover only through `fetchRoomSnapshotPayloa
 
 **Step 4: Remove fabricated identity and answers**
 
-Player pages use `snapshot.self`, `snapshot.myAnswers`, `snapshot.myParticipations`, and `snapshot.scores`. Delete device-ID comparisons, direct answer/participation reads, player raw-answer score subscriptions, and recap/winner answer reads. A selected button may show pending, but cannot become an `AnswerRow`, affect scoring, or enter `PlayerLocked` before canonical confirmation.
+Player pages use `snapshot.self`, `snapshot.myAnswers`, `snapshot.myParticipations`, and `snapshot.scores`. Delete device-ID comparisons, direct answer/participation reads, player raw-answer score subscriptions, and recap/winner answer reads. A selected button may show pending, but cannot become an `AnswerRow`, affect scoring, or enter `PlayerLocked` before canonical confirmation. Keep the current device hook temporarily only as the session-readiness signal; do not remove the raw browser header until every player read in this task has moved behind the signed route.
 
 **Step 5: Verify and commit**
 
@@ -241,7 +207,46 @@ git add -- lib/hooks/useRoom.ts 'app/(player)/room/[code]/page.tsx' 'app/(player
 git commit -m "fix: route player state through signed session"
 ```
 
-Expected type-check difference: only the two documented pre-existing `HostHomeClient-founder-build.test.tsx` fixture errors.
+Compare type-check output to the exact baseline captured before Task 1. This commit may not add an error, change a baseline error into a new path, or increase the baseline count; record the remaining baseline paths in the task report.
+
+---
+
+### Task 4: Remove raw device identity from browser JavaScript
+
+**Files:** Modify session init, device hook, browser Supabase client, player join and room pages, and answer tests; create `tests/unit/device-session.test.tsx`.
+
+**Step 1: Write the hook regression**
+
+Seed `localStorage.tr1via_device_id = "stolen-value"`, mock session init as `{ ready: true }`, and assert the key is deleted and the hook exposes only `{ isReady, isLoading }`.
+
+**Step 2: Change the session contract**
+
+The route still verifies/mints the HTTP-only cookie, but returns only `{ ready: true }`. The hook removes stale storage and returns:
+
+```ts
+export interface DeviceSession {
+  isReady: boolean;
+  isLoading: boolean;
+}
+```
+
+All player pages now gate their already-route-backed snapshots on `isReady`; none needs the device value.
+
+**Step 3: Remove the mutable Supabase header**
+
+Only after Task 3 has removed every player raw-table dependency, delete `fetchWithDeviceHeader`, its storage key, and the custom fetch from `lib/supabase/client.ts`. Authenticated hosts continue using their Supabase session.
+
+**Step 4: Update join and answer checks**
+
+Join gates on `isReady`. Answer tests assert `credentials: "same-origin"` and no body/header contains `deviceId`, `playerId`, or `x-tr1via-device`. Run the Task 3 player suite again to prove removing the header does not break any supported player state.
+
+**Step 5: Verify and commit**
+
+```bash
+npx vitest run tests/unit/device-session.test.tsx tests/unit/answer-submit.test.tsx tests/unit/api-room-snapshot-route.test.ts tests/unit/player-between-games.test.tsx tests/unit/player-join-game2.test.tsx
+git add -- app/api/session/init/route.ts lib/hooks/useDeviceSession.ts lib/supabase/client.ts 'app/(player)/join/page.tsx' 'app/(player)/room/[code]/page.tsx' 'app/(player)/room/[code]/recap/page.tsx' 'app/(player)/room/[code]/won/page.tsx' tests/unit/device-session.test.tsx tests/unit/answer-submit.test.tsx
+git commit -m "fix: keep player identity in signed cookie"
+```
 
 ---
 

@@ -21,6 +21,8 @@
 - Rollback disables `resilient_v1` only for newly opened nights; an already latched night finishes on its stored engine and its additive records remain intact for incident review.
 - Do not deploy, enable Heather, or switch any open night as part of this plan.
 
+Before Task 1, capture the exact `npm test`, `npx tsc --noEmit`, and `npm run build` baseline from the branch. Each task must preserve that baseline or improve it; record exact remaining error paths rather than relying on a stale documented count.
+
 ---
 
 ## File Map
@@ -39,6 +41,7 @@
 - `tests/integration/live-answer-engine-schema.test.ts`
 - `tests/integration/game-scores-answer-engine.test.ts`
 - `tests/unit/api-answers-route.test.ts`
+- `tests/unit/api-resolve-route.test.ts`
 - `tests/unit/live-answer-telemetry.test.ts`
 - `tests/concurrency/live-answer-races.test.ts`
 - `vitest.db.config.ts`
@@ -55,6 +58,7 @@
 - `app/api/games/[id]/reveal/route.ts`
 - `app/api/answers/route.ts`
 - `app/api/games/[id]/end-early/route.ts`
+- `app/api/questions/[id]/resolve/route.ts`
 - `app/api/games/[id]/undo/route.ts`
 - `app/api/games/[id]/end/route.ts`
 - `app/api/nights/[id]/reset-to-setup/route.ts`
@@ -97,6 +101,11 @@ export interface LivePlayProjection {
   finalizeAt: string | null;
   eligibleCount: number;
   confirmedCount: number;
+}
+
+export interface PlayerLiveProjection extends LiveRoomProjection {
+  canAnswerThisPlay: boolean;
+  canonicalAnswer: PlayerCanonicalAnswer | null;
 }
 
 export type SubmitAnswerResult =
@@ -256,7 +265,9 @@ Never hand-edit the generated result.
 
 **Step 2: Project by audience**
 
-Common room/TV/host projections include run/revisions/play state/deadlines/aggregate counts. Player projection adds only the signed player's canonical answer. Host projection adds only operational counts. TV never receives a selected choice or correctness before resolution.
+Common room/TV/host projections include run/revisions/play state/deadlines/aggregate counts. Player projection adds only the signed player's `canAnswerThisPlay` eligibility bit and canonical answer. That bit is derived from the immutable `(play_id, player_id)` eligibility row, so a late join renders watch-only for the current play and becomes eligible next question. Host projection adds only operational counts. TV never receives a selected choice or correctness before resolution.
+
+Add route/projection tests for an eligible player, an ineligible late join, and a removed-but-frozen eligible player. Prove `canAnswerThisPlay` is correct while no roster-wide eligibility rows, player IDs, or eligibility reasons cross the player or TV boundary.
 
 **Step 3: Make event payloads safe**
 
@@ -275,7 +286,7 @@ git commit -m "feat: project canonical play state safely"
 
 ### Task 6: Branch existing APIs on the latched engine
 
-**Files:** Modify all lifecycle routes listed in the file map; create finalize and host-setting routes plus `tests/unit/api-answers-route.test.ts`; modify existing route tests.
+**Files:** Modify all lifecycle routes listed in the file map; create finalize and host-setting routes plus `tests/unit/api-answers-route.test.ts` and `tests/unit/api-resolve-route.test.ts`; modify existing route tests.
 
 **Step 1: Add strict request schemas**
 
@@ -291,6 +302,8 @@ No resilient body accepts player ID, device ID, scramble, canonical choice, answ
 
 Each current route reads the night latch. `legacy` follows today's path after the security gate. `resilient_v1` calls the matching RPC. `open` latches allowed host preference once. `start`, `reveal`, answer, Show answer, undo, end, and reset use typed results.
 
+The existing public `app/api/questions/[id]/resolve/route.ts` is part of this branch. For legacy nights it retains today's idempotent legacy resolution. For resilient nights it must never call `resolve_question`; it looks up the canonical current play and delegates to `finalize_current_play_if_due` or returns the same typed not-due/stale result. This closes the old local-timer route as an alternate path around the visible final window while clients migrate.
+
 **Step 3: Add public deadline check**
 
 `POST /api/room/[code]/plays/[playId]/finalize` validates code/run/play, rate-limits by opaque room/play, and calls only `finalize_current_play_if_due`. It cannot choose another play, reason, or deadline and returns an audience-safe projection.
@@ -302,9 +315,9 @@ Each current route reads the night latch. `legacy` follows today's path after th
 **Step 5: Verify and commit**
 
 ```bash
-npx vitest run tests/unit/api-answers-route.test.ts tests/unit/api-end-early-route.test.ts tests/unit/api-room-snapshot-route.test.ts
+npx vitest run tests/unit/api-answers-route.test.ts tests/unit/api-end-early-route.test.ts tests/unit/api-room-snapshot-route.test.ts tests/unit/api-resolve-route.test.ts
 npx tsc --noEmit
-git add -- lib/api/schemas.ts 'app/api/nights/[id]/open/route.ts' 'app/api/games/[id]/start/route.ts' 'app/api/games/[id]/reveal/route.ts' app/api/answers/route.ts 'app/api/games/[id]/end-early/route.ts' 'app/api/games/[id]/undo/route.ts' 'app/api/games/[id]/end/route.ts' 'app/api/nights/[id]/reset-to-setup/route.ts' 'app/api/room/[code]/plays/[playId]/finalize/route.ts' app/api/host/answer-engine/route.ts tests/unit/api-answers-route.test.ts
+git add -- lib/api/schemas.ts 'app/api/nights/[id]/open/route.ts' 'app/api/games/[id]/start/route.ts' 'app/api/games/[id]/reveal/route.ts' app/api/answers/route.ts 'app/api/games/[id]/end-early/route.ts' 'app/api/questions/[id]/resolve/route.ts' 'app/api/games/[id]/undo/route.ts' 'app/api/games/[id]/end/route.ts' 'app/api/nights/[id]/reset-to-setup/route.ts' 'app/api/room/[code]/plays/[playId]/finalize/route.ts' app/api/host/answer-engine/route.ts tests/unit/api-answers-route.test.ts tests/unit/api-resolve-route.test.ts
 git commit -m "feat: route live nights through latched engine"
 ```
 

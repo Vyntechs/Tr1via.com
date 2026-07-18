@@ -21,6 +21,8 @@
 - Retry correctness never depends on `navigator.onLine`; focus/online events may wake work but never grant authority or bypass retry ceilings.
 - Do not deploy, enable Heather, or alter an opened night in this plan.
 
+Before Task 1, capture the exact `npm test`, `npx tsc --noEmit`, and `npm run build` baseline from the branch. Each task must preserve that baseline or improve it; record exact remaining error paths rather than relying on a stale documented count.
+
 ---
 
 ## File Map
@@ -195,6 +197,8 @@ The player never has to tap Retry. Network handoff uses the same record and subm
 
 `PlayerQuestion` accepts phase, selected slot, delivery state, and final seconds. Unanswered and pending players retain 44px-minimum answer controls during `Final answers — 2... 1...`; controls freeze at the authoritative end. A pending choice may continue reconciling after freeze but cannot create a new late answer.
 
+If `canAnswerThisPlay` is false, render a calm watch-only current-question state and never mount answer controls or enqueue an outbox record for that play. This covers a player who joins after eligibility was frozen; their next accepted play automatically restores normal answer controls without a refresh or host action.
+
 **Step 4: Preserve legacy mode**
 
 Legacy-latched nights use the existing path after the security gate. Retire `useAnswerSubmit` only after no legacy call site needs it; never interpret generic 409 as resilient confirmation.
@@ -202,7 +206,7 @@ Legacy-latched nights use the existing path after the security gate. Retire `use
 **Step 5: Verify and commit**
 
 ```bash
-npx vitest run tests/unit/answer-outbox.test.ts tests/unit/answer-submit.test.tsx tests/unit/useAnswerSubmit-confirmed.test.tsx tests/component/PlayerQuestion.test.tsx
+npx vitest run tests/unit/answer-outbox.test.ts tests/unit/answer-submit.test.tsx tests/unit/useAnswerSubmit-confirmed.test.tsx tests/component/PlayerQuestion.test.tsx tests/unit/player-join-game2.test.tsx
 git add -- 'app/(player)/room/[code]/page.tsx' lib/hooks/useAnswerSubmit.ts components/player/PlayerQuestion.tsx components/player/PlayerLocked.tsx components/player/AnswerDeliveryStatus.tsx components/system/AnswerCard.tsx components/system/BackInSyncNotice.tsx
 git commit -m "feat: keep answers sending until confirmed"
 ```
@@ -332,6 +336,7 @@ The helper supports seeded request/response loss, fixed delay, dropped post-comm
 - No path through deadline: no invented/scored answer; proven-miss state.
 - Revision N delayed after N+1: all surfaces stay at N+1.
 - Forty-player reconnect surge, 25% first-response drop: exactly forty answers, <=320 POST attempts/10s, response p95 <=2s, convergence <=6.5s.
+- Late join during an active play: the current question is visible but watch-only, no answer request is emitted, and the next play restores controls automatically.
 
 **Step 3: Update behavioral E2E**
 
