@@ -5,10 +5,11 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   HostDashboard,
+  HostWhatsNew,
   ResetGameConfirmModal,
   type HostDashboardPastNight,
   type HostDashboardSetupNight,
@@ -16,6 +17,8 @@ import {
 } from "@/components/host";
 import { OnboardingFirstDashboard } from "@/components/onboarding";
 import { BillingUpgrade } from "@/components/host/BillingUpgrade";
+
+const HOST_WHATS_NEW_KEY = "tr1via-host-whats-new-original-v1";
 
 export interface HostHomeClientProps {
   hostName: string;
@@ -48,6 +51,17 @@ export function HostHomeClient({
   const [submitting, setSubmitting] = useState(false);
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isFirstNightComplete) return;
+    setWhatsNewOpen(window.localStorage.getItem(HOST_WHATS_NEW_KEY) !== "dismissed");
+  }, [isFirstNightComplete]);
+
+  const dismissWhatsNew = useCallback(() => {
+    window.localStorage.setItem(HOST_WHATS_NEW_KEY, "dismissed");
+    setWhatsNewOpen(false);
+  }, []);
 
   // Founder-only: build a complete real game in one tap (real generation +
   // photos, auto topics + auto-pick) so we can stand up a genuine night to
@@ -185,6 +199,32 @@ export function HostHomeClient({
         isPaywallBypassed={isPaywallBypassed}
         subscriptionStatus={subscriptionStatus}
       />
+      <button
+        type="button"
+        onClick={() => setWhatsNewOpen(true)}
+        style={{
+          position: "fixed",
+          right: 20,
+          bottom: 20,
+          zIndex: 38,
+          minHeight: 40,
+          padding: "0 14px",
+          borderRadius: 999,
+          border: "1px solid var(--line)",
+          background: "var(--surface)",
+          color: "var(--ink)",
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: ".1em",
+          textTransform: "uppercase",
+          cursor: "pointer",
+          boxShadow: "0 12px 28px -18px rgba(0,0,0,.6)",
+        }}
+      >
+        What&apos;s new
+      </button>
+      <HostWhatsNew open={whatsNewOpen} onClose={dismissWhatsNew} />
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
       {successMessage && (
         <SuccessToast
