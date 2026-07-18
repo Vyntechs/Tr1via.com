@@ -1,4 +1,7 @@
-import type { RoomSnapshotPayload } from "@/lib/room/roomSnapshotPayload";
+import type {
+  RoomFallbackPayload,
+  RoomSnapshotPayload,
+} from "@/lib/room/roomSnapshotPayload";
 
 /**
  * Decide whether the host console should seed its direct-read state (live
@@ -18,8 +21,8 @@ import type { RoomSnapshotPayload } from "@/lib/room/roomSnapshotPayload";
 export function hostRecoverySeed(
   prevBackupMode: boolean,
   backupMode: boolean,
-  lastPayload: RoomSnapshotPayload | null,
-): RoomSnapshotPayload | null {
+  lastPayload: RoomFallbackPayload | RoomSnapshotPayload | null,
+): RoomFallbackPayload | null {
   const isRecovery = prevBackupMode && !backupMode;
-  return isRecovery ? lastPayload : null;
+  return isRecovery ? (lastPayload as unknown as RoomFallbackPayload) : null;
 }

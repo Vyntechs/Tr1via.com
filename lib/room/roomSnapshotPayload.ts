@@ -1,11 +1,4 @@
-// roomSnapshotPayload — wire contract for the resilient server-route fallback
-// (`GET /api/room/[code]/snapshot`).
-//
-// The route assembles this payload server-side via the admin client (the way
-// the TV snapshot route does), and the client maps it into the exact
-// `RoomSnapshot` shape `useRoom` already produces — so on a degraded network we
-// swap the 7 direct browser→Supabase reads for ONE same-origin request without
-// changing anything downstream.
+// roomSnapshotPayload — wire contract for the resilient server-route fallback.
 
 import type {
   AnswerRow,
@@ -20,71 +13,128 @@ import type {
 } from "@/lib/supabase/types";
 import type { RoomSnapshot } from "@/lib/hooks/useRoom";
 import type { RoomMagicReactionEvent } from "@/lib/room-magic/reactions";
+import {
+  serializeRoomQuestion,
+  type HostLiveAnswer,
+  type ParticipationDTO,
+  type PlayerCanonicalAnswer,
+  type PlayerSelf,
+  type RoomPlayer,
+  type RoomQuestion,
+} from "./roomAudience";
 import { pickCurrentGame } from "./pickCurrentGame";
 
-export interface RoomSnapshotPayload {
+export { serializeRoomQuestion } from "./roomAudience";
+
+interface RoomSnapshotBase {
+  night: NightRow | null;
+  hostDefaultThemeKey: string | null;
+  games: GameRow[];
+  categories: CategoryRow[];
+  players: RoomPlayer[];
+  currentQuestion: RoomQuestion | null;
+  lastResolvedQuestion: RoomQuestion | null;
+  currentReveal: RevealRow | null;
+  allQuestions: RoomQuestion[];
+  scores: GameScoreRow[];
+  roomMagicReactions?: RoomMagicReactionEvent[];
+}
+
+/** The response is intentionally audience-discriminated at the HTTP boundary. */
+export type RoomSnapshotPayload = RoomSnapshotBase & (
+  | {
+      audience: "player";
+      self: PlayerSelf;
+      myAnswers: PlayerCanonicalAnswer[];
+      myParticipations: ParticipationDTO[];
+      liveAnswers?: never;
+    }
+  | {
+      audience: "host";
+      self: null;
+      myAnswers?: never;
+      myParticipations?: never;
+      liveAnswers: HostLiveAnswer[];
+    }
+);
+
+/**
+ * The fallback store is surface-local: a player route can only receive a
+ * player payload and a host route can only receive a host payload. This bridge
+ * preserves the existing client consumers while the wire payload stays strict.
+ */
+export interface RoomFallbackPayload {
+  audience: "player" | "host";
+  self: PlayerSelf | null;
   night: NightRow | null;
   hostDefaultThemeKey: string | null;
   games: GameRow[];
   categories: CategoryRow[];
   players: PlayerRow[];
-  /** Live question (played, not finished). correct_index is withheld (null). */
   currentQuestion: QuestionRow | null;
-  /** Most-recently-resolved question. correct_index present (it's the reveal). */
   lastResolvedQuestion: QuestionRow | null;
   currentReveal: RevealRow | null;
-  /** All picked questions (host board). correct_index withheld for non-finished. */
   allQuestions: QuestionRow[];
-  // ── player-mode only (null/empty in host mode) ──
-  /** The authed player's own row (player mode). */
-  me: PlayerRow | null;
-  /** The authed player's answers across the night. */
   myAnswers: AnswerRow[];
-  /** The authed player's per-game participation rows. */
   myParticipations: ParticipationRow[];
-  /** game_scores for the current game (both modes). */
   scores: GameScoreRow[];
-  /** Answers for the target question (live, else most-recently-resolved). Used
-   *  by the HOST console for lock counts + the reveal "X of N got it". Same data
-   *  the public TV feed already exposes; the player surface ignores it. */
   liveAnswers: AnswerRow[];
-  /** Host-fallback-only display-safe Room Magic reactions. */
   roomMagicReactions?: RoomMagicReactionEvent[];
 }
 
-/**
- * SECURITY: withhold correct_index for any question that isn't RESOLVED. A live
- * or unplayed question must never ship its answer to a device — same rule as
- * the public TV feed (`serializeBoardQuestion`, 2026-06-06 pentest CRITICAL).
- * Resolved questions keep it so the reveal screen can highlight the answer.
- */
-export function serializeRoomQuestion(q: QuestionRow): QuestionRow {
-  return {
-    ...q,
-    // `as` keeps the QuestionRow shape; consumers only read correct_index when
-    // finished_at is set, exactly as the direct-read path does.
-    correct_index: (q.finished_at ? q.correct_index : null) as QuestionRow["correct_index"],
-  };
-}
-
-/** Map the route payload into the RoomSnapshot shape useRoom returns. */
+/** Map the route payload into the RoomSnapshot shape useRoom already produces. */
 export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapshot {
   return {
     night: payload.night,
     hostDefaultThemeKey: payload.hostDefaultThemeKey,
     games: payload.games,
     categories: payload.categories,
-    players: payload.players,
+    players: payload.players.map(roomPlayerToRow),
     currentGame: pickCurrentGame(payload.games),
-    currentQuestion: payload.currentQuestion,
-    lastResolvedQuestion: payload.lastResolvedQuestion,
+    currentQuestion: payload.currentQuestion
+      ? roomQuestionToRow(payload.currentQuestion)
+      : null,
+    lastResolvedQuestion: payload.lastResolvedQuestion
+      ? roomQuestionToRow(payload.lastResolvedQuestion)
+      : null,
     currentReveal: payload.currentReveal,
     lastBroadcast: null,
-    // The server-route fallback payload carries durable state only; the
-    // firework beat is a transient broadcast, never reconstructed from a poll.
     lastFireworksBeat: null,
     lastRoomMagicReaction: null,
     roomMagicReactions: payload.roomMagicReactions ?? [],
     isLoading: false,
   };
+}
+
+function roomPlayerToRow(player: RoomPlayer): PlayerRow {
+  return {
+    id: player.id,
+    night_id: player.night_id,
+    display_name: player.display_name,
+    joined_at: player.joined_at,
+    last_seen_at: player.last_seen_at,
+    removed_at: player.removed_at,
+    app_switch_total_seconds: player.app_switch_total_seconds,
+  } as PlayerRow;
+}
+
+function roomQuestionToRow(question: RoomQuestion): QuestionRow {
+  const row: Omit<QuestionRow, "correct_index"> & { correct_index?: QuestionRow["correct_index"] } = {
+    id: question.id,
+    category_id: question.category_id,
+    difficulty: question.difficulty,
+    fact_blurb: question.fact_blurb,
+    image_attribution: question.image_attribution,
+    image_source: question.image_source,
+    image_url: question.image_url,
+    is_picked: question.is_picked,
+    options: question.options,
+    played_at: question.played_at,
+    finished_at: question.finished_at,
+    point_value: question.point_value,
+    prompt: question.prompt,
+    source: question.source,
+  };
+  if (question.correct_index !== undefined) row.correct_index = question.correct_index;
+  return row as QuestionRow;
 }

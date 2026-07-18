@@ -22,6 +22,7 @@ import {
   unauthorized,
 } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { serializeRoomPlayer } from "@/lib/room/roomAudience";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -65,7 +66,7 @@ export async function POST(
     .select("*")
     .single();
   if (error || !player) {
-    return serverError(error?.message ?? "could not add player");
+    return serverError();
   }
 
   // Auto-opt into the currently active game (live > ready, prefer the
@@ -87,5 +88,5 @@ export async function POST(
       .insert({ game_id: activeGame.id, player_id: player.id });
   }
 
-  return ok({ player }, 201);
+  return ok({ player: serializeRoomPlayer(player) }, 201);
 }

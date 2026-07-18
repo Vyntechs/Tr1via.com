@@ -18,6 +18,7 @@ import { getDeviceId } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastPlayerJoined } from "@/lib/api/broadcast";
 import { playerColorKey } from "@/lib/player/playerColor";
+import { serializeRoomPlayer } from "@/lib/room/roomAudience";
 
 export async function POST(req: NextRequest) {
   const deviceId = await getDeviceId();
@@ -79,7 +80,7 @@ export async function POST(req: NextRequest) {
     .select("*")
     .single();
   if (error || !player) {
-    return serverError(error?.message ?? "could not join");
+    return serverError();
   }
 
   // Magic-Welcome broadcast — fire-and-forget. The TV's safety poll and
@@ -131,5 +132,5 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
   }
 
-  return ok({ player }, 201);
+  return ok({ player: serializeRoomPlayer(player) }, 201);
 }

@@ -105,11 +105,19 @@ describe("payloadToRoomSnapshot", () => {
     lastResolvedQuestion: null,
     currentReveal: null,
     allQuestions: [],
-    me: null,
+    audience: "player",
+    self: {
+      id: "p1",
+      nightId: "n1",
+      displayName: "Player",
+      joinedAt: "2026-01-01T00:00:00Z",
+      lastSeenAt: "2026-01-01T00:00:00Z",
+      removedAt: null,
+      appSwitchTotalSeconds: 0,
+    },
     myAnswers: [],
     myParticipations: [],
     scores: [],
-    liveAnswers: [],
   });
 
   it("derives currentGame via pickCurrentGame (live wins)", () => {

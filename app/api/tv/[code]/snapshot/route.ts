@@ -47,7 +47,7 @@ export async function GET(
     )
     .eq("room_code", code)
     .maybeSingle();
-  if (nightError) return serverError(nightError.message);
+  if (nightError) return serverError();
   if (!night) return notFound("room not found");
   const nightId = night.id;
   const roomMagicEnabled = Boolean(
@@ -122,13 +122,14 @@ export async function GET(
       : Promise.resolve({ data: [], error: null }),
   ]);
 
-  if (gamesRes.error) return serverError(gamesRes.error.message);
-  if (playersRes.error) return serverError(playersRes.error.message);
-  if (categoriesRes.error) return serverError(categoriesRes.error.message);
-  if (pickedQuestionsRes.error) return serverError(pickedQuestionsRes.error.message);
-  if (recentRevealsRes.error) return serverError(recentRevealsRes.error.message);
+  if (gamesRes.error) return serverError();
+  if (playersRes.error) return serverError();
+  if (categoriesRes.error) return serverError();
+  if (pickedQuestionsRes.error) return serverError();
+  if (liveQuestionRes.error) return serverError();
+  if (recentRevealsRes.error) return serverError();
   if (recentRoomMagicReactionsRes.error) {
-    return serverError(recentRoomMagicReactionsRes.error.message);
+    return serverError();
   }
 
   const games = gamesRes.data ?? [];
@@ -180,10 +181,11 @@ export async function GET(
     fastest_correct_ms: number | null;
   }> = [];
   if (currentGame) {
-    const { data: scoreRows } = await admin
+    const { data: scoreRows, error: scoresError } = await admin
       .from("game_scores")
       .select("*")
       .eq("game_id", currentGame.id);
+    if (scoresError) return serverError();
     if (scoreRows) {
       // game_scores is a LEFT JOIN view so player_id + display_name can
       // technically be null. In practice every game_participation pins a
@@ -240,10 +242,11 @@ export async function GET(
     chosen_index: 0 | 1 | 2 | 3 | null;
   }> = [];
   if (targetQuestionId) {
-    const { data: ans } = await admin
+    const { data: ans, error: answersError } = await admin
       .from("answers")
       .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
       .eq("question_id", targetQuestionId);
+    if (answersError) return serverError();
     if (ans && ans.length > 0) {
       const playerMap = new Map(
         (playersRes.data ?? []).map((p) => [p.id, p.display_name] as const),

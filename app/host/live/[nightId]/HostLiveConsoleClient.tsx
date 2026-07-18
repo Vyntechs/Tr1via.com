@@ -26,7 +26,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRoom, type BroadcastTag } from "@/lib/hooks/useRoom";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { hostRecoverySeed } from "@/lib/room/hostRecoverySeed";
-import type { RoomSnapshotPayload } from "@/lib/room/roomSnapshotPayload";
+import type { RoomFallbackPayload } from "@/lib/room/roomSnapshotPayload";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
   AddLatecomerModal,
@@ -102,7 +102,7 @@ export function HostLiveConsoleClient({
   // stale. Remember the last route payload (setBackupMode(false) nulls it in the
   // same tick, so we can't read it at the edge) and seed the direct state from it
   // on recovery; the direct subscriptions then refresh on the next change.
-  const lastFallbackRef = useRef<RoomSnapshotPayload | null>(null);
+  const lastFallbackRef = useRef<RoomFallbackPayload | null>(null);
   useEffect(() => {
     if (fallbackPayload) lastFallbackRef.current = fallbackPayload;
   }, [fallbackPayload]);

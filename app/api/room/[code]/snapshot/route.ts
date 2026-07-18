@@ -26,7 +26,14 @@ import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthedHost, getDeviceId } from "@/lib/api/auth";
-import { serializeRoomQuestion } from "@/lib/room/roomSnapshotPayload";
+import {
+  serializeHostLiveAnswer,
+  serializeParticipation,
+  serializePlayerCanonicalAnswer,
+  serializePlayerSelf,
+  serializeRoomPlayer,
+  serializeRoomQuestion,
+} from "@/lib/room/roomAudience";
 import type {
   AnswerRow,
   CategoryRow,
@@ -59,7 +66,7 @@ export async function GET(
     .select("*, hosts!inner(default_theme_key)")
     .eq("room_code", code)
     .maybeSingle();
-  if (nightErr) return serverError(nightErr.message);
+  if (nightErr) return serverError();
   if (!nightRaw) return notFound("room not found");
 
   type HostJoin = { default_theme_key: string | null };
@@ -75,7 +82,7 @@ export async function GET(
 
   // ── Authorize: host-owns-night OR device-cookie player in this night ──────
   let mode: "host" | "player";
-  let me: PlayerRow | null = null;
+  let playerRow: PlayerRow | null = null;
 
   const hostAuth = await getAuthedHost();
   if (hostAuth.ok && (night as { host_id?: string }).host_id === hostAuth.host.id) {
@@ -85,14 +92,16 @@ export async function GET(
     if (!deviceId) return forbidden("not authorized for this room");
     const { data: player } = await admin
       .from("players")
-      .select("*")
+      .select(
+        "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds, device_id",
+      )
       .eq("night_id", nightId)
       .eq("device_id", deviceId)
       .is("removed_at", null)
       .maybeSingle();
     if (!player) return forbidden("not a player in this room");
     mode = "player";
-    me = player as PlayerRow;
+    playerRow = player as PlayerRow;
   }
 
   // ── Room state (same reads useRoom's bootstrap does, server-side) ─────────
@@ -110,7 +119,9 @@ export async function GET(
         .order("position", { ascending: true }),
       admin
         .from("players")
-        .select("*")
+        .select(
+          "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds",
+        )
         .eq("night_id", nightId)
         .is("removed_at", null)
         .order("joined_at", { ascending: true }),
@@ -129,15 +140,15 @@ export async function GET(
         .limit(1),
     ]);
 
-  if (gamesRes.error) return serverError(gamesRes.error.message);
-  if (categoriesRes.error) return serverError(categoriesRes.error.message);
-  if (playersRes.error) return serverError(playersRes.error.message);
-  if (pickedRes.error) return serverError(pickedRes.error.message);
-  if (revealsRes.error) return serverError(revealsRes.error.message);
+  if (gamesRes.error) return serverError();
+  if (categoriesRes.error) return serverError();
+  if (playersRes.error) return serverError();
+  if (pickedRes.error) return serverError();
+  if (revealsRes.error) return serverError();
 
   const games = (gamesRes.data ?? []) as GameRow[];
   const categories = stripJoins(categoriesRes.data ?? [], "games") as CategoryRow[];
-  const players = (playersRes.data ?? []) as PlayerRow[];
+  const players = ((playersRes.data ?? []) as PlayerRow[]).map(serializeRoomPlayer);
   const allQuestionsRaw = stripJoins(pickedRes.data ?? [], "categories") as QuestionRow[];
   const reveals = stripJoins(revealsRes.data ?? [], "games") as RevealRow[];
 
@@ -183,15 +194,20 @@ export async function GET(
             .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
             .eq("question_id", targetQuestionId)
         : Promise.resolve({ data: [] as AnswerRow[], error: null }),
-      mode === "player" && me
+      mode === "player" && playerRow
         ? admin
             .from("answers")
-            .select("*")
-            .eq("player_id", me.id)
+            .select(
+              "id, player_id, question_id, chosen_index, ms_to_lock, is_correct, awarded_points, locked_at",
+            )
+            .eq("player_id", playerRow.id)
             .order("locked_at", { ascending: true })
         : Promise.resolve({ data: [] as AnswerRow[], error: null }),
-      mode === "player" && me
-        ? admin.from("game_participations").select("*").eq("player_id", me.id)
+      mode === "player" && playerRow
+        ? admin
+            .from("game_participations")
+            .select("id, player_id, game_id, joined_at")
+            .eq("player_id", playerRow.id)
         : Promise.resolve({ data: [] as ParticipationRow[], error: null }),
       mode === "host" && night.room_magic_enabled === true
         ? admin
@@ -208,9 +224,19 @@ export async function GET(
     ]);
 
   const scores = (scoresRes.data ?? []) as GameScoreRow[];
-  const liveAnswers = (liveAnswersRes.data ?? []) as AnswerRow[];
-  const myAnswers = (myAnswersRes.data ?? []) as AnswerRow[];
-  const myParticipations = (myParticipationsRes.data ?? []) as ParticipationRow[];
+  if (scoresRes.error) return serverError();
+  if (liveAnswersRes.error) return serverError();
+  if (myAnswersRes.error) return serverError();
+  if (myParticipationsRes.error) return serverError();
+  if (roomMagicReactionsRes.error) return serverError();
+
+  const liveAnswers = ((liveAnswersRes.data ?? []) as AnswerRow[]).map(serializeHostLiveAnswer);
+  const myAnswers = ((myAnswersRes.data ?? []) as AnswerRow[]).map(
+    serializePlayerCanonicalAnswer,
+  );
+  const myParticipations = ((myParticipationsRes.data ?? []) as ParticipationRow[]).map(
+    serializeParticipation,
+  );
   const roomMagicReactions = (roomMagicReactionsRes.data ?? [])
     .filter((row) => isRoomMagicReactionKind(row.kind))
     .map((row) => ({
@@ -219,7 +245,7 @@ export async function GET(
       serverNow: row.created_at,
     }));
 
-  return ok({
+  const common = {
     night,
     hostDefaultThemeKey,
     games,
@@ -230,12 +256,25 @@ export async function GET(
     lastResolvedQuestion: lastResolvedRaw ? serializeRoomQuestion(lastResolvedRaw) : null,
     currentReveal: reveals[0] ?? null,
     allQuestions: allQuestionsRaw.map(serializeRoomQuestion),
-    me,
-    myAnswers,
-    myParticipations,
     scores,
+    roomMagicReactions: mode === "host" ? roomMagicReactions : [],
+  };
+
+  if (mode === "player" && playerRow) {
+    return ok({
+      ...common,
+      audience: "player" as const,
+      self: serializePlayerSelf(playerRow),
+      myAnswers,
+      myParticipations,
+    });
+  }
+
+  return ok({
+    ...common,
+    audience: "host" as const,
+    self: null,
     liveAnswers,
-    roomMagicReactions,
   });
 }
 
