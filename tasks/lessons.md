@@ -137,3 +137,8 @@ Reason: Serial approval questions make Brandon perform the agent’s product wor
 Trigger: A type-generation command redirects output while its required local database or Docker service is unavailable.
 Rule: Verify dependencies first and generate to a temporary destination before replacing the tracked types file.
 Reason: CLI errors can be redirected into the generated file and silently erase valid types.
+
+### share-production-generation-budgets
+Trigger: Two production-smoke paths used different default generation timeouts.
+Rule: Import one timeout source and test each workflow step's explicit budget and total runtime envelope.
+Reason: A healthy generator can be deleted and falsely blamed when one harness retains stale limits.

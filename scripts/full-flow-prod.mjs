@@ -61,6 +61,7 @@
 // names the step, the game, the question, and DB state at the failure.
 
 import { createClient } from "@supabase/supabase-js";
+import { genTimeoutFromEnv } from "./prod-smoke-config.mjs";
 
 const BASE = process.env.SMOKE_BASE_URL ?? "https://tr1via.com";
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
@@ -94,9 +95,9 @@ const TOPIC_BANK_G2 = [
   "national parks",
 ];
 // Env-configurable: question generation now runs Sonnet + two Opus verify
-// passes, which is slower than the old single Haiku call. Default 90s; bump
-// via SMOKE_GEN_TIMEOUT_MS for the verified pipeline (e.g. on a cold preview).
-const GEN_TIMEOUT_MS = Number(process.env.SMOKE_GEN_TIMEOUT_MS ?? 90_000);
+// passes, which is slower than the old single Haiku call. Share one budget
+// with the API smoke so cleanup cannot race a healthy background worker.
+const GEN_TIMEOUT_MS = genTimeoutFromEnv();
 const POLL_MS = 2000;
 // Alice/Bob/Carol drive the strict assertions in 3-phone mode. Player04+
 // are pure load phones with a simple alternate-correct-wrong strategy.

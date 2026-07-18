@@ -14,11 +14,20 @@ describe("prod smoke generation budget", () => {
 
   it("keeps the GitHub Actions timeout budget aligned with the script", () => {
     const workflow = readFileSync(".github/workflows/prod-smoke.yml", "utf8");
+    const fullFlow = readFileSync("scripts/full-flow-prod.mjs", "utf8");
+    const fullFlowStep = workflow.match(
+      /- name: Full-flow driver[\s\S]*?run: node scripts\/full-flow-prod\.mjs/,
+    )?.[0];
 
     expect(workflow).toMatch(/timeout-minutes:\s*15/);
-    expect(workflow).toContain(`SMOKE_GEN_TIMEOUT_MS: ${DEFAULT_GEN_TIMEOUT_MS}`);
-    expect(workflow).toMatch(
-      /Full-flow driver[\s\S]*?timeout-minutes:\s*8/,
+    expect(fullFlow).toContain(
+      'import { genTimeoutFromEnv } from "./prod-smoke-config.mjs";',
+    );
+    expect(fullFlow).toContain("const GEN_TIMEOUT_MS = genTimeoutFromEnv();");
+    expect(fullFlowStep).toContain("timeout-minutes: 12");
+    expect(fullFlowStep).toContain("CATEGORIES_PER_GAME: 1");
+    expect(fullFlowStep).toContain(
+      `SMOKE_GEN_TIMEOUT_MS: ${DEFAULT_GEN_TIMEOUT_MS}`,
     );
   });
 
