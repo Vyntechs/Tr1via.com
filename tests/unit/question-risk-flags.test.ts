@@ -42,4 +42,20 @@ describe("riskFlagsForQuestion", () => {
     expect(flags).toContain("subjective_wording");
     expect(flags).toContain("multiple_answer_risk");
   });
+
+  it("hard-flags prompts that ask players to interpret an unseen image", () => {
+    expect(
+      riskFlagsForQuestion({
+        ...base,
+        prompt: "What does this sign mean?",
+      }),
+    ).toContain("image_required");
+
+    expect(
+      riskFlagsForQuestion({
+        ...base,
+        prompt: "Which movie features a character named Buzz Lightyear?",
+      }),
+    ).not.toContain("image_required");
+  });
 });

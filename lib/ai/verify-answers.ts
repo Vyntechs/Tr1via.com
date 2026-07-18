@@ -35,6 +35,8 @@ export interface AnswerVerdict {
   index: number;
   markedAnswerIsCorrect: boolean;
   ambiguous: boolean;
+  factBlurbIsCorrect: boolean;
+  answerableWithoutImage: boolean;
 }
 
 export interface VerifyAnswersOptions {
@@ -60,8 +62,16 @@ const verdictsTool = {
             index: { type: "integer" },
             markedAnswerIsCorrect: { type: "boolean" },
             ambiguous: { type: "boolean" },
+            factBlurbIsCorrect: { type: "boolean" },
+            answerableWithoutImage: { type: "boolean" },
           },
-          required: ["index", "markedAnswerIsCorrect", "ambiguous"],
+          required: [
+            "index",
+            "markedAnswerIsCorrect",
+            "ambiguous",
+            "factBlurbIsCorrect",
+            "answerableWithoutImage",
+          ],
           additionalProperties: false,
         },
       },
@@ -77,7 +87,12 @@ const VERIFIER_SYSTEM =
   "markedAnswer is right. Set markedAnswerIsCorrect=true only if the marked " +
   "answer is unambiguously the single correct option. Set ambiguous=true if " +
   "two or more options are defensibly correct, or the question has no single " +
-  "defensible answer. Return exactly one verdict for every question index. " +
+  "defensible answer. Independently check factBlurb: set factBlurbIsCorrect=true " +
+  "only when every factual claim in it is accurate and supports the marked answer. " +
+  "Set answerableWithoutImage=true only when a player can answer from the prompt " +
+  "and options alone, without seeing a photo, sign, map, chart, logo, or other image. " +
+  "Treat missing date, metric, geography, edition, or other necessary context as " +
+  "ambiguity. Return exactly one verdict for every question index. " +
   "Output only the verdicts — no explanations.";
 
 function getEnv(name: string): string {
@@ -86,7 +101,13 @@ function getEnv(name: string): string {
   return v;
 }
 
-interface RawVerdict { index: number; markedAnswerIsCorrect: boolean; ambiguous: boolean }
+interface RawVerdict {
+  index: number;
+  markedAnswerIsCorrect: boolean;
+  ambiguous: boolean;
+  factBlurbIsCorrect: boolean;
+  answerableWithoutImage: boolean;
+}
 // Opus 4.8 occasionally double-encodes the tool output — the verdicts array
 // arrives as a JSON string inside block.input instead of a native array.
 function extractVerdicts(value: unknown): RawVerdict[] | null {
@@ -120,6 +141,8 @@ async function verifyChunk(
     prompt: q.prompt,
     options: q.options,
     markedAnswer: q.options[q.correctIndex],
+    factBlurb: q.factBlurb,
+    mustBeAnswerableWithoutImage: true,
   }));
   const byIndex = new Map<number, AnswerVerdict>();
 
@@ -158,8 +181,10 @@ async function verifyChunk(
         if (v.index >= 0 && v.index < chunk.length && !byIndex.has(v.index)) {
           byIndex.set(v.index, {
             index: v.index,
-            markedAnswerIsCorrect: v.markedAnswerIsCorrect,
-            ambiguous: v.ambiguous,
+            markedAnswerIsCorrect: v.markedAnswerIsCorrect === true,
+            ambiguous: v.ambiguous !== false,
+            factBlurbIsCorrect: v.factBlurbIsCorrect === true,
+            answerableWithoutImage: v.answerableWithoutImage === true,
           });
         }
       }

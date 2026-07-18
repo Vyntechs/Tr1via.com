@@ -21,7 +21,13 @@ function chunkSize(params: Record<string, unknown>): number {
   const content = (params.messages as Array<{ content: string }>)[0]!.content;
   return (content.match(/"index":/g) ?? []).length;
 }
-const verdict = (i: number) => ({ index: i, markedAnswerIsCorrect: true, ambiguous: false });
+const verdict = (i: number) => ({
+  index: i,
+  markedAnswerIsCorrect: true,
+  ambiguous: false,
+  factBlurbIsCorrect: true,
+  answerableWithoutImage: true,
+});
 
 // Mock returning a COMPLETE clean verdict set sized to whatever chunk it gets.
 function cleanClient(capture: Call[]) {
@@ -44,7 +50,11 @@ describe("verifyAnswers", () => {
     const out = await verifyAnswers([q()], { client });
     expect(out).toHaveLength(1);
     expect(out[0]?.markedAnswerIsCorrect).toBe(true);
+    expect(out[0]?.factBlurbIsCorrect).toBe(true);
+    expect(out[0]?.answerableWithoutImage).toBe(true);
     expect(capture[0]!.params.tool_choice).toEqual({ type: "tool", name: "verdicts" });
+    expect(JSON.stringify(capture[0]!.params.tools)).toContain("factBlurbIsCorrect");
+    expect(JSON.stringify(capture[0]!.params.tools)).toContain("answerableWithoutImage");
   });
 
   it("sends the MARKED answer (options[correctIndex]) for each question", async () => {
@@ -54,6 +64,7 @@ describe("verifyAnswers", () => {
     await verifyAnswers([q({ correctIndex: 3 })], { client });
     const content = (capture[0]!.params.messages as Array<{ content: string }>)[0]!.content;
     expect(content).toContain('"markedAnswer":"Arnold"');
+    expect(content).toContain('"factBlurb":"They married in 1987."');
   });
 
   it("omits temperature for Opus 4.8 (the param is deprecated there)", async () => {
