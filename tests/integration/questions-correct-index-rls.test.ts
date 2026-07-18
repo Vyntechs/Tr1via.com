@@ -21,7 +21,7 @@
 // read correct_index and these tests FAIL. They pass once the fix migration
 // revokes the column from the player (`anon`) role.
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
@@ -32,11 +32,7 @@ const MIGRATIONS_DIR = path.resolve(
   "../../supabase/migrations",
 );
 
-// Apply 0001 (schema) + 0002 (RLS) + any later migration that revokes the
-// player role's column access on questions (the fix). Matching on content keeps
-// the test honest if the fix file is renamed; the regex is specific enough that
-// no other migration (which only ever `revoke ... on function`) matches.
-const QUESTIONS_COLUMN_FIX = /revoke\s+select\s+on\s+questions/i;
+const LIVE_SECURITY_GATE = path.join(MIGRATIONS_DIR, "0021_live_security_gate.sql");
 
 async function freshRlsDb(): Promise<PGlite> {
   const db = new PGlite();
@@ -70,11 +66,14 @@ async function freshRlsDb(): Promise<PGlite> {
 
   await db.exec(readFileSync(path.join(MIGRATIONS_DIR, "0002_rls.sql"), "utf8"));
 
-  for (const f of readdirSync(MIGRATIONS_DIR)
-    .filter((f) => f.endsWith(".sql") && f > "0002_rls.sql")
-    .sort()) {
-    const sql = readFileSync(path.join(MIGRATIONS_DIR, f), "utf8");
-    if (QUESTIONS_COLUMN_FIX.test(sql)) await db.exec(sql);
+  for (const migration of [
+    "0014_questions_withhold_correct_index_from_players.sql",
+    "0018_resolve_question_if_all_locked.sql",
+  ]) {
+    await db.exec(readFileSync(path.join(MIGRATIONS_DIR, migration), "utf8"));
+  }
+  if (existsSync(LIVE_SECURITY_GATE)) {
+    await db.exec(readFileSync(LIVE_SECURITY_GATE, "utf8"));
   }
 
   return db;
@@ -141,6 +140,10 @@ describe("questions.correct_index is unreadable by a player at the database laye
 
   afterAll(async () => {
     await db?.close();
+  });
+
+  test("requires the 0021 live security gate migration alongside the established question projection", () => {
+    expect(existsSync(LIVE_SECURITY_GATE)).toBe(true);
   });
 
   test("a joined player cannot read correct_index of the LIVE question", async () => {

@@ -18,15 +18,17 @@ vi.mock("@/lib/api/auth", () => authMock);
 const CODE = "ABCDEF";
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
 const HOST_ID = "host-1";
-const DEVICE_ID = "device-abc";
+const DEVICE_ID = "DEVICE-ID-LEAK";
 const PLAYER_ID = "P1";
+const DEVICE_ID_LEAK = "DEVICE-ID-LEAK";
+const SCRAMBLE_LEAK = "SCRAMBLE-LEAK";
 
 // Chainable, awaitable query stub. Real columns filter; join-path filters
 // (keys containing ".") are no-ops since the seed rows are already night-scoped.
 // select() records a plain (non-join) column list and projects OUTPUT rows to
 // it — filters still run against the full row, matching real Postgres
 // semantics where a narrower select doesn't hide columns from a later .eq().
-function qb(rows: Record<string, unknown>[]) {
+function qb(rows: Record<string, unknown>[], error: { message: string } | null = null) {
   let data = [...rows];
   let cols: string | null = null;
   const project = (rs: Record<string, unknown>[]) => {
@@ -53,9 +55,9 @@ function qb(rows: Record<string, unknown>[]) {
     gte: () => b,
     order: () => b,
     limit: () => b,
-    maybeSingle: () => Promise.resolve({ data: project(data)[0] ?? null, error: null }),
-    then: (onF: (v: { data: unknown; error: null }) => unknown) =>
-      Promise.resolve({ data: project(data), error: null }).then(onF),
+    maybeSingle: () => Promise.resolve({ data: project(data)[0] ?? null, error }),
+    then: (onF: (v: { data: unknown; error: { message: string } | null }) => unknown) =>
+      Promise.resolve({ data: project(data), error }).then(onF),
   };
   return b;
 }
@@ -73,7 +75,7 @@ const Q_RESOLVED = {
   finished_at: "2026-06-07T00:00:20Z", is_picked: true,
 };
 
-function makeAdmin() {
+function makeAdmin(errorTable?: string) {
   const seed: Record<string, Record<string, unknown>[]> = {
     nights: [{
       id: NIGHT_ID, venue_name: "V", theme_key: "house", room_code: CODE,
@@ -91,14 +93,18 @@ function makeAdmin() {
     questions: [Q_LIVE, Q_RESOLVED],
     players: [{
       id: PLAYER_ID, display_name: "Alice", night_id: NIGHT_ID,
-      device_id: DEVICE_ID, joined_at: "2026-06-07T00:00:00Z",
-      last_seen_at: null, removed_at: null,
+      device_id: DEVICE_ID_LEAK, joined_at: "2026-06-07T00:00:00Z",
+      last_seen_at: null, removed_at: null, app_switch_total_seconds: 0,
+    }, {
+      id: "P2", display_name: "Bob", night_id: NIGHT_ID,
+      device_id: "OTHER-DEVICE-ID-LEAK", joined_at: "2026-06-07T00:00:01Z",
+      last_seen_at: null, removed_at: null, app_switch_total_seconds: 0,
     }],
     reveals: [],
     game_scores: [],
     answers: [{
       id: "a1", player_id: PLAYER_ID, question_id: "q-resolved",
-      chosen_index: 3, scramble: [0, 1, 2, 3], ms_to_lock: 1200,
+      chosen_index: 3, scramble: SCRAMBLE_LEAK, ms_to_lock: 1200,
       is_correct: true, awarded_points: 500, locked_at: "2026-06-07T00:00:10Z",
     }, {
       // Another player's answer on the LIVE question — the anti-cheat target:
@@ -117,7 +123,12 @@ function makeAdmin() {
       created_at: "2026-06-07T00:00:22Z",
     }],
   };
-  return { from: vi.fn((table: string) => qb(seed[table] ?? [])) };
+  return {
+    from: vi.fn((table: string) => qb(
+      seed[table] ?? [],
+      table === errorTable ? { message: "RAW-DATABASE-ERROR-LEAK" } : null,
+    )),
+  };
 }
 
 async function callRoute() {
@@ -140,7 +151,7 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(res.status).toBe(403);
   });
 
-  it("PLAYER mode: withholds live correct_index, exposes resolved, returns own answers", async () => {
+  it("PLAYER mode: withholds live correct_index, exposes resolved, returns only signed-player state", async () => {
     authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
     authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
     const res = await callRoute();
@@ -148,20 +159,39 @@ describe("GET /api/room/[code]/snapshot", () => {
     const body = await res.json();
 
     expect(body.currentQuestion.id).toBe("q-live");
-    expect(body.currentQuestion.correct_index).toBeNull();
+    expect(body.currentQuestion).not.toHaveProperty("correct_index");
     expect(body.lastResolvedQuestion.id).toBe("q-resolved");
     expect(body.lastResolvedQuestion.correct_index).toBe(3);
 
     // Board withholds the live answer index entirely.
     const allJson = JSON.stringify(body.allQuestions);
-    expect(allJson).not.toContain('"correct_index":1');
+    expect(body.allQuestions.find((question: { id: string }) => question.id === "q-live"))
+      .not.toHaveProperty("correct_index");
     expect(allJson).toContain('"correct_index":3');
 
     // Player's own data present.
-    expect(body.me.id).toBe(PLAYER_ID);
+    expect(body).toMatchObject({
+      audience: "player",
+      self: { id: PLAYER_ID, displayName: "Alice" },
+    });
     expect(body.myAnswers).toHaveLength(1);
     expect(body.myParticipations).toHaveLength(1);
     expect(body.roomMagicReactions).toEqual([]);
+  });
+
+  it("PLAYER mode: never exposes a browser identity, answer scramble, or another player's live choice", async () => {
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const json = JSON.stringify(body);
+
+    expect(json).not.toContain(DEVICE_ID_LEAK);
+    expect(json).not.toContain("OTHER-DEVICE-ID-LEAK");
+    expect(json).not.toContain(SCRAMBLE_LEAK);
+    expect(json).not.toContain('"id":"a2"');
+    expect(body).not.toHaveProperty("liveAnswers");
   });
 
   it("HOST mode: owning host gets room state with the same gating", async () => {
@@ -170,11 +200,11 @@ describe("GET /api/room/[code]/snapshot", () => {
     const res = await callRoute();
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.currentQuestion.correct_index).toBeNull();
+    expect(body.currentQuestion).not.toHaveProperty("correct_index");
     expect(body.lastResolvedQuestion.correct_index).toBe(3);
     // Host mode carries no player-scoped data.
-    expect(body.me).toBeNull();
-    expect(body.myAnswers).toEqual([]);
+    expect(body).toMatchObject({ audience: "host", self: null });
+    expect(body).not.toHaveProperty("myAnswers");
     expect(body.roomMagicReactions).toEqual([
       {
         id: "reaction-1",
@@ -184,6 +214,15 @@ describe("GET /api/room/[code]/snapshot", () => {
     ]);
     expect(JSON.stringify(body.roomMagicReactions)).not.toContain("player");
     expect(JSON.stringify(body.roomMagicReactions)).not.toContain("question");
+  });
+
+  it("HOST mode: does not echo any player's browser device identity", async () => {
+    authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
+    authMock.getDeviceId.mockResolvedValue(null);
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+
+    expect(JSON.stringify(await res.json())).not.toContain("DEVICE-ID-LEAK");
   });
 
   it("PLAYER mode: withholds OTHER players' answers on a LIVE question (liveAnswers empty)", async () => {
@@ -219,5 +258,17 @@ describe("GET /api/room/[code]/snapshot", () => {
     authMock.getDeviceId.mockResolvedValue(null);
     const res = await callRoute();
     expect(res.status).toBe(403); // not owner, no device cookie either
+  });
+
+  it("maps a player snapshot database failure to a generic typed error", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin("nights"));
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+    const res = await callRoute();
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "server error" });
+    expect(JSON.stringify(body)).not.toContain("RAW-DATABASE-ERROR-LEAK");
   });
 });

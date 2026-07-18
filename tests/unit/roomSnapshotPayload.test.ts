@@ -67,6 +67,19 @@ describe("serializeRoomQuestion — correct_index gating", () => {
     expect(q.prompt).toBe("Who?");
     expect(q.options).toEqual(["a", "b", "c", "d"]);
   });
+
+  it("fails closed when an admin row grows browser-identity, submission, or live-answer fields", () => {
+    const row = rawQuestion({ id: "q", played_at: "2026-06-07T00:00:00Z", finished_at: null });
+    Object.assign(row as Record<string, unknown>, {
+      device_id: "DEVICE-ID-LEAK",
+      submission_id: "SUBMISSION-ID-LEAK",
+    });
+
+    const json = JSON.stringify(serializeRoomQuestion(row));
+    expect(json).not.toContain("DEVICE-ID-LEAK");
+    expect(json).not.toContain("SUBMISSION-ID-LEAK");
+    expect(json).not.toContain('"correct_index"');
+  });
 });
 
 describe("payloadToRoomSnapshot", () => {

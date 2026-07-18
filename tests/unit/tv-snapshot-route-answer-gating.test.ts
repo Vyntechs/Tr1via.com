@@ -31,7 +31,7 @@ const CODE = "ABCDEF"; // valid: alphabet excludes I/L/O/0/1
 // (eq/is/not) actually narrow the seeded rows so the route's two distinct
 // `questions` queries (picked vs live) resolve to faithful subsets; the object
 // is thenable so `await`/`Promise.all` resolve it to { data, error }.
-function qb(rows: Record<string, unknown>[]) {
+function qb(rows: Record<string, unknown>[], error: { message: string } | null = null) {
   let data = [...rows];
   const b: Record<string, unknown> = {
     select: () => b,
@@ -49,9 +49,9 @@ function qb(rows: Record<string, unknown>[]) {
     },
     order: () => b,
     limit: () => b,
-    maybeSingle: () => Promise.resolve({ data: data[0] ?? null, error: null }),
-    then: (onF: (v: { data: unknown; error: null }) => unknown) =>
-      Promise.resolve({ data, error: null }).then(onF),
+    maybeSingle: () => Promise.resolve({ data: data[0] ?? null, error }),
+    then: (onF: (v: { data: unknown; error: { message: string } | null }) => unknown) =>
+      Promise.resolve({ data, error }).then(onF),
   };
   return b;
 }
@@ -74,7 +74,10 @@ const Q_RESOLVED = {
   finished_at: "2026-06-07T00:00:20Z", is_picked: true,
 };
 
-function makeAdmin({ live = true }: { live?: boolean } = {}) {
+function makeAdmin({
+  live = true,
+  errorTable,
+}: { live?: boolean; errorTable?: string } = {}) {
   const seed: Record<string, Record<string, unknown>[]> = {
     nights: [{
       id: NIGHT_ID, venue_name: "V", theme_key: "house", room_code: CODE,
@@ -115,7 +118,12 @@ function makeAdmin({ live = true }: { live?: boolean } = {}) {
         awarded_points: 500, locked_at: "2026-06-07T00:00:10Z" },
     ],
   };
-  return { from: vi.fn((table: string) => qb(seed[table] ?? [])) };
+  return {
+    from: vi.fn((table: string) => qb(
+      seed[table] ?? [],
+      table === errorTable ? { message: "RAW-DATABASE-ERROR-LEAK" } : null,
+    )),
+  };
 }
 
 describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
@@ -189,5 +197,19 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
     // The reveal screen ("who got it right", fastest-five) reads these.
     expect(body.liveAnswers[0].chosen_index).toBe(3);
     expect(body.liveAnswers[0].is_correct).toBe(true);
+  });
+
+  it("maps a public snapshot database failure to a generic typed error", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({ errorTable: "nights" }));
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "server error" });
+    expect(JSON.stringify(body)).not.toContain("RAW-DATABASE-ERROR-LEAK");
   });
 });
