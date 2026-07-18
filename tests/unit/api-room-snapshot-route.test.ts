@@ -225,7 +225,7 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(JSON.stringify(await res.json())).not.toContain("DEVICE-ID-LEAK");
   });
 
-  it("PLAYER mode: withholds OTHER players' answers on a LIVE question (liveAnswers empty)", async () => {
+  it("PLAYER mode: omits host-only liveAnswers for a LIVE question", async () => {
     authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
     authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
     const res = await callRoute();
@@ -233,7 +233,7 @@ describe("GET /api/room/[code]/snapshot", () => {
     const body = await res.json();
     // The live question is the target; a player must not see anyone's live picks.
     expect(body.currentQuestion.id).toBe("q-live");
-    expect(body.liveAnswers).toEqual([]);
+    expect(body).not.toHaveProperty("liveAnswers");
     // And the other player's chosen index appears nowhere in the payload.
     expect(JSON.stringify(body)).not.toContain('"id":"a2"');
   });
