@@ -12,8 +12,8 @@ export interface HostWhatsNewProps {
 const BENEFITS = [
   {
     stamp: "CHECKED",
-    title: "Questions are checked before you can use them.",
-    body: "TR1VIA now checks the answer, the other choices, and the fact before a question reaches your game.",
+    title: "AI-generated questions are checked before you can use them.",
+    body: "TR1VIA now checks the answer, the other choices, and the fact before an AI-generated question reaches your game.",
   },
   {
     stamp: "SAFE",

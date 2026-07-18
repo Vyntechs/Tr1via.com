@@ -44,7 +44,9 @@ describe("HostHomeClient host-only What's New", () => {
         name: /your games now protect themselves/i,
       }),
     ).toBeVisible();
-    expect(screen.getByText(/questions are checked before you can use them/i)).toBeVisible();
+    expect(
+      screen.getByText(/AI-generated questions are checked before you can use them/i),
+    ).toBeVisible();
     expect(screen.getByText(/no fact-check is perfect/i)).toBeVisible();
     expect(screen.getByText(/contact Brandon/i)).toBeVisible();
   });
