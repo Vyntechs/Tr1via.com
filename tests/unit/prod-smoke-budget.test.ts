@@ -29,6 +29,9 @@ describe("prod smoke generation budget", () => {
     expect(fullFlowStep).toContain(
       `SMOKE_GEN_TIMEOUT_MS: ${DEFAULT_GEN_TIMEOUT_MS}`,
     );
+    expect(fullFlow).toContain('.from("question_generation_jobs")');
+    expect(fullFlow).toContain('job?.phase === "needs_attention"');
+    expect(fullFlow).toContain("retrying only the uncertified shortfall");
   });
 
   it("allows a one-off override for manual investigations", () => {

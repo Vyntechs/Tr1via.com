@@ -142,3 +142,8 @@ Reason: CLI errors can be redirected into the generated file and silently erase 
 Trigger: Two production-smoke paths used different default generation timeouts.
 Rule: Import one timeout source and test each workflow step's explicit budget and total runtime envelope.
 Reason: A healthy generator can be deleted and falsely blamed when one harness retains stale limits.
+
+### terminal-generation-state-must-win
+Trigger: An async progress observer overwrote needs-attention after partial certified generation stopped.
+Rule: Await every durable progress write; never let fire-and-forget writes follow a terminal state.
+Reason: Late nonterminal writes hide retry and strand safe checkpoints.
