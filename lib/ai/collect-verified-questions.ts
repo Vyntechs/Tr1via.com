@@ -56,7 +56,9 @@ export interface CollectVerifiedOptions {
   /** Persist each newly accepted batch before the next refill round starts. */
   onAccepted?: (questions: GeneratedQuestion[]) => void | Promise<void>;
   /** Optional: observe per-round verification quality. No-op if omitted. */
-  onRoundComplete?: (event: CollectVerifiedRoundEvent) => void;
+  onRoundComplete?: (
+    event: CollectVerifiedRoundEvent,
+  ) => void | Promise<void>;
 }
 
 export async function collectVerifiedQuestions(
@@ -75,7 +77,7 @@ export async function collectVerifiedQuestions(
     const need = opts.target - clean.length;
     const batch = await opts.generate([...seenPrompts], need);
     if (batch.length === 0) {
-      opts.onRoundComplete?.({
+      await opts.onRoundComplete?.({
         round: round + 1,
         requested: need,
         generated: 0,
@@ -111,7 +113,7 @@ export async function collectVerifiedQuestions(
     if (accepted.length > 0) {
       await opts.onAccepted?.(accepted);
     }
-    opts.onRoundComplete?.({
+    await opts.onRoundComplete?.({
       round: round + 1,
       requested: need,
       generated: batch.length,

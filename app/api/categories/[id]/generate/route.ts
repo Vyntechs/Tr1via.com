@@ -485,7 +485,7 @@ async function runGenerationJob(opts: {
         void emitProgress();
         return verifyAnswers(qs, { onUsage: trackUsage });
       },
-      onRoundComplete: (event) => {
+      onRoundComplete: async (event) => {
         qualityReport.recordRound({
           round: event.round,
           requested: event.requested,
@@ -498,7 +498,7 @@ async function runGenerationJob(opts: {
         });
         if (certifiedCount < 20) {
           phase = "repairing";
-          void updateGenerationJob(jobClient, opts.categoryId, {
+          await updateGenerationJob(jobClient, opts.categoryId, {
             phase: "repairing",
             written_count: writtenCount,
             certified_count: certifiedCount,

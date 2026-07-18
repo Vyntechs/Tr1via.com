@@ -366,21 +366,54 @@ async function setupCategory(gameId, topic, position) {
   }
 
   // poll for >= 7 candidate questions
-  const deadline = Date.now() + GEN_TIMEOUT_MS;
+  let deadline = Date.now() + GEN_TIMEOUT_MS;
   let candidates = [];
   let lastState = null;
+  let recoveryAttempts = 0;
   while (Date.now() < deadline) {
-    const { data: cat } = await admin
-      .from("categories")
-      .select("state")
-      .eq("id", categoryId)
-      .maybeSingle();
+    const [{ data: cat }, { data: job }] = await Promise.all([
+      admin
+        .from("categories")
+        .select("state")
+        .eq("id", categoryId)
+        .maybeSingle(),
+      admin
+        .from("question_generation_jobs")
+        .select("phase, certified_count, target_count, attempt")
+        .eq("category_id", categoryId)
+        .maybeSingle(),
+    ]);
     if (cat?.state !== lastState) {
       note(`(${topic}) state=${cat?.state} (${Math.round((Date.now() - genStart) / 1000)}s)`);
       lastState = cat?.state;
     }
     if (cat?.state === "draft") {
       throw new Error(`(${topic}) category rolled back to draft`);
+    }
+    if (job?.phase === "needs_attention") {
+      if (recoveryAttempts >= 1) {
+        throw new Error(
+          `(${topic}) recovery still needs attention after attempt ${job.attempt}`,
+        );
+      }
+      note(
+        `(${topic}) retrying only the uncertified shortfall ` +
+          `(${job.certified_count}/${job.target_count} already safe)`,
+      );
+      const retryRes = await call(
+        founderJar,
+        `/api/categories/${categoryId}/generate`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      if (retryRes.status !== 202) {
+        throw new Error(
+          `retry generate (${topic}): ${retryRes.status} ${await retryRes.text()}`,
+        );
+      }
+      recoveryAttempts += 1;
+      deadline = Date.now() + GEN_TIMEOUT_MS;
+      await new Promise((r) => setTimeout(r, POLL_MS));
+      continue;
     }
     if (cat?.state === "review" || cat?.state === "ready") {
       const { data: qs } = await admin

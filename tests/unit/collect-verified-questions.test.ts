@@ -283,6 +283,22 @@ it("reports each newly certified batch so callers can persist it immediately", a
   expect(acceptedBatches).toEqual([["safe-0", "safe-1"]]);
 });
 
+it("waits for async round observers before the collection result settles", async () => {
+  let observerFinished = false;
+  await collectVerifiedQuestions({
+    target: 1,
+    maxRounds: 1,
+    generate: async () => [q("safe")],
+    verify: async () => [ok(0)],
+    onRoundComplete: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      observerFinished = true;
+    },
+  });
+
+  expect(observerFinished).toBe(true);
+});
+
 it("never persists a model buffer beyond the requested target", async () => {
   const acceptedBatches: string[][] = [];
   const out = await collectVerifiedQuestions({
