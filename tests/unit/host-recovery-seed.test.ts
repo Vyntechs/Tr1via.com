@@ -54,6 +54,7 @@ const payload = {
   myAnswers: [],
   myParticipations: [],
   roomMagicReactions: [],
+  tvPlayerKeys: {},
 } satisfies RoomFallbackPayload;
 
 describe("hostRecoverySeed — host board not stale after WiFi recovery (#3)", () => {

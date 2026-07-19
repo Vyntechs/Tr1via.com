@@ -87,6 +87,9 @@ export type RoomSnapshotPayload = SharedRoomSnapshotBase & (
       players: RoomPlayer[];
       allScores: GameScoreRow[];
       scores: GameScoreRow[];
+      /** Raw-to-TV presentation map, available only to the authenticated host.
+       *  Values are server-computed in the public TV identity namespace. */
+      tvPlayerKeys: Record<string, string>;
       live?: HostLiveProjection | null;
       self: null;
       myAnswers?: never;
@@ -111,6 +114,7 @@ export interface RoomFallbackPayload {
   myParticipations: ParticipationRow[];
   allScores: GameScoreRow[];
   scores: GameScoreRow[];
+  tvPlayerKeys: Record<string, string>;
   liveAnswers: AnswerRow[];
   roomMagicReactions: RoomMagicReactionEvent[];
   questionScrambles?: PlayerQuestionScrambles;
@@ -150,6 +154,7 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
     ...(playerAudience
       ? { self: playerRoomPlayerToRow(payload.self, payload.night?.nightKey ?? "") }
       : {}),
+    tvPlayerKeys: playerAudience ? {} : payload.tvPlayerKeys,
     isLoading: false,
   };
 }
@@ -181,6 +186,7 @@ export function toRoomFallbackPayload(payload: RoomSnapshotPayload): RoomFallbac
       myParticipations: payload.myParticipations.map((participation) =>
         participationToRow(participation, payload.self.playerKey)),
       liveAnswers: [],
+      tvPlayerKeys: {},
       questionScrambles: payload.questionScrambles,
     };
   }
@@ -192,6 +198,7 @@ export function toRoomFallbackPayload(payload: RoomSnapshotPayload): RoomFallbac
     myAnswers: [],
     myParticipations: [],
     liveAnswers: payload.liveAnswers.map(hostLiveAnswerToRow),
+    tvPlayerKeys: payload.tvPlayerKeys,
     questionScrambles: {},
   };
 }

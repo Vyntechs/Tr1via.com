@@ -83,7 +83,7 @@ export interface TVStateMachineProps {
   hostAdvanced?: boolean;
   /** Magic-Welcome — when a new player just joined, the parent passes
    *  the event down so TVLobby can fire the slide-in overlay. The parent
-   *  owns the timer (mounts the event for ~3s after a player-joined
+   *  owns the timer (mounts the event for ~3s after a roster-changed
    *  broadcast, then unmounts by passing null). */
   welcomeEvent?: TVLobbyWelcomeEvent | null;
   /** The resolved theme for this night — drives the question timer duration

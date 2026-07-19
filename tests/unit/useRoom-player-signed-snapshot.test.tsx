@@ -320,6 +320,35 @@ describe("useRoom player audience", () => {
     expect(h.fromCalls).toEqual([]);
   });
 
+  it("treats roster-changed as an identity-free refresh signal", async () => {
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "player", sessionReady: true }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const before = h.fetchSnapshot.mock.calls.length;
+
+    act(() => {
+      h.broadcastHandlers.get("roster-changed")?.({
+        payload: {
+          joinToken: "join-event-token",
+          displayName: "Blair",
+          joinedAt: "2026-07-18T18:07:00.000Z",
+          colorKey: 4,
+          serverNow: "2026-07-18T18:07:00.000Z",
+          playerId: "22222222-2222-4222-8222-222222222222",
+        },
+      });
+    });
+
+    await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(before + 1));
+    expect(result.current.lastBroadcast).toMatchObject({
+      event: "roster-changed",
+      joinToken: "join-event-token",
+      displayName: "Blair",
+    });
+    expect(result.current.lastBroadcast).not.toHaveProperty("playerId");
+  });
+
   it("ignores an older failed refresh after a newer signed snapshot succeeds", async () => {
     let rejectOlder!: (reason?: unknown) => void;
     h.fetchSnapshot

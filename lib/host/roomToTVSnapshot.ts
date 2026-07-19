@@ -115,22 +115,33 @@ export function roomToTVSnapshot(
     room.lastResolvedQuestion?.id ??
     null;
 
-  const players = filterActivePlayers(room.players).map(playerRowToTVPlayer);
-  const playerNameById = new Map(players.map((p) => [p.id, p.displayName] as const));
+  const tvPlayerKeys = room.tvPlayerKeys ?? {};
+  const playerNameByRawId = new Map(
+    filterActivePlayers(room.players).map((player) => [player.id, player.display_name] as const),
+  );
+  const players = filterActivePlayers(room.players).flatMap((player) => {
+    const tvPlayerKey = tvPlayerKeys[player.id];
+    return tvPlayerKey ? [playerRowToTVPlayer(player, tvPlayerKey)] : [];
+  });
 
   const tvScores: TVScore[] = scores
     .filter(
       (s): s is GameScoreRow & { player_id: string; display_name: string } =>
         s.player_id !== null && s.display_name !== null,
     )
-    .map((s) => ({
-      player_key: s.player_id,
-      display_name: s.display_name,
-      score: Number(s.score ?? 0),
-      correct_count: Number(s.correct_count ?? 0),
-      answered_count: Number(s.answered_count ?? 0),
-      fastest_correct_ms: s.fastest_correct_ms,
-    }))
+    .flatMap((s) => {
+      const tvPlayerKey = tvPlayerKeys[s.player_id];
+      return tvPlayerKey
+        ? [{
+            player_key: tvPlayerKey,
+            display_name: s.display_name,
+            score: Number(s.score ?? 0),
+            correct_count: Number(s.correct_count ?? 0),
+            answered_count: Number(s.answered_count ?? 0),
+            fastest_correct_ms: s.fastest_correct_ms,
+          }]
+        : [];
+    })
     .sort((a, b) => b.score - a.score);
 
   // Only surface answer rows that belong to the target question. The host's
@@ -139,14 +150,19 @@ export function roomToTVSnapshot(
   const liveAnswers: TVAnswer[] = targetQuestionId
     ? answers
         .filter((a) => a.question_id === targetQuestionId)
-        .map((a) => ({
-          question_id: a.question_id,
-          player_key: a.player_id,
-          player_name: playerNameById.get(a.player_id) ?? "—",
-          ms_to_lock: Number(a.ms_to_lock ?? 0),
-          is_correct: a.is_correct,
-          chosen_index: a.chosen_index,
-        }))
+        .flatMap((a) => {
+          const tvPlayerKey = tvPlayerKeys[a.player_id];
+          return tvPlayerKey
+            ? [{
+                question_id: a.question_id,
+                player_key: tvPlayerKey,
+                player_name: playerNameByRawId.get(a.player_id) ?? "—",
+                ms_to_lock: Number(a.ms_to_lock ?? 0),
+                is_correct: a.is_correct,
+                chosen_index: a.chosen_index,
+              }]
+            : [];
+        })
         .sort((a, b) => a.ms_to_lock - b.ms_to_lock)
     : [];
 
@@ -258,9 +274,9 @@ function questionRowToTVQuestion(q: QuestionRow): TVQuestionShape {
   };
 }
 
-function playerRowToTVPlayer(p: PlayerRow): TVPlayer {
+function playerRowToTVPlayer(p: PlayerRow, tvPlayerKey: string): TVPlayer {
   return {
-    id: p.id,
+    id: tvPlayerKey,
     displayName: p.display_name,
     joinedAt: p.joined_at,
     lastSeenAt: p.last_seen_at,

@@ -107,7 +107,7 @@ export interface HostLiveConsoleProps {
   tvLastBroadcastRevealedAt?: string | null;
   /** Server "now" at the broadcast moment, for client-clock skew. */
   tvLastBroadcastServerNow?: string | null;
-  /** Magic-Welcome: a fresh `player-joined` event, held by the parent
+  /** Magic-Welcome: a fresh `roster-changed` event, held by the parent
    *  for ~3s before being unset to null. Threaded into the embedded TV
    *  state machine so the host's laptop drives the same overlay the
    *  HDMI'd venue TV shows. */

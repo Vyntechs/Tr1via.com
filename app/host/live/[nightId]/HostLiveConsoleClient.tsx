@@ -353,7 +353,7 @@ export function HostLiveConsoleClient({
       : null;
 
   // Magic-Welcome event for the embedded TV panel. Lifts the
-  // `player-joined` broadcast into a UI-shaped event, holds for ~3s,
+  // `roster-changed` broadcast into a UI-shaped event, holds for ~3s,
   // then unmounts. The host's HDMI'd laptop shows BOTH this overlay AND
   // the venue TV's overlay — they fire from the same broadcast so they
   // stay in sync.
@@ -660,7 +660,7 @@ function formatAppOff(seconds: number): string {
 /**
  * Same shape as the standalone /tv/[code] route's welcome hook, but reads
  * from `useRoom` (host surface) instead of `useTVRoom`. Holds the welcome
- * event for ~3s after a `player-joined` broadcast, then unmounts. Also
+ * event for ~3s after a `roster-changed` broadcast, then unmounts. Also
  * plays the chime locally so the host's HDMI'd laptop drives the venue
  * audio.
  */
@@ -672,11 +672,11 @@ function useHostWelcomeEvent(
   const reduced = usePrefersReducedMotion();
 
   useEffect(() => {
-    if (!lastBroadcast || lastBroadcast.event !== "player-joined") return;
-    if (!lastBroadcast.playerId || !lastBroadcast.displayName) return;
+    if (!lastBroadcast || lastBroadcast.event !== "roster-changed") return;
+    if (!lastBroadcast.joinToken || !lastBroadcast.displayName) return;
     const idx = Math.max(1, players.length);
     setEvent({
-      playerId: lastBroadcast.playerId,
+      joinToken: lastBroadcast.joinToken,
       name: lastBroadcast.displayName,
       colorKey: lastBroadcast.colorKey,
       joinIndex: idx,
@@ -695,7 +695,7 @@ function useHostWelcomeEvent(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     lastBroadcast?.event,
-    lastBroadcast?.playerId,
+    lastBroadcast?.joinToken,
     lastBroadcast?.serverNow,
   ]);
 

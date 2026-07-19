@@ -24,6 +24,8 @@
 
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
 import type { LiveRoomBroadcastAttempt } from "@/lib/live-answer/contracts";
 import type {
@@ -37,7 +39,7 @@ export type RoomEventName =
   | "resolve"
   | "end-early"
   | "game-ended"
-  | "player-joined"
+  | "roster-changed"
   | "room-magic-reaction"
   | "live-room-event"
   | "fireworks";
@@ -193,8 +195,8 @@ export async function broadcastAppliedLiveRoomEvent(
 }
 
 /**
- * Broadcast that a new player just joined the night. Carries the new player's
- * id, display name, joined-at, and a stable color key so every surface
+ * Broadcast that the roster changed. Carries an ephemeral join token, display
+ * name, joined-at, and a stable color key so every surface
  * (TV, host live console, the joining player's own phone) lights up the
  * "magic welcome" moment within ~300ms — without waiting on the 4-second
  * snapshot poll that useTVRoom uses as a fallback.
@@ -202,10 +204,9 @@ export async function broadcastAppliedLiveRoomEvent(
  * Best-effort. If the broadcast fails, the persistent state (the inserted
  * players row) will still propagate via postgres_changes / the safety poll.
  */
-export async function broadcastPlayerJoined(
+export async function broadcastRosterChanged(
   roomCode: string,
   player: {
-    id: string;
     displayName: string;
     joinedAt: string;
     colorKey: number;
@@ -214,9 +215,9 @@ export async function broadcastPlayerJoined(
   await postBroadcasts([
     {
       topic: `room:${roomCode}`,
-      event: "player-joined",
+      event: "roster-changed",
       payload: {
-        playerId: player.id,
+        joinToken: `join_${randomUUID()}`,
         displayName: player.displayName,
         joinedAt: player.joinedAt,
         colorKey: player.colorKey,

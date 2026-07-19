@@ -406,6 +406,20 @@ export async function GET(
     });
   }
 
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) return serverError();
+  const tvPlayerIds = new Set<string>(activePlayerRows.map((player) => player.id));
+  for (const score of allScores) {
+    if (score.player_id) tvPlayerIds.add(score.player_id);
+  }
+  for (const answer of liveAnswers) tvPlayerIds.add(answer.playerId);
+  const tvPlayerKeys = Object.fromEntries(
+    [...tvPlayerIds].map((rawPlayerId) => [
+      rawPlayerId,
+      presentationKey(secret, "tv", "player", nightId, rawPlayerId),
+    ]),
+  );
+
   return ok({
     ...common,
     night,
@@ -413,6 +427,7 @@ export async function GET(
     allScores,
     scores,
     audience: "host" as const,
+    tvPlayerKeys,
     live,
     self: null,
     liveAnswers,

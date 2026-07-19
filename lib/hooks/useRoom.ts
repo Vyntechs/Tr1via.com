@@ -103,6 +103,9 @@ export interface RoomSnapshot {
   /** Server-derived visible answer order for the signed player. Raw player
    * identity stays server-side; resilient submission must remain slot-only. */
   questionScrambles?: Record<string, [number, number, number, number]>;
+  /** Authenticated-host-only raw-to-TV presentation map. Values are produced
+   * server-side; audience components must never derive HMAC keys in-browser. */
+  tvPlayerKeys?: Record<string, string>;
   /** Ask the signed player route for a fresh canonical snapshot. */
   requestRefresh?: () => void;
   /** True while the initial snapshot fetch is in flight. */
@@ -110,9 +113,9 @@ export interface RoomSnapshot {
 }
 
 export interface BroadcastTag {
-  event: "reveal" | "undo" | "resolve" | "end-early" | "player-joined";
+  event: "reveal" | "undo" | "resolve" | "end-early" | "roster-changed";
   /** Question id for reveal/undo/resolve/end-early; empty string for
-   *  player-joined (which is keyed on a playerId instead). Kept on the
+   *  roster-changed. Kept on the
    *  union so existing consumers don't have to narrow before reading. */
   questionId: string;
   /** Server's "now" at broadcast time. ISO string. */
@@ -123,13 +126,13 @@ export interface BroadcastTag {
   correctIndex?: number;
   /** Resolve-specific: per-player award rows. */
   awards?: Array<{ playerId: string; awarded: number; isCorrect: boolean }>;
-  /** player-joined specific: the new player's id. */
-  playerId?: string;
-  /** player-joined specific: the joined display name. */
+  /** roster-changed specific: ephemeral event identity, never a database id. */
+  joinToken?: string;
+  /** roster-changed specific: the joined display name. */
   displayName?: string;
-  /** player-joined specific: deterministic palette index (see lib/player/playerColor.ts). */
+  /** roster-changed specific: deterministic palette index (see lib/player/playerColor.ts). */
   colorKey?: number;
-  /** player-joined specific: ISO timestamp the row was inserted. */
+  /** roster-changed specific: ISO timestamp the row was inserted. */
   joinedAt?: string;
 }
 
@@ -158,6 +161,7 @@ const EMPTY: RoomSnapshot = {
   allScores: [],
   allQuestions: [],
   questionScrambles: {},
+  tvPlayerKeys: {},
   isLoading: true,
 };
 
@@ -424,20 +428,17 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         .on("broadcast", { event: "game-ended" }, () => {
           refetchForBroadcast();
         })
-        .on("broadcast", { event: "player-joined" }, (msg) => {
+        .on("broadcast", { event: "roster-changed" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;
-          setSnapshot((prev) => ({
-            ...prev,
-            lastBroadcast: {
-              event: "player-joined",
-              questionId: "",
-              serverNow: String(p.serverNow ?? ""),
-              playerId: typeof p.playerId === "string" ? p.playerId : undefined,
-              displayName: typeof p.displayName === "string" ? p.displayName : undefined,
-              colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
-              joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
-            },
-          }));
+          refetchForBroadcast({
+            event: "roster-changed",
+            questionId: "",
+            serverNow: String(p.serverNow ?? ""),
+            joinToken: typeof p.joinToken === "string" ? p.joinToken : undefined,
+            displayName: typeof p.displayName === "string" ? p.displayName : undefined,
+            colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
+            joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
+          });
         })
         .on("broadcast", { event: "fireworks" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;
@@ -497,7 +498,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
 
     /**
      * Re-fetch the players list and merge it into the snapshot. Called as a
-     * fallback from the `player-joined` broadcast handler so the host's
+     * fallback from the `roster-changed` broadcast handler so the host's
      * lobby roster doesn't sit stale waiting on `postgres_changes` — which
      * can drop INSERTs under burst-join load (e.g., 10–15 patrons scanning
      * the QR within a couple seconds at the start of a night), or get
@@ -517,6 +518,20 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       if (cancelled || error) return;
       const next = (data ?? []) as PlayerRow[];
       setSnapshot((prev) => ({ ...prev, players: next }));
+    }
+
+    async function refreshHostTVPlayerKeys(): Promise<void> {
+      if (cancelled) return;
+      try {
+        const payload = await fetchRoomSnapshotPayload(code, {
+          signal: bootstrapAbort.signal,
+        });
+        if (cancelled || payload.audience !== "host") return;
+        setSnapshot((prev) => ({ ...prev, tvPlayerKeys: payload.tvPlayerKeys }));
+      } catch {
+        // The host's direct room state remains usable. The next roster signal
+        // or heartbeat retries the server projection; raw ids never substitute.
+      }
     }
 
     /**
@@ -922,8 +937,10 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         lastFireworksBeat: null,
         lastRoomMagicReaction: null,
         roomMagicReactions: [],
+        tvPlayerKeys: {},
         isLoading: false,
       });
+      void refreshHostTVPlayerKeys();
 
       // Subscribe to broadcast + 6 tables of postgres changes.
       const filterBy = `night_id=eq.${nightId}`;
@@ -1035,7 +1052,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           // game 2). Doesn't need a questionId — game-level wake-up.
           void refreshLiveState(nightId);
         })
-        .on("broadcast", { event: "player-joined" }, (msg) => {
+        .on("broadcast", { event: "roster-changed" }, (msg) => {
           // Magic-Welcome wake-up. Tags the lastBroadcast so the host live
           // console can fire the slide-in tile + chime within ~300ms of
           // the join. We ALSO refetch the players list over REST — under
@@ -1047,16 +1064,17 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           // pattern as `refreshLiveState` for reveal/undo/resolve events.
           const p = msg.payload as Record<string, unknown>;
           mergeBroadcast({
-            event: "player-joined",
+            event: "roster-changed",
             questionId: "",
             serverNow: String(p.serverNow ?? ""),
-            playerId: typeof p.playerId === "string" ? p.playerId : undefined,
+            joinToken: typeof p.joinToken === "string" ? p.joinToken : undefined,
             displayName:
               typeof p.displayName === "string" ? p.displayName : undefined,
             colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
             joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
           });
           void refreshPlayers(nightId);
+          void refreshHostTVPlayerKeys();
         })
         .on("broadcast", { event: "fireworks" }, (msg) => {
           // Cosmetic synchronized firework beat (July). Surface it on its OWN

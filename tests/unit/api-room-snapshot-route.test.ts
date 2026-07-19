@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
 import { scrambleFor } from "@/lib/game/scramble";
+import { presentationKey } from "@/lib/room/presentationKey";
 
 const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
 const authMock = vi.hoisted(() => ({
@@ -339,6 +340,22 @@ describe("GET /api/room/[code]/snapshot", () => {
     // Host mode carries no player-scoped data.
     expect(body).toMatchObject({ audience: "host", self: null });
     expect(body).not.toHaveProperty("myAnswers");
+    expect(body.tvPlayerKeys).toEqual({
+      [PLAYER_ID]: presentationKey(
+        "snapshot-test-secret",
+        "tv",
+        "player",
+        NIGHT_ID,
+        PLAYER_ID,
+      ),
+      [OTHER_PLAYER_ID]: presentationKey(
+        "snapshot-test-secret",
+        "tv",
+        "player",
+        NIGHT_ID,
+        OTHER_PLAYER_ID,
+      ),
+    });
     expect(body.roomMagicReactions).toEqual([
       {
         id: "reaction-1",

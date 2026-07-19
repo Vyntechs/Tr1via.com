@@ -16,7 +16,7 @@ import { CreatePlayerSchema } from "@/lib/api/schemas";
 import { badRequest, ok, serverError, unauthorized, notFound, forbidden } from "@/lib/api/responses";
 import { getDeviceId } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { broadcastPlayerJoined } from "@/lib/api/broadcast";
+import { broadcastRosterChanged } from "@/lib/api/broadcast";
 import { playerColorKey } from "@/lib/player/playerColor";
 import { serializeRoomPlayer } from "@/lib/room/roomAudience";
 
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   // Pre-flight: the night must exist, not be closed, and not be locked.
   // (Lock = host's "private game" toggle; closed = night is over.)
-  // We also pull `room_code` so the player-joined broadcast below can
+  // We also pull `room_code` so the roster-changed broadcast below can
   // address the right channel without a second lookup.
   const { data: night } = await admin
     .from("nights")
@@ -99,8 +99,7 @@ export async function POST(req: NextRequest) {
   if (isFirstJoin && night.room_code) {
     const colorKey = playerColorKey(player.id);
     try {
-      await broadcastPlayerJoined(night.room_code, {
-        id: player.id,
+      await broadcastRosterChanged(night.room_code, {
         displayName: player.display_name,
         joinedAt: player.joined_at,
         colorKey,
@@ -109,7 +108,7 @@ export async function POST(req: NextRequest) {
       // Best-effort: the durable players row already landed; the welcome
       // overlay will just lag by up to the TV safety-poll interval. Don't
       // fail the join.
-      console.warn("broadcast player-joined failed", e);
+      console.warn("broadcast roster-changed failed", e);
     }
   }
 
