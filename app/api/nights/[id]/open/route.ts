@@ -42,6 +42,13 @@ export async function POST(
   const resilient = parseLiveCommandRpcEnvelope(rpcData);
   const legacy = parseLegacyOpenEnvelope(rpcData);
   if (!resilient && !legacy) return serverError("could not open night");
+  if (
+    resilient &&
+    "eventKind" in resilient.result &&
+    resilient.result.eventKind !== "night_opened"
+  ) {
+    return serverError("could not open night");
+  }
 
   const freshEvent = freshLiveEventFromRpc(resilient);
   if (freshEvent) {

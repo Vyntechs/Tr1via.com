@@ -182,6 +182,28 @@ describe("POST /api/nights/[id]/open", () => {
     expect(broadcastMock.broadcastAppliedLiveRoomEvent).not.toHaveBeenCalled();
   });
 
+  it("rejects a valid fresh envelope for any event except night_opened", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(adminWith({
+      freshlyApplied: true,
+      result: {
+        code: "applied",
+        applied: true,
+        eventKind: "game_started",
+        runId: RUN_ID,
+        gameId: "33333333-3333-3333-3333-333333333333",
+        roomRevision: 1,
+        controlRevision: 1,
+      },
+    }));
+
+    const { POST } = await import("@/app/api/nights/[id]/open/route");
+    const response = await POST(request(), context());
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({ error: "could not open night" });
+    expect(projectMock.projectExactLiveEvent).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastAppliedLiveRoomEvent).not.toHaveBeenCalled();
+  });
+
   it("keeps the committed open successful when the fast broadcast fails", async () => {
     adminMock.getSupabaseAdmin.mockReturnValue(adminWith(
       { freshlyApplied: true, result: resilientResult },

@@ -23,6 +23,17 @@ alter table public.live_command_receipts
     on delete cascade
     deferrable initially deferred;
 
+-- Lifecycle receipts also name their expected game before the command takes
+-- the night/game locks. Defer this ancestry check for the same reason: an
+-- immediate game KEY SHARE can deadlock a concurrent command that already
+-- holds the night lock and is waiting to lock that game.
+alter table public.live_command_receipts
+  drop constraint live_command_receipts_game_night_fk,
+  add constraint live_command_receipts_game_night_fk
+    foreign key (expected_game_id, night_id)
+    references public.games(id, night_id)
+    deferrable initially deferred;
+
 create or replace function public.open_night_run(
   p_night_id uuid,
   p_command_id uuid,

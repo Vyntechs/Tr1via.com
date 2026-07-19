@@ -170,6 +170,15 @@ describe("resilient host lifecycle routes", () => {
   ])("accepts %s from Show Answer without calling legacy resolution", async (_kind, result) => {
     const admin = adminReturning(envelope(result));
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    if (_kind === "play_resolved") {
+      projectMock.projectExactLiveEvent.mockResolvedValueOnce({
+        runId: RUN_ID,
+        roomRevision: 8,
+        controlRevision: 5,
+        playId: PLAY_ID,
+        play: { questionId: QUESTION_ID },
+      });
+    }
 
     const { POST } = await import("@/app/api/games/[id]/end-early/route");
     const response = await POST(
@@ -188,6 +197,38 @@ describe("resilient host lifecycle routes", () => {
       p_expected_control_revision: 4,
     });
     expect(admin.rpc).not.toHaveBeenCalledWith("resolve_question", expect.anything());
+    if (_kind === "play_resolved") {
+      expect(broadcastMock.broadcastFireworks).toHaveBeenCalledTimes(1);
+      expect(broadcastMock.broadcastFireworks).toHaveBeenCalledWith(
+        "ABCDEF",
+        "salvo",
+        QUESTION_ID,
+      );
+    } else {
+      expect(broadcastMock.broadcastFireworks).not.toHaveBeenCalled();
+    }
+  });
+
+  it("does not repeat the resolved-question salvo for a nonfresh Show Answer retry", async () => {
+    const result = {
+      code: "resolved",
+      applied: true,
+      eventKind: "play_resolved",
+      runId: RUN_ID,
+      playId: PLAY_ID,
+      roomRevision: 8,
+      controlRevision: 5,
+    };
+    adminMock.getSupabaseAdmin.mockReturnValue(adminReturning(envelope(result, false)));
+
+    const { POST } = await import("@/app/api/games/[id]/end-early/route");
+    const response = await POST(
+      request(`/api/games/${GAME_ID}/end-early`, playBody),
+      gameContext(),
+    );
+    expect(response.status).toBe(200);
+    expect(projectMock.projectExactLiveEvent).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastFireworks).not.toHaveBeenCalled();
   });
 
   it("undoes the exact accepted play through one authoritative RPC", async () => {

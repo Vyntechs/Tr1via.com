@@ -15,7 +15,7 @@ import { EndEarlySchema, HostPlayCommandSchema } from "@/lib/api/schemas";
 import { badRequest, ok, forbidden, unauthorized, serverError, notFound, conflict } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { broadcastAppliedLiveRoomEvent, broadcastToRoom } from "@/lib/api/broadcast";
+import { broadcastAppliedLiveRoomEvent, broadcastFireworks, broadcastToRoom } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 
@@ -80,6 +80,17 @@ export async function POST(
           });
         } catch {
           console.warn("broadcast show-answer failed");
+        }
+        if (fresh.kind === "play_resolved" && live.play?.questionId) {
+          try {
+            await broadcastFireworks(
+              owned.night.room_code,
+              "salvo",
+              live.play.questionId,
+            );
+          } catch {
+            console.warn("broadcast question fireworks failed");
+          }
         }
       }
     }
