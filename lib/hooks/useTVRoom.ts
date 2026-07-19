@@ -185,13 +185,27 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const [lastFireworksBeat, setLastFireworksBeat] = useState<FireworksBeat | null>(null);
   const [lastRoomMagicReaction, setLastRoomMagicReaction] =
     useState<RoomMagicReactionEvent | null>(null);
+  const [snapshotCode, setSnapshotCode] = useState<string | null>(null);
+  const [statusCode, setStatusCode] = useState<string | null>(null);
   const safetyHandle = useRef<ReturnType<typeof setInterval> | null>(null);
+  const activeCodeRef = useRef<string | null>(null);
+  const activeSnapshotAbortRef = useRef<AbortController | null>(null);
+  const snapshotRequestSequenceRef = useRef(0);
 
   const code = roomCodeRaw ? parseRoomCode(roomCodeRaw) : null;
 
   // Stable fetcher — `code` is captured per-effect-run via the closure.
   const fetchSnapshot = useCallback(async () => {
     if (!code) return;
+    const requestedCode = code;
+    const requestSequence = ++snapshotRequestSequenceRef.current;
+    activeSnapshotAbortRef.current?.abort();
+    const controller = new AbortController();
+    activeSnapshotAbortRef.current = controller;
+    const isCurrentRequest = () =>
+      !controller.signal.aborted &&
+      activeCodeRef.current === requestedCode &&
+      snapshotRequestSequenceRef.current === requestSequence;
     try {
       // Bound the fetch so a hung request fast-fails to "error" (and the 4s
       // safety poll auto-recovers) rather than spinning the TV forever. The TV
@@ -199,34 +213,57 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
       // blocks the host/player's direct Supabase reads — this just guards the
       // rarer hung-Vercel/DNS case.
       const res = await withTimeout(
-        fetch(`/api/tv/${code}/snapshot`, { cache: "no-store" }),
+        fetch(`/api/tv/${requestedCode}/snapshot`, {
+          cache: "no-store",
+          signal: controller.signal,
+        }),
         BOOTSTRAP_TIMEOUT_MS,
         "tv/snapshot",
       );
+      if (!isCurrentRequest()) return;
       if (res.status === 404) {
+        setStatusCode(requestedCode);
+        setSnapshotCode(null);
         setStatus("not-found");
         setSnapshot(null);
         return;
       }
       if (!res.ok) {
+        setStatusCode(requestedCode);
         setStatus("error");
         return;
       }
       const data = (await res.json()) as TVSnapshot;
+      if (!isCurrentRequest()) return;
+      setStatusCode(requestedCode);
+      setSnapshotCode(requestedCode);
       setSnapshot(data);
       setStatus("ready");
     } catch {
+      if (!isCurrentRequest()) return;
+      controller.abort();
+      setStatusCode(requestedCode);
       setStatus("error");
+    } finally {
+      if (activeSnapshotAbortRef.current === controller) {
+        activeSnapshotAbortRef.current = null;
+      }
     }
   }, [code]);
 
   useEffect(() => {
+    snapshotRequestSequenceRef.current += 1;
+    activeSnapshotAbortRef.current?.abort();
+    activeSnapshotAbortRef.current = null;
+    activeCodeRef.current = code;
     if (!code) {
       return;
     }
     let cancelled = false;
     queueMicrotask(() => {
       if (cancelled) return;
+      setStatusCode(code);
+      setSnapshotCode(null);
       setStatus("loading");
       setLastRoomMagicReaction(null);
       void fetchSnapshot();
@@ -346,14 +383,21 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
 
     return () => {
       cancelled = true;
+      if (activeCodeRef.current === code) activeCodeRef.current = null;
+      snapshotRequestSequenceRef.current += 1;
+      activeSnapshotAbortRef.current?.abort();
+      activeSnapshotAbortRef.current = null;
       void supa.removeChannel(channel);
       if (safetyHandle.current) clearInterval(safetyHandle.current);
     };
   }, [code, fetchSnapshot]);
 
+  const hasActiveStatus = Boolean(code && statusCode === code);
+  const hasActiveSnapshot = Boolean(code && snapshotCode === code);
+
   return {
-    status: code ? status : "loading",
-    snapshot: code ? snapshot : null,
+    status: code && hasActiveStatus ? status : "loading",
+    snapshot: hasActiveSnapshot ? snapshot : null,
     lastBroadcast: code ? lastBroadcast : null,
     lastFireworksBeat: code ? lastFireworksBeat : null,
     lastRoomMagicReaction: code ? lastRoomMagicReaction : null,
