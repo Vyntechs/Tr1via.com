@@ -222,9 +222,15 @@ describe("authoritative live answer engine schema", () => {
       const explicitlyExcludesUndone = /status\s*(?:<>|!=)\s*['"]undone['"]/.test(
         onePerQuestionPredicate ?? "",
       );
-      const exactNonUndoneSet = ["accepting", "all_in_hold", "final_window", "resolved"].every(
-        (state) => onePerQuestionPredicate?.includes(state),
-      ) && !onePerQuestionPredicate?.includes("'undone'");
+      const usesPositiveStateSet = /where.*status\s*(?:in\s*\(|=\s*any\s*\(\s*array\[)/.test(
+        onePerQuestionPredicate ?? "",
+      );
+      const exactNonUndoneSet = usesPositiveStateSet
+        && ["accepting", "all_in_hold", "final_window", "resolved"].every(
+          (state) => onePerQuestionPredicate?.includes(state),
+        )
+        && !onePerQuestionPredicate?.includes("'undone'");
+      expect(onePerQuestionPredicate).not.toMatch(/\bnot\b/);
       expect(explicitlyExcludesUndone || exactNonUndoneSet).toBe(true);
       expect(onePerQuestionPredicate).not.toMatch(
         /status\s*(?:=\s*['"]undone['"]|in\s*\(\s*['"]undone['"]\s*\))/,
