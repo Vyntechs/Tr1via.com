@@ -15,6 +15,14 @@ const PHONE_VIEWPORTS = [
   { name: "landscape", width: 844, height: 390 },
 ] as const;
 const HOST_EMAIL = `mobile-parity-${Date.now()}@tr1via.test`;
+const INTERACTIVE_SELECTOR = [
+  "button:visible",
+  "a[href]:visible",
+  'input:not([type="hidden"]):visible',
+  "select:visible",
+  "textarea:visible",
+  '[role="button"]:visible',
+].join(", ");
 
 async function expectPhoneFit(page: Page) {
   await expect
@@ -28,13 +36,15 @@ async function expectPhoneFit(page: Page) {
 
 async function expectTouchSafeHostActions(page: Page) {
   const undersized = await page
-    .locator('[data-mobile-touch-target="true"]:visible')
+    .locator(INTERACTIVE_SELECTOR)
     .evaluateAll((elements) =>
       elements
         .map((element) => {
           const rect = element.getBoundingClientRect();
           return {
             label: element.getAttribute("aria-label") ?? element.textContent?.trim(),
+            testId: element.getAttribute("data-testid"),
+            tag: element.tagName.toLowerCase(),
             width: rect.width,
             height: rect.height,
           };
@@ -42,6 +52,22 @@ async function expectTouchSafeHostActions(page: Page) {
         .filter(({ width, height }) => width < 43.5 || height < 43.5),
     );
   expect(undersized).toEqual([]);
+
+  const interactive = page.locator(INTERACTIVE_SELECTOR);
+  for (let index = 0; index < (await interactive.count()); index += 1) {
+    const control = interactive.nth(index);
+    await control.evaluate((element) =>
+      element.scrollIntoView({ block: "center", inline: "center" }),
+    );
+    const box = await control.boundingBox();
+    const viewport = page.viewportSize();
+    expect(box).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width + 0.5);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height + 0.5);
+  }
 }
 
 async function endRound(page: Page, gameNo: 1 | 2) {
@@ -148,6 +174,14 @@ test.describe.serial("phone-first host parity", () => {
     await page.goto(`/host/phone/${readyNight!.nightId}`);
 
     await page.getByRole("button", { name: "Start Game 1" }).click();
+    await page.goto("/host");
+    const privatePhoneControl = page.getByTestId("host-private-phone-controls");
+    await expect(privatePhoneControl).toBeVisible();
+    const privatePhoneBox = await privatePhoneControl.boundingBox();
+    expect(privatePhoneBox!.width).toBeGreaterThanOrEqual(43.5);
+    expect(privatePhoneBox!.height).toBeGreaterThanOrEqual(43.5);
+    await expectTouchSafeHostActions(page);
+    await page.goto(`/host/phone/${readyNight!.nightId}`);
     await expect(page.getByRole("button", { name: /Reveal to the room/ })).toBeVisible();
 
     // Reveal, undo inside the guarded window, then reload to prove the

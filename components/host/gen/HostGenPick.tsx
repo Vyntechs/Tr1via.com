@@ -438,16 +438,31 @@ function QuestionCard({
           onClick={onTogglePick}
           aria-label={isPicked ? "Unpick question" : "Pick question"}
           style={{
-            position: "absolute", top: 10, left: 10,
-            width: 26, height: 26, borderRadius: 99,
-            background: isPicked ? cc : "rgba(0,0,0,.5)",
-            border: isPicked ? "none" : "1.5px solid rgba(255,255,255,.85)",
+            position: "absolute", top: 1, left: 1,
+            width: 44, height: 44, borderRadius: 99,
+            background: "transparent",
+            border: "none",
             display: "flex", alignItems: "center", justifyContent: "center",
             cursor: "pointer",
             padding: 0,
           }}
         >
-          {isPicked && <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.5 12L13 4.5" stroke="#0E0805" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+          <span
+            aria-hidden="true"
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 99,
+              background: isPicked ? cc : "rgba(0,0,0,.5)",
+              border: isPicked ? "none" : "1.5px solid rgba(255,255,255,.85)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxSizing: "border-box",
+            }}
+          >
+            {isPicked && <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.5 12L13 4.5" stroke="#0E0805" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+          </span>
         </button>
       </StockImage>
 
@@ -1048,7 +1063,7 @@ function EditableTopicEyebrow({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", minWidth: 0 }}>
         <input
           ref={inputRef}
           type="text"
@@ -1074,7 +1089,10 @@ function EditableTopicEyebrow({
             letterSpacing: "0.12em",
             textTransform: "uppercase",
             color: cc,
-            minWidth: 220,
+            minWidth: 0,
+            height: 44,
+            flex: "1 1 120px",
+            boxSizing: "border-box",
             outline: "none",
           }}
         />
@@ -1142,8 +1160,9 @@ function renameControlStyle(
     color: fg,
     border: "none",
     borderRadius: 4,
-    width: 22,
-    height: 22,
+    width: 44,
+    height: 44,
+    flex: "0 0 44px",
     fontSize: 12,
     fontWeight: 700,
     cursor: "pointer",

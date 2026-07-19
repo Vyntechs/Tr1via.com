@@ -38,7 +38,14 @@ body {
     max-width: 100%;
   }
 
-  [data-mobile-touch-target="true"] {
+  [data-host-mobile-surface="true"] :is(
+    button,
+    a[href],
+    input:not([type="hidden"]),
+    select,
+    textarea,
+    [role="button"]
+  ) {
     min-width: 44px;
     min-height: 44px;
     box-sizing: border-box;

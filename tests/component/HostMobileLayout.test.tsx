@@ -137,15 +137,18 @@ describe("phone-first host generation layouts", () => {
     expect(screen.getByLabelText("Row 1 optional image URL")).toHaveValue("");
   });
 
-  it("scopes touch sizing instead of expanding every grid button", () => {
+  it("scopes complete touch sizing to host mobile surfaces", () => {
     const css = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
     const pick = readFileSync(
       join(process.cwd(), "components/host/gen/HostGenPick.tsx"),
       "utf8",
     );
 
-    expect(css).not.toContain('[data-host-mobile-surface="true"] button,');
-    expect(css).toContain('[data-mobile-touch-target="true"]');
+    expect(css).toContain('[data-host-mobile-surface="true"] :is(');
+    expect(css).toContain("button,");
+    expect(css).toContain("a[href],");
+    expect(css).toContain('input:not([type="hidden"]),');
+    expect(css).toContain('[role="button"]');
     expect(pick).toContain('gridColumn: mobile ? "2 / -1"');
   });
 });

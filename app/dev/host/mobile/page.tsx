@@ -12,6 +12,7 @@ import {
   HostGenPick,
   HostGenTopicEntry,
 } from "@/components/host/gen";
+import { HostDashboard } from "@/components/host";
 
 const SURFACES = [
   "overview",
@@ -22,6 +23,7 @@ const SURFACES = [
   "image-swap",
   "image-upload",
   "manual",
+  "dashboard",
 ] as const;
 type Surface = (typeof SURFACES)[number];
 
@@ -49,12 +51,26 @@ function HostMobilePreview() {
           onTogglePick={() => {}}
           onReorder={() => {}}
           onEdit={() => {}}
+          onRename={async () => {}}
         />
       )}
       {surface === "edit" && <HostGenEdit />}
       {surface === "image-swap" && <HostGenImageSwap />}
       {surface === "image-upload" && <HostGenImageUpload state="idle" />}
       {surface === "manual" && <HostGenManualEntry />}
+      {surface === "dashboard" && (
+        <HostDashboard
+          tonight={{
+            nightId: "mobile-proof-night",
+            venue: "Soul Fire Pizza",
+            date: "Wed Jul 22",
+            isToday: true,
+            roomCode: "K9PR4M",
+            themeKey: "house",
+            status: "live",
+          }}
+        />
+      )}
     </main>
   );
 }

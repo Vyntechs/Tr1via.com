@@ -1,3 +1,8 @@
+### touch-audits-must-discover-controls
+Trigger: Mobile accessibility test measured only explicitly tagged controls and missed undersized actions.
+Rule: Enumerate every visible interactive element; allow only narrow documented exceptions.
+Reason: Opt-in selectors cannot catch controls developers forgot to mark.
+
 ### closure-narrowing-in-effects
 Trigger: Nested async closure captured narrowed nullable id in host live effect.
 Rule: Rebind narrowed values to non-null locals before nested closures use them.
