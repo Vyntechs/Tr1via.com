@@ -491,6 +491,26 @@ describe("authoritative live answer engine schema", () => {
       ]);
     });
 
+    test("adds a private canonical result slot for immutable answer acknowledgements", async () => {
+      const columns = await db.query<{
+        data_type: string;
+        is_nullable: string;
+        column_default: string | null;
+      }>(`
+        select data_type, is_nullable, column_default
+          from information_schema.columns
+         where table_schema = 'public'
+           and table_name = 'question_play_answers'
+           and column_name = 'canonical_result'
+      `);
+
+      expect(columns.rows).toEqual([{
+        data_type: "jsonb",
+        is_nullable: "YES",
+        column_default: null,
+      }]);
+    });
+
     test("creates every server-owned engine table with RLS enabled", async () => {
       const tables = await db.query<{ relname: string; relrowsecurity: boolean }>(`
         select c.relname, c.relrowsecurity
@@ -1347,13 +1367,7 @@ describe("authoritative live answer engine schema", () => {
           "select public.submit_question_play_answer($1, $2, $3, $4, 4::smallint) as result",
           [play.playId, opened.runId, LIVE.deviceA, "60000000-0000-0000-0000-000000000099"],
         );
-        expect(duplicate).toMatchObject({
-          code: "confirmed",
-          confirmedSlot: visibleSlot,
-          duplicate: true,
-          roomRevision: 4,
-          controlRevision: 3,
-        });
+        expect(duplicate).toEqual(confirmed);
       } finally {
         await db.close();
       }
@@ -1398,7 +1412,14 @@ describe("authoritative live answer engine schema", () => {
           },
         });
 
-        const duplicate = await rpcEnvelope(
+        const exactRetry = await rpcEnvelope(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 2::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        expect(exactRetry).toEqual({ freshlyApplied: false, result: winner.result });
+
+        const conflictingRetry = await rpcEnvelope(
           db,
           "select public.submit_question_play_answer($1, $2, $3, $4, 4::smallint) as result",
           [
@@ -1408,10 +1429,40 @@ describe("authoritative live answer engine schema", () => {
             "60000000-0000-0000-0000-000000000099",
           ],
         );
-        expect(duplicate).toMatchObject({
+        expect(conflictingRetry).toEqual({
           freshlyApplied: false,
-          result: { code: "confirmed", confirmedSlot: 2, duplicate: true },
+          result: winner.result,
         });
+
+        await rpcEnvelope(
+          db,
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.finalCommand],
+        );
+        await rpcEnvelope(
+          db,
+          "select public.undo_question_play($1, $2, $3, $4, 4::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.undoCommand],
+        );
+        await rpcEnvelope(
+          db,
+          "select public.end_live_game($1, $2, $3, 5::bigint) as result",
+          [LIVE.game, opened.runId, LIVE.endCommand],
+        );
+        const afterTransitions = await rpcEnvelope(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 2::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        expect(afterTransitions).toEqual({ freshlyApplied: false, result: winner.result });
+
+        const stored = await db.query<{ canonical_result: RpcResult | null }>(
+          `select canonical_result
+             from question_play_answers
+            where play_id = $1 and player_id = $2`,
+          [play.playId, LIVE.playerA],
+        );
+        expect(stored.rows).toEqual([{ canonical_result: winner.result }]);
 
         const state = await db.query<{
           room_revision: number;
@@ -1427,10 +1478,56 @@ describe("authoritative live answer engine schema", () => {
           [LIVE.night, play.playId],
         );
         expect(state.rows[0]).toEqual({
-          room_revision: 4,
-          control_revision: 3,
+          room_revision: 7,
+          control_revision: 6,
           answers: 1,
           answer_events: 1,
+        });
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("fails closed when a pre-canonical answer row is retried", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db, 1);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+        await db.query(
+          `insert into question_play_answers (
+             play_id, player_id, submission_id, visible_slot, canonical_index,
+             received_at, locked_at, ms_to_lock
+           ) values ($1, $2, $3, 2, 0, now(), now(), 1)`,
+          [play.playId, LIVE.playerA, LIVE.submissionA],
+        );
+
+        const retry = await rpcEnvelope(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 2::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        expect(retry).toEqual({
+          freshlyApplied: false,
+          result: { code: "retry_later", retryAfterMs: 100 },
+        });
+
+        const state = await db.query<{
+          room_revision: number;
+          control_revision: number;
+          answer_events: number;
+        }>(
+          `select n.room_revision, n.control_revision,
+                  (select count(*)::int from live_room_events
+                    where play_id = $2 and kind = 'answer_progress') as answer_events
+             from nights n where n.id = $1`,
+          [LIVE.night, play.playId],
+        );
+        expect(state.rows[0]).toEqual({
+          room_revision: 3,
+          control_revision: 3,
+          answer_events: 0,
         });
       } finally {
         await db.close();

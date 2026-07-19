@@ -588,6 +588,7 @@ declare
   v_canonical smallint;
   v_latest_receipt timestamptz;
   v_retry_ms integer;
+  v_result jsonb;
 begin
   if p_visible_slot not between 1 and 4 then
     return public._live_mutation_envelope(
@@ -632,13 +633,14 @@ begin
     from public.question_play_answers
    where play_id = p_play_id and player_id = v_player_id;
   if found then
+    if v_answer.canonical_result is null then
+      return public._live_mutation_envelope(
+        false, jsonb_build_object('code', 'retry_later', 'retryAfterMs', 100)
+      );
+    end if;
     return public._live_mutation_envelope(
       false,
-      jsonb_build_object(
-        'code', 'confirmed', 'confirmedSlot', v_answer.visible_slot,
-        'duplicate', true, 'roomRevision', v_night.room_revision,
-        'controlRevision', v_night.control_revision, 'playId', p_play_id
-      )
+      v_answer.canonical_result
     );
   end if;
 
@@ -718,15 +720,18 @@ begin
       'confirmedCount', v_play.confirmed_count, 'finalizeAt', v_play.finalize_at
     )
   );
-  return public._live_mutation_envelope(
-    true,
-    jsonb_build_object(
-      'code', 'confirmed', 'confirmedSlot', p_visible_slot, 'duplicate', false,
-      'eventKind', 'answer_progress', 'playId', p_play_id,
-      'roomRevision', v_night.room_revision,
-      'controlRevision', v_night.control_revision
-    )
+  v_result := jsonb_build_object(
+    'code', 'confirmed', 'confirmedSlot', p_visible_slot, 'duplicate', false,
+    'eventKind', 'answer_progress', 'playId', p_play_id,
+    'roomRevision', v_night.room_revision,
+    'controlRevision', v_night.control_revision
   );
+  update public.question_play_answers
+     set canonical_result = v_result
+   where play_id = p_play_id
+     and player_id = v_player_id
+     and canonical_result is null;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 

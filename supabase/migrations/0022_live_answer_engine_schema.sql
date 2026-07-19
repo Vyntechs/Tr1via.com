@@ -174,6 +174,9 @@ create table public.question_play_answers (
   ms_to_lock integer not null check (ms_to_lock >= 0),
   is_correct boolean,
   awarded_points integer,
+  -- Written once by the authoritative answer RPC after its matching event.
+  -- Nullable only for pre-canonical/backfill rows; browser roles have no access.
+  canonical_result jsonb,
   primary key (play_id, player_id),
   constraint question_play_answers_eligible_fk
     foreign key (play_id, player_id)
