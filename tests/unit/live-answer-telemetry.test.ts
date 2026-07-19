@@ -65,6 +65,65 @@ describe("live answer health telemetry", () => {
     expect(createLiveAnswerHealthEvent({ playId: PLAY_ID })).toBeNull();
   });
 
+  test("snapshots every allowed property exactly once before validation and emission", () => {
+    const alternateId = "50000000-0000-4000-8000-000000000099";
+    const reads = {
+      playId: 0,
+      latencyBucket: 0,
+      resultCode: 0,
+      retryCount: 0,
+      duplicateCount: 0,
+      reconciliationCount: 0,
+      resolutionReason: 0,
+    };
+    const once = <T,>(key: keyof typeof reads, safe: T, changed: unknown) => {
+      reads[key] += 1;
+      return reads[key] === 1 ? safe : changed;
+    };
+    const input = {
+      get playId() {
+        return once("playId", PLAY_ID, alternateId);
+      },
+      get latencyBucket() {
+        return once("latencyBucket", "under_250ms", "437ms");
+      },
+      get resultCode() {
+        return once("resultCode", "confirmed", "raw database detail");
+      },
+      get retryCount() {
+        return once("retryCount", 1, -1);
+      },
+      get duplicateCount() {
+        return once("duplicateCount", 2, -1);
+      },
+      get reconciliationCount() {
+        return once("reconciliationCount", 3, -1);
+      },
+      get resolutionReason() {
+        return once("resolutionReason", "timer", "private answer");
+      },
+    };
+
+    expect(createLiveAnswerHealthEvent(input)).toEqual({
+      playId: PLAY_ID,
+      latencyBucket: "under_250ms",
+      resultCode: "confirmed",
+      retryCount: 1,
+      duplicateCount: 2,
+      reconciliationCount: 3,
+      resolutionReason: "timer",
+    });
+    expect(reads).toEqual({
+      playId: 1,
+      latencyBucket: 1,
+      resultCode: 1,
+      retryCount: 1,
+      duplicateCount: 1,
+      reconciliationCount: 1,
+      resolutionReason: 1,
+    });
+  });
+
   test.each([
     ["missing play ID", { resultCode: "confirmed" }],
     ["non-UUID play ID", { playId: "ROOM42", resultCode: "confirmed" }],
@@ -92,11 +151,11 @@ describe("live answer health telemetry", () => {
     expect(latencyBucketFor(Number.POSITIVE_INFINITY)).toBeNull();
   });
 
-  test("records only the constructed safe event", () => {
+  test("records only the constructed safe event", async () => {
     const sink = vi.fn();
 
     expect(
-      recordLiveAnswerHealth(
+      await recordLiveAnswerHealth(
         {
           playId: PLAY_ID,
           latencyBucket: "under_250ms",
@@ -119,11 +178,11 @@ describe("live answer health telemetry", () => {
     });
   });
 
-  test("does not invoke the sink for an invalid event", () => {
+  test("does not invoke the sink for an invalid event", async () => {
     const sink = vi.fn();
 
     expect(
-      recordLiveAnswerHealth(
+      await recordLiveAnswerHealth(
         { playId: PLAY_ID, resultCode: "database exploded" },
         sink,
       ),
@@ -131,13 +190,27 @@ describe("live answer health telemetry", () => {
     expect(sink).not.toHaveBeenCalled();
   });
 
-  test("telemetry sink failure never changes the live mutation outcome", () => {
+  test("telemetry sink failure never changes the live mutation outcome", async () => {
     const sink = vi.fn(() => {
       throw new Error("collector unavailable");
     });
 
     expect(
-      recordLiveAnswerHealth(
+      await recordLiveAnswerHealth(
+        { playId: PLAY_ID, resultCode: "confirmed" },
+        sink,
+      ),
+    ).toBe(false);
+    expect(sink).toHaveBeenCalledOnce();
+  });
+
+  test("awaits and contains an asynchronously rejecting telemetry sink", async () => {
+    const sink = vi.fn(async () => {
+      throw new Error("collector unavailable asynchronously");
+    });
+
+    expect(
+      await recordLiveAnswerHealth(
         { playId: PLAY_ID, resultCode: "confirmed" },
         sink,
       ),

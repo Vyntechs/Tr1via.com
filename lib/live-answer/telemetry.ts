@@ -42,7 +42,9 @@ export interface LiveAnswerHealthEvent {
   readonly resolutionReason?: LiveAnswerResolutionReason;
 }
 
-export type LiveAnswerHealthSink = (event: LiveAnswerHealthEvent) => void;
+export type LiveAnswerHealthSink = (
+  event: LiveAnswerHealthEvent,
+) => void | Promise<void>;
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -76,36 +78,34 @@ export function createLiveAnswerHealthEvent(
 
   try {
     const source = input as Record<string, unknown>;
-    if (typeof source.playId !== "string" || !UUID_PATTERN.test(source.playId)) {
+    const playId = source.playId;
+    const latencyBucket = source.latencyBucket;
+    const resultCode = source.resultCode;
+    const retryCount = source.retryCount;
+    const duplicateCount = source.duplicateCount;
+    const reconciliationCount = source.reconciliationCount;
+    const resolutionReason = source.resolutionReason;
+
+    if (typeof playId !== "string" || !UUID_PATTERN.test(playId)) {
       return null;
     }
-    if (!isOptionalMember(source.latencyBucket, LATENCY_BUCKETS)) return null;
-    if (!isMember(source.resultCode, RESULT_CODES)) return null;
-    if (!isOptionalCount(source.retryCount)) return null;
-    if (!isOptionalCount(source.duplicateCount)) return null;
-    if (!isOptionalCount(source.reconciliationCount)) return null;
-    if (!isOptionalMember(source.resolutionReason, RESOLUTION_REASONS)) {
+    if (!isOptionalMember(latencyBucket, LATENCY_BUCKETS)) return null;
+    if (!isMember(resultCode, RESULT_CODES)) return null;
+    if (!isOptionalCount(retryCount)) return null;
+    if (!isOptionalCount(duplicateCount)) return null;
+    if (!isOptionalCount(reconciliationCount)) return null;
+    if (!isOptionalMember(resolutionReason, RESOLUTION_REASONS)) {
       return null;
     }
 
     const event = {
-      playId: source.playId,
-      ...(source.latencyBucket === undefined
-        ? {}
-        : { latencyBucket: source.latencyBucket }),
-      resultCode: source.resultCode,
-      ...(source.retryCount === undefined
-        ? {}
-        : { retryCount: source.retryCount }),
-      ...(source.duplicateCount === undefined
-        ? {}
-        : { duplicateCount: source.duplicateCount }),
-      ...(source.reconciliationCount === undefined
-        ? {}
-        : { reconciliationCount: source.reconciliationCount }),
-      ...(source.resolutionReason === undefined
-        ? {}
-        : { resolutionReason: source.resolutionReason }),
+      playId,
+      ...(latencyBucket === undefined ? {} : { latencyBucket }),
+      resultCode,
+      ...(retryCount === undefined ? {} : { retryCount }),
+      ...(duplicateCount === undefined ? {} : { duplicateCount }),
+      ...(reconciliationCount === undefined ? {} : { reconciliationCount }),
+      ...(resolutionReason === undefined ? {} : { resolutionReason }),
     } satisfies LiveAnswerHealthEvent;
 
     return Object.freeze(event);
@@ -118,15 +118,15 @@ export function createLiveAnswerHealthEvent(
  * Telemetry is best-effort and can never change the result of a committed live
  * mutation. `false` means the event was invalid or the collector was down.
  */
-export function recordLiveAnswerHealth(
+export async function recordLiveAnswerHealth(
   input: unknown,
   sink: LiveAnswerHealthSink,
-): boolean {
+): Promise<boolean> {
   const event = createLiveAnswerHealthEvent(input);
   if (!event) return false;
 
   try {
-    sink(event);
+    await sink(event);
     return true;
   } catch {
     return false;
