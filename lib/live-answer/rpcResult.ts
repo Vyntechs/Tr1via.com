@@ -31,6 +31,11 @@ const AppliedCommandBase = {
   controlRevision: Revision,
 };
 
+const OptionalPlayAncestry = {
+  gameId: Uuid.optional(),
+  questionId: Uuid.optional(),
+};
+
 const CommandAppliedResultSchema = z.union([
   z
     .object({
@@ -50,6 +55,7 @@ const CommandAppliedResultSchema = z.union([
       ...AppliedCommandBase,
       eventKind: z.literal("play_opened"),
       gameId: Uuid,
+      questionId: Uuid.optional(),
       playId: Uuid,
     })
     .strict(),
@@ -57,6 +63,7 @@ const CommandAppliedResultSchema = z.union([
     .object({
       ...AppliedCommandBase,
       eventKind: z.literal("final_window_started"),
+      ...OptionalPlayAncestry,
       playId: Uuid,
     })
     .strict(),
@@ -64,6 +71,7 @@ const CommandAppliedResultSchema = z.union([
     .object({
       ...AppliedCommandBase,
       eventKind: z.literal("play_undone"),
+      ...OptionalPlayAncestry,
       playId: Uuid,
     })
     .strict(),
@@ -89,6 +97,7 @@ const ResolvedResultSchema = z
     applied: z.literal(true),
     eventKind: z.literal("play_resolved"),
     runId: Uuid,
+    ...OptionalPlayAncestry,
     playId: Uuid,
     roomRevision: Revision,
     controlRevision: Revision,
@@ -122,6 +131,7 @@ const ConfirmedAnswerResultSchema = z
     duplicate: z.literal(false),
     eventKind: z.literal("answer_progress"),
     runId: Uuid,
+    ...OptionalPlayAncestry,
     playId: Uuid,
     roomRevision: Revision,
     controlRevision: Revision,
@@ -153,6 +163,7 @@ const FinalWindowResultSchema = z
     applied: z.literal(true),
     eventKind: z.literal("final_window_started"),
     runId: Uuid,
+    ...OptionalPlayAncestry,
     playId: Uuid,
     roomRevision: Revision,
     controlRevision: Revision,
@@ -199,9 +210,12 @@ export interface FreshLiveEventReference {
   freshness: "transaction_winner";
   kind: LiveRoomEventKind;
   runId: string;
+  gameId: string | null;
+  questionId: string | null;
   roomRevision: number;
   controlRevision: number;
   playId: string | null;
+  previousRunId: string | null;
 }
 
 export function parseLiveCommandRpcEnvelope(
@@ -245,9 +259,13 @@ export function freshLiveEventFromRpc(
     freshness: "transaction_winner",
     kind: result.eventKind,
     runId: result.runId,
+    gameId: "gameId" in result ? (result.gameId ?? null) : null,
+    questionId: "questionId" in result ? (result.questionId ?? null) : null,
     roomRevision: result.roomRevision,
     controlRevision: result.controlRevision,
     playId: "playId" in result ? (result.playId ?? null) : null,
+    previousRunId:
+      "previousRunId" in result ? (result.previousRunId ?? null) : null,
   };
 }
 

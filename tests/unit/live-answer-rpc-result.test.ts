@@ -10,6 +10,7 @@ import {
 const RUN_ID = "11111111-1111-4111-8111-111111111111";
 const GAME_ID = "22222222-2222-4222-8222-222222222222";
 const PLAY_ID = "33333333-3333-4333-8333-333333333333";
+const QUESTION_ID = "44444444-4444-4444-8444-444444444444";
 
 const commandWinner = {
   code: "applied",
@@ -17,6 +18,7 @@ const commandWinner = {
   eventKind: "play_opened",
   runId: RUN_ID,
   gameId: GAME_ID,
+  questionId: QUESTION_ID,
   playId: PLAY_ID,
   roomRevision: 8,
   controlRevision: 5,
@@ -39,9 +41,12 @@ describe("live RPC result validation", () => {
       freshness: "transaction_winner",
       kind: "play_opened",
       runId: RUN_ID,
+      gameId: GAME_ID,
+      questionId: QUESTION_ID,
       roomRevision: 8,
       controlRevision: 5,
       playId: PLAY_ID,
+      previousRunId: null,
     });
   });
 
@@ -119,6 +124,68 @@ describe("live RPC result validation", () => {
     ).toBeNull();
   });
 
+  it("retains every event-specific ancestry identifier for exact projection", () => {
+    const undone = parseLiveCommandRpcEnvelope({
+      freshlyApplied: true,
+      result: {
+        code: "applied",
+        applied: true,
+        eventKind: "play_undone",
+        runId: RUN_ID,
+        gameId: GAME_ID,
+        questionId: QUESTION_ID,
+        playId: PLAY_ID,
+        roomRevision: 12,
+        controlRevision: 8,
+      },
+    });
+    const resolved = parseLiveFinalizeRpcEnvelope({
+      freshlyApplied: true,
+      result: {
+        code: "resolved",
+        applied: true,
+        eventKind: "play_resolved",
+        runId: RUN_ID,
+        gameId: GAME_ID,
+        questionId: QUESTION_ID,
+        playId: PLAY_ID,
+        roomRevision: 13,
+        controlRevision: 9,
+      },
+    });
+    const previousRunId = "55555555-5555-4555-8555-555555555555";
+    const reset = parseLiveCommandRpcEnvelope({
+      freshlyApplied: true,
+      result: {
+        code: "applied",
+        applied: true,
+        eventKind: "night_reset",
+        runId: RUN_ID,
+        previousRunId,
+        roomRevision: 0,
+        controlRevision: 0,
+      },
+    });
+
+    expect(freshLiveEventFromRpc(undone)).toMatchObject({
+      gameId: GAME_ID,
+      questionId: QUESTION_ID,
+      playId: PLAY_ID,
+    });
+    expect(freshLiveEventFromRpc(resolved)).toMatchObject({
+      gameId: GAME_ID,
+      questionId: QUESTION_ID,
+      playId: PLAY_ID,
+    });
+    expect(freshLiveEventFromRpc(reset)).toMatchObject({
+      runId: RUN_ID,
+      previousRunId,
+      gameId: null,
+      questionId: null,
+      playId: null,
+    });
+  });
+
   it("parses canonical answer results without trusting answer identity or choice fields", () => {
     const winner = parseLiveAnswerRpcEnvelope({
       freshlyApplied: true,
@@ -128,6 +195,8 @@ describe("live RPC result validation", () => {
         duplicate: false,
         eventKind: "answer_progress",
         runId: RUN_ID,
+        gameId: GAME_ID,
+        questionId: QUESTION_ID,
         playId: PLAY_ID,
         roomRevision: 9,
         controlRevision: 5,
@@ -143,9 +212,12 @@ describe("live RPC result validation", () => {
       freshness: "transaction_winner",
       kind: "answer_progress",
       runId: RUN_ID,
+      gameId: GAME_ID,
+      questionId: QUESTION_ID,
       roomRevision: 9,
       controlRevision: 5,
       playId: PLAY_ID,
+      previousRunId: null,
     });
     expect(retry?.result).toEqual({ code: "retry_later", retryAfterMs: 100 });
     expect(retry?.freshness).toBe("non_winner");
@@ -176,6 +248,8 @@ describe("live RPC result validation", () => {
         applied: true,
         eventKind: "final_window_started",
         runId: RUN_ID,
+        gameId: GAME_ID,
+        questionId: QUESTION_ID,
         playId: PLAY_ID,
         roomRevision: 10,
         controlRevision: 6,
@@ -196,6 +270,10 @@ describe("live RPC result validation", () => {
     expect(freshLiveEventFromRpc(finalWindow)?.kind).toBe(
       "final_window_started",
     );
+    expect(freshLiveEventFromRpc(finalWindow)).toMatchObject({
+      gameId: GAME_ID,
+      questionId: QUESTION_ID,
+    });
     expect(freshLiveEventFromRpc(notDue)).toBeNull();
     expect(notDue?.freshness).toBe("non_winner");
     expect(

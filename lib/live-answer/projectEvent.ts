@@ -7,6 +7,7 @@ import type { FreshLiveEventReference } from "./rpcResult";
 
 const PLAY_SELECT =
   "id, night_id, run_id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count";
+const GAME_SELECT = "id, night_id";
 
 /**
  * Rebuilds the fast event from current server truth. The exact play returned by
@@ -33,12 +34,39 @@ export async function projectExactLiveEvent(
       .eq("night_id", nightId)
       .eq("run_id", event.runId)
       .maybeSingle();
-    if (error || !data || !eventMatchesPlay(event.kind, data.status)) {
+    if (
+      error ||
+      !data ||
+      data.id !== event.playId ||
+      data.night_id !== nightId ||
+      data.run_id !== event.runId ||
+      (event.gameId !== null && data.game_id !== event.gameId) ||
+      (event.questionId !== null && data.question_id !== event.questionId) ||
+      !eventMatchesPlay(event.kind, data.status)
+    ) {
       return null;
     }
     play = data;
   } else if (isPlayEvent(event.kind)) {
     return null;
+  }
+
+  if (isGameEvent(event.kind)) {
+    if (!event.gameId) return null;
+    const { data: game, error: gameError } = await admin
+      .from("games")
+      .select(GAME_SELECT)
+      .eq("id", event.gameId)
+      .eq("night_id", nightId)
+      .maybeSingle();
+    if (
+      gameError ||
+      !game ||
+      game.id !== event.gameId ||
+      game.night_id !== nightId
+    ) {
+      return null;
+    }
   }
 
   const { data: night, error: nightError } = await admin
@@ -65,6 +93,10 @@ export async function projectExactLiveEvent(
     },
     play,
   });
+}
+
+function isGameEvent(kind: LiveRoomEventKind): boolean {
+  return kind === "game_started" || kind === "game_ended";
 }
 
 function isPlayEvent(kind: LiveRoomEventKind): boolean {
