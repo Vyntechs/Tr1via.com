@@ -112,6 +112,142 @@ async function freshDb(): Promise<PGlite> {
   return db;
 }
 
+const ANCESTRY = {
+  hostUser: "10000000-0000-0000-0000-000000000001",
+  host: "10000000-0000-0000-0000-000000000002",
+  nightA: "10000000-0000-0000-0000-000000000003",
+  nightB: "10000000-0000-0000-0000-000000000004",
+  runA: "10000000-0000-0000-0000-000000000005",
+  runB: "10000000-0000-0000-0000-000000000006",
+  gameA: "10000000-0000-0000-0000-000000000007",
+  gameB: "10000000-0000-0000-0000-000000000008",
+  categoryA: "10000000-0000-0000-0000-000000000009",
+  categoryB: "10000000-0000-0000-0000-000000000010",
+  questionA: "10000000-0000-0000-0000-000000000011",
+  questionB: "10000000-0000-0000-0000-000000000012",
+  playerA: "10000000-0000-0000-0000-000000000013",
+  playerB: "10000000-0000-0000-0000-000000000014",
+  playA: "10000000-0000-0000-0000-000000000015",
+} as const;
+
+async function seedAncestryFixture(db: PGlite): Promise<void> {
+  await db.query("insert into auth.users (id) values ($1)", [ANCESTRY.hostUser]);
+  await db.query(
+    "insert into hosts (id, user_id, display_name) values ($1, $2, 'Host')",
+    [ANCESTRY.host, ANCESTRY.hostUser],
+  );
+  await db.query(
+    `insert into nights (id, host_id, venue_name, room_code, current_run_id) values
+      ($1, $3, 'Venue A', 'RUNAAA', $4),
+      ($2, $3, 'Venue B', 'RUNBBB', $5)`,
+    [ANCESTRY.nightA, ANCESTRY.nightB, ANCESTRY.host, ANCESTRY.runA, ANCESTRY.runB],
+  );
+  await db.query(
+    `insert into games (id, night_id, game_no) values
+      ($1, $3, 1),
+      ($2, $4, 1)`,
+    [ANCESTRY.gameA, ANCESTRY.gameB, ANCESTRY.nightA, ANCESTRY.nightB],
+  );
+  await db.query(
+    `insert into categories (id, game_id, name, topic, position) values
+      ($1, $3, 'A', 'A', 0),
+      ($2, $4, 'B', 'B', 0)`,
+    [ANCESTRY.categoryA, ANCESTRY.categoryB, ANCESTRY.gameA, ANCESTRY.gameB],
+  );
+  await db.query(
+    `insert into questions (id, category_id, prompt, options, correct_index) values
+      ($1, $3, 'A?', '["A","B","C","D"]'::jsonb, 0),
+      ($2, $4, 'B?', '["A","B","C","D"]'::jsonb, 0)`,
+    [ANCESTRY.questionA, ANCESTRY.questionB, ANCESTRY.categoryA, ANCESTRY.categoryB],
+  );
+  await db.query(
+    `insert into players (id, night_id, device_id, display_name) values
+      ($1, $3, '20000000-0000-0000-0000-000000000001', 'Player A'),
+      ($2, $4, '20000000-0000-0000-0000-000000000002', 'Player B')`,
+    [ANCESTRY.playerA, ANCESTRY.playerB, ANCESTRY.nightA, ANCESTRY.nightB],
+  );
+}
+
+async function hasColumn(db: PGlite, table: string, column: string): Promise<boolean> {
+  const result = await db.query<{ exists: boolean }>(`
+    select exists (
+      select 1
+        from information_schema.columns
+       where table_schema = 'public'
+         and table_name = $1
+         and column_name = $2
+    )
+  `, [table, column]);
+  return result.rows[0]?.exists ?? false;
+}
+
+async function insertProbePlay(
+  db: PGlite,
+  values: {
+    id?: string;
+    nightId: string;
+    runId: string;
+    gameId: string;
+    categoryId: string;
+    questionId: string;
+  },
+): Promise<void> {
+  const includeCategory = await hasColumn(db, "question_plays", "category_id");
+  if (includeCategory) {
+    await db.query(
+      `insert into question_plays (
+         id, night_id, run_id, game_id, category_id, question_id,
+         status, opened_at, main_zero_at, final_window_ends_at
+       ) values (
+         $1, $2, $3, $4, $5, $6,
+         'accepting', now(), now() + interval '20 seconds', now() + interval '22 seconds'
+       )`,
+      [
+        values.id ?? ANCESTRY.playA,
+        values.nightId,
+        values.runId,
+        values.gameId,
+        values.categoryId,
+        values.questionId,
+      ],
+    );
+    return;
+  }
+
+  await db.query(
+    `insert into question_plays (
+       id, night_id, run_id, game_id, question_id,
+       status, opened_at, main_zero_at, final_window_ends_at
+     ) values (
+       $1, $2, $3, $4, $5,
+       'accepting', now(), now() + interval '20 seconds', now() + interval '22 seconds'
+     )`,
+    [
+      values.id ?? ANCESTRY.playA,
+      values.nightId,
+      values.runId,
+      values.gameId,
+      values.questionId,
+    ],
+  );
+}
+
+async function insertProbeEligibility(
+  db: PGlite,
+  playId: string,
+  playerId: string,
+  nightId: string,
+): Promise<void> {
+  const includeNight = await hasColumn(db, "question_play_eligibility", "night_id");
+  const values = [playId, playerId, ...(includeNight ? [nightId] : [])];
+  await db.query(
+    `insert into question_play_eligibility (
+       play_id, player_id${includeNight ? ", night_id" : ""}
+     ) values ($1, $2${includeNight ? ", $3" : ""})`,
+    values,
+  );
+}
+
 describe("authoritative live answer engine schema", () => {
   test("accepts only the exact non-undone partial-index predicate", () => {
     for (const predicate of [
@@ -247,7 +383,9 @@ describe("authoritative live answer engine schema", () => {
       `);
       const assertExactCheckValues = (table: string, column: string, expected: string[]) => {
         const matching = checks.rows.filter(
-          (row) => row.table_name === table && row.definition.includes(column),
+          (row) => row.table_name === table
+            && row.definition.includes(column)
+            && expected.every((value) => row.definition.includes(`'${value}'`)),
         );
         expect(matching, `${table}.${column}`).toHaveLength(1);
         const definition = matching[0].definition.toLowerCase().replace(/::text/g, "");
@@ -333,6 +471,193 @@ describe("authoritative live answer engine schema", () => {
       expect(normalized).toMatch(
         /foreign key \(play_id, player_id\) references question_play_eligibility\(play_id, player_id\)/,
       );
+    });
+
+    test.each([
+      {
+        label: "run from another night",
+        nightId: ANCESTRY.nightA,
+        runId: ANCESTRY.runB,
+        gameId: ANCESTRY.gameA,
+        categoryId: ANCESTRY.categoryA,
+        questionId: ANCESTRY.questionA,
+      },
+      {
+        label: "game and question from another night",
+        nightId: ANCESTRY.nightA,
+        runId: ANCESTRY.runA,
+        gameId: ANCESTRY.gameB,
+        categoryId: ANCESTRY.categoryB,
+        questionId: ANCESTRY.questionB,
+      },
+      {
+        label: "question from another game",
+        nightId: ANCESTRY.nightA,
+        runId: ANCESTRY.runA,
+        gameId: ANCESTRY.gameA,
+        categoryId: ANCESTRY.categoryB,
+        questionId: ANCESTRY.questionB,
+      },
+    ])("rejects a question play with $label", async (probe) => {
+      const probeDb = await freshDb();
+      try {
+        await seedAncestryFixture(probeDb);
+        await expect(insertProbePlay(probeDb, probe)).rejects.toThrow(/foreign key|constraint/i);
+      } finally {
+        await probeDb.close();
+      }
+    });
+
+    test("rejects eligibility for a player from another night", async () => {
+      const probeDb = await freshDb();
+      try {
+        await seedAncestryFixture(probeDb);
+        await insertProbePlay(probeDb, {
+          nightId: ANCESTRY.nightA,
+          runId: ANCESTRY.runA,
+          gameId: ANCESTRY.gameA,
+          categoryId: ANCESTRY.categoryA,
+          questionId: ANCESTRY.questionA,
+        });
+
+        await expect(
+          insertProbeEligibility(probeDb, ANCESTRY.playA, ANCESTRY.playerB, ANCESTRY.nightA),
+        ).rejects.toThrow(/foreign key|constraint/i);
+      } finally {
+        await probeDb.close();
+      }
+    });
+
+    test.each([
+      {
+        label: "another night's expected game and play",
+        nightId: ANCESTRY.nightB,
+        runId: ANCESTRY.runB,
+        expectedStatus: "accepting",
+      },
+      {
+        label: "an unsupported expected play status",
+        nightId: ANCESTRY.nightA,
+        runId: ANCESTRY.runA,
+        expectedStatus: "paused",
+      },
+      {
+        label: "a status that disagrees with the referenced play",
+        nightId: ANCESTRY.nightA,
+        runId: ANCESTRY.runA,
+        expectedStatus: "resolved",
+      },
+    ])("rejects a command receipt with $label", async ({ nightId, runId, expectedStatus }) => {
+      const probeDb = await freshDb();
+      try {
+        await seedAncestryFixture(probeDb);
+        await insertProbePlay(probeDb, {
+          nightId: ANCESTRY.nightA,
+          runId: ANCESTRY.runA,
+          gameId: ANCESTRY.gameA,
+          categoryId: ANCESTRY.categoryA,
+          questionId: ANCESTRY.questionA,
+        });
+        const includeExpectedStatus = await hasColumn(
+          probeDb,
+          "live_command_receipts",
+          "expected_play_status",
+        );
+
+        const receiptValues = [
+          nightId,
+          runId,
+          ANCESTRY.gameA,
+          ANCESTRY.playA,
+          ...(includeExpectedStatus ? [expectedStatus] : []),
+        ];
+        await expect(probeDb.query(
+          `insert into live_command_receipts (
+             night_id, command_id, run_id, kind, request_hash,
+             expected_control_revision, expected_game_id, expected_play_id
+             ${includeExpectedStatus ? ", expected_play_status" : ""}
+           ) values (
+             $1, gen_random_uuid(), $2, 'probe', 'probe', 0, $3, $4
+             ${includeExpectedStatus ? ", $5" : ""}
+           )`,
+          receiptValues,
+        )).rejects.toThrow(/foreign key|constraint|check/i);
+      } finally {
+        await probeDb.close();
+      }
+    });
+
+    test("preserves a valid receipt's expected status after the play advances", async () => {
+      const probeDb = await freshDb();
+      try {
+        await seedAncestryFixture(probeDb);
+        await insertProbePlay(probeDb, {
+          nightId: ANCESTRY.nightA,
+          runId: ANCESTRY.runA,
+          gameId: ANCESTRY.gameA,
+          categoryId: ANCESTRY.categoryA,
+          questionId: ANCESTRY.questionA,
+        });
+        const commandId = "10000000-0000-0000-0000-000000000016";
+        await probeDb.query(
+          `insert into live_command_receipts (
+             night_id, command_id, run_id, kind, request_hash,
+             expected_control_revision, expected_game_id, expected_play_id,
+             expected_play_status
+           ) values ($1, $2, $3, 'probe', 'probe', 0, $4, $5, 'accepting')`,
+          [
+            ANCESTRY.nightA,
+            commandId,
+            ANCESTRY.runA,
+            ANCESTRY.gameA,
+            ANCESTRY.playA,
+          ],
+        );
+
+        await probeDb.query(
+          "update question_plays set status = 'all_in_hold' where id = $1",
+          [ANCESTRY.playA],
+        );
+        const receipt = await probeDb.query<{ expected_play_status: string }>(
+          `select expected_play_status
+             from live_command_receipts
+            where night_id = $1 and command_id = $2`,
+          [ANCESTRY.nightA, commandId],
+        );
+        expect(receipt.rows[0]?.expected_play_status).toBe("accepting");
+      } finally {
+        await probeDb.close();
+      }
+    });
+
+    test("rejects a room event whose ancestry disagrees with its play", async () => {
+      const probeDb = await freshDb();
+      try {
+        await seedAncestryFixture(probeDb);
+        await insertProbePlay(probeDb, {
+          nightId: ANCESTRY.nightA,
+          runId: ANCESTRY.runA,
+          gameId: ANCESTRY.gameA,
+          categoryId: ANCESTRY.categoryA,
+          questionId: ANCESTRY.questionA,
+        });
+
+        await expect(probeDb.query(
+          `insert into live_room_events (
+             night_id, run_id, play_id, game_id, question_id,
+             room_revision, control_revision, kind
+           ) values ($1, $2, $3, $4, $5, 1, 1, 'play_opened')`,
+          [
+            ANCESTRY.nightB,
+            ANCESTRY.runB,
+            ANCESTRY.playA,
+            ANCESTRY.gameA,
+            ANCESTRY.questionA,
+          ],
+        )).rejects.toThrow(/foreign key|constraint/i);
+      } finally {
+        await probeDb.close();
+      }
     });
 
     test("grants every engine table only to service_role", async () => {
