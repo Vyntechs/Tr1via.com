@@ -62,7 +62,10 @@ export async function POST(
       device_id: deviceId,
       display_name: parsed.data.displayName,
       last_seen_at: now,
-    })
+      // Host-added roster names have no signed device and are score-only.
+      // The cast is temporary until the planned Task 5 type regeneration.
+      can_answer: false,
+    } as never)
     .select(
       "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds",
     )

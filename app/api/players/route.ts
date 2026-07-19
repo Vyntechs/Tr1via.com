@@ -71,10 +71,13 @@ export async function POST(req: NextRequest) {
         device_id: deviceId,
         display_name: parsed.data.displayName,
         last_seen_at: now,
+        // Migration 0022 makes signed-device players eligible to answer.
+        // The cast is temporary until the planned Task 5 type regeneration.
+        can_answer: true,
         // Clear any prior soft-removal: if a host removed someone and they
         // rejoin, the host can re-remove. Otherwise being "stuck" is worse.
         removed_at: null,
-      },
+      } as never,
       { onConflict: "night_id,device_id" },
     )
     .select(
