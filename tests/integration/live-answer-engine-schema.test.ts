@@ -242,6 +242,10 @@ describe("authoritative live answer engine schema", () => {
         && definition.includes("where"),
       );
       expect(onePerQuestion).toBeDefined();
+      const onePerQuestionKey = onePerQuestion
+        ?.match(/using\s+\w+\s*\(([^)]*)\)\s+where/)?.[1]
+        .replace(/["\s]/g, "");
+      expect(onePerQuestionKey).toBe("run_id,question_id");
       const onePerQuestionPredicate = onePerQuestion?.slice(onePerQuestion.indexOf("where"));
       const explicitlyExcludesUndone = /status\s*(?:<>|!=)\s*['"]undone['"]/.test(
         onePerQuestionPredicate ?? "",
