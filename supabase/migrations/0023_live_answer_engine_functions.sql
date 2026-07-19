@@ -738,7 +738,7 @@ begin
   );
   v_result := jsonb_build_object(
     'code', 'confirmed', 'confirmedSlot', p_visible_slot, 'duplicate', false,
-    'eventKind', 'answer_progress', 'playId', p_play_id,
+    'eventKind', 'answer_progress', 'runId', p_run_id, 'playId', p_play_id,
     'roomRevision', v_night.room_revision,
     'controlRevision', v_night.control_revision
   );

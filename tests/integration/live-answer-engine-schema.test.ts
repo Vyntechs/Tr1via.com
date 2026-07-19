@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { SCRAMBLE_TEST_VECTORS } from "../../lib/game/scramble";
+import { parseLiveAnswerRpcEnvelope } from "../../lib/live-answer/rpcResult";
 
 const MIGRATIONS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -1629,6 +1630,80 @@ describe("authoritative live answer engine schema", () => {
         expect(state.rows[0]).toEqual({
           room_revision: 7,
           control_revision: 6,
+          answers: 1,
+          answer_events: 1,
+        });
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("parses the real confirmed-answer winner and canonical replay at the shared seam", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        const runId = opened.runId as string;
+        await startGame(db, runId);
+        const play = await openPlay(db, runId);
+
+        const winner = await rpcEnvelope(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 2::smallint) as result",
+          [play.playId, runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        const replay = await rpcEnvelope(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 2::smallint) as result",
+          [play.playId, runId, LIVE.deviceA, LIVE.submissionA],
+        );
+
+        const parsedWinner = parseLiveAnswerRpcEnvelope(winner);
+        const parsedReplay = parseLiveAnswerRpcEnvelope(replay);
+        expect(parsedWinner).toMatchObject({
+          freshlyApplied: true,
+          freshness: "transaction_winner",
+          result: { code: "confirmed", runId },
+        });
+        expect(parsedReplay).toMatchObject({
+          freshlyApplied: false,
+          freshness: "replay",
+          result: { code: "confirmed", runId },
+        });
+        expect(parsedReplay?.result).toEqual(parsedWinner?.result);
+        expect(replay.result).toEqual(winner.result);
+
+        const missingRunIdResult = { ...winner.result };
+        delete missingRunIdResult.runId;
+        expect(parseLiveAnswerRpcEnvelope({
+          ...winner,
+          result: missingRunIdResult,
+        })).toBeNull();
+
+        const stored = await db.query<{ canonical_result: RpcResult }>(
+          `select canonical_result
+             from question_play_answers
+            where play_id = $1 and player_id = $2`,
+          [play.playId, LIVE.playerA],
+        );
+        expect(stored.rows).toEqual([{ canonical_result: winner.result }]);
+
+        const state = await db.query<{
+          room_revision: number;
+          control_revision: number;
+          answers: number;
+          answer_events: number;
+        }>(
+          `select n.room_revision, n.control_revision,
+                  (select count(*)::int from question_play_answers where play_id = $2) as answers,
+                  (select count(*)::int from live_room_events
+                    where play_id = $2 and kind = 'answer_progress') as answer_events
+             from nights n where n.id = $1`,
+          [LIVE.night, play.playId],
+        );
+        expect(state.rows[0]).toEqual({
+          room_revision: 4,
+          control_revision: 3,
           answers: 1,
           answer_events: 1,
         });
