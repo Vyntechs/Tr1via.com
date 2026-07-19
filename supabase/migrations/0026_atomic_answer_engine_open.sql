@@ -11,6 +11,18 @@ set search_path = public, extensions;
 alter table public.live_command_receipts
   alter column run_id drop not null;
 
+-- A receipt is deliberately claimed before the night row is locked. Defer
+-- direct parent validation so the provisional insert does not acquire a
+-- KEY SHARE lock that can deadlock with another opener's later FOR UPDATE.
+-- The run ancestry FK stays immediate for every run-bound receipt.
+alter table public.live_command_receipts
+  drop constraint live_command_receipts_night_fk,
+  add constraint live_command_receipts_night_fk
+    foreign key (night_id)
+    references public.nights(id)
+    on delete cascade
+    deferrable initially deferred;
+
 create or replace function public.open_night_run(
   p_night_id uuid,
   p_command_id uuid,

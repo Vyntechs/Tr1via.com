@@ -379,4 +379,34 @@ describe("atomic answer-engine open migration", () => {
     `);
     expect(grants.rows).toEqual([{ grantee: "service_role", privilege_type: "EXECUTE" }]);
   });
+
+  test("defers only direct receipt-to-night ancestry until commit", async () => {
+    const constraints = await db.query<{
+      constraint_name: string;
+      is_deferrable: string;
+      initially_deferred: string;
+    }>(`
+      select constraint_name, is_deferrable, initially_deferred
+        from information_schema.table_constraints
+       where constraint_schema = 'public'
+         and table_name = 'live_command_receipts'
+         and constraint_name in (
+           'live_command_receipts_night_fk',
+           'live_command_receipts_night_run_fk'
+         )
+       order by constraint_name
+    `);
+    expect(constraints.rows).toEqual([
+      {
+        constraint_name: "live_command_receipts_night_fk",
+        is_deferrable: "YES",
+        initially_deferred: "YES",
+      },
+      {
+        constraint_name: "live_command_receipts_night_run_fk",
+        is_deferrable: "NO",
+        initially_deferred: "NO",
+      },
+    ]);
+  });
 });

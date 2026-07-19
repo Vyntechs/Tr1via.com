@@ -199,5 +199,6 @@ describe("POST /api/nights/[id]/open", () => {
     const response = await POST(request(), context());
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ openedAt: OPENED_AT });
+    expect(console.warn).toHaveBeenCalledWith("broadcast night-opened failed");
   });
 });

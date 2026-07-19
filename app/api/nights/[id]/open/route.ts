@@ -55,8 +55,8 @@ export async function POST(
           serverNow: new Date().toISOString(),
           live,
         });
-      } catch (error) {
-        console.warn("broadcast night-opened failed", error);
+      } catch {
+        console.warn("broadcast night-opened failed");
       }
     }
   }
