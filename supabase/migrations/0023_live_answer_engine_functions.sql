@@ -6,6 +6,16 @@
 
 set search_path = public, extensions;
 
+-- A command can be canonically rejected before a run exists (most notably
+-- the first open command with a stale control precondition). Applied
+-- receipts still require a run and retain the 0022 composite ancestry FK.
+alter table public.live_command_receipts
+  alter column run_id drop not null;
+
+alter table public.live_command_receipts
+  add constraint live_command_receipts_applied_run_required
+  check (status <> 'applied' or run_id is not null);
+
 create or replace function public._live_scramble_for(
   p_question_id uuid,
   p_player_id uuid
@@ -88,6 +98,38 @@ begin
 end;
 $$;
 
+create or replace function public._live_claim_command(
+  p_night_id uuid,
+  p_command_id uuid,
+  p_receipt_run_id uuid,
+  p_kind text,
+  p_request_hash text,
+  p_expected_control_revision bigint,
+  p_expected_game_id uuid
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_rows integer;
+begin
+  insert into public.live_command_receipts (
+    night_id, command_id, run_id, kind, request_hash,
+    expected_control_revision, expected_game_id
+  ) values (
+    p_night_id, p_command_id, p_receipt_run_id, p_kind, p_request_hash,
+    p_expected_control_revision, p_expected_game_id
+  ) on conflict do nothing;
+  get diagnostics v_rows = row_count;
+  if v_rows = 1 then
+    return jsonb_build_object('claimed', true);
+  end if;
+  return public._live_existing_command_result(p_night_id, p_command_id, p_request_hash);
+end;
+$$;
+
 create or replace function public._live_reject_command(
   p_night_id uuid,
   p_command_id uuid,
@@ -124,23 +166,29 @@ declare
   v_night public.nights%rowtype;
   v_hash text := md5(concat_ws('|', 'open_night_run', p_night_id::text,
     coalesce(p_expected_run_id::text, 'null'), p_expected_control_revision::text));
-  v_retry jsonb;
+  v_claim jsonb;
+  v_receipt_run_id uuid;
   v_run_id uuid;
   v_result jsonb;
-  v_rows integer;
 begin
-  select * into v_night from public.nights where id = p_night_id for update;
+  select current_run_id into v_receipt_run_id
+    from public.nights where id = p_night_id;
   if not found then
     return jsonb_build_object('code', 'not_found', 'applied', false);
   end if;
 
-  v_retry := public._live_existing_command_result(p_night_id, p_command_id, v_hash);
-  if v_retry is not null then return v_retry; end if;
+  v_claim := public._live_claim_command(
+    p_night_id, p_command_id, v_receipt_run_id, 'open_night_run', v_hash,
+    p_expected_control_revision, null
+  );
+  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+
+  select * into v_night from public.nights where id = p_night_id for update;
 
   if v_night.answer_engine <> 'resilient_v1'
      or v_night.current_run_id is distinct from p_expected_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return jsonb_build_object('code', 'stale', 'applied', false);
+    return public._live_reject_command(p_night_id, p_command_id, 'stale');
   end if;
 
   v_run_id := gen_random_uuid();
@@ -152,17 +200,6 @@ begin
          control_revision = control_revision + 1
    where id = p_night_id
    returning * into v_night;
-
-  insert into public.live_command_receipts (
-    night_id, command_id, run_id, kind, request_hash, expected_control_revision
-  ) values (
-    p_night_id, p_command_id, v_run_id, 'open_night_run', v_hash,
-    p_expected_control_revision
-  ) on conflict do nothing;
-  get diagnostics v_rows = row_count;
-  if v_rows = 0 then
-    return public._live_existing_command_result(p_night_id, p_command_id, v_hash);
-  end if;
 
   insert into public.live_room_events (
     night_id, run_id, room_revision, control_revision, kind, payload
@@ -177,7 +214,8 @@ begin
     'controlRevision', v_night.control_revision
   );
   update public.live_command_receipts
-     set status = 'applied', canonical_result = v_result, completed_at = clock_timestamp()
+     set run_id = v_run_id, status = 'applied', canonical_result = v_result,
+         completed_at = clock_timestamp()
    where night_id = p_night_id and command_id = p_command_id;
   return v_result;
 end;
@@ -196,38 +234,33 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_night_id uuid;
+  v_receipt_run_id uuid;
   v_night public.nights%rowtype;
   v_game public.games%rowtype;
   v_hash text := md5(concat_ws('|', 'start_live_game', p_game_id::text,
     p_run_id::text, p_expected_control_revision::text));
-  v_retry jsonb;
+  v_claim jsonb;
   v_result jsonb;
-  v_rows integer;
 begin
-  select night_id into v_night_id from public.games where id = p_game_id;
+  select g.night_id, n.current_run_id into v_night_id, v_receipt_run_id
+    from public.games g
+    join public.nights n on n.id = g.night_id
+   where g.id = p_game_id;
   if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
-  select * into v_night from public.nights where id = v_night_id for update;
+  v_claim := public._live_claim_command(
+    v_night_id, p_command_id, v_receipt_run_id, 'start_live_game', v_hash,
+    p_expected_control_revision, p_game_id
+  );
+  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
 
-  v_retry := public._live_existing_command_result(v_night_id, p_command_id, v_hash);
-  if v_retry is not null then return v_retry; end if;
+  select * into v_night from public.nights where id = v_night_id for update;
   if v_night.answer_engine <> 'resilient_v1'
      or v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return jsonb_build_object('code', 'stale', 'applied', false);
+    return public._live_reject_command(v_night_id, p_command_id, 'stale');
   end if;
 
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
-  insert into public.live_command_receipts (
-    night_id, command_id, run_id, kind, request_hash, expected_control_revision,
-    expected_game_id
-  ) values (
-    v_night_id, p_command_id, p_run_id, 'start_live_game', v_hash,
-    p_expected_control_revision, p_game_id
-  ) on conflict do nothing;
-  get diagnostics v_rows = row_count;
-  if v_rows = 0 then
-    return public._live_existing_command_result(v_night_id, p_command_id, v_hash);
-  end if;
   if v_game.state <> 'ready' then
     return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
   end if;
@@ -271,6 +304,7 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_night_id uuid;
+  v_receipt_run_id uuid;
   v_night public.nights%rowtype;
   v_game public.games%rowtype;
   v_question public.questions%rowtype;
@@ -280,33 +314,28 @@ declare
   v_eligible integer;
   v_hash text := md5(concat_ws('|', 'open_question_play', p_game_id::text,
     p_question_id::text, p_run_id::text, p_expected_control_revision::text));
-  v_retry jsonb;
+  v_claim jsonb;
   v_result jsonb;
-  v_rows integer;
 begin
-  select night_id into v_night_id from public.games where id = p_game_id;
+  select g.night_id, n.current_run_id into v_night_id, v_receipt_run_id
+    from public.games g
+    join public.nights n on n.id = g.night_id
+   where g.id = p_game_id;
   if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  v_claim := public._live_claim_command(
+    v_night_id, p_command_id, v_receipt_run_id, 'open_question_play', v_hash,
+    p_expected_control_revision, p_game_id
+  );
+  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+
   select * into v_night from public.nights where id = v_night_id for update;
-  v_retry := public._live_existing_command_result(v_night_id, p_command_id, v_hash);
-  if v_retry is not null then return v_retry; end if;
   if v_night.answer_engine <> 'resilient_v1'
      or v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return jsonb_build_object('code', 'stale', 'applied', false);
+    return public._live_reject_command(v_night_id, p_command_id, 'stale');
   end if;
 
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
-  insert into public.live_command_receipts (
-    night_id, command_id, run_id, kind, request_hash, expected_control_revision,
-    expected_game_id
-  ) values (
-    v_night_id, p_command_id, p_run_id, 'open_question_play', v_hash,
-    p_expected_control_revision, p_game_id
-  ) on conflict do nothing;
-  get diagnostics v_rows = row_count;
-  if v_rows = 0 then
-    return public._live_existing_command_result(v_night_id, p_command_id, v_hash);
-  end if;
   if v_game.state <> 'live' then
     return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
   end if;
@@ -525,6 +554,7 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_night_id uuid;
+  v_receipt_run_id uuid;
   v_night public.nights%rowtype;
   v_game public.games%rowtype;
   v_play public.question_plays%rowtype;
@@ -532,33 +562,34 @@ declare
   v_hash text := md5(concat_ws('|', 'begin_question_play_final_window',
     p_game_id::text, p_play_id::text, p_run_id::text,
     p_expected_control_revision::text));
-  v_retry jsonb;
+  v_claim jsonb;
   v_result jsonb;
-  v_rows integer;
 begin
-  select night_id into v_night_id from public.games where id = p_game_id;
+  select g.night_id, n.current_run_id into v_night_id, v_receipt_run_id
+    from public.games g
+    join public.nights n on n.id = g.night_id
+   where g.id = p_game_id;
   if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  v_claim := public._live_claim_command(
+    v_night_id, p_command_id, v_receipt_run_id,
+    'begin_question_play_final_window', v_hash,
+    p_expected_control_revision, p_game_id
+  );
+  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+
   select * into v_night from public.nights where id = v_night_id for update;
-  v_retry := public._live_existing_command_result(v_night_id, p_command_id, v_hash);
-  if v_retry is not null then return v_retry; end if;
   if v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return jsonb_build_object('code', 'stale', 'applied', false);
+    return public._live_reject_command(v_night_id, p_command_id, 'stale');
   end if;
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
   select * into v_play from public.question_plays
    where id = p_play_id and night_id = v_night_id and run_id = p_run_id and game_id = p_game_id
    for update;
-  if not found then return jsonb_build_object('code', 'stale', 'applied', false); end if;
-  insert into public.live_command_receipts (
-    night_id, command_id, run_id, kind, request_hash, expected_control_revision,
-    expected_game_id, expected_play_id, expected_play_status
-  ) values (
-    v_night_id, p_command_id, p_run_id, 'begin_question_play_final_window', v_hash,
-    p_expected_control_revision, p_game_id, p_play_id, v_play.status
-  ) on conflict do nothing;
-  get diagnostics v_rows = row_count;
-  if v_rows = 0 then return public._live_existing_command_result(v_night_id, p_command_id, v_hash); end if;
+  if not found then return public._live_reject_command(v_night_id, p_command_id, 'stale'); end if;
+  update public.live_command_receipts
+     set expected_play_id = p_play_id, expected_play_status = v_play.status
+   where night_id = v_night_id and command_id = p_command_id;
   if v_play.status <> 'accepting' then
     return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
   end if;
@@ -738,38 +769,39 @@ as $$
 declare
   v_now timestamptz := clock_timestamp();
   v_night_id uuid;
+  v_receipt_run_id uuid;
   v_night public.nights%rowtype;
   v_game public.games%rowtype;
   v_play public.question_plays%rowtype;
   v_hash text := md5(concat_ws('|', 'undo_question_play', p_game_id::text,
     p_play_id::text, p_run_id::text, p_expected_control_revision::text));
-  v_retry jsonb;
+  v_claim jsonb;
   v_result jsonb;
-  v_rows integer;
 begin
-  select night_id into v_night_id from public.games where id = p_game_id;
+  select g.night_id, n.current_run_id into v_night_id, v_receipt_run_id
+    from public.games g
+    join public.nights n on n.id = g.night_id
+   where g.id = p_game_id;
   if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  v_claim := public._live_claim_command(
+    v_night_id, p_command_id, v_receipt_run_id, 'undo_question_play', v_hash,
+    p_expected_control_revision, p_game_id
+  );
+  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+
   select * into v_night from public.nights where id = v_night_id for update;
-  v_retry := public._live_existing_command_result(v_night_id, p_command_id, v_hash);
-  if v_retry is not null then return v_retry; end if;
   if v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return jsonb_build_object('code', 'stale', 'applied', false);
+    return public._live_reject_command(v_night_id, p_command_id, 'stale');
   end if;
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
   select * into v_play from public.question_plays
    where id = p_play_id and night_id = v_night_id and run_id = p_run_id and game_id = p_game_id
    for update;
-  if not found then return jsonb_build_object('code', 'stale', 'applied', false); end if;
-  insert into public.live_command_receipts (
-    night_id, command_id, run_id, kind, request_hash, expected_control_revision,
-    expected_game_id, expected_play_id, expected_play_status
-  ) values (
-    v_night_id, p_command_id, p_run_id, 'undo_question_play', v_hash,
-    p_expected_control_revision, p_game_id, p_play_id, v_play.status
-  ) on conflict do nothing;
-  get diagnostics v_rows = row_count;
-  if v_rows = 0 then return public._live_existing_command_result(v_night_id, p_command_id, v_hash); end if;
+  if not found then return public._live_reject_command(v_night_id, p_command_id, 'stale'); end if;
+  update public.live_command_receipts
+     set expected_play_id = p_play_id, expected_play_status = v_play.status
+   where night_id = v_night_id and command_id = p_command_id;
   if v_play.status in ('resolved', 'undone')
      or v_now > v_play.opened_at + interval '2 seconds' then
     return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
@@ -814,33 +846,31 @@ set search_path = pg_catalog, public
 as $$
 declare
   v_night_id uuid;
+  v_receipt_run_id uuid;
   v_night public.nights%rowtype;
   v_game public.games%rowtype;
   v_hash text := md5(concat_ws('|', 'end_live_game', p_game_id::text,
     p_run_id::text, p_expected_control_revision::text));
-  v_retry jsonb;
+  v_claim jsonb;
   v_result jsonb;
-  v_rows integer;
 begin
-  select night_id into v_night_id from public.games where id = p_game_id;
+  select g.night_id, n.current_run_id into v_night_id, v_receipt_run_id
+    from public.games g
+    join public.nights n on n.id = g.night_id
+   where g.id = p_game_id;
   if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  v_claim := public._live_claim_command(
+    v_night_id, p_command_id, v_receipt_run_id, 'end_live_game', v_hash,
+    p_expected_control_revision, p_game_id
+  );
+  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+
   select * into v_night from public.nights where id = v_night_id for update;
-  v_retry := public._live_existing_command_result(v_night_id, p_command_id, v_hash);
-  if v_retry is not null then return v_retry; end if;
   if v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return jsonb_build_object('code', 'stale', 'applied', false);
+    return public._live_reject_command(v_night_id, p_command_id, 'stale');
   end if;
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
-  insert into public.live_command_receipts (
-    night_id, command_id, run_id, kind, request_hash, expected_control_revision,
-    expected_game_id
-  ) values (
-    v_night_id, p_command_id, p_run_id, 'end_live_game', v_hash,
-    p_expected_control_revision, p_game_id
-  ) on conflict do nothing;
-  get diagnostics v_rows = row_count;
-  if v_rows = 0 then return public._live_existing_command_result(v_night_id, p_command_id, v_hash); end if;
   if v_game.state <> 'live' or exists (
     select 1 from public.question_plays qp
      where qp.game_id = p_game_id and qp.run_id = p_run_id
@@ -871,6 +901,7 @@ $$;
 
 revoke all on function public._live_scramble_for(uuid, uuid) from public, anon, authenticated;
 revoke all on function public._live_existing_command_result(uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public._live_claim_command(uuid, uuid, uuid, text, text, bigint, uuid) from public, anon, authenticated;
 revoke all on function public._live_reject_command(uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public.open_night_run(uuid, uuid, uuid, bigint) from public, anon, authenticated;
 revoke all on function public.start_live_game(uuid, uuid, uuid, bigint) from public, anon, authenticated;
@@ -883,6 +914,7 @@ revoke all on function public.end_live_game(uuid, uuid, uuid, bigint) from publi
 
 grant execute on function public._live_scramble_for(uuid, uuid) to service_role;
 grant execute on function public._live_existing_command_result(uuid, uuid, text) to service_role;
+grant execute on function public._live_claim_command(uuid, uuid, uuid, text, text, bigint, uuid) to service_role;
 grant execute on function public._live_reject_command(uuid, uuid, text) to service_role;
 grant execute on function public.open_night_run(uuid, uuid, uuid, bigint) to service_role;
 grant execute on function public.start_live_game(uuid, uuid, uuid, bigint) to service_role;

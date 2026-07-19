@@ -995,6 +995,118 @@ describe("authoritative live answer engine schema", () => {
       }
     });
 
+    test("keeps every stale host command rejected after the room reaches its requested revision", async () => {
+      const db = await freshDb();
+      const command = (suffix: string) => `50000000-0000-0000-0000-000000000${suffix}`;
+      try {
+        await seedLiveFixture(db);
+
+        const staleOpen = await rpc(
+          db,
+          "select public.open_night_run($1, $2, null::uuid, 1::bigint) as result",
+          [LIVE.night, command("101")],
+        );
+        expect(staleOpen).toMatchObject({ code: "stale", applied: false });
+        const opened = await openRun(db);
+        expect(await rpc(
+          db,
+          "select public.open_night_run($1, $2, null::uuid, 1::bigint) as result",
+          [LIVE.night, command("101")],
+        )).toEqual(staleOpen);
+
+        const staleStart = await rpc(
+          db,
+          "select public.start_live_game($1, $2, $3, 2::bigint) as result",
+          [LIVE.game, opened.runId, command("102")],
+        );
+        expect(staleStart).toMatchObject({ code: "stale", applied: false });
+        await startGame(db, opened.runId as string);
+        expect(await rpc(
+          db,
+          "select public.start_live_game($1, $2, $3, 2::bigint) as result",
+          [LIVE.game, opened.runId, command("102")],
+        )).toEqual(staleStart);
+
+        const staleOpenPlay = await rpc(
+          db,
+          "select public.open_question_play($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, LIVE.question, opened.runId, command("103")],
+        );
+        expect(staleOpenPlay).toMatchObject({ code: "stale", applied: false });
+        const play = await openPlay(db, opened.runId as string);
+        expect(await rpc(
+          db,
+          "select public.open_question_play($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, LIVE.question, opened.runId, command("103")],
+        )).toEqual(staleOpenPlay);
+
+        const staleFinal = await rpc(
+          db,
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 4::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, command("104")],
+        );
+        expect(staleFinal).toMatchObject({ code: "stale", applied: false });
+        await rpc(
+          db,
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.finalCommand],
+        );
+        expect(await rpc(
+          db,
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 4::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, command("104")],
+        )).toEqual(staleFinal);
+
+        const staleUndo = await rpc(
+          db,
+          "select public.undo_question_play($1, $2, $3, $4, 5::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, command("105")],
+        );
+        expect(staleUndo).toMatchObject({ code: "stale", applied: false });
+        await rpc(
+          db,
+          "select public.undo_question_play($1, $2, $3, $4, 4::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.undoCommand],
+        );
+        expect(await rpc(
+          db,
+          "select public.undo_question_play($1, $2, $3, $4, 5::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, command("105")],
+        )).toEqual(staleUndo);
+
+        const staleEnd = await rpc(
+          db,
+          "select public.end_live_game($1, $2, $3, 6::bigint) as result",
+          [LIVE.game, opened.runId, command("106")],
+        );
+        expect(staleEnd).toMatchObject({ code: "stale", applied: false });
+        await rpc(
+          db,
+          "select public.end_live_game($1, $2, $3, 5::bigint) as result",
+          [LIVE.game, opened.runId, LIVE.endCommand],
+        );
+        expect(await rpc(
+          db,
+          "select public.end_live_game($1, $2, $3, 6::bigint) as result",
+          [LIVE.game, opened.runId, command("106")],
+        )).toEqual(staleEnd);
+
+        const receipts = await db.query<{ status: string; count: number }>(
+          `select status, count(*)::int as count
+             from live_command_receipts
+            where command_id in ($1, $2, $3, $4, $5, $6)
+            group by status`,
+          [
+            command("101"), command("102"), command("103"),
+            command("104"), command("105"), command("106"),
+          ],
+        );
+        expect(receipts.rows).toEqual([{ status: "rejected", count: 6 }]);
+      } finally {
+        await db.close();
+      }
+    });
+
     test("opens a play with frozen eligibility, database deadlines, and monotonic control revisions", async () => {
       const db = await freshDb();
       try {
