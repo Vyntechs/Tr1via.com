@@ -46,6 +46,17 @@ import type {
   RevealRow,
 } from "@/lib/supabase/types";
 
+type SafePlayerRow = Pick<
+  PlayerRow,
+  | "id"
+  | "night_id"
+  | "display_name"
+  | "joined_at"
+  | "last_seen_at"
+  | "removed_at"
+  | "app_switch_total_seconds"
+>;
+
 const RECENT_REACTION_WINDOW_MS = 30_000;
 const RECENT_REACTION_LIMIT = 25;
 
@@ -82,7 +93,7 @@ export async function GET(
 
   // ── Authorize: host-owns-night OR device-cookie player in this night ──────
   let mode: "host" | "player";
-  let playerRow: PlayerRow | null = null;
+  let playerRow: SafePlayerRow | null = null;
 
   const hostAuth = await getAuthedHost();
   if (hostAuth.ok && (night as { host_id?: string }).host_id === hostAuth.host.id) {
@@ -101,7 +112,7 @@ export async function GET(
       .maybeSingle();
     if (!player) return forbidden("not a player in this room");
     mode = "player";
-    playerRow = player as PlayerRow;
+    playerRow = player as SafePlayerRow;
   }
 
   // ── Room state (same reads useRoom's bootstrap does, server-side) ─────────
@@ -148,7 +159,7 @@ export async function GET(
 
   const games = (gamesRes.data ?? []) as GameRow[];
   const categories = stripJoins(categoriesRes.data ?? [], "games") as CategoryRow[];
-  const players = ((playersRes.data ?? []) as PlayerRow[]).map(serializeRoomPlayer);
+  const players = ((playersRes.data ?? []) as SafePlayerRow[]).map(serializeRoomPlayer);
   const allQuestionsRaw = stripJoins(pickedRes.data ?? [], "categories") as QuestionRow[];
   const reveals = stripJoins(revealsRes.data ?? [], "games") as RevealRow[];
 
@@ -187,22 +198,22 @@ export async function GET(
       // counts + reveal data). A player must NOT see other players' picks while
       // the question is live — so player mode resolves to []. Explicit column
       // list (matches the TV route) so a future select("*") can't auto-ship a
-      // sensitive column, and it drops the over-exposed `scramble`.
+      // sensitive column.
       mode === "host" && targetQuestionId
         ? admin
             .from("answers")
             .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
             .eq("question_id", targetQuestionId)
-        : Promise.resolve({ data: [] as AnswerRow[], error: null }),
+        : Promise.resolve({ data: [], error: null }),
       mode === "player" && playerRow
         ? admin
             .from("answers")
             .select(
-              "id, player_id, question_id, chosen_index, ms_to_lock, is_correct, awarded_points, locked_at",
+              "id, player_id, question_id, chosen_index, scramble, ms_to_lock, is_correct, awarded_points, locked_at",
             )
             .eq("player_id", playerRow.id)
             .order("locked_at", { ascending: true })
-        : Promise.resolve({ data: [] as AnswerRow[], error: null }),
+        : Promise.resolve({ data: [], error: null }),
       mode === "player" && playerRow
         ? admin
             .from("game_participations")
@@ -230,10 +241,8 @@ export async function GET(
   if (myParticipationsRes.error) return serverError();
   if (roomMagicReactionsRes.error) return serverError();
 
-  const liveAnswers = ((liveAnswersRes.data ?? []) as AnswerRow[]).map(serializeHostLiveAnswer);
-  const myAnswers = ((myAnswersRes.data ?? []) as AnswerRow[]).map(
-    serializePlayerCanonicalAnswer,
-  );
+  const liveAnswers = (liveAnswersRes.data ?? []).map(serializeHostLiveAnswer);
+  const myAnswers = (myAnswersRes.data ?? []).map(serializePlayerCanonicalAnswer);
   const myParticipations = ((myParticipationsRes.data ?? []) as ParticipationRow[]).map(
     serializeParticipation,
   );

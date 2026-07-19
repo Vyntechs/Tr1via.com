@@ -1,4 +1,5 @@
-// roomSnapshotPayload — wire contract for the resilient server-route fallback.
+// roomSnapshotPayload — explicit wire contract and legacy-client adapters for
+// the resilient server-route fallback.
 
 import type {
   AnswerRow,
@@ -18,7 +19,6 @@ import {
   type HostLiveAnswer,
   type ParticipationDTO,
   type PlayerCanonicalAnswer,
-  type PlayerSelf,
   type RoomPlayer,
   type RoomQuestion,
 } from "./roomAudience";
@@ -44,7 +44,7 @@ interface RoomSnapshotBase {
 export type RoomSnapshotPayload = RoomSnapshotBase & (
   | {
       audience: "player";
-      self: PlayerSelf;
+      self: RoomPlayer;
       myAnswers: PlayerCanonicalAnswer[];
       myParticipations: ParticipationDTO[];
       liveAnswers?: never;
@@ -59,13 +59,10 @@ export type RoomSnapshotPayload = RoomSnapshotBase & (
 );
 
 /**
- * The fallback store is surface-local: a player route can only receive a
- * player payload and a host route can only receive a host payload. This bridge
- * preserves the existing client consumers while the wire payload stays strict.
+ * Local-only shape consumed by legacy fallback users. It is constructed below
+ * from every allowlisted DTO field; it is never used as the wire contract.
  */
 export interface RoomFallbackPayload {
-  audience: "player" | "host";
-  self: PlayerSelf | null;
   night: NightRow | null;
   hostDefaultThemeKey: string | null;
   games: GameRow[];
@@ -79,7 +76,7 @@ export interface RoomFallbackPayload {
   myParticipations: ParticipationRow[];
   scores: GameScoreRow[];
   liveAnswers: AnswerRow[];
-  roomMagicReactions?: RoomMagicReactionEvent[];
+  roomMagicReactions: RoomMagicReactionEvent[];
 }
 
 /** Map the route payload into the RoomSnapshot shape useRoom already produces. */
@@ -91,9 +88,7 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
     categories: payload.categories,
     players: payload.players.map(roomPlayerToRow),
     currentGame: pickCurrentGame(payload.games),
-    currentQuestion: payload.currentQuestion
-      ? roomQuestionToRow(payload.currentQuestion)
-      : null,
+    currentQuestion: payload.currentQuestion ? roomQuestionToRow(payload.currentQuestion) : null,
     lastResolvedQuestion: payload.lastResolvedQuestion
       ? roomQuestionToRow(payload.lastResolvedQuestion)
       : null,
@@ -106,35 +101,113 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
   };
 }
 
+/** Explicitly adapt the safe HTTP DTO for the existing fallback-only consumers. */
+export function toRoomFallbackPayload(payload: RoomSnapshotPayload): RoomFallbackPayload {
+  const common = {
+    night: payload.night,
+    hostDefaultThemeKey: payload.hostDefaultThemeKey,
+    games: payload.games,
+    categories: payload.categories,
+    players: payload.players.map(roomPlayerToRow),
+    currentQuestion: payload.currentQuestion ? roomQuestionToRow(payload.currentQuestion) : null,
+    lastResolvedQuestion: payload.lastResolvedQuestion
+      ? roomQuestionToRow(payload.lastResolvedQuestion)
+      : null,
+    currentReveal: payload.currentReveal,
+    allQuestions: payload.allQuestions.map(roomQuestionToRow),
+    scores: payload.scores,
+    roomMagicReactions: payload.roomMagicReactions ?? [],
+  };
+
+  if (payload.audience === "player") {
+    return {
+      ...common,
+      myAnswers: payload.myAnswers.map(playerCanonicalAnswerToRow),
+      myParticipations: payload.myParticipations.map(participationToRow),
+      liveAnswers: [],
+    };
+  }
+
+  return {
+    ...common,
+    myAnswers: [],
+    myParticipations: [],
+    liveAnswers: payload.liveAnswers.map(hostLiveAnswerToRow),
+  };
+}
+
 function roomPlayerToRow(player: RoomPlayer): PlayerRow {
   return {
     id: player.id,
-    night_id: player.night_id,
-    display_name: player.display_name,
-    joined_at: player.joined_at,
-    last_seen_at: player.last_seen_at,
-    removed_at: player.removed_at,
-    app_switch_total_seconds: player.app_switch_total_seconds,
-  } as PlayerRow;
+    night_id: player.nightId,
+    display_name: player.displayName,
+    joined_at: player.joinedAt,
+    last_seen_at: player.lastSeenAt,
+    removed_at: player.removedAt,
+    app_switch_total_seconds: player.appSwitchTotalSeconds,
+    // Room DTOs deliberately exclude bearer identity. Existing roster-only
+    // consumers require the generated row type, so use an inert local value.
+    device_id: "",
+  };
 }
 
 function roomQuestionToRow(question: RoomQuestion): QuestionRow {
-  const row: Omit<QuestionRow, "correct_index"> & { correct_index?: QuestionRow["correct_index"] } = {
+  return {
     id: question.id,
-    category_id: question.category_id,
+    category_id: question.categoryId,
     difficulty: question.difficulty,
-    fact_blurb: question.fact_blurb,
-    image_attribution: question.image_attribution,
-    image_source: question.image_source,
-    image_url: question.image_url,
-    is_picked: question.is_picked,
+    fact_blurb: question.factBlurb,
+    image_attribution: question.imageAttribution,
+    image_source: question.imageSource,
+    image_url: question.imageUrl,
+    is_picked: question.isPicked,
     options: question.options,
-    played_at: question.played_at,
-    finished_at: question.finished_at,
-    point_value: question.point_value,
+    played_at: question.playedAt,
+    finished_at: question.finishedAt,
+    point_value: question.pointValue,
     prompt: question.prompt,
     source: question.source,
+    // Consumers only inspect this after finish. A synthetic local value keeps
+    // their legacy type intact without adding a live answer to the wire DTO.
+    correct_index: question.correctIndex ?? 0,
   };
-  if (question.correct_index !== undefined) row.correct_index = question.correct_index;
-  return row as QuestionRow;
+}
+
+function playerCanonicalAnswerToRow(answer: PlayerCanonicalAnswer): AnswerRow {
+  return {
+    id: answer.id,
+    question_id: answer.questionId,
+    player_id: answer.playerId,
+    chosen_index: answer.chosenIndex,
+    scramble: answer.scramble,
+    locked_at: answer.lockedAt,
+    ms_to_lock: answer.msToLock,
+    is_correct: answer.isCorrect,
+    awarded_points: answer.awardedPoints,
+  };
+}
+
+function hostLiveAnswerToRow(answer: HostLiveAnswer): AnswerRow {
+  return {
+    id: answer.id,
+    question_id: answer.questionId,
+    player_id: answer.playerId,
+    chosen_index: answer.chosenIndex ?? 0,
+    // The host fallback never renders an answer's option order. This inert
+    // local value only satisfies the legacy raw-row consumer type.
+    scramble: [0, 1, 2, 3],
+    locked_at: "",
+    ms_to_lock: answer.msToLock,
+    is_correct: answer.isCorrect,
+    awarded_points: null,
+  };
+}
+
+function participationToRow(participation: ParticipationDTO): ParticipationRow {
+  return {
+    id: participation.id,
+    player_id: participation.playerId,
+    game_id: participation.gameId,
+    joined_at: participation.joinedAt,
+  };
 }

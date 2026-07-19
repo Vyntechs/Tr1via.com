@@ -16,8 +16,40 @@ import type { RoomSnapshotPayload } from "@/lib/room/roomSnapshotPayload";
 
 afterEach(() => __resetRoomFallbackForTests());
 
-const payload = (tag: string): RoomSnapshotPayload =>
-  ({ night: { id: tag } } as unknown as RoomSnapshotPayload);
+const payload = (tag: string): RoomSnapshotPayload => ({
+  audience: "player",
+  night: null,
+  hostDefaultThemeKey: null,
+  games: [],
+  categories: [],
+  players: [],
+  currentQuestion: null,
+  lastResolvedQuestion: null,
+  currentReveal: null,
+  allQuestions: [],
+  scores: [],
+  self: {
+    id: "player-1",
+    nightId: tag,
+    displayName: "Alice",
+    joinedAt: "2026-06-07T00:00:00Z",
+    lastSeenAt: "2026-06-07T00:00:00Z",
+    removedAt: null,
+    appSwitchTotalSeconds: 0,
+  },
+  myAnswers: [{
+    id: "answer-1",
+    questionId: "question-1",
+    playerId: "player-1",
+    chosenIndex: 2,
+    scramble: [2, 0, 3, 1],
+    lockedAt: "2026-06-07T00:00:01Z",
+    msToLock: 800,
+    isCorrect: null,
+    awardedPoints: null,
+  }],
+  myParticipations: [],
+});
 
 describe("roomFallbackStore", () => {
   it("starts not-in-backup-mode with no payload", () => {
@@ -32,7 +64,26 @@ describe("roomFallbackStore", () => {
     act(() => setBackupMode(true));
     act(() => publishRoomFallback(payload("n1")));
     expect(result.current.backupMode).toBe(true);
-    expect(result.current.payload?.night?.id).toBe("n1");
+    expect(result.current.payload).not.toBeNull();
+  });
+
+  it("adapts a player's canonical locked answer with its own scramble intact", () => {
+    act(() => {
+      setBackupMode(true);
+      publishRoomFallback(payload("n1"));
+    });
+
+    expect(getRoomFallback().payload?.myAnswers).toEqual([{
+      id: "answer-1",
+      question_id: "question-1",
+      player_id: "player-1",
+      chosen_index: 2,
+      scramble: [2, 0, 3, 1],
+      locked_at: "2026-06-07T00:00:01Z",
+      ms_to_lock: 800,
+      is_correct: null,
+      awarded_points: null,
+    }]);
   });
 
   it("clears the payload when backup mode turns off (recovery)", () => {

@@ -77,7 +77,9 @@ export async function POST(req: NextRequest) {
       },
       { onConflict: "night_id,device_id" },
     )
-    .select("*")
+    .select(
+      "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds",
+    )
     .single();
   if (error || !player) {
     return serverError();

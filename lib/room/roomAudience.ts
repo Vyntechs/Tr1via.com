@@ -1,23 +1,22 @@
 import type {
-  AnswerRow,
   ParticipationRow,
   PlayerRow,
   QuestionRow,
 } from "@/lib/supabase/types";
 
-/** The roster fields that are safe on a room-facing surface. */
-export interface RoomPlayer {
-  id: string;
-  night_id: string;
-  display_name: string;
-  joined_at: string;
-  last_seen_at: string;
-  removed_at: string | null;
-  app_switch_total_seconds: number;
-}
+type SafePlayerRow = Pick<
+  PlayerRow,
+  | "id"
+  | "night_id"
+  | "display_name"
+  | "joined_at"
+  | "last_seen_at"
+  | "removed_at"
+  | "app_switch_total_seconds"
+>;
 
-/** The signed-in player's safe identity, returned only to that player. */
-export interface PlayerSelf {
+/** The roster and player-self fields that are safe on a room-facing surface. */
+export interface RoomPlayer {
   id: string;
   nightId: string;
   displayName: string;
@@ -27,72 +26,74 @@ export interface PlayerSelf {
   appSwitchTotalSeconds: number;
 }
 
-/** A player's own answer. `scramble` is deliberately not part of this contract. */
 export interface PlayerCanonicalAnswer {
   id: string;
-  player_id: string;
+  questionId: string;
+  playerId: string;
+  chosenIndex: 0 | 1 | 2 | 3;
+  scramble: [number, number, number, number];
+  lockedAt: string;
+  msToLock: number;
+  isCorrect: boolean | null;
+  awardedPoints: number | null;
+}
+
+export interface HostLiveAnswer {
+  id: string;
+  questionId: string;
+  playerId: string;
+  msToLock: number;
+  chosenIndex: 0 | 1 | 2 | 3 | null;
+  isCorrect: boolean | null;
+}
+
+export interface ParticipationDTO {
+  id: string;
+  playerId: string;
+  gameId: string;
+  joinedAt: string;
+}
+
+export interface RoomQuestion {
+  id: string;
+  categoryId: string;
+  difficulty: number;
+  factBlurb: string | null;
+  imageAttribution: string | null;
+  imageSource: string | null;
+  imageUrl: string | null;
+  isPicked: boolean;
+  options: [string, string, string, string];
+  playedAt: string | null;
+  finishedAt: string | null;
+  pointValue: 100 | 200 | 300 | 400 | 500 | 600 | 700 | null;
+  prompt: string;
+  source: string;
+  correctIndex?: 0 | 1 | 2 | 3;
+}
+
+interface PlayerCanonicalAnswerSource {
+  id: string;
   question_id: string;
-  chosen_index: 0 | 1 | 2 | 3;
+  player_id: string;
+  chosen_index: number;
+  scramble: unknown;
+  locked_at: string;
   ms_to_lock: number;
   is_correct: boolean | null;
   awarded_points: number | null;
-  locked_at: string;
 }
 
-/** The subset of an answer the host needs for lock counts and reveals. */
-export interface HostLiveAnswer {
+interface HostLiveAnswerSource {
   id: string;
   question_id: string;
   player_id: string;
   ms_to_lock: number;
+  chosen_index: number | null;
   is_correct: boolean | null;
-  chosen_index: 0 | 1 | 2 | 3;
 }
 
-/** A participation row contains no browser identity and is safe for its owner. */
-export interface ParticipationDTO {
-  id: string;
-  player_id: string;
-  game_id: string;
-  joined_at: string;
-}
-
-/**
- * Question fields that can cross the room boundary. `correct_index` is only
- * present after resolution; the explicit construction makes future DB columns
- * fail closed instead of silently joining the wire contract.
- */
-export interface RoomQuestion {
-  id: string;
-  category_id: string;
-  difficulty: number;
-  fact_blurb: string | null;
-  image_attribution: string | null;
-  image_source: string | null;
-  image_url: string | null;
-  is_picked: boolean;
-  options: [string, string, string, string];
-  played_at: string | null;
-  finished_at: string | null;
-  point_value: 100 | 200 | 300 | 400 | 500 | 600 | 700 | null;
-  prompt: string;
-  source: string;
-  correct_index?: 0 | 1 | 2 | 3;
-}
-
-export function serializeRoomPlayer(player: PlayerRow): RoomPlayer {
-  return {
-    id: player.id,
-    night_id: player.night_id,
-    display_name: player.display_name,
-    joined_at: player.joined_at,
-    last_seen_at: player.last_seen_at,
-    removed_at: player.removed_at,
-    app_switch_total_seconds: player.app_switch_total_seconds,
-  };
-}
-
-export function serializePlayerSelf(player: PlayerRow): PlayerSelf {
+export function serializeRoomPlayer(player: SafePlayerRow): RoomPlayer {
   return {
     id: player.id,
     nightId: player.night_id,
@@ -104,67 +105,83 @@ export function serializePlayerSelf(player: PlayerRow): PlayerSelf {
   };
 }
 
-export function serializePlayerCanonicalAnswer(answer: AnswerRow): PlayerCanonicalAnswer {
+export function serializePlayerSelf(player: SafePlayerRow): RoomPlayer {
+  return serializeRoomPlayer(player);
+}
+
+export function serializePlayerCanonicalAnswer(
+  answer: PlayerCanonicalAnswerSource,
+): PlayerCanonicalAnswer {
   return {
     id: answer.id,
-    player_id: answer.player_id,
-    question_id: answer.question_id,
-    chosen_index: answer.chosen_index,
-    ms_to_lock: answer.ms_to_lock,
-    is_correct: answer.is_correct,
-    awarded_points: answer.awarded_points,
-    locked_at: answer.locked_at,
+    questionId: answer.question_id,
+    playerId: answer.player_id,
+    chosenIndex: optionIndex(answer.chosen_index),
+    scramble: answerScramble(answer.scramble),
+    lockedAt: answer.locked_at,
+    msToLock: answer.ms_to_lock,
+    isCorrect: answer.is_correct,
+    awardedPoints: answer.awarded_points,
   };
 }
 
-export function serializeHostLiveAnswer(answer: AnswerRow): HostLiveAnswer {
+export function serializeHostLiveAnswer(
+  answer: HostLiveAnswerSource,
+): HostLiveAnswer {
   return {
     id: answer.id,
-    question_id: answer.question_id,
-    player_id: answer.player_id,
-    ms_to_lock: answer.ms_to_lock,
-    is_correct: answer.is_correct,
-    chosen_index: answer.chosen_index,
+    questionId: answer.question_id,
+    playerId: answer.player_id,
+    msToLock: answer.ms_to_lock,
+    chosenIndex: answer.chosen_index === null ? null : optionIndex(answer.chosen_index),
+    isCorrect: answer.is_correct,
   };
 }
 
-export function serializeParticipation(participation: ParticipationRow): ParticipationDTO {
+export function serializeParticipation(
+  participation: Pick<ParticipationRow, "id" | "player_id" | "game_id" | "joined_at">,
+): ParticipationDTO {
   return {
     id: participation.id,
-    player_id: participation.player_id,
-    game_id: participation.game_id,
-    joined_at: participation.joined_at,
+    playerId: participation.player_id,
+    gameId: participation.game_id,
+    joinedAt: participation.joined_at,
   };
 }
 
 export function serializeRoomQuestion(question: QuestionRow): RoomQuestion {
   const serialized: RoomQuestion = {
     id: question.id,
-    category_id: question.category_id,
+    categoryId: question.category_id,
     difficulty: question.difficulty,
-    fact_blurb: question.fact_blurb,
-    image_attribution: question.image_attribution,
-    image_source: question.image_source,
-    image_url: question.image_url,
-    is_picked: question.is_picked,
+    factBlurb: question.fact_blurb,
+    imageAttribution: question.image_attribution,
+    imageSource: question.image_source,
+    imageUrl: question.image_url,
+    isPicked: question.is_picked,
     options: question.options,
-    played_at: question.played_at,
-    finished_at: question.finished_at,
-    point_value: question.point_value,
+    playedAt: question.played_at,
+    finishedAt: question.finished_at,
+    pointValue: question.point_value,
     prompt: question.prompt,
     source: question.source,
   };
-
-  if (question.finished_at !== null) {
-    serialized.correct_index = question.correct_index;
-  } else {
-    // Keep the in-process helper compatible with legacy callers that read the
-    // field, while keeping it absent from JSON and therefore off the wire.
-    Object.defineProperty(serialized, "correct_index", {
-      value: null,
-      enumerable: false,
-    });
-  }
-
+  if (question.finished_at !== null) serialized.correctIndex = question.correct_index;
   return serialized;
+}
+
+function optionIndex(value: number): 0 | 1 | 2 | 3 {
+  if (value === 0 || value === 1 || value === 2 || value === 3) return value;
+  throw new Error("invalid answer index");
+}
+
+function answerScramble(value: unknown): [number, number, number, number] {
+  if (
+    Array.isArray(value) &&
+    value.length === 4 &&
+    value.every((entry) => typeof entry === "number")
+  ) {
+    return [value[0], value[1], value[2], value[3]];
+  }
+  throw new Error("invalid answer scramble");
 }

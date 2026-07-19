@@ -21,7 +21,7 @@ const HOST_ID = "host-1";
 const DEVICE_ID = "DEVICE-ID-LEAK";
 const PLAYER_ID = "P1";
 const DEVICE_ID_LEAK = "DEVICE-ID-LEAK";
-const SCRAMBLE_LEAK = "SCRAMBLE-LEAK";
+const SCRAMBLE = [3, 1, 0, 2];
 
 // Chainable, awaitable query stub. Real columns filter; join-path filters
 // (keys containing ".") are no-ops since the seed rows are already night-scoped.
@@ -104,7 +104,7 @@ function makeAdmin(errorTable?: string) {
     game_scores: [],
     answers: [{
       id: "a1", player_id: PLAYER_ID, question_id: "q-resolved",
-      chosen_index: 3, scramble: SCRAMBLE_LEAK, ms_to_lock: 1200,
+      chosen_index: 3, scramble: SCRAMBLE, ms_to_lock: 1200,
       is_correct: true, awarded_points: 500, locked_at: "2026-06-07T00:00:10Z",
     }, {
       // Another player's answer on the LIVE question — the anti-cheat target:
@@ -159,15 +159,15 @@ describe("GET /api/room/[code]/snapshot", () => {
     const body = await res.json();
 
     expect(body.currentQuestion.id).toBe("q-live");
-    expect(body.currentQuestion).not.toHaveProperty("correct_index");
+    expect(body.currentQuestion).not.toHaveProperty("correctIndex");
     expect(body.lastResolvedQuestion.id).toBe("q-resolved");
-    expect(body.lastResolvedQuestion.correct_index).toBe(3);
+    expect(body.lastResolvedQuestion.correctIndex).toBe(3);
 
     // Board withholds the live answer index entirely.
     const allJson = JSON.stringify(body.allQuestions);
     expect(body.allQuestions.find((question: { id: string }) => question.id === "q-live"))
-      .not.toHaveProperty("correct_index");
-    expect(allJson).toContain('"correct_index":3');
+      .not.toHaveProperty("correctIndex");
+    expect(allJson).toContain('"correctIndex":3');
 
     // Player's own data present.
     expect(body).toMatchObject({
@@ -175,11 +175,17 @@ describe("GET /api/room/[code]/snapshot", () => {
       self: { id: PLAYER_ID, displayName: "Alice" },
     });
     expect(body.myAnswers).toHaveLength(1);
+    expect(body.myAnswers[0]).toMatchObject({
+      questionId: "q-resolved",
+      playerId: PLAYER_ID,
+      chosenIndex: 3,
+      scramble: SCRAMBLE,
+    });
     expect(body.myParticipations).toHaveLength(1);
     expect(body.roomMagicReactions).toEqual([]);
   });
 
-  it("PLAYER mode: never exposes a browser identity, answer scramble, or another player's live choice", async () => {
+  it("PLAYER mode: exposes only its own scrambled answer and never another player's live choice", async () => {
     authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
     authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
     const res = await callRoute();
@@ -189,7 +195,7 @@ describe("GET /api/room/[code]/snapshot", () => {
 
     expect(json).not.toContain(DEVICE_ID_LEAK);
     expect(json).not.toContain("OTHER-DEVICE-ID-LEAK");
-    expect(json).not.toContain(SCRAMBLE_LEAK);
+    expect(body.myAnswers[0].scramble).toEqual(SCRAMBLE);
     expect(json).not.toContain('"id":"a2"');
     expect(body).not.toHaveProperty("liveAnswers");
   });
@@ -200,8 +206,8 @@ describe("GET /api/room/[code]/snapshot", () => {
     const res = await callRoute();
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.currentQuestion).not.toHaveProperty("correct_index");
-    expect(body.lastResolvedQuestion.correct_index).toBe(3);
+    expect(body.currentQuestion).not.toHaveProperty("correctIndex");
+    expect(body.lastResolvedQuestion.correctIndex).toBe(3);
     // Host mode carries no player-scoped data.
     expect(body).toMatchObject({ audience: "host", self: null });
     expect(body).not.toHaveProperty("myAnswers");
@@ -247,10 +253,10 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(body.liveAnswers).toHaveLength(1);
     expect(body.liveAnswers[0].id).toBe("a2");
     // The host needs chosen_index for lock counts / reveal data.
-    expect(body.liveAnswers[0].chosen_index).toBe(0);
+    expect(body.liveAnswers[0].chosenIndex).toBe(0);
     // And question_id, so host fallback mode can still match answers to the
     // live question when deciding whether every eligible player has locked.
-    expect(body.liveAnswers[0].question_id).toBe("q-live");
+    expect(body.liveAnswers[0].questionId).toBe("q-live");
   });
 
   it("a signed-in host who does NOT own the night falls through to player auth", async () => {

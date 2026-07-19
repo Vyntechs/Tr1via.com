@@ -36,16 +36,16 @@ function rawQuestion(over: Partial<QuestionRow> & { id: string }): QuestionRow {
 }
 
 describe("serializeRoomQuestion — correct_index gating", () => {
-  it("withholds correct_index for an unplayed question", () => {
+  it("omits correctIndex for an unplayed question", () => {
     const q = serializeRoomQuestion(rawQuestion({ id: "q", played_at: null, finished_at: null, correct_index: 2 }));
-    expect(q.correct_index).toBeNull();
+    expect(q).not.toHaveProperty("correctIndex");
   });
 
-  it("withholds correct_index for a LIVE (played, not finished) question", () => {
+  it("omits correctIndex for a LIVE (played, not finished) question", () => {
     const q = serializeRoomQuestion(
       rawQuestion({ id: "q", played_at: "2026-06-07T00:00:00Z", finished_at: null, correct_index: 1 }),
     );
-    expect(q.correct_index).toBeNull();
+    expect(q).not.toHaveProperty("correctIndex");
   });
 
   it("exposes correct_index once the question is RESOLVED", () => {
@@ -57,7 +57,7 @@ describe("serializeRoomQuestion — correct_index gating", () => {
         correct_index: 3,
       }),
     );
-    expect(q.correct_index).toBe(3);
+    expect(q.correctIndex).toBe(3);
   });
 
   it("preserves all non-answer fields", () => {
@@ -78,7 +78,7 @@ describe("serializeRoomQuestion — correct_index gating", () => {
     const json = JSON.stringify(serializeRoomQuestion(row));
     expect(json).not.toContain("DEVICE-ID-LEAK");
     expect(json).not.toContain("SUBMISSION-ID-LEAK");
-    expect(json).not.toContain('"correct_index"');
+    expect(json).not.toContain('"correctIndex"');
   });
 });
 

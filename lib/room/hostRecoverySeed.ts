@@ -1,6 +1,5 @@
 import type {
   RoomFallbackPayload,
-  RoomSnapshotPayload,
 } from "@/lib/room/roomSnapshotPayload";
 
 /**
@@ -21,8 +20,8 @@ import type {
 export function hostRecoverySeed(
   prevBackupMode: boolean,
   backupMode: boolean,
-  lastPayload: RoomFallbackPayload | RoomSnapshotPayload | null,
+  lastPayload: RoomFallbackPayload | null,
 ): RoomFallbackPayload | null {
   const isRecovery = prevBackupMode && !backupMode;
-  return isRecovery ? (lastPayload as unknown as RoomFallbackPayload) : null;
+  return isRecovery ? lastPayload : null;
 }
