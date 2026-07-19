@@ -60,6 +60,7 @@ export default async function HostLayout({ children }: { children: ReactNode }) 
   return (
     <ThemeProvider themeKey={themeKey}>
       <div
+        data-host-layout="true"
         style={{
           minHeight: "100dvh",
           width: "100%",

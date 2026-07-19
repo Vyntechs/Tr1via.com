@@ -11,10 +11,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
+import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
+import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
+import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { HostPhoneUpcoming, HostPhoneLive, type HostPhoneLivePlayer } from "@/components/host";
 import { Eyebrow, ThemeProvider, useTheme } from "@/components/system";
-import type { AnswerRow, QuestionRow } from "@/lib/supabase/types";
+import type { AnswerRow, GameScoreRow, QuestionRow } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 const UNDO_WINDOW_MS = 2_000;
@@ -33,10 +36,51 @@ export function HostPhoneClient({
   themeKey,
 }: HostPhoneClientProps) {
   const room = useRoom({ roomCode, audience: "host" });
-  const [allQuestions, setAllQuestions] = useState<QuestionRow[]>([]);
-  const [answers, setAnswers] = useState<AnswerRow[]>([]);
-  const [stagedQuestionId, setStagedQuestionId] = useState<string | null>(null);
-  const [lastRevealAt, setLastRevealAt] = useState<number | null>(null);
+  const [directAllQuestions, setDirectAllQuestions] = useState<QuestionRow[]>([]);
+  const [directAnswers, setDirectAnswers] = useState<AnswerRow[]>([]);
+  const [directScoreSnapshot, setDirectScoreSnapshot] = useState<{
+    eligibilityKey: string;
+    rows: GameScoreRow[];
+  } | null>(null);
+  const { backupMode, payload: fallbackPayload } = useRoomFallback();
+  const sourceQuestions =
+    backupMode && fallbackPayload ? fallbackPayload.allQuestions : directAllQuestions;
+  const allQuestions = useMemo(
+    () =>
+      sourceQuestions.map((question) => {
+        if (question.id === room.currentQuestion?.id) {
+          return { ...question, played_at: room.currentQuestion.played_at };
+        }
+        if (
+          !room.currentQuestion &&
+          room.lastBroadcast?.event === "undo" &&
+          question.id === room.lastBroadcast.questionId
+        ) {
+          return { ...question, played_at: null, finished_at: null };
+        }
+        return question;
+      }),
+    [room.currentQuestion, room.lastBroadcast, sourceQuestions],
+  );
+  const answers = useMemo(
+    () =>
+      backupMode && fallbackPayload
+        ? fallbackPayload.liveAnswers
+        : room.currentQuestion
+          ? directAnswers.filter(
+              (answer) => answer.question_id === room.currentQuestion?.id,
+            )
+          : [],
+    [backupMode, directAnswers, fallbackPayload, room.currentQuestion],
+  );
+  const scores = useMemo(
+    () =>
+      backupMode && fallbackPayload
+        ? fallbackPayload.scores
+        : directScoreSnapshot?.rows ?? [],
+    [backupMode, directScoreSnapshot, fallbackPayload],
+  );
+  const [preferredQuestionId, setPreferredQuestionId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmingEnd, setConfirmingEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,7 +106,7 @@ export function HostPhoneClient({
         .eq("is_picked", true);
       if (cancelled) return;
       const rows = (qData as QuestionRow[] | null) ?? [];
-      setAllQuestions(
+      setDirectAllQuestions(
         rows.map((question) =>
           question.id === room.currentQuestion?.id
             ? { ...question, played_at: room.currentQuestion.played_at }
@@ -77,10 +121,7 @@ export function HostPhoneClient({
 
   // Subscribe to answers for the live question, for the lock-in counter.
   useEffect(() => {
-    if (!room.currentQuestion) {
-      setAnswers([]);
-      return;
-    }
+    if (!room.currentQuestion) return;
     const supa = getSupabaseBrowser();
     let cancelled = false;
     async function load() {
@@ -90,7 +131,7 @@ export function HostPhoneClient({
         .select("*")
         .eq("question_id", room.currentQuestion.id);
       if (cancelled) return;
-      setAnswers(((data as AnswerRow[] | null) ?? []));
+      setDirectAnswers(((data as AnswerRow[] | null) ?? []));
     }
     void load();
     const channel = supa
@@ -112,48 +153,61 @@ export function HostPhoneClient({
     };
   }, [room.currentQuestion]);
 
-  // Track the last reveal timestamp for the undo window.
-  useEffect(() => {
-    if (room.lastBroadcast?.event === "reveal") {
-      setLastRevealAt(new Date(room.lastBroadcast.serverNow).getTime());
-    }
-  }, [room.lastBroadcast]);
+  const activePlayerIdSignature = useMemo(
+    () => room.players.map((player) => player.id).sort().join(","),
+    [room.players],
+  );
 
-  // Keep the staging pool aligned with the live snapshot. The initial query
-  // is intentionally broad and does not rerun after every reveal, so mirror
-  // the authoritative played/undo transitions locally to advance instantly.
   useEffect(() => {
-    const liveQuestion = room.currentQuestion;
-    if (liveQuestion) {
-      setAllQuestions((previous) =>
-        previous.map((question) =>
-          question.id === liveQuestion.id
-            ? { ...question, played_at: liveQuestion.played_at }
-            : question,
-        ),
-      );
-      return;
+    const gameId = room.currentGame?.id;
+    if (!gameId) return;
+    const activeGameId = gameId;
+    const eligibilityKey = `${activeGameId}:${activePlayerIdSignature}`;
+    const supa = getSupabaseBrowser();
+    let cancelled = false;
+    async function load() {
+      const { data } = await supa
+        .from("game_scores")
+        .select("*")
+        .eq("game_id", activeGameId)
+        .order("score", { ascending: false });
+      if (cancelled) return;
+      setDirectScoreSnapshot({
+        eligibilityKey,
+        rows: (data as GameScoreRow[] | null) ?? [],
+      });
     }
-    if (room.lastBroadcast?.event === "undo") {
-      const undoneId = room.lastBroadcast.questionId;
-      setAllQuestions((previous) =>
-        previous.map((question) =>
-          question.id === undoneId
-            ? { ...question, played_at: null, finished_at: null }
-            : question,
-        ),
-      );
-      setStagedQuestionId(undoneId);
-    }
-  }, [room.currentQuestion, room.lastBroadcast]);
-  const [, setTick] = useState(0);
+    void load();
+    const channel = supa
+      .channel(`host-phone-scores:${activeGameId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "answers" }, () => void load())
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "game_participations", filter: `game_id=eq.${activeGameId}` },
+        () => void load(),
+      )
+      .subscribe();
+    return () => {
+      cancelled = true;
+      void supa.removeChannel(channel);
+    };
+  }, [activePlayerIdSignature, room.currentGame?.id]);
+
+  const lastRevealAt =
+    room.lastBroadcast?.event === "reveal"
+      ? new Date(room.lastBroadcast.serverNow).getTime()
+      : room.currentQuestion?.played_at
+        ? new Date(room.currentQuestion.played_at).getTime()
+        : null;
+  const [clockMs, setClockMs] = useState(0);
   useEffect(() => {
     if (!lastRevealAt) return;
-    const handle = setInterval(() => setTick((n) => n + 1), 250);
+    const handle = setInterval(() => setClockMs(Date.now()), 250);
     return () => clearInterval(handle);
   }, [lastRevealAt]);
   const canUndo =
-    lastRevealAt !== null && Date.now() - lastRevealAt < UNDO_WINDOW_MS;
+    lastRevealAt !== null &&
+    (clockMs === 0 || clockMs - lastRevealAt < UNDO_WINDOW_MS);
 
   // `pickCurrentGame` intentionally holds the just-completed game during an
   // intermission. The private host controller instead advances to the next
@@ -193,23 +247,18 @@ export function HostPhoneClient({
 
   // Stage the next question when the room idles (no live question).
   const nextUnplayedId = unplayedControlQuestions[0]?.id ?? null;
-
-  useEffect(() => {
-    if (room.currentQuestion) return;
-    if (room.lastBroadcast?.event === "undo") {
-      if (stagedQuestionId !== room.lastBroadcast.questionId) {
-        setStagedQuestionId(room.lastBroadcast.questionId);
-      }
-      return;
-    }
-    if (
-      stagedQuestionId &&
-      unplayedControlQuestions.some((question) => question.id === stagedQuestionId)
-    ) {
-      return;
-    }
-    setStagedQuestionId(nextUnplayedId);
-  }, [room.currentQuestion, room.lastBroadcast, stagedQuestionId, nextUnplayedId, unplayedControlQuestions]);
+  const undoneQuestionId =
+    !room.currentQuestion && room.lastBroadcast?.event === "undo"
+      ? room.lastBroadcast.questionId
+      : null;
+  const stagedQuestionId =
+    undoneQuestionId ??
+    (preferredQuestionId &&
+    unplayedControlQuestions.some(
+      (question) => question.id === preferredQuestionId,
+    )
+      ? preferredQuestionId
+      : nextUnplayedId);
 
   // Live timer for the question.
   const timer = useTimer({
@@ -253,22 +302,28 @@ export function HostPhoneClient({
     }
   }
 
-  async function endEarly() {
-    if (!room.currentGame || !room.currentQuestion) return;
+  async function endEarly(requireAllLocked = false): Promise<boolean> {
+    if (!room.currentGame || !room.currentQuestion) return false;
     setBusy(true);
     setError(null);
     try {
       const res = await fetch(`/api/games/${room.currentGame.id}/end-early`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId: room.currentQuestion.id }),
+        body: JSON.stringify({
+          questionId: room.currentQuestion.id,
+          ...(requireAllLocked ? { requireAllLocked: true } : {}),
+        }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (requireAllLocked && res.status === 409) return false;
         throw new Error(body.error ?? "end-early failed");
       }
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-early failed.");
+      return true;
     } finally {
       setBusy(false);
     }
@@ -323,6 +378,32 @@ export function HostPhoneClient({
         : null,
     }));
   const currentGame = controlGame;
+  const directEligibilityKey = room.currentGame
+    ? `${room.currentGame.id}:${activePlayerIdSignature}`
+    : null;
+  const eligibilityReadyKey =
+    backupMode && fallbackPayload
+      ? directEligibilityKey
+      : directScoreSnapshot?.eligibilityKey ?? null;
+  const allLockedDecision = useMemo(
+    () =>
+      deriveAllLockedAutoRevealDecision({
+        currentGameId: room.currentGame?.id ?? null,
+        liveQuestionId: room.currentQuestion?.id ?? null,
+        activePlayerIds: room.players.map((player) => player.id),
+        scoreRows:
+          directEligibilityKey && eligibilityReadyKey === directEligibilityKey
+            ? scores
+            : null,
+        answers,
+      }),
+    [answers, directEligibilityKey, eligibilityReadyKey, room.currentGame?.id, room.currentQuestion?.id, room.players, scores],
+  );
+  useAllLockedAutoReveal({
+    questionId: room.currentQuestion?.id ?? null,
+    decision: allLockedDecision,
+    onAutoReveal: () => endEarly(true),
+  });
   const allGamesEnded = room.games.length > 0 && room.games.every((game) => game.state === "done");
   const roundControls = (
     <PhoneRoundControls
@@ -420,7 +501,7 @@ export function HostPhoneClient({
           const pool = unplayedControlQuestions;
           const idx = pool.findIndex((q) => q.id === stagedQuestionId);
           const next = pool[(idx + 1) % pool.length];
-          setStagedQuestionId(next?.id ?? null);
+          setPreferredQuestionId(next?.id ?? null);
         }}
         isRevealing={busy}
       />
@@ -433,18 +514,13 @@ function PhoneCenter({ children, controls }: { children: React.ReactNode; contro
   // The host's phone view should fill the device. We don't add a faux
   // phone chrome here — this isn't the dev gallery — and just lean on the
   // PhoneScreen component's inner padding.
-  //
-  // The AccountChip is hidden on this in-hand surface (see AccountChip), but
-  // HostLayout still reserves its top strip (--host-chip-reserve). The
-  // negative margin cancels that leftover padding so the phone keeps filling
-  // the device with no extra scroll.
   return (
     <div
       data-host-mobile-surface="true"
+      data-host-full-bleed="true"
       style={{
         minHeight: "100dvh",
         height: "100dvh",
-        marginTop: "calc(-1 * var(--host-chip-reserve, 0px))",
         display: "flex",
         flexDirection: "column",
         background: "var(--paper)",

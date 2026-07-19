@@ -232,6 +232,7 @@ function HostGenOverviewInner({
                     <Numeric size={12} color={t.inkMid}>{s.count}</Numeric>
                     <button
                       type="button"
+                      data-mobile-touch-target={mobile ? "true" : undefined}
                       aria-label={`Use ${s.name}`}
                       onClick={() => onUseSuggestion?.(s.name)}
                       disabled={!onUseSuggestion}

@@ -584,7 +584,7 @@ function PickSidebar({
   const rows = slots.map((v) => {
     const filled = byTier[v];
     if (!filled) {
-      return <EmptyBoardSlotRow key={v} slot={v} reserveGrip={dndEnabled} />;
+      return <EmptyBoardSlotRow key={v} slot={v} reserveGrip={dndEnabled} mobile={mobile} />;
     }
     const common = {
       slot: v,
@@ -592,6 +592,7 @@ function PickSidebar({
       cc,
       onEdit,
       onUnpick,
+      mobile,
     };
     return dndEnabled ? (
       <SortableBoardSlotRow key={filled.id} {...common} />
@@ -672,6 +673,7 @@ function BoardSlotContent({
   grip,
   onEdit,
   onUnpick,
+  mobile,
 }: {
   slot: number;
   q: HostGenPickQuestion;
@@ -680,23 +682,28 @@ function BoardSlotContent({
   grip: React.ReactNode | null;
   onEdit?: (questionId: string) => void;
   onUnpick?: (questionId: string) => void;
+  mobile: boolean;
 }) {
   const { t } = useTheme();
-  const cols = [
-    grip !== null ? SLOT_GRIP_COL : null,
-    SLOT_VALUE_COL,
-    "1fr",
-    onEdit || onUnpick ? "auto" : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const cols = mobile
+    ? grip !== null
+      ? "44px 44px minmax(0, 1fr)"
+      : "44px minmax(0, 1fr)"
+    : [
+        grip !== null ? SLOT_GRIP_COL : null,
+        SLOT_VALUE_COL,
+        "1fr",
+        onEdit || onUnpick ? "auto" : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
   return (
     <div
       style={{
         display: "grid",
         gridTemplateColumns: cols,
         alignItems: "center",
-        gap: 10,
+        gap: mobile ? 8 : 10,
         padding: "10px 12px",
         borderRadius: 10,
         background: t.dark ? `${cc}10` : `${cc}06`,
@@ -710,7 +717,7 @@ function BoardSlotContent({
         <div style={{ marginTop: 2, fontSize: 10, color: t.inkMute, fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>{q.options[q.correctIndex]}</div>
       </div>
       {(onEdit || onUnpick) && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, gridColumn: mobile ? "2 / -1" : undefined }}>
           {onEdit && (
             <button
               type="button"
@@ -718,7 +725,8 @@ function BoardSlotContent({
               aria-label={`Edit the ${slot}-point question`}
               title="Edit this question"
               data-testid={`pick-sidebar-edit-${slot}`}
-              style={slotIconButtonStyle(t.line, t.inkMid)}
+              data-mobile-touch-target={mobile ? "true" : undefined}
+              style={slotIconButtonStyle(t.line, t.inkMid, mobile)}
             >
               <PencilGlyph />
             </button>
@@ -730,7 +738,8 @@ function BoardSlotContent({
               aria-label={`Remove from slot ${slot}`}
               title={`Remove (slot ${slot} opens up)`}
               data-testid={`pick-sidebar-unpick-${slot}`}
-              style={{ ...slotIconButtonStyle(t.line, t.inkMid), fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}
+              data-mobile-touch-target={mobile ? "true" : undefined}
+              style={{ ...slotIconButtonStyle(t.line, t.inkMid, mobile), fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}
             >
               ×
             </button>
@@ -747,6 +756,7 @@ function StaticBoardSlotRow(props: {
   cc: string;
   onEdit?: (questionId: string) => void;
   onUnpick?: (questionId: string) => void;
+  mobile: boolean;
 }) {
   return <BoardSlotContent {...props} grip={null} />;
 }
@@ -757,12 +767,14 @@ function SortableBoardSlotRow({
   cc,
   onEdit,
   onUnpick,
+  mobile,
 }: {
   slot: number;
   q: HostGenPickQuestion;
   cc: string;
   onEdit?: (questionId: string) => void;
   onUnpick?: (questionId: string) => void;
+  mobile: boolean;
 }) {
   const { t } = useTheme();
   const {
@@ -780,11 +792,12 @@ function SortableBoardSlotRow({
       aria-label={`Drag to reorder the ${slot}-point question`}
       title="Drag to reorder"
       data-testid={`pick-sidebar-drag-${slot}`}
+      data-mobile-touch-target={mobile ? "true" : undefined}
       {...attributes}
       {...listeners}
       style={{
-        width: 18,
-        height: 24,
+        width: mobile ? 44 : 18,
+        height: mobile ? 44 : 24,
         border: "none",
         background: "transparent",
         color: t.inkMute,
@@ -818,6 +831,7 @@ function SortableBoardSlotRow({
         grip={grip}
         onEdit={onEdit}
         onUnpick={onUnpick}
+        mobile={mobile}
       />
     </div>
   );
@@ -826,16 +840,22 @@ function SortableBoardSlotRow({
 function EmptyBoardSlotRow({
   slot,
   reserveGrip,
+  mobile,
 }: {
   slot: number;
   /** Render an empty grip-width gutter so columns line up with filled rows
    *  while dragging is enabled. */
   reserveGrip: boolean;
+  mobile: boolean;
 }) {
   const { t } = useTheme();
-  const cols = [reserveGrip ? SLOT_GRIP_COL : null, SLOT_VALUE_COL, "1fr"]
-    .filter(Boolean)
-    .join(" ");
+  const cols = mobile
+    ? reserveGrip
+      ? "44px 44px minmax(0, 1fr)"
+      : "44px minmax(0, 1fr)"
+    : [reserveGrip ? SLOT_GRIP_COL : null, SLOT_VALUE_COL, "1fr"]
+        .filter(Boolean)
+        .join(" ");
   return (
     <div
       style={{
@@ -856,10 +876,10 @@ function EmptyBoardSlotRow({
   );
 }
 
-function slotIconButtonStyle(border: string, color: string): React.CSSProperties {
+function slotIconButtonStyle(border: string, color: string, mobile = false): React.CSSProperties {
   return {
-    width: 24,
-    height: 24,
+    width: mobile ? 44 : 24,
+    height: mobile ? 44 : 24,
     borderRadius: 99,
     border: `1px solid ${border}`,
     background: "transparent",

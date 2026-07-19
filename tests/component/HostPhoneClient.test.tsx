@@ -2,12 +2,26 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
 import type { RoomSnapshot } from "@/lib/hooks/useRoom";
-import type { CategoryRow, GameRow, NightRow, QuestionRow } from "@/lib/supabase/types";
+import type {
+  AnswerRow,
+  CategoryRow,
+  GameRow,
+  GameScoreRow,
+  NightRow,
+  PlayerRow,
+  QuestionRow,
+} from "@/lib/supabase/types";
+import type { RoomFallbackPayload } from "@/lib/room/roomSnapshotPayload";
 
 const h = vi.hoisted(() => ({
   room: null as RoomSnapshot | null,
   questions: [] as QuestionRow[],
   fetch: vi.fn(),
+  fallback: { backupMode: false, payload: null as RoomFallbackPayload | null },
+  autoRevealOptions: null as {
+    decision: { complete: boolean; eligibleCount: number; lockedCount: number } | null;
+    onAutoReveal: () => unknown;
+  } | null,
 }));
 
 vi.mock("@/lib/hooks/useRoom", () => ({
@@ -16,6 +30,16 @@ vi.mock("@/lib/hooks/useRoom", () => ({
 
 vi.mock("@/lib/hooks/useTimer", () => ({
   useTimer: () => ({ secondsRemaining: 14 }),
+}));
+
+vi.mock("@/lib/room/roomFallbackStore", () => ({
+  useRoomFallback: () => h.fallback,
+}));
+
+vi.mock("@/lib/hooks/useAllLockedAutoReveal", () => ({
+  useAllLockedAutoReveal: (options: typeof h.autoRevealOptions) => {
+    h.autoRevealOptions = options;
+  },
 }));
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -37,16 +61,28 @@ vi.mock("@/lib/supabase/client", () => ({
           }),
         };
       }
+      if (table === "game_scores") {
+        return {
+          select: () => ({
+            eq: () => ({
+              order: async () => ({ data: [] }),
+            }),
+          }),
+        };
+      }
       return {
         select: () => ({
           eq: async () => ({ data: [] }),
         }),
       };
     },
-    channel: () => ({
-      on: () => ({ subscribe: () => ({}) }),
-      subscribe: () => ({}),
-    }),
+    channel: () => {
+      const channel = {
+        on: () => channel,
+        subscribe: () => ({}),
+      };
+      return channel;
+    },
     removeChannel: () => undefined,
   }),
 }));
@@ -129,6 +165,62 @@ const secondPickedQuestion: QuestionRow = {
   difficulty: 2,
 };
 
+const player = (id: string): PlayerRow => ({
+  id,
+  night_id: "night-1",
+  device_id: `device-${id}`,
+  display_name: `Player ${id}`,
+  joined_at: "2026-07-08T00:00:00Z",
+  last_seen_at: "2026-07-08T00:00:00Z",
+  removed_at: null,
+  app_switch_total_seconds: 0,
+  can_answer: true,
+});
+
+const answer = (id: string, playerId: string): AnswerRow => ({
+  id,
+  question_id: "q1",
+  player_id: playerId,
+  chosen_index: 0,
+  scramble: [0, 1, 2, 3],
+  locked_at: "2026-07-08T00:01:35Z",
+  ms_to_lock: 5_000,
+  is_correct: null,
+  awarded_points: null,
+});
+
+const score = (playerId: string): GameScoreRow => ({
+  game_id: "g1",
+  player_id: playerId,
+  display_name: `Player ${playerId}`,
+  score: 0,
+  answered_count: 0,
+  correct_count: 0,
+  fastest_correct_ms: null,
+});
+
+function fallbackPayload(overrides: Partial<RoomFallbackPayload> = {}): RoomFallbackPayload {
+  return {
+    night,
+    hostDefaultThemeKey: "house",
+    games: [readyGame],
+    categories: [readyCategory],
+    players: [],
+    currentQuestion: null,
+    lastResolvedQuestion: null,
+    currentReveal: null,
+    allQuestions: [],
+    myAnswers: [],
+    myParticipations: [],
+    allScores: [],
+    scores: [],
+    tvPlayerKeys: {},
+    liveAnswers: [],
+    roomMagicReactions: [],
+    ...overrides,
+  };
+}
+
 function room(): RoomSnapshot {
   return {
     night,
@@ -152,8 +244,109 @@ describe("HostPhoneClient reveal flow", () => {
     h.room = room();
     h.questions = [pickedQuestion, secondPickedQuestion];
     h.fetch.mockReset();
+    h.fallback = { backupMode: false, payload: null };
+    h.autoRevealOptions = null;
     h.fetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     vi.stubGlobal("fetch", h.fetch);
+  });
+
+  it("stages questions and lock counts from the shared backup payload", async () => {
+    const fallbackQuestion = {
+      ...pickedQuestion,
+      id: "fallback-q",
+      prompt: "Fallback-only private prompt",
+    };
+    h.questions = [pickedQuestion];
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({ allQuestions: [fallbackQuestion] }),
+    };
+
+    const view = render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+    expect(await screen.findByText(fallbackQuestion.prompt)).toBeVisible();
+
+    const liveGame = game("g1", 1, "live");
+    const liveQuestion = { ...pickedQuestion, played_at: "2026-07-08T00:01:30Z" };
+    h.room = {
+      ...room(),
+      games: [liveGame],
+      currentGame: liveGame,
+      currentQuestion: liveQuestion,
+      players: [player("p1"), player("p2")],
+    };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({
+        games: [liveGame],
+        currentQuestion: liveQuestion,
+        players: h.room.players,
+        liveAnswers: [answer("a1", "p1")],
+        scores: [score("p1"), score("p2")],
+      }),
+    };
+    view.rerender(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    const lockedSection = (await screen.findByText("LOCKED IN")).parentElement;
+    expect(lockedSection).toHaveTextContent(/1of 2/);
+  });
+
+  it("uses shared eligibility to auto-end only when every eligible player is locked", async () => {
+    const liveGame = game("g1", 1, "live");
+    const liveQuestion = { ...pickedQuestion, played_at: "2026-07-08T00:01:30Z" };
+    const players = [player("p1"), player("p2")];
+    h.room = {
+      ...room(),
+      games: [liveGame],
+      currentGame: liveGame,
+      currentQuestion: liveQuestion,
+      players,
+    };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({
+        games: [liveGame],
+        currentQuestion: liveQuestion,
+        players,
+        liveAnswers: [answer("a1", "p1"), answer("a2", "p2")],
+        scores: [score("p1"), score("p2")],
+      }),
+    };
+
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    await waitFor(() => expect(h.autoRevealOptions?.decision?.complete).toBe(true));
+    expect(h.autoRevealOptions?.decision).toMatchObject({
+      eligibleCount: 2,
+      lockedCount: 2,
+    });
+    await h.autoRevealOptions?.onAutoReveal();
+    expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/end-early",
+      expect.objectContaining({
+        body: JSON.stringify({ questionId: "q1", requireAllLocked: true }),
+      }),
+    );
   });
 
   it("starts a draft or ready game before revealing from the private host phone", async () => {

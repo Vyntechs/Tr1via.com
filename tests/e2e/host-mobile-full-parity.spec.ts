@@ -28,9 +28,7 @@ async function expectPhoneFit(page: Page) {
 
 async function expectTouchSafeHostActions(page: Page) {
   const undersized = await page
-    .locator(
-      '[data-host-mobile-surface="true"] button:visible, [data-host-mobile-surface="true"] a[role="button"]:visible',
-    )
+    .locator('[data-mobile-touch-target="true"]:visible')
     .evaluateAll((elements) =>
       elements
         .map((element) => {
@@ -123,26 +121,31 @@ test.describe.serial("phone-first host parity", () => {
       await expectTouchSafeHostActions(page);
 
       await page.goto(`/host/live/${readyNight.nightId}`);
+      await expect(page.getByTestId("host-live-console")).toBeVisible();
+      await expect(page.getByText("CORRECT", { exact: true })).toHaveCount(0);
+      await expectPhoneFit(page);
+
+      await page.goto(`/host/phone/${readyNight.nightId}`);
       await expect(page.getByTestId("host-phone-round-controls")).toBeVisible();
       await expectPhoneFit(page);
 
       if (viewport.name === "iphone" || viewport.name === "landscape") {
         await page.screenshot({
-          path: testInfo.outputPath(`host-live-${viewport.name}.png`),
+          path: testInfo.outputPath(`host-phone-${viewport.name}.png`),
           fullPage: true,
         });
       }
     }
   });
 
-  test("canonical live route runs Game 1, recovery, Game 2, and night close from one phone", async ({
+  test("private phone route runs Game 1, recovery, Game 2, and night close", async ({
     page,
   }, testInfo) => {
     test.setTimeout(180_000);
     expect(readyNight).not.toBeNull();
     await loginAsHost(page, HOST_EMAIL, "Mobile Host");
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/host/live/${readyNight!.nightId}`);
+    await page.goto(`/host/phone/${readyNight!.nightId}`);
 
     await page.getByRole("button", { name: "Start Game 1" }).click();
     await expect(page.getByRole("button", { name: /Reveal to the room/ })).toBeVisible();

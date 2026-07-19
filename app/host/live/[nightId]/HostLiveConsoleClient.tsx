@@ -50,8 +50,6 @@ import { playWelcomeChime } from "@/lib/audio/welcomeChime";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
 import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
-import { useMediaQuery } from "@/components/system/useMediaQuery";
-import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -59,35 +57,10 @@ export interface HostLiveConsoleClientProps {
   nightId: string;
   roomCode: string;
   venueName: string;
-  hostName: string;
   themeKey: string;
 }
 
-export function HostLiveConsoleClient(props: HostLiveConsoleClientProps) {
-  const mobile = useMediaQuery("(max-width: 860px)");
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => setHydrated(true), []);
-
-  if (!hydrated) {
-    return <div aria-label="Loading host controls" style={{ minHeight: "100dvh", background: "var(--paper)" }} />;
-  }
-
-  if (mobile) {
-    return (
-      <HostPhoneClient
-        nightId={props.nightId}
-        roomCode={props.roomCode}
-        hostName={props.hostName}
-        themeKey={props.themeKey as ThemeKey}
-      />
-    );
-  }
-
-  return <HostLiveConsoleDesktopClient {...props} />;
-}
-
-function HostLiveConsoleDesktopClient({
+export function HostLiveConsoleClient({
   nightId,
   roomCode,
   venueName,
@@ -594,6 +567,7 @@ function HostLiveConsoleDesktopClient({
         }
         canUndo={canUndo}
         roomCode={roomCode}
+        privateControlUrl={`${typeof window === "undefined" ? "https://tr1via.com" : window.location.origin}/host/phone/${nightId}`}
         onRevealCell={(qid) => void handleReveal(qid)}
         onEndEarly={() => void handleEndEarly()}
         onUndo={() => void handleUndo()}

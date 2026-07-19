@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import {
@@ -34,18 +36,18 @@ describe("phone-first host generation layouts", () => {
   });
 
   it.each([
-    ["overview", <HostGenOverview themeKey="house" />, "host-gen-overview-layout"],
-    ["topic entry", <HostGenTopicEntry themeKey="house" />, "host-gen-topic-layout"],
-    ["loading", <HostGenLoading themeKey="house" />, "host-gen-loading-layout"],
+    ["overview", <HostGenOverview key="overview" themeKey="house" />, "host-gen-overview-layout"],
+    ["topic entry", <HostGenTopicEntry key="topic" themeKey="house" />, "host-gen-topic-layout"],
+    ["loading", <HostGenLoading key="loading" themeKey="house" />, "host-gen-loading-layout"],
     [
       "pick and audit",
-      <HostGenPick themeKey="house" onTogglePick={() => {}} />,
+      <HostGenPick key="pick" themeKey="house" onTogglePick={() => {}} />,
       "host-gen-pick-layout",
     ],
-    ["question edit", <HostGenEdit themeKey="house" />, "host-gen-edit-layout"],
-    ["image swap", <HostGenImageSwap themeKey="house" />, "host-gen-image-swap-layout"],
-    ["image upload", <HostGenImageUpload themeKey="house" />, "host-gen-image-upload-layout"],
-    ["manual entry", <HostGenManualEntry themeKey="house" />, "host-gen-manual-layout"],
+    ["question edit", <HostGenEdit key="edit" themeKey="house" />, "host-gen-edit-layout"],
+    ["image swap", <HostGenImageSwap key="swap" themeKey="house" />, "host-gen-image-swap-layout"],
+    ["image upload", <HostGenImageUpload key="upload" themeKey="house" />, "host-gen-image-upload-layout"],
+    ["manual entry", <HostGenManualEntry key="manual" themeKey="house" />, "host-gen-manual-layout"],
   ])("marks %s as the compact single-column task flow", async (_name, ui, testId) => {
     render(ui);
     const layout = await screen.findByTestId(testId);
@@ -108,5 +110,42 @@ describe("phone-first host generation layouts", () => {
         "Which lake borders downtown Madison?",
       ),
     );
+  });
+
+  it("discards malformed manual draft fields instead of rendering stale shapes", async () => {
+    window.sessionStorage.setItem(
+      "malformed-manual",
+      JSON.stringify([
+        {
+          prompt: 42,
+          options: [false, null, { stale: true }, ["nested"]],
+          correctIndex: 99,
+          imageUrl: { unsafe: true },
+        },
+      ]),
+    );
+
+    render(
+      <HostGenManualEntry themeKey="house" draftKey="malformed-manual" />,
+    );
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Question prompt for row 1")).toHaveValue(""),
+    );
+    expect(screen.getByLabelText("Row 1 option 1")).toHaveValue("");
+    expect(screen.getByLabelText("Row 1 option 4")).toHaveValue("");
+    expect(screen.getByLabelText("Row 1 optional image URL")).toHaveValue("");
+  });
+
+  it("scopes touch sizing instead of expanding every grid button", () => {
+    const css = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
+    const pick = readFileSync(
+      join(process.cwd(), "components/host/gen/HostGenPick.tsx"),
+      "utf8",
+    );
+
+    expect(css).not.toContain('[data-host-mobile-surface="true"] button,');
+    expect(css).toContain('[data-mobile-touch-target="true"]');
+    expect(pick).toContain('gridColumn: mobile ? "2 / -1"');
   });
 });

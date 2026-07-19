@@ -70,6 +70,8 @@ export interface HostLiveConsoleProps {
   roomCode?: string;
   /** Full URL the QR encodes. Defaults to `${origin}/join?code=<roomCode>`. */
   joinUrl?: string;
+  /** Authenticated private controller URL. Exposed only as a scan handoff. */
+  privateControlUrl?: string;
   /** Called when the host taps a cell on the TV grid. */
   onRevealCell?: (questionId: string) => void;
   /** End-early reveals the live question now. */
@@ -149,6 +151,7 @@ function HostLiveConsoleInner({
   canUndo = true,
   roomCode,
   joinUrl,
+  privateControlUrl,
   onRevealCell,
   onEndEarly,
   onUndo,
@@ -184,6 +187,7 @@ function HostLiveConsoleInner({
 
   const [hostAdvanced, setHostAdvanced] = useState(false);
   const [playersOpen, setPlayersOpen] = useState(false);
+  const [phoneRemoteOpen, setPhoneRemoteOpen] = useState(false);
 
   // Reset the "Pick next" override when a new live question arrives — the
   // override only matters for the brief window after a resolve before the
@@ -287,6 +291,9 @@ function HostLiveConsoleInner({
           onEndGame={onEndGame}
           onCloseNight={onCloseNight}
           onOpenPlayers={() => setPlayersOpen(true)}
+          onOpenPhoneRemote={
+            privateControlUrl ? () => setPhoneRemoteOpen(true) : undefined
+          }
         />
 
         {playersOpen && (
@@ -297,6 +304,12 @@ function HostLiveConsoleInner({
             onClose={() => setPlayersOpen(false)}
             onRemove={onRemovePlayer}
             onAdd={onAddPlayer}
+          />
+        )}
+        {phoneRemoteOpen && privateControlUrl && (
+          <PhoneRemoteHandoff
+            url={privateControlUrl}
+            onClose={() => setPhoneRemoteOpen(false)}
           />
         )}
       </div>
@@ -337,6 +350,7 @@ interface HostControlStripProps {
   onEndGame?: () => void;
   onCloseNight?: () => void;
   onOpenPlayers: () => void;
+  onOpenPhoneRemote?: () => void;
 }
 
 function HostControlStrip({
@@ -357,6 +371,7 @@ function HostControlStrip({
   onEndGame,
   onCloseNight,
   onOpenPlayers,
+  onOpenPhoneRemote,
 }: HostControlStripProps) {
   const { t } = useTheme();
 
@@ -452,6 +467,14 @@ function HostControlStrip({
 
       {/* Secondary controls — right side */}
       <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        {onOpenPhoneRemote && (
+          <SecondaryButton
+            onClick={onOpenPhoneRemote}
+            testId="host-phone-remote-btn"
+          >
+            Phone remote
+          </SecondaryButton>
+        )}
         {canUndo && onUndo && (
           <SecondaryButton onClick={onUndo} testId="host-undo-btn">
             ↺ Undo
@@ -466,6 +489,64 @@ function HostControlStrip({
         <SecondaryButton onClick={onOpenPlayers} testId="host-players-btn">
           Room ({totalPlayers})
         </SecondaryButton>
+      </div>
+    </div>
+  );
+}
+
+function PhoneRemoteHandoff({ url, onClose }: { url: string; onClose: () => void }) {
+  const { t } = useTheme();
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Private phone remote"
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 45,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,.72)",
+      }}
+    >
+      <div
+        style={{
+          width: 320,
+          maxWidth: "calc(100% - 32px)",
+          padding: 24,
+          borderRadius: 16,
+          background: t.paper,
+          color: t.ink,
+          textAlign: "center",
+          boxSizing: "border-box",
+        }}
+      >
+        <Eyebrow color={t.accent} size={10}>PRIVATE PHONE REMOTE</Eyebrow>
+        <div style={{ margin: "16px auto", display: "flex", justifyContent: "center" }}>
+          <QRBlock url={url} size={220} light />
+        </div>
+        <div style={{ fontSize: 13, lineHeight: 1.45, color: t.inkMid }}>
+          Scan on the authenticated host phone. Correct answers never appear on this venue screen.
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          style={{
+            marginTop: 16,
+            minHeight: 44,
+            width: "100%",
+            borderRadius: 10,
+            border: `1px solid ${t.line}`,
+            background: "transparent",
+            color: t.ink,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+        >
+          Close
+        </button>
       </div>
     </div>
   );

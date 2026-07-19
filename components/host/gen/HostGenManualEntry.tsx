@@ -14,7 +14,6 @@
 
 import { useEffect, useState, type ChangeEvent } from "react";
 import {
-  Display,
   Eyebrow,
   Numeric,
   PointTag,
@@ -70,23 +69,47 @@ function defaultRows(): HostGenManualQuestionInput[] {
   return POINT_VALUES.map(() => emptyRow());
 }
 
-function normalizeRows(
-  initial?: HostGenManualQuestionInput[],
-): HostGenManualQuestionInput[] {
-  if (!initial) return defaultRows();
-  const merged = initial.slice(0, 7).map((row) => ({
-    prompt: row?.prompt ?? "",
-    options: ([
-      row?.options?.[0] ?? "",
-      row?.options?.[1] ?? "",
-      row?.options?.[2] ?? "",
-      row?.options?.[3] ?? "",
-    ] as [string, string, string, string]),
-    correctIndex: (row?.correctIndex ?? 0) as 0 | 1 | 2 | 3,
-    imageUrl: row?.imageUrl ?? null,
-  }));
+function normalizeRows(initial?: unknown): HostGenManualQuestionInput[] {
+  if (!Array.isArray(initial)) return defaultRows();
+  const merged = initial.slice(0, 7).map((candidate) => {
+    const row =
+      candidate !== null && typeof candidate === "object"
+        ? (candidate as Record<string, unknown>)
+        : {};
+    const options = Array.isArray(row.options) ? row.options : [];
+    const correctIndex =
+      Number.isInteger(row.correctIndex) &&
+      Number(row.correctIndex) >= 0 &&
+      Number(row.correctIndex) <= 3
+        ? (Number(row.correctIndex) as 0 | 1 | 2 | 3)
+        : 0;
+    return {
+      prompt: typeof row.prompt === "string" ? row.prompt : "",
+      options: [0, 1, 2, 3].map((index) =>
+        typeof options[index] === "string" ? options[index] : "",
+      ) as [string, string, string, string],
+      correctIndex,
+      imageUrl:
+        typeof row.imageUrl === "string" || row.imageUrl === null
+          ? row.imageUrl
+          : null,
+    };
+  });
   while (merged.length < 7) merged.push(emptyRow());
   return merged;
+}
+
+function restoreManualDraft(
+  draftKey: string | undefined,
+  initial: HostGenManualQuestionInput[] | undefined,
+): HostGenManualQuestionInput[] {
+  if (!draftKey || typeof window === "undefined") return normalizeRows(initial);
+  try {
+    const saved = window.sessionStorage.getItem(draftKey);
+    return saved ? normalizeRows(JSON.parse(saved) as unknown) : normalizeRows(initial);
+  } catch {
+    return normalizeRows(initial);
+  }
 }
 
 export function HostGenManualEntry(props: HostGenManualEntryProps) {
@@ -102,7 +125,6 @@ export function HostGenManualEntry(props: HostGenManualEntryProps) {
 }
 
 function HostGenManualEntryInner({
-  shellTitle = "type 7 · manual entry",
   topic = "Pixar Movies",
   eyebrow = "MANUAL ENTRY · 7 QUESTIONS",
   initial,
@@ -117,40 +139,18 @@ function HostGenManualEntryInner({
   const cc = categoryColor(topic, t.accent);
 
   const [rows, setRows] = useState<HostGenManualQuestionInput[]>(() =>
-    normalizeRows(initial),
+    restoreManualDraft(draftKey, initial),
   );
   const [touched, setTouched] = useState(false);
-  const [draftReady, setDraftReady] = useState(!draftKey);
 
   useEffect(() => {
-    if (!draftKey) {
-      setDraftReady(true);
-      return;
-    }
-    setDraftReady(false);
-    try {
-      const saved = window.sessionStorage.getItem(draftKey);
-      if (saved) {
-        const parsed: unknown = JSON.parse(saved);
-        if (Array.isArray(parsed)) {
-          setRows(normalizeRows(parsed as HostGenManualQuestionInput[]));
-        }
-      }
-    } catch {
-      // A malformed or unavailable draft should not block manual entry.
-    } finally {
-      setDraftReady(true);
-    }
-  }, [draftKey]);
-
-  useEffect(() => {
-    if (!draftKey || !draftReady) return;
+    if (!draftKey) return;
     try {
       window.sessionStorage.setItem(draftKey, JSON.stringify(rows));
     } catch {
       // Draft recovery is best-effort and must never block editing.
     }
-  }, [draftKey, draftReady, rows]);
+  }, [draftKey, rows]);
 
   function updateRow(
     idx: number,

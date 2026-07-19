@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import {
   Display,
   Eyebrow,
@@ -78,6 +78,15 @@ const FLAVOR_OPTIONS = [
   "Fresher",
 ] as const;
 
+function restoreTopicDraft(draftKey: string | undefined, fallback: string): string {
+  if (!draftKey || typeof window === "undefined") return fallback;
+  try {
+    return window.sessionStorage.getItem(draftKey) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function HostGenTopicEntry(props: HostGenTopicEntryProps) {
   const { themeKey, ...rest } = props;
   if (themeKey) {
@@ -91,7 +100,6 @@ export function HostGenTopicEntry(props: HostGenTopicEntryProps) {
 }
 
 function HostGenTopicEntryInner({
-  shellTitle = "set up tonight · slot 5",
   eyebrow = "GAME 1 · SLOT 5 OF 6",
   recent = DEMO_RECENT,
   initialTopic = "",
@@ -104,19 +112,11 @@ function HostGenTopicEntryInner({
 }: Omit<HostGenTopicEntryProps, "themeKey">) {
   const { t } = useTheme();
   const mobile = useMediaQuery("(max-width: 860px)");
-  const [topic, setTopic] = useState(initialTopic);
+  const [topic, setTopic] = useState(() =>
+    restoreTopicDraft(draftKey, initialTopic),
+  );
   const [difficulty, setDifficulty] = useState<DifficultyTarget>(initialDifficulty);
   const [flavor, setFlavor] = useState<string[]>(initialFlavor);
-
-  useEffect(() => {
-    if (!draftKey) return;
-    try {
-      const saved = window.sessionStorage.getItem(draftKey);
-      if (saved !== null) setTopic(saved);
-    } catch {
-      // Storage may be unavailable in private browsing. The form still works.
-    }
-  }, [draftKey]);
 
   function updateTopic(value: string) {
     setTopic(value);
@@ -231,6 +231,7 @@ function HostGenTopicEntryInner({
                     <button
                       key={d}
                       type="button"
+                      data-mobile-touch-target={mobile ? "true" : undefined}
                       onClick={() => setDifficulty(d)}
                       style={{
                         flex: 1, padding: "8px 0", borderRadius: 8,
@@ -256,6 +257,7 @@ function HostGenTopicEntryInner({
                     <button
                       key={s}
                       type="button"
+                      data-mobile-touch-target={mobile ? "true" : undefined}
                       onClick={() => toggleFlavor(s)}
                       style={{
                         padding: "6px 10px", borderRadius: 99, border: `1px solid ${active ? t.ink : t.line}`,

@@ -29,6 +29,19 @@ async function expectNoHorizontalOverflow(page: Page) {
     .toBe(true);
 }
 
+async function expectFullyInViewport(page: Page, selector: string) {
+  const locator = page.locator(selector);
+  await locator.scrollIntoViewIfNeeded();
+  const box = await locator.boundingBox();
+  expect(box, `${selector} should have a layout box`).not.toBeNull();
+  const viewport = page.viewportSize();
+  expect(viewport).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(viewport!.width + 0.5);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(viewport!.height + 0.5);
+}
+
 test("all production prep components fit every approved phone viewport", async ({
   page,
 }, testInfo) => {
@@ -46,7 +59,7 @@ test("all production prep components fit every approved phone viewport", async (
 
       const undersized = await page
         .locator(
-          '[data-host-mobile-surface="true"] button:visible, [data-host-mobile-surface="true"] a[role="button"]:visible',
+          '[data-mobile-touch-target="true"]:visible',
         )
         .evaluateAll((elements) =>
           elements
@@ -63,6 +76,35 @@ test("all production prep components fit every approved phone viewport", async (
             .filter(({ width, height }) => width < 43.5 || height < 43.5),
         );
       expect(undersized).toEqual([]);
+
+      const essential = page.locator('[data-mobile-touch-target="true"]:visible');
+      for (let index = 0; index < (await essential.count()); index += 1) {
+        await expectFullyInViewport(
+          page,
+          `[data-mobile-touch-target="true"]:visible >> nth=${index}`,
+        );
+      }
+
+      if (surface === "pick" && viewport.name === "320x568") {
+        const selectors = [
+          '[data-testid="pick-sidebar-drag-100"]',
+          '[data-testid="pick-sidebar-edit-100"]',
+          '[data-testid="pick-sidebar-unpick-100"]',
+        ];
+        for (const selector of selectors) await expectFullyInViewport(page, selector);
+        const boxes = await Promise.all(
+          selectors.map((selector) => page.locator(selector).boundingBox()),
+        );
+        for (let left = 0; left < boxes.length; left += 1) {
+          for (let right = left + 1; right < boxes.length; right += 1) {
+            const a = boxes[left]!;
+            const b = boxes[right]!;
+            const overlapX = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+            const overlapY = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
+            expect(overlapX <= 0 || overlapY <= 0).toBe(true);
+          }
+        }
+      }
 
       if (
         viewport.name === "390x844" ||
