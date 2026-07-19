@@ -184,7 +184,9 @@ describe("Room Magic broadcast hooks", () => {
 
   it("useRoom stores Room Magic reactions separately without mutating lastBroadcast or refetching", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    const { result } = renderHook(() => useRoom({ roomCode: "ABCDEF" }));
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "host" }),
+    );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
     const fetchCountBefore = fetchMock.mock.calls.length;
@@ -201,7 +203,9 @@ describe("Room Magic broadcast hooks", () => {
   });
 
   it("useRoom ignores malformed Room Magic reaction payloads", async () => {
-    const { result } = renderHook(() => useRoom({ roomCode: "ABCDEF" }));
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "host" }),
+    );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 

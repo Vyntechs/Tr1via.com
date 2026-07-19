@@ -31,7 +31,7 @@ export function HostPhoneClient({
   hostName,
   themeKey,
 }: HostPhoneClientProps) {
-  const room = useRoom({ roomCode });
+  const room = useRoom({ roomCode, audience: "host" });
   const [allQuestions, setAllQuestions] = useState<QuestionRow[]>([]);
   const [answers, setAnswers] = useState<AnswerRow[]>([]);
   const [stagedQuestionId, setStagedQuestionId] = useState<string | null>(null);

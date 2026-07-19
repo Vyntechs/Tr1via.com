@@ -4,7 +4,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ThemeProvider, useTheme, Display } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
@@ -14,8 +14,7 @@ import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { isValidRoomCode, parseRoomCode, formatRoomCode } from "@/lib/game/room-code";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
-import { getSupabaseBrowser } from "@/lib/supabase/client";
-import type { AnswerRow, CategoryRow, GameScoreRow, GameRow, PlayerRow } from "@/lib/supabase/types";
+import type { AnswerRow, CategoryRow, GameScoreRow, GameRow } from "@/lib/supabase/types";
 import { categoryColor } from "@/lib/theme/categories";
 
 export default function PlayerRecapPage() {
@@ -32,91 +31,26 @@ export default function PlayerRecapPage() {
 
 function PlayerRecapInner({ roomCode }: { roomCode: string }) {
   const { deviceId, isLoading: deviceLoading } = useDeviceSession();
-  const snapshot = useRoom({ roomCode, deviceId });
+  const snapshot = useRoom({
+    roomCode,
+    audience: "player",
+    sessionReady: !deviceLoading && !!deviceId,
+  });
 
   const themeKey: ThemeKey = resolveTheme(
     snapshot.night,
     { default_theme_key: snapshot.hostDefaultThemeKey },
   );
 
-  const me = useMemo<PlayerRow | null>(() => {
-    if (!deviceId) return null;
-    return snapshot.players.find((p) => p.device_id === deviceId) ?? null;
-  }, [snapshot.players, deviceId]);
+  const me = snapshot.self ?? null;
 
   const finalGame = useMemo<GameRow | null>(() => {
     if (snapshot.games.length === 0) return null;
     return [...snapshot.games].sort((a, b) => b.game_no - a.game_no)[0] ?? null;
   }, [snapshot.games]);
 
-  // Tri-state: `null` means "we haven't completed a fetch yet" — the loading
-  // guard below uses this to gate render so we never paint "#0" while the
-  // initial REST query is still in flight. Once a fetch returns we move to
-  // `[]` (empty) or `[...]` (populated). The realtime subscription below
-  // refreshes the view as `answers`/`adjustments`/`game_participations`
-  // change, which matters when the close-night broadcast lands microseconds
-  // before the resolve-question writes complete.
-  const [scores, setScores] = useState<GameScoreRow[] | null>(null);
-  const [answers, setAnswers] = useState<AnswerRow[]>([]);
-
-  useEffect(() => {
-    if (!finalGame) return;
-    const gameId = finalGame.id;
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    async function load() {
-      const { data } = await supa
-        .from("game_scores")
-        .select("*")
-        .eq("game_id", gameId)
-        .order("score", { ascending: false });
-      if (cancelled) return;
-      setScores((data as GameScoreRow[] | null) ?? []);
-    }
-    void load();
-    // Same load+subscribe pattern HostLiveConsoleClient uses for its own
-    // game_scores read (the view is derived, so we listen to the underlying
-    // tables rather than the view itself).
-    const channel = supa
-      .channel(`recap-scores:${gameId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "answers" },
-        () => void load(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "adjustments" },
-        () => void load(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "game_participations" },
-        () => void load(),
-      )
-      .subscribe();
-    return () => {
-      cancelled = true;
-      void supa.removeChannel(channel);
-    };
-  }, [finalGame?.id]);
-
-  useEffect(() => {
-    if (!me) return;
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    void supa
-      .from("answers")
-      .select("*")
-      .eq("player_id", me.id)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setAnswers((data as AnswerRow[] | null) ?? []);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [me]);
+  const scores = snapshot.scores ?? [];
+  const answers = snapshot.myAnswers ?? [];
 
   const handleSuggestTopic = useCallback(async (text: string) => {
     const res = await fetch("/api/topic-suggestions", {
@@ -140,8 +74,7 @@ function PlayerRecapInner({ roomCode }: { roomCode: string }) {
     deviceLoading ||
     !snapshot.night ||
     !me ||
-    !finalGame ||
-    scores === null
+    !finalGame
   ) {
     return (
       <ThemeProvider themeKey={themeKey}>

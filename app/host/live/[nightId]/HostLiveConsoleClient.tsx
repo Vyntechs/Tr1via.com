@@ -66,7 +66,7 @@ export function HostLiveConsoleClient({
   venueName,
   themeKey,
 }: HostLiveConsoleClientProps) {
-  const room = useRoom({ roomCode });
+  const room = useRoom({ roomCode, audience: "host" });
   const [directAllQuestions, setAllQuestions] = useState<QuestionRow[]>([]);
   const [directAnswers, setAnswers] = useState<AnswerRow[]>([]);
   const [directScores, setScores] = useState<GameScoreRow[]>([]);
