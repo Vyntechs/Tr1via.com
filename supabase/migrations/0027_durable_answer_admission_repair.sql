@@ -81,19 +81,20 @@ begin
 
   if v_play.status = 'accepting'
      and v_play.eligible_count > 0
-     and v_play.confirmed_count = v_play.eligible_count
-     and v_answer.received_at < v_play.main_zero_at then
+     and v_play.confirmed_count = v_play.eligible_count then
     select max(received_at) into v_latest_receipt
       from public.question_play_answers
      where play_id = p_play_id;
-    update public.question_plays
-       set status = 'all_in_hold',
-           finalize_at = greatest(
-             v_latest_receipt + interval '1200 milliseconds',
-             opened_at + interval '2 seconds'
-           )
-     where id = p_play_id
-     returning * into v_play;
+    if v_latest_receipt < v_play.main_zero_at then
+      update public.question_plays
+         set status = 'all_in_hold',
+             finalize_at = greatest(
+               v_latest_receipt + interval '1200 milliseconds',
+               opened_at + interval '2 seconds'
+             )
+       where id = p_play_id
+       returning * into v_play;
+    end if;
   end if;
 
   update public.nights
@@ -552,7 +553,7 @@ begin
      and jsonb_array_length(q.options) = 4
    order by c.position, q.point_value, q.id
    limit 1
-   for key share of c, q;
+   for no key update of c, q;
   if not found then
     return public._live_mutation_envelope(
       false,

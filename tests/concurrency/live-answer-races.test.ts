@@ -197,6 +197,8 @@ const CLAIM_SIGNATURE = "public.claim_question_play_answer(uuid,uuid,uuid,uuid,s
 const APPLY_SIGNATURE = "public.apply_claimed_question_play_answer(uuid,uuid,uuid)";
 const APPLY_LOCKED_SIGNATURE = "public._live_apply_pending_answer_locked(uuid,uuid,uuid,uuid,uuid)";
 const FINALIZE_SIGNATURE = "public.finalize_current_play_if_due(text,uuid,uuid)";
+const START_SIGNATURE = "public.start_live_game(uuid,uuid,uuid,bigint)";
+const START_GATE_KEY = 7_418_002;
 const CLOCK_ASSIGNMENT = "v_now := clock_timestamp();";
 const CLOCKED_ASSIGNMENT = "v_now := current_setting('tr1via.test_now')::timestamptz;";
 const FINALIZE_CLOCK_INITIALIZER = "v_now timestamptz := clock_timestamp();";
@@ -230,6 +232,27 @@ async function installedApplyLockedDefinition(client = admin): Promise<string> {
   return result.rows[0]?.definition ?? "";
 }
 
+async function installPausedStart(client: Client): Promise<void> {
+  const result = await client.query<{ definition: string }>(
+    "select pg_get_functiondef($1::regprocedure) as definition",
+    [START_SIGNATURE],
+  );
+  const installed = result.rows[0]?.definition ?? "";
+  const mutation = "  update public.games\n     set state = 'live',";
+  const pausedMutation = `  perform pg_advisory_xact_lock(${START_GATE_KEY});\n\n${mutation}`;
+  expect(count(installed, "public.start_live_game(")).toBe(1);
+  expect(count(installed, mutation)).toBe(1);
+  const clone = installed
+    .replace("public.start_live_game(", "pg_temp.start_live_game_paused(")
+    .replace(mutation, pausedMutation);
+  expect(
+    clone
+      .replace("pg_temp.start_live_game_paused(", "public.start_live_game(")
+      .replace(pausedMutation, mutation),
+  ).toBe(installed);
+  await client.query(clone);
+}
+
 async function installClockedFinalizer(
   client: Client,
   finalizeAt: string,
@@ -253,7 +276,10 @@ async function installClockedFinalizer(
   ]);
 }
 
-async function waitForLockWait(pid: number): Promise<void> {
+async function waitForLockWait(
+  pid: number,
+  operation = "finalizer",
+): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
     const waiting = await admin.query<{ waiting: boolean }>(
@@ -266,30 +292,49 @@ async function waitForLockWait(pid: number): Promise<void> {
     if (waiting.rows[0]?.waiting) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
-  throw new Error("finalizer did not block on the admission lock");
+  throw new Error(`${operation} did not block on the expected lock`);
+}
+
+async function installClockedClaim(client: Client): Promise<void> {
+  const installed = await installedClaimDefinition(client);
+  expect(count(installed, "public.claim_question_play_answer(")).toBe(1);
+  expect(count(installed, CLOCK_ASSIGNMENT)).toBe(1);
+  const clone = installed
+    .replace("public.claim_question_play_answer(", "pg_temp.claim_question_play_answer_at(")
+    .replace(CLOCK_ASSIGNMENT, CLOCKED_ASSIGNMENT);
+  // The clone is built from the installed function, and these reversible,
+  // session-local substitutions are the entire seam.
+  expect(
+    clone
+      .replace("pg_temp.claim_question_play_answer_at(", "public.claim_question_play_answer(")
+      .replace(CLOCKED_ASSIGNMENT, CLOCK_ASSIGNMENT),
+  ).toBe(installed);
+  await client.query(clone);
 }
 
 async function withClockedClaim<T>(run: (client: Client, submitAt: string) => Promise<T>): Promise<T> {
   const client = await connect();
   try {
-    const installed = await installedClaimDefinition(client);
-    expect(count(installed, "public.claim_question_play_answer(")).toBe(1);
-    expect(count(installed, CLOCK_ASSIGNMENT)).toBe(1);
-    const clone = installed
-      .replace("public.claim_question_play_answer(", "pg_temp.claim_question_play_answer_at(")
-      .replace(CLOCK_ASSIGNMENT, CLOCKED_ASSIGNMENT);
-    // The clone is built from the installed function, and these reversible,
-    // session-local substitutions are the entire seam.
-    expect(
-      clone
-        .replace("pg_temp.claim_question_play_answer_at(", "public.claim_question_play_answer(")
-        .replace(CLOCKED_ASSIGNMENT, CLOCK_ASSIGNMENT),
-    ).toBe(installed);
-    await client.query(clone);
+    await installClockedClaim(client);
     return await run(client, "2030-01-02T03:04:05.000000Z");
   } finally {
     await client.end();
   }
+}
+
+async function clockedClaim(
+  client: Client,
+  submitAt: string,
+  playId: string,
+  runId: string,
+  deviceId: string,
+): Promise<Envelope> {
+  await client.query("select set_config('tr1via.test_now', $1, false)", [submitAt]);
+  return rpc(
+    client,
+    "select pg_temp.claim_question_play_answer_at($1, $2, $3, $4, 1::smallint) as result",
+    [playId, runId, deviceId, uuid()],
+  );
 }
 
 async function clockedAnswer(
@@ -402,6 +447,108 @@ afterAll(async () => {
 });
 
 describe("authoritative answer engine PostgreSQL races", () => {
+  test("mixed receipt and application order cannot falsely resolve all-in", async () => {
+    const { fixture, runId, playId } = await readyPlay(2);
+    const earlyClaimant = await connect();
+    const lateClaimant = await connect();
+    const finalizer = await connect();
+    const mainZeroAt = "2030-01-02T03:04:05.000000Z";
+    try {
+      await admin.query(
+        `update question_plays
+            set opened_at = $2::timestamptz - interval '10 seconds',
+                main_zero_at = $2::timestamptz,
+                final_window_starts_at = $2::timestamptz,
+                final_window_ends_at = $2::timestamptz + interval '10 seconds',
+                finalize_at = null
+          where id = $1`,
+        [playId, mainZeroAt],
+      );
+      await Promise.all([
+        installClockedClaim(earlyClaimant),
+        installClockedClaim(lateClaimant),
+      ]);
+
+      const early = await clockedClaim(
+        earlyClaimant,
+        "2030-01-02T03:04:04.999999Z",
+        playId,
+        runId,
+        fixture.players[0].deviceId,
+      );
+      const late = await clockedClaim(
+        lateClaimant,
+        "2030-01-02T03:04:05.000001Z",
+        playId,
+        runId,
+        fixture.players[1].deviceId,
+      );
+      expect([early, late]).toMatchObject([
+        { freshlyApplied: true, result: { code: "claimed" } },
+        { freshlyApplied: true, result: { code: "claimed" } },
+      ]);
+
+      expect(await applyAnswer(
+        lateClaimant,
+        playId,
+        runId,
+        fixture.players[1].deviceId,
+      )).toMatchObject({ freshlyApplied: true, result: { code: "confirmed" } });
+      expect(await applyAnswer(
+        earlyClaimant,
+        playId,
+        runId,
+        fixture.players[0].deviceId,
+      )).toMatchObject({ freshlyApplied: true, result: { code: "confirmed" } });
+
+      const admitted = await admin.query<{
+        status: string;
+        confirmed_count: number;
+        finalize_at: Date | null;
+      }>(
+        "select status, confirmed_count, finalize_at from question_plays where id = $1",
+        [playId],
+      );
+      expect.soft(admitted.rows[0]).toEqual({
+        status: "accepting",
+        confirmed_count: 2,
+        finalize_at: null,
+      });
+
+      await installClockedFinalizer(finalizer, "2030-01-02T03:04:16.000000Z");
+      const finalized = await rpc(
+        finalizer,
+        "select pg_temp.finalize_current_play_if_due_at($1, $2, $3) as result",
+        [fixture.roomCode, runId, playId],
+      );
+      expect(finalized.result.code).toBe("resolved");
+      const terminal = await admin.query<{
+        status: string;
+        resolution_reason: string;
+        terminal_events: number;
+      }>(
+        `select status, resolution_reason,
+                (select count(*)::int from live_room_events
+                  where play_id = $1 and kind = 'play_resolved') as terminal_events
+           from question_plays
+          where id = $1`,
+        [playId],
+      );
+      expect.soft(terminal.rows[0]).toEqual({
+        status: "resolved",
+        resolution_reason: "deadline",
+        terminal_events: 1,
+      });
+    } finally {
+      await Promise.all([
+        earlyClaimant.end(),
+        lateClaimant.end(),
+        finalizer.end(),
+      ]);
+      await removeFixture(fixture);
+    }
+  });
+
   test("simultaneous last answers produce one all-in hold after exactly two canonical answers", async () => {
     const { fixture, runId, playId } = await readyPlay(2);
     try {
@@ -667,6 +814,84 @@ describe("authoritative answer engine PostgreSQL races", () => {
     } finally { await removeFixture(fixture); }
   });
 
+  test("a concurrent ready-board edit waits behind a validated game start", async () => {
+    const fixture = await createFixture();
+    const runId = await openRun(fixture);
+    const gate = await connect();
+    const editor = await connect();
+    const starter = await connect();
+    let startPromise: Promise<Envelope> | null = null;
+    let editPromise: Promise<unknown> | null = null;
+    try {
+      await installPausedStart(starter);
+      await gate.query("begin");
+      await gate.query("select pg_advisory_xact_lock($1::bigint)", [
+        START_GATE_KEY,
+      ]);
+      await editor.query("begin");
+      const starterPid = await starter.query<{ pid: number }>(
+        "select pg_backend_pid() as pid",
+      );
+      const editorPid = await editor.query<{ pid: number }>(
+        "select pg_backend_pid() as pid",
+      );
+      startPromise = rpc(
+        starter,
+        "select pg_temp.start_live_game_paused($1, $2, $3, 1::bigint) as result",
+        [fixture.gameId, runId, uuid()],
+      );
+      await waitForLockWait(starterPid.rows[0].pid, "paused game start");
+
+      editPromise = editor.query(
+        `update questions
+            set is_picked = false,
+                prompt = '',
+                options = '[]'::jsonb
+          where id = $1`,
+        [fixture.questionId],
+      );
+      await waitForLockWait(editorPid.rows[0].pid, "ready-board editor");
+
+      await gate.query("commit");
+      const started = await startPromise;
+      expect(started).toMatchObject({
+        freshlyApplied: true,
+        result: { code: "applied", eventKind: "game_started" },
+      });
+      await editPromise;
+      await editor.query("rollback");
+
+      const state = await admin.query<{
+        state: string;
+        category_state: string;
+        is_picked: boolean;
+        start_events: number;
+      }>(
+        `select g.state, c.state as category_state, q.is_picked,
+                (select count(*)::int from live_room_events
+                  where game_id = g.id and kind = 'game_started') as start_events
+           from games g
+           join categories c on c.game_id = g.id
+           join questions q on q.category_id = c.id
+          where g.id = $1`,
+        [fixture.gameId],
+      );
+      expect(state.rows[0]).toEqual({
+        state: "live",
+        category_state: "ready",
+        is_picked: true,
+        start_events: 1,
+      });
+    } finally {
+      await gate.query("rollback").catch(() => undefined);
+      await startPromise?.catch(() => undefined);
+      await editPromise?.catch(() => undefined);
+      await editor.query("rollback").catch(() => undefined);
+      await Promise.all([gate.end(), editor.end(), starter.end()]);
+      await removeFixture(fixture);
+    }
+  });
+
   test("Show Answer is idempotent when host retries concurrently", async () => {
     const { fixture, runId, playId } = await readyPlay();
     try {
@@ -865,7 +1090,8 @@ describe("authoritative answer engine PostgreSQL races", () => {
       const applyLockedSource = await installedApplyLockedDefinition();
       expect(source).toContain("v_now >= v_play.final_window_ends_at");
       expect(applySource).toContain("_live_apply_pending_answer_locked");
-      expect(applyLockedSource).toContain("v_answer.received_at < v_play.main_zero_at");
+      expect(applyLockedSource).toContain("select max(received_at) into v_latest_receipt");
+      expect(applyLockedSource).toContain("v_latest_receipt < v_play.main_zero_at");
       expect(source).toContain("floor(extract(epoch from (v_now - v_play.opened_at)) * 1000)::integer");
       expect(source.indexOf("for share")).toBeLessThan(
         source.indexOf(CLOCK_ASSIGNMENT),
