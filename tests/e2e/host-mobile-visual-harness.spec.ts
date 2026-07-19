@@ -78,7 +78,10 @@ test("all production prep components fit every approved phone viewport", async (
       );
       await expectNoHorizontalOverflow(page);
 
-      const surfaceRoot = page.getByTestId(testId);
+      const surfaceRoot = page.locator("main").filter({
+        has: page.getByTestId(testId),
+      });
+      await expect(surfaceRoot).toHaveCount(1);
       const undersized = await surfaceRoot
         .locator(INTERACTIVE_SELECTOR)
         .evaluateAll((elements) =>
@@ -100,6 +103,38 @@ test("all production prep components fit every approved phone viewport", async (
       expect(undersized).toEqual([]);
 
       const interactive = surfaceRoot.locator(INTERACTIVE_SELECTOR);
+      const discoveredLabels = await interactive.evaluateAll((elements) =>
+        elements.map(
+          (element) =>
+            element.getAttribute("aria-label") ??
+            element.getAttribute("data-testid") ??
+            element.textContent?.trim() ??
+            element.tagName.toLowerCase(),
+        ),
+      );
+      if (surface === "pick") {
+        expect.soft(discoveredLabels).toEqual(
+          expect.arrayContaining([
+            "Rename category",
+            "easy",
+            "normal",
+            "hard",
+            "↻ Another 20",
+          ]),
+        );
+      }
+      if (surface === "manual") {
+        expect.soft(discoveredLabels).toEqual(
+          expect.arrayContaining([
+            "Question prompt for row 1",
+            "Row 1 option 1",
+            "Cancel",
+          ]),
+        );
+        expect.soft(
+          discoveredLabels.some((label) => label.includes("Lock the category")),
+        ).toBe(true);
+      }
       for (let index = 0; index < (await interactive.count()); index += 1) {
         await expectAccessibleHitTarget(
           page,
