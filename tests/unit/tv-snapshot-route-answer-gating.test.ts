@@ -39,6 +39,10 @@ function qb(rows: Record<string, unknown>[], error: { message: string } | null =
       data = data.filter((r) => r[c] === v);
       return b;
     },
+    neq: (c: string, v: unknown) => {
+      data = data.filter((r) => r[c] !== v);
+      return b;
+    },
     is: (c: string, v: unknown) => {
       data = data.filter((r) => (r[c] ?? null) === v);
       return b;
@@ -76,22 +80,42 @@ const Q_RESOLVED = {
 
 function makeAdmin({
   live = true,
+  resilient = false,
+  secondGame = false,
+  playGameId = "G1",
   errorTable,
-}: { live?: boolean; errorTable?: string } = {}) {
+}: {
+  live?: boolean;
+  resilient?: boolean;
+  secondGame?: boolean;
+  playGameId?: "G1" | "G2";
+  errorTable?: string;
+} = {}) {
   const seed: Record<string, Record<string, unknown>[]> = {
     nights: [{
       id: NIGHT_ID, venue_name: "V", theme_key: "house", room_code: CODE,
       opened_at: null, closed_at: null, scheduled_at: null, is_locked: false,
+      answer_engine: resilient ? "resilient_v1" : "legacy",
+      current_run_id: resilient ? "run-1" : null,
+      room_revision: resilient ? 8 : 0,
+      control_revision: resilient ? 5 : 0,
       hosts: { default_theme_key: "house" },
     }],
     games: [{
       id: "G1", game_no: 1, state: "live", started_at: null, ended_at: null,
       category_count: 1, question_count: 7, night_id: NIGHT_ID,
-    }],
+      ...(secondGame ? { state: "done", ended_at: "2026-06-07T00:10:00Z" } : {}),
+    }, ...(secondGame ? [{
+      id: "G2", game_no: 2, state: "live", started_at: "2026-06-07T00:11:00Z",
+      ended_at: null, category_count: 1, question_count: 7, night_id: NIGHT_ID,
+    }] : [])],
     categories: [{
       id: "C1", game_id: "G1", name: "Cat", topic: "t", position: 0,
       color: null, state: "ready",
-    }],
+    }, ...(secondGame ? [{
+      id: "C2", game_id: "G2", name: "Cat 2", topic: "t2", position: 0,
+      color: null, state: "ready",
+    }] : [])],
     // With `live: false` there's no open question, so the TV targets the
     // most-recently-resolved one (the reveal screen) via the 'resolve' reveal.
     questions: live ? [Q_UNPLAYED, Q_LIVE, Q_RESOLVED] : [Q_UNPLAYED, Q_RESOLVED],
@@ -117,6 +141,25 @@ function makeAdmin({
         scramble: [0, 1, 2, 3], ms_to_lock: 1200, is_correct: true,
         awarded_points: 500, locked_at: "2026-06-07T00:00:10Z" },
     ],
+    question_plays: resilient ? [{
+      id: "play-1", night_id: NIGHT_ID, run_id: "run-1", game_id: playGameId,
+      category_id: playGameId === "G2" ? "C2" : "C1",
+      question_id: live ? "q-live" : "q-resolved",
+      status: live ? "accepting" : "resolved",
+      opened_at: "2026-06-07T00:00:00Z",
+      main_zero_at: "2026-06-07T00:00:30Z",
+      final_window_starts_at: null,
+      final_window_ends_at: "2026-06-07T00:00:32Z", finalize_at: null,
+      eligible_count: 2, confirmed_count: 1,
+    }] : [],
+    question_play_eligibility: [{
+      play_id: "play-1", player_id: "P1", eligibility_reason: "DO-NOT-LEAK",
+    }],
+    question_play_answers: [{
+      play_id: "play-1", player_id: "P1", submission_id: "SUBMISSION-LEAK",
+      visible_slot: 2, canonical_index: 1, is_correct: true,
+      device_id: "DEVICE-LEAK",
+    }],
   };
   return {
     from: vi.fn((table: string) => qb(
@@ -197,6 +240,65 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
     // The reveal screen ("who got it right", fastest-five) reads these.
     expect(body.liveAnswers[0].chosen_index).toBe(3);
     expect(body.liveAnswers[0].is_correct).toBe(true);
+  });
+
+  it("projects aggregate resilient play state without any selected answer or eligibility identity", async () => {
+    const admin = makeAdmin({ resilient: true });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.live).toEqual({
+      runId: "run-1",
+      roomRevision: 8,
+      controlRevision: 5,
+      playId: "play-1",
+      play: {
+        playId: "play-1",
+        gameId: "G1",
+        questionId: "q-live",
+        state: "accepting",
+        openedAt: "2026-06-07T00:00:00Z",
+        mainZeroAt: "2026-06-07T00:00:30Z",
+        finalWindowStartsAt: null,
+        finalWindowEndsAt: "2026-06-07T00:00:32Z",
+        finalizeAt: null,
+        eligibleCount: 2,
+        confirmedCount: 1,
+      },
+    });
+    const json = JSON.stringify(body.live);
+    expect(json).not.toContain("P1");
+    expect(json).not.toContain("DO-NOT-LEAK");
+    expect(json).not.toContain("SUBMISSION-LEAK");
+    expect(json).not.toContain("DEVICE-LEAK");
+    expect(json).not.toContain("canonical");
+    expect(json).not.toContain("isCorrect");
+    expect(json).not.toContain("selected");
+  });
+
+  it("does not project Game 1 play state after Game 2 starts before its first question", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      resilient: true,
+      live: false,
+      secondGame: true,
+      playGameId: "G1",
+    }));
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.currentGameId).toBe("G2");
+    expect(body.live).toMatchObject({ playId: null, play: null });
   });
 
   it("maps a public snapshot database failure to a generic typed error", async () => {

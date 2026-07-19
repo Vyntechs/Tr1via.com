@@ -14,6 +14,10 @@ import type {
 } from "@/lib/supabase/types";
 import type { RoomSnapshot } from "@/lib/hooks/useRoom";
 import type { RoomMagicReactionEvent } from "@/lib/room-magic/reactions";
+import type {
+  HostLiveProjection,
+  PlayerLiveProjection,
+} from "@/lib/live-answer/contracts";
 import {
   type HostLiveAnswer,
   type ParticipationDTO,
@@ -44,6 +48,7 @@ interface RoomSnapshotBase {
 export type RoomSnapshotPayload = RoomSnapshotBase & (
   | {
       audience: "player";
+      live?: PlayerLiveProjection | null;
       self: RoomPlayer;
       myAnswers: PlayerCanonicalAnswer[];
       myParticipations: ParticipationDTO[];
@@ -51,6 +56,7 @@ export type RoomSnapshotPayload = RoomSnapshotBase & (
     }
   | {
       audience: "host";
+      live?: HostLiveProjection | null;
       self: null;
       myAnswers?: never;
       myParticipations?: never;

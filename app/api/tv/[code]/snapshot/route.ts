@@ -20,6 +20,7 @@ import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
 import {
   serializeBoardQuestion,
   type TVBoardQuestionRow,
@@ -43,7 +44,7 @@ export async function GET(
   const { data: night, error: nightError } = await admin
     .from("nights")
     .select(
-      "id, venue_name, theme_key, room_code, opened_at, closed_at, scheduled_at, is_locked, room_magic_enabled, hosts!inner(default_theme_key)",
+      "id, venue_name, theme_key, room_code, opened_at, closed_at, scheduled_at, is_locked, room_magic_enabled, answer_engine, current_run_id, room_revision, control_revision, hosts!inner(default_theme_key)",
     )
     .eq("room_code", code)
     .maybeSingle();
@@ -58,6 +59,22 @@ export async function GET(
   const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
   const hostDefaultThemeKey: string | null =
     host?.default_theme_key ?? null;
+
+  let currentPlay: Parameters<typeof projectLiveRoom>[0]["play"] = null;
+  if (night.answer_engine === "resilient_v1" && night.current_run_id) {
+    const { data: playRows, error: playError } = await admin
+      .from("question_plays")
+      .select(
+        "id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count",
+      )
+      .eq("night_id", nightId)
+      .eq("run_id", night.current_run_id)
+      .neq("status", "undone")
+      .order("opened_at", { ascending: false })
+      .limit(1);
+    if (playError) return serverError();
+    currentPlay = playRows?.[0] ?? null;
+  }
 
   const [
     gamesRes,
@@ -170,6 +187,19 @@ export async function GET(
     : null;
   const readyGame = games.find((g) => g.state === "ready") ?? null;
   const currentGame = liveGame ?? lastDone ?? readyGame ?? games[0] ?? null;
+  const live = night.answer_engine === "resilient_v1" && night.current_run_id
+    ? projectLiveRoom({
+        night: {
+          current_run_id: night.current_run_id,
+          room_revision: night.room_revision,
+          control_revision: night.control_revision,
+        },
+        play:
+          liveGame && currentPlay?.game_id === liveGame.id
+            ? currentPlay
+            : null,
+      })
+    : null;
 
   // Fetch game_scores for currentGame (used by Grid/Leaderboard/Finale).
   let scores: Array<{
@@ -268,6 +298,7 @@ export async function GET(
   }
 
   return ok({
+    live,
     night: {
       id: night.id,
       venueName: night.venue_name,

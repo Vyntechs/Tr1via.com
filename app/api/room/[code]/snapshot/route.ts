@@ -27,6 +27,10 @@ import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthedHost, getDeviceId } from "@/lib/api/auth";
 import {
+  projectHostLiveRoom,
+  projectPlayerLiveRoom,
+} from "@/lib/live-answer/projectPlay";
+import {
   serializeHostLiveAnswer,
   serializeParticipation,
   serializePlayerCanonicalAnswer,
@@ -107,11 +111,53 @@ export async function GET(
       )
       .eq("night_id", nightId)
       .eq("device_id", deviceId)
-      .is("removed_at", null)
       .maybeSingle();
     if (!player) return forbidden("not a player in this room");
     mode = "player";
     playerRow = player as SafePlayerRow;
+  }
+
+  // Resilient nights expose one explicit audience-safe projection. Raw plays,
+  // frozen eligibility rows, and canonical answers never cross this route.
+  let currentPlay: Record<string, unknown> | null = null;
+  let playerEligibility: { play_id: string } | null = null;
+  let playerCanonicalAnswer: Record<string, unknown> | null = null;
+  const resilient = night.answer_engine === "resilient_v1";
+  if (resilient && night.current_run_id) {
+    const { data: playRows, error: playError } = await admin
+      .from("question_plays")
+      .select(
+        "id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count",
+      )
+      .eq("night_id", nightId)
+      .eq("run_id", night.current_run_id)
+      .neq("status", "undone")
+      .order("opened_at", { ascending: false })
+      .limit(1);
+    if (playError) return serverError();
+    currentPlay = playRows?.[0] ?? null;
+
+    if (mode === "player" && playerRow && currentPlay) {
+      const [eligibilityRes, canonicalAnswerRes] = await Promise.all([
+        admin
+          .from("question_play_eligibility")
+          .select("play_id")
+          .eq("play_id", currentPlay.id as string)
+          .eq("player_id", playerRow.id)
+          .maybeSingle(),
+        admin
+          .from("question_play_answers")
+          .select(
+            "visible_slot, canonical_index, received_at, locked_at, ms_to_lock, is_correct, awarded_points",
+          )
+          .eq("play_id", currentPlay.id as string)
+          .eq("player_id", playerRow.id)
+          .maybeSingle(),
+      ]);
+      if (eligibilityRes.error || canonicalAnswerRes.error) return serverError();
+      playerEligibility = eligibilityRes.data;
+      playerCanonicalAnswer = canonicalAnswerRes.data;
+    }
   }
 
   // ── Room state (same reads useRoom's bootstrap does, server-side) ─────────
@@ -178,6 +224,47 @@ export async function GET(
     .sort((a, b) => (b.ended_at ?? "").localeCompare(a.ended_at ?? ""))[0];
   const readyGame = games.find((g) => g.state === "ready");
   const currentGame = liveGame ?? doneGame ?? readyGame ?? games[0] ?? null;
+
+  // A completed Game 1 play is not the current Game 2 play. This prevents the
+  // between-games snapshot from replaying old answer state before Game 2's
+  // first question opens.
+  const projectionPlay =
+    liveGame && currentPlay?.game_id === liveGame.id ? currentPlay : null;
+  const projectionEligibility =
+    projectionPlay && playerEligibility?.play_id === projectionPlay.id
+      ? playerEligibility
+      : null;
+  const projectionAnswer = projectionEligibility ? playerCanonicalAnswer : null;
+
+  // Removal stops access to future plays, but it cannot revoke eligibility
+  // that was frozen for a play already in progress.
+  if (mode === "player" && playerRow?.removed_at && !projectionEligibility) {
+    return forbidden("not a player in this room");
+  }
+
+  const live = resilient && night.current_run_id
+    ? mode === "player"
+      ? projectPlayerLiveRoom({
+          night: {
+            current_run_id: night.current_run_id,
+            room_revision: night.room_revision ?? 0,
+            control_revision: night.control_revision ?? 0,
+          },
+          play: projectionPlay as Parameters<typeof projectPlayerLiveRoom>[0]["play"],
+          eligibility: projectionEligibility,
+          answer: projectionAnswer as Parameters<
+            typeof projectPlayerLiveRoom
+          >[0]["answer"],
+        })
+      : projectHostLiveRoom({
+          night: {
+            current_run_id: night.current_run_id,
+            room_revision: night.room_revision ?? 0,
+            control_revision: night.control_revision ?? 0,
+          },
+          play: projectionPlay as Parameters<typeof projectHostLiveRoom>[0]["play"],
+        })
+    : null;
 
   // Target question for the host's lock count / reveal answers: the live one,
   // else the most-recently-resolved (mirrors HostLiveConsoleClient).
@@ -276,6 +363,7 @@ export async function GET(
     return ok({
       ...common,
       audience: "player" as const,
+      live,
       self: serializePlayerSelf(playerRow),
       myAnswers,
       myParticipations,
@@ -285,6 +373,7 @@ export async function GET(
   return ok({
     ...common,
     audience: "host" as const,
+    live,
     self: null,
     liveAnswers,
   });

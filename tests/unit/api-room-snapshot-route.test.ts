@@ -50,12 +50,16 @@ function qb(rows: Record<string, unknown>[], error: { message: string } | null =
       return b;
     },
     eq: (c: string, v: unknown) => apply(c, (r) => r[c] === v),
+    neq: (c: string, v: unknown) => apply(c, (r) => r[c] !== v),
     in: (c: string, values: unknown[]) => apply(c, (r) => values.includes(r[c])),
     is: (c: string, v: unknown) => apply(c, (r) => (r[c] ?? null) === v),
     not: (c: string, _op: string, v: unknown) => apply(c, (r) => (r[c] ?? null) !== v),
     gte: () => b,
     order: () => b,
-    limit: () => b,
+    limit: (count: number) => {
+      data = data.slice(0, count);
+      return b;
+    },
     maybeSingle: () => Promise.resolve({ data: project(data)[0] ?? null, error }),
     then: (onF: (v: { data: unknown; error: { message: string } | null }) => unknown) =>
       Promise.resolve({ data: project(data), error }).then(onF),
@@ -76,12 +80,33 @@ const Q_RESOLVED = {
   finished_at: "2026-06-07T00:00:20Z", is_picked: true,
 };
 
-function makeAdmin(errorTable?: string) {
+function makeAdmin(
+  options?: string | {
+    resilient?: boolean;
+    eligible?: boolean;
+    removed?: boolean;
+    answered?: boolean;
+    recentUndone?: number;
+    playGameId?: "G1" | "G2";
+  },
+) {
+  const errorTable = typeof options === "string" ? options : undefined;
+  const resilient = typeof options === "object" && options.resilient === true;
+  const eligible = typeof options !== "object" || options.eligible !== false;
+  const removed = typeof options === "object" && options.removed === true;
+  const answered = typeof options !== "object" || options.answered !== false;
+  const recentUndone = typeof options === "object" ? options.recentUndone ?? 0 : 0;
+  const playGameId = typeof options === "object" ? options.playGameId ?? "G2" : "G2";
   const seed: Record<string, Record<string, unknown>[]> = {
     nights: [{
       id: NIGHT_ID, venue_name: "V", theme_key: "house", room_code: CODE,
       host_id: HOST_ID, opened_at: null, closed_at: null, scheduled_at: null,
-      is_locked: false, room_magic_enabled: true, hosts: { default_theme_key: "house" },
+      is_locked: false, room_magic_enabled: true,
+      answer_engine: resilient ? "resilient_v1" : "legacy",
+      current_run_id: resilient ? "run-1" : null,
+      room_revision: resilient ? 8 : 0,
+      control_revision: resilient ? 5 : 0,
+      hosts: { default_theme_key: "house" },
     }],
     games: [{
       id: "G1", game_no: 1, state: "done", started_at: null,
@@ -102,7 +127,9 @@ function makeAdmin(errorTable?: string) {
     players: [{
       id: PLAYER_ID, display_name: "Alice", night_id: NIGHT_ID,
       device_id: DEVICE_ID_LEAK, joined_at: "2026-06-07T00:00:00Z",
-      last_seen_at: null, removed_at: null, app_switch_total_seconds: 0,
+      last_seen_at: null,
+      removed_at: removed ? "2026-06-07T00:00:03Z" : null,
+      app_switch_total_seconds: 0,
     }, {
       id: "P2", display_name: "Bob", night_id: NIGHT_ID,
       device_id: "OTHER-DEVICE-ID-LEAK", joined_at: "2026-06-07T00:00:01Z",
@@ -136,6 +163,40 @@ function makeAdmin(errorTable?: string) {
       kind: "wow",
       created_at: "2026-06-07T00:00:22Z",
     }],
+    question_plays: resilient ? [
+      ...Array.from({ length: recentUndone }, (_, index) => ({
+        id: `undone-${index}`, night_id: NIGHT_ID, run_id: "run-1", game_id: playGameId,
+        category_id: playGameId === "G2" ? "C2" : "C1",
+        question_id: `undone-question-${index}`,
+        status: "undone", opened_at: `2026-06-07T00:01:0${index}Z`,
+        main_zero_at: "2026-06-07T00:01:30Z",
+        final_window_starts_at: null,
+        final_window_ends_at: "2026-06-07T00:01:32Z", finalize_at: null,
+        eligible_count: 1, confirmed_count: 0,
+      })),
+      {
+      id: "play-1", night_id: NIGHT_ID, run_id: "run-1", game_id: playGameId,
+      category_id: playGameId === "G2" ? "C2" : "C1",
+      question_id: playGameId === "G2" ? "q-live" : "q-resolved",
+      status: playGameId === "G2" ? "accepting" : "resolved",
+      opened_at: "2026-06-07T00:00:00Z",
+      main_zero_at: "2026-06-07T00:00:30Z",
+      final_window_starts_at: null,
+      final_window_ends_at: "2026-06-07T00:00:32Z", finalize_at: null,
+      eligible_count: eligible ? 1 : 0, confirmed_count: answered ? 1 : 0,
+      },
+    ] : [],
+    question_play_eligibility: resilient && eligible ? [{
+      play_id: "play-1", player_id: PLAYER_ID, night_id: NIGHT_ID,
+      frozen_at: "2026-06-07T00:00:00Z", eligibility_reason: "DO-NOT-LEAK",
+    }] : [],
+    question_play_answers: resilient && answered ? [{
+      play_id: "play-1", player_id: PLAYER_ID,
+      submission_id: "SUBMISSION-ID-LEAK", visible_slot: 3, canonical_index: 1,
+      received_at: "2026-06-07T00:00:04Z",
+      locked_at: "2026-06-07T00:00:04Z", ms_to_lock: 4_000,
+      is_correct: null, awarded_points: null, device_id: "DEVICE-ANSWER-LEAK",
+    }] : [],
   };
   return {
     from: vi.fn((table: string) => qb(
@@ -288,6 +349,114 @@ describe("GET /api/room/[code]/snapshot", () => {
     // And question_id, so host fallback mode can still match answers to the
     // live question when deciding whether every eligible player has locked.
     expect(body.liveAnswers[0].questionId).toBe("q-live");
+  });
+
+  it("RESILIENT PLAYER: projects only the signed eligible player's canonical play state", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({ resilient: true }));
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.live).toMatchObject({
+      runId: "run-1",
+      roomRevision: 8,
+      controlRevision: 5,
+      playId: "play-1",
+      canAnswerThisPlay: true,
+      canonicalAnswer: { confirmedSlot: 3, canonicalIndex: 1 },
+      play: { eligibleCount: 1, confirmedCount: 1 },
+    });
+    const json = JSON.stringify(body.live);
+    expect(json).not.toContain(PLAYER_ID);
+    expect(json).not.toContain("SUBMISSION-ID-LEAK");
+    expect(json).not.toContain("DEVICE-ANSWER-LEAK");
+    expect(json).not.toContain("DO-NOT-LEAK");
+  });
+
+  it("RESILIENT PLAYER: makes a late join watch-only for the already-open play", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      resilient: true,
+      eligible: false,
+      answered: false,
+    }));
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.live.canAnswerThisPlay).toBe(false);
+    expect(body.live.canonicalAnswer).toBeNull();
+  });
+
+  it("RESILIENT PLAYER: honors frozen eligibility after the player is removed", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      resilient: true,
+      removed: true,
+      answered: false,
+    }));
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.live.canAnswerThisPlay).toBe(true);
+    expect(body.live.canonicalAnswer).toBeNull();
+  });
+
+  it("RESILIENT HOST: receives aggregate operations without player answer identity", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({ resilient: true }));
+    authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
+    authMock.getDeviceId.mockResolvedValue(null);
+
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.live.operations).toEqual({
+      eligibleCount: 1,
+      confirmedCount: 1,
+      awaitingCount: 0,
+    });
+    expect(JSON.stringify(body.live)).not.toContain(PLAYER_ID);
+  });
+
+  it("RESILIENT PLAYER: ignores any number of undone plays when selecting the current play", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      resilient: true,
+      recentUndone: 6,
+    }));
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.live.playId).toBe("play-1");
+    expect(body.live.canAnswerThisPlay).toBe(true);
+  });
+
+  it("RESILIENT PLAYER: does not carry Game 1 play state into Game 2 before its first question", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      resilient: true,
+      playGameId: "G1",
+      eligible: false,
+      answered: false,
+    }));
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.live.playId).toBeNull();
+    expect(body.live.play).toBeNull();
+    expect(body.live.canAnswerThisPlay).toBe(false);
   });
 
   it("a signed-in host who does NOT own the night falls through to player auth", async () => {

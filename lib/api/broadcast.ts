@@ -25,6 +25,7 @@
 import "server-only";
 
 import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
+import type { LiveRoomBroadcastAttempt } from "@/lib/live-answer/contracts";
 import type {
   RoomMagicReactionEvent,
   RoomMagicReactionKind,
@@ -38,6 +39,7 @@ export type RoomEventName =
   | "game-ended"
   | "player-joined"
   | "room-magic-reaction"
+  | "live-room-event"
   | "fireworks";
 export type CategoryEventName =
   | "progress"
@@ -142,6 +144,52 @@ export async function broadcastToRoom(
       payload: payload as unknown as Record<string, unknown>,
     },
   ]);
+}
+
+/**
+ * Fail-closed boundary for the server-authoritative answer engine.
+ *
+ * The caller must provide the transaction-winner/replay discriminator from a
+ * durable source. We never infer freshness from `applied`, revisions, request
+ * data, or process memory. Extra source fields are discarded by constructing
+ * an explicit audience-safe payload below.
+ */
+export async function broadcastAppliedLiveRoomEvent(
+  roomCode: string,
+  attempt: LiveRoomBroadcastAttempt,
+): Promise<boolean> {
+  if (
+    attempt.applied !== true ||
+    attempt.freshness !== "transaction_winner"
+  ) {
+    return false;
+  }
+
+  const play = attempt.live.play;
+  if (attempt.kind === "answer_progress" && !play) return false;
+
+  const payload: Record<string, unknown> = {
+    kind: attempt.kind,
+    serverNow: attempt.serverNow,
+    runId: attempt.live.runId,
+    roomRevision: attempt.live.roomRevision,
+    controlRevision: attempt.live.controlRevision,
+    playId: attempt.live.playId,
+  };
+
+  if (play) {
+    payload.state = play.state;
+    payload.eligibleCount = play.eligibleCount;
+    payload.confirmedCount = play.confirmedCount;
+    payload.finalizeAt = play.finalizeAt;
+  }
+
+  await postBroadcasts([{
+    topic: `room:${roomCode}`,
+    event: "live-room-event",
+    payload,
+  }]);
+  return true;
 }
 
 /**
