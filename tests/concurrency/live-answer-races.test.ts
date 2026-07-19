@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 type Json = Record<string, unknown>;
 type Envelope = { freshlyApplied: boolean; result: Json };
 type Fixture = {
+  hostUserId: string;
   hostId: string;
   nightId: string;
   gameId: string;
@@ -18,8 +19,14 @@ const databaseUrl = process.env.TR1VIA_RACE_DATABASE_URL
 // Never let this harness point at a hosted Supabase project by mistake.
 const localDatabaseHosts = new Set(["127.0.0.1", "localhost", "::1"]);
 const target = new URL(databaseUrl);
-if (!localDatabaseHosts.has(target.hostname)) {
-  throw new Error("TR1VIA_RACE_DATABASE_URL must target local disposable PostgreSQL");
+if (
+  !localDatabaseHosts.has(target.hostname)
+  || target.port !== "54322"
+  || target.pathname !== "/postgres"
+  || target.search
+  || target.hash
+) {
+  throw new Error("TR1VIA_RACE_DATABASE_URL must target 127.0.0.1:54322/postgres (or localhost/::1 equivalent)");
 }
 
 let admin: Client;
@@ -40,8 +47,9 @@ async function rpc(client: Client, sql: string, values: unknown[]): Promise<Enve
 }
 
 async function concurrently<T>(commands: Array<(client: Client) => Promise<T>>): Promise<T[]> {
-  const clients = await Promise.all(commands.map(() => connect()));
+  const clients: Client[] = [];
   try {
+    for (let index = 0; index < commands.length; index += 1) clients.push(await connect());
     return await Promise.all(commands.map((command, index) => command(clients[index])));
   } finally {
     await Promise.all(clients.map((client) => client.end()));
@@ -85,7 +93,7 @@ async function createFixture(playerCount = 2): Promise<Fixture> {
     );
     await admin.query("insert into game_participations (game_id, player_id) values ($1, $2)", [gameId, player.id]);
   }
-  return { hostId, nightId, gameId, questionId, roomCode, players };
+  return { hostUserId: hostUser, hostId, nightId, gameId, questionId, roomCode, players };
 }
 
 async function openRun(fixture: Fixture): Promise<string> {
@@ -134,6 +142,144 @@ async function answer(client: Client, playId: string, runId: string, deviceId: s
 
 async function removeFixture(fixture: Fixture): Promise<void> {
   await admin.query("delete from hosts where id = $1", [fixture.hostId]);
+  await admin.query("delete from auth.users where id = $1", [fixture.hostUserId]);
+}
+
+const SUBMIT_SIGNATURE = "public.submit_question_play_answer(uuid,uuid,uuid,uuid,smallint)";
+const CLOCK_INITIALIZER = "v_now timestamptz := clock_timestamp();";
+const CLOCKED_INITIALIZER = "v_now timestamptz := current_setting('tr1via.test_now')::timestamptz;";
+
+function count(value: string, needle: string): number {
+  return value.split(needle).length - 1;
+}
+
+async function installedSubmitDefinition(client = admin): Promise<string> {
+  const result = await client.query<{ definition: string }>(
+    "select pg_get_functiondef($1::regprocedure) as definition",
+    [SUBMIT_SIGNATURE],
+  );
+  return result.rows[0]?.definition ?? "";
+}
+
+async function withClockedSubmit<T>(run: (client: Client, submitAt: string) => Promise<T>): Promise<T> {
+  const client = await connect();
+  try {
+    const installed = await installedSubmitDefinition(client);
+    expect(count(installed, "public.submit_question_play_answer(")).toBe(1);
+    expect(count(installed, CLOCK_INITIALIZER)).toBe(1);
+    const clone = installed
+      .replace("public.submit_question_play_answer(", "pg_temp.submit_question_play_answer_at(")
+      .replace(CLOCK_INITIALIZER, CLOCKED_INITIALIZER);
+    // The clone is built from the installed function, and these reversible,
+    // session-local substitutions are the entire seam.
+    expect(
+      clone
+        .replace("pg_temp.submit_question_play_answer_at(", "public.submit_question_play_answer(")
+        .replace(CLOCKED_INITIALIZER, CLOCK_INITIALIZER),
+    ).toBe(installed);
+    await client.query(clone);
+    return await run(client, "2030-01-02T03:04:05.000000Z");
+  } finally {
+    await client.end();
+  }
+}
+
+async function clockedAnswer(
+  client: Client,
+  submitAt: string,
+  playId: string,
+  runId: string,
+  deviceId: string,
+): Promise<Envelope> {
+  await client.query("select set_config('tr1via.test_now', $1, false)", [submitAt]);
+  return rpc(
+    client,
+    "select pg_temp.submit_question_play_answer_at($1, $2, $3, $4, 1::smallint) as result",
+    [playId, runId, deviceId, uuid()],
+  );
+}
+
+async function setClockedPlay(
+  playId: string,
+  submitAt: string,
+  openedOffsetMs: number,
+  finalWindowOffset: "equal" | "after",
+): Promise<void> {
+  await admin.query(
+    `update question_plays
+        set opened_at = $2::timestamptz - ($3::integer * interval '1 millisecond'),
+            main_zero_at = $2::timestamptz + interval '10 seconds',
+            final_window_ends_at = $2::timestamptz
+              + case when $4::text = 'after' then interval '10 seconds' else interval '0 seconds' end
+      where id = $1`,
+    [playId, submitAt, openedOffsetMs, finalWindowOffset],
+  );
+}
+
+async function proveClockedDeadlineBoundary(client: Client, submitAt: string): Promise<void> {
+  const equality = await readyPlay();
+  try {
+    await setClockedPlay(equality.playId, submitAt, 10_000, "equal");
+    expect(await clockedAnswer(client, submitAt, equality.playId, equality.runId, equality.fixture.players[0].deviceId))
+      .toMatchObject({ freshlyApplied: false, result: { code: "deadline_passed" } });
+    const rejected = await admin.query<{ answers: number }>(
+      "select count(*)::int as answers from question_play_answers where play_id = $1",
+      [equality.playId],
+    );
+    expect(rejected.rows[0]).toEqual({ answers: 0 });
+  } finally { await removeFixture(equality.fixture); }
+
+  const before = await readyPlay();
+  try {
+    await setClockedPlay(before.playId, submitAt, 10_000, "equal");
+    const justBefore = "2030-01-02T03:04:04.999999Z";
+    expect(await clockedAnswer(client, justBefore, before.playId, before.runId, before.fixture.players[0].deviceId))
+      .toMatchObject({ freshlyApplied: true, result: { code: "confirmed" } });
+    const accepted = await admin.query<{ received_at: string; answers: number }>(
+      `select (select received_at::text from question_play_answers where play_id = $1) as received_at,
+              (select count(*)::int from question_play_answers where play_id = $1) as answers`,
+      [before.playId],
+    );
+    expect(accepted.rows[0]).toMatchObject({ answers: 1 });
+    expect(new Date(accepted.rows[0].received_at).toISOString()).toBe("2030-01-02T03:04:04.999Z");
+  } finally { await removeFixture(before.fixture); }
+}
+
+async function proveClockedSpeedBoundary(
+  client: Client,
+  submitAt: string,
+  expectedMs: number,
+  expectedPoints: number,
+): Promise<void> {
+  const boundary = await readyPlay();
+  try {
+    await setClockedPlay(boundary.playId, submitAt, expectedMs, "after");
+    await admin.query(
+      `update questions
+          set correct_index = (public._live_scramble_for($2::uuid, $3::uuid))[1]
+        where id = $1`,
+      [boundary.fixture.questionId, boundary.fixture.questionId, boundary.fixture.players[0].id],
+    );
+    expect(await clockedAnswer(client, submitAt, boundary.playId, boundary.runId, boundary.fixture.players[0].deviceId))
+      .toMatchObject({ freshlyApplied: true, result: { code: "confirmed" } });
+    const receipt = await admin.query<{ received_at: string; ms_to_lock: number }>(
+      "select received_at::text, ms_to_lock from question_play_answers where play_id = $1",
+      [boundary.playId],
+    );
+    expect(receipt.rows[0]).toMatchObject({ ms_to_lock: expectedMs });
+    expect(new Date(receipt.rows[0].received_at).toISOString()).toBe("2030-01-02T03:04:05.000Z");
+    const resolved = await rpc(
+      admin,
+      "select public._live_resolve_locked_play($1, $2, $3, $4, $5::timestamptz) as result",
+      [boundary.fixture.nightId, boundary.runId, boundary.fixture.gameId, boundary.playId, "2030-01-02T03:04:07.000000Z"],
+    );
+    expect(resolved.result.code).toBe("resolved");
+    const score = await admin.query<{ awarded_points: number }>(
+      "select awarded_points from question_play_answers where play_id = $1",
+      [boundary.playId],
+    );
+    expect(score.rows[0]).toEqual({ awarded_points: expectedPoints });
+  } finally { await removeFixture(boundary.fixture); }
 }
 
 beforeAll(async () => {
@@ -175,12 +321,15 @@ describe("authoritative answer engine PostgreSQL races", () => {
         (client) => answer(client, playId, runId, fixture.players[0].deviceId),
         (client) => rpc(client, "select public.finalize_current_play_if_due($1, $2, $3) as result", [fixture.roomCode, runId, playId]),
       ]);
+      expect(submitted).toMatchObject({ freshlyApplied: false, result: { code: "deadline_passed" } });
       expect([submitted.result.code, finalized.result.code]).toContain("resolved");
-      const terminal = await admin.query<{ status: string; terminal_events: number }>(
-        `select status, (select count(*)::int from live_room_events where play_id = $1 and kind = 'play_resolved') as terminal_events
+      const terminal = await admin.query<{ status: string; terminal_events: number; answers: number }>(
+        `select status,
+                (select count(*)::int from live_room_events where play_id = $1 and kind = 'play_resolved') as terminal_events,
+                (select count(*)::int from question_play_answers where play_id = $1) as answers
            from question_plays where id = $1`, [playId],
       );
-      expect(terminal.rows[0]).toEqual({ status: "resolved", terminal_events: 1 });
+      expect(terminal.rows[0]).toEqual({ status: "resolved", terminal_events: 1, answers: 0 });
     } finally { await removeFixture(fixture); }
   });
 
@@ -201,6 +350,25 @@ describe("authoritative answer engine PostgreSQL races", () => {
       expect(conflicting.map((entry) => entry.result.code).sort()).toEqual(["already_open", "already_open"]);
       const runs = await admin.query<{ count: number }>("select count(*)::int from live_night_runs where night_id = $1", [fixture.nightId]);
       expect(runs.rows[0].count).toBe(1);
+    } finally { await removeFixture(fixture); }
+  });
+
+  test("distinct first-open commands race on a fresh night with one canonical winner", async () => {
+    const fixture = await createFixture();
+    try {
+      const results = await concurrently([
+        (client) => rpc(client, "select public.open_night_run($1, $2, null::uuid, 0::bigint) as result", [fixture.nightId, uuid()]),
+        (client) => rpc(client, "select public.open_night_run($1, $2, null::uuid, 0::bigint) as result", [fixture.nightId, uuid()]),
+      ]);
+      expect(results.filter((entry) => entry.freshlyApplied)).toHaveLength(1);
+      expect(results.map((entry) => entry.result.code).sort()).toEqual(["already_open", "applied"]);
+      const state = await admin.query<{ runs: number; events: number }>(
+        `select
+          (select count(*)::int from live_night_runs where night_id = $1) as runs,
+          (select count(*)::int from live_room_events where night_id = $1 and kind = 'night_opened') as events`,
+        [fixture.nightId],
+      );
+      expect(state.rows[0]).toEqual({ runs: 1, events: 1 });
     } finally { await removeFixture(fixture); }
   });
 
@@ -303,7 +471,7 @@ describe("authoritative answer engine PostgreSQL races", () => {
     } finally { await removeFixture(fixture); }
   });
 
-  test("exact deadline and speed boundaries are database-authoritative", async () => {
+  test("installed source, public brackets, and a session-local clone prove exact deadline and speed boundaries", async () => {
     const { fixture, runId, playId } = await readyPlay();
     try {
       await admin.query(
@@ -329,30 +497,17 @@ describe("authoritative answer engine PostgreSQL races", () => {
       const replay = await answer(admin, playId, runId, fixture.players[0].deviceId, uuid(), 4);
       expect(replay).toEqual({ freshlyApplied: false, result: accepted.result });
 
-      // Resolve the accepted pre-deadline answer at the exact speed threshold:
-      // <5000ms earns the 10% bonus, while 5000ms does not.
-      await admin.query("update question_play_answers set ms_to_lock = 4999, canonical_index = 0 where play_id = $1", [playId]);
-      const resolved = await rpc(admin, "select public.finalize_current_play_if_due($1, $2, $3) as result", [fixture.roomCode, runId, playId]);
-      expect(resolved.result.code).toBe("resolved");
-      const bonus = await admin.query<{ awarded_points: number }>("select awarded_points from question_play_answers where play_id = $1", [playId]);
-      expect(bonus.rows[0].awarded_points).toBe(110);
+      const source = await installedSubmitDefinition();
+      expect(source).toContain("v_now >= v_play.final_window_ends_at");
+      expect(source).toContain("v_now < v_play.main_zero_at");
+      expect(source).toContain("floor(extract(epoch from (v_now - v_play.opened_at)) * 1000)::integer");
+      expect(count(source, "v_now timestamptz := clock_timestamp();")).toBe(1);
 
-      const boundary = await readyPlay();
-      try {
-        await answer(admin, boundary.playId, boundary.runId, boundary.fixture.players[0].deviceId);
-        await admin.query(
-          `update question_plays
-              set opened_at = now() - interval '3 seconds',
-                  main_zero_at = now() - interval '2 seconds',
-                  final_window_ends_at = now() - interval '1 second'
-            where id = $1`,
-          [boundary.playId],
-        );
-        await admin.query("update question_play_answers set ms_to_lock = 5000, canonical_index = 0 where play_id = $1", [boundary.playId]);
-        expect((await rpc(admin, "select public.finalize_current_play_if_due($1, $2, $3) as result", [boundary.fixture.roomCode, boundary.runId, boundary.playId])).result.code).toBe("resolved");
-        const noBonus = await admin.query<{ awarded_points: number }>("select awarded_points from question_play_answers where play_id = $1", [boundary.playId]);
-        expect(noBonus.rows[0].awarded_points).toBe(100);
-      } finally { await removeFixture(boundary.fixture); }
+      await withClockedSubmit(async (client, submitAt) => {
+        await proveClockedDeadlineBoundary(client, submitAt);
+        await proveClockedSpeedBoundary(client, submitAt, 4_999, 110);
+        await proveClockedSpeedBoundary(client, submitAt, 5_000, 100);
+      });
     } finally { await removeFixture(fixture); }
   });
 
