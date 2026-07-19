@@ -194,6 +194,7 @@ const PLAYER_QUESTION_COLUMNS =
 export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs): RoomSnapshot {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(EMPTY);
   const playerRefreshRef = useRef<(() => void) | null>(null);
+  const hostTVKeyRefreshSequenceRef = useRef(0);
   const requestPlayerRefresh = useCallback(() => {
     playerRefreshRef.current?.();
   }, []);
@@ -520,14 +521,26 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       setSnapshot((prev) => ({ ...prev, players: next }));
     }
 
-    async function refreshHostTVPlayerKeys(): Promise<void> {
+    async function refreshHostTVPlayerKeys(expectedNightId: string): Promise<void> {
       if (cancelled) return;
+      const requestSequence = ++hostTVKeyRefreshSequenceRef.current;
       try {
         const payload = await fetchRoomSnapshotPayload(code, {
           signal: bootstrapAbort.signal,
         });
-        if (cancelled || payload.audience !== "host") return;
-        setSnapshot((prev) => ({ ...prev, tvPlayerKeys: payload.tvPlayerKeys }));
+        if (
+          cancelled ||
+          requestSequence !== hostTVKeyRefreshSequenceRef.current ||
+          payload.audience !== "host" ||
+          payload.night?.id !== expectedNightId
+        ) {
+          return;
+        }
+        setSnapshot((prev) =>
+          prev.night?.id === expectedNightId
+            ? { ...prev, tvPlayerKeys: payload.tvPlayerKeys }
+            : prev,
+        );
       } catch {
         // The host's direct room state remains usable. The next roster signal
         // or heartbeat retries the server projection; raw ids never substitute.
@@ -923,7 +936,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // returning 406 from PostgREST on iPhones.
       const cleanNight = (nightRow.data ?? null) as NightRow | null;
       const hostDefaultThemeKey = lookupHostDefaultThemeKey;
-      setSnapshot({
+      setSnapshot((prev) => ({
         night: cleanNight,
         hostDefaultThemeKey,
         games,
@@ -937,10 +950,13 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         lastFireworksBeat: null,
         lastRoomMagicReaction: null,
         roomMagicReactions: [],
-        tvPlayerKeys: {},
+        tvPlayerKeys:
+          cleanNight && prev.night?.id === cleanNight.id
+            ? prev.tvPlayerKeys ?? {}
+            : {},
         isLoading: false,
-      });
-      void refreshHostTVPlayerKeys();
+      }));
+      void refreshHostTVPlayerKeys(nightId);
 
       // Subscribe to broadcast + 6 tables of postgres changes.
       const filterBy = `night_id=eq.${nightId}`;
@@ -1074,7 +1090,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
           });
           void refreshPlayers(nightId);
-          void refreshHostTVPlayerKeys();
+          void refreshHostTVPlayerKeys(nightId);
         })
         .on("broadcast", { event: "fireworks" }, (msg) => {
           // Cosmetic synchronized firework beat (July). Surface it on its OWN

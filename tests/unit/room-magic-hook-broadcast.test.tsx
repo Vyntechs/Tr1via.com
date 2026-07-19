@@ -178,6 +178,7 @@ describe("Room Magic broadcast hooks", () => {
             status: 200,
             json: async () => ({
               audience: "host",
+              night: { id: "night-1" },
               tvPlayerKeys: { "raw-player-1": "pk_tv_player_1" },
             }),
           };
