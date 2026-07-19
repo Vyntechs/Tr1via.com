@@ -38,12 +38,13 @@ export async function POST(
   // Look up the corresponding game in this player's night. Schema constrains
   // game_no to literal 1|2; Zod gives us number, narrow before the .eq.
   const gameNo = parsed.data.gameNo as 1 | 2;
-  const { data: game } = await admin
+  const { data: game, error: gameError } = await admin
     .from("games")
     .select("id, state")
     .eq("night_id", owned.player.night_id)
     .eq("game_no", gameNo)
     .maybeSingle();
+  if (gameError) return serverError();
   if (!game) return notFound("game not found");
   if (game.state === "done") return forbidden("game is over");
 
@@ -53,7 +54,7 @@ export async function POST(
     .from("game_participations")
     .insert({ game_id: game.id, player_id: playerId });
   if (insertError && insertError.code !== "23505") {
-    return serverError(insertError.message);
+    return serverError();
   }
 
   return ok({ gameId: game.id });

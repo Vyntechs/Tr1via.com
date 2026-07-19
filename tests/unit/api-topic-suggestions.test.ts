@@ -15,7 +15,10 @@ function makeRequest(body: unknown) {
   });
 }
 
-function makeAdmin(existing: null | { id: string; text: string; created_at: string }) {
+function makeAdmin(
+  existing: null | { id: string; text: string; created_at: string },
+  writeError: { message: string } | null = null,
+) {
   const calls = {
     insert: null as null | Record<string, unknown>,
     update: null as null | Record<string, unknown>,
@@ -49,13 +52,25 @@ function makeAdmin(existing: null | { id: string; text: string; created_at: stri
           maybeSingle: vi.fn().mockResolvedValue({ data: existing, error: null }),
           insert: vi.fn((row: Record<string, unknown>) => {
             calls.insert = row;
-            return { select: vi.fn(() => ({ single: vi.fn().mockResolvedValue({ data: inserted, error: null }) })) };
+            return {
+              select: vi.fn(() => ({
+                single: vi.fn().mockResolvedValue({
+                  data: writeError ? null : inserted,
+                  error: writeError,
+                }),
+              })),
+            };
           }),
           update: vi.fn((row: Record<string, unknown>) => {
             calls.update = row;
             return {
               eq: vi.fn(() => ({
-                select: vi.fn(() => ({ single: vi.fn().mockResolvedValue({ data: updated, error: null }) })),
+                select: vi.fn(() => ({
+                  single: vi.fn().mockResolvedValue({
+                    data: writeError ? null : updated,
+                    error: writeError,
+                  }),
+                })),
               })),
             };
           }),
@@ -110,5 +125,19 @@ describe("POST /api/topic-suggestions", () => {
     expect(calls.insert).toBeNull();
     expect(calls.update).toEqual({ text: "Pixar movies" });
     expect(await res.json()).toMatchObject({ suggestionId: "suggestion-old", updated: true });
+  });
+
+  it("never exposes a topic suggestion database error", async () => {
+    const sentinel = "SENTINEL topic_suggestions private constraint";
+    const { client } = makeAdmin(null, { message: sentinel });
+    adminMock.getSupabaseAdmin.mockReturnValue(client);
+
+    const { POST } = await import("@/app/api/topic-suggestions/route");
+    const res = await POST(makeRequest({ text: "Pixar movies" }));
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body).toEqual({ error: "server error" });
+    expect(JSON.stringify(body)).not.toContain(sentinel);
   });
 });

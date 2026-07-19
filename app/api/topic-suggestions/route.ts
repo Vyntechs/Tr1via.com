@@ -21,7 +21,6 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 // auto-complete; the rest is Zod's job (length cap).
 function sanitizeText(raw: string): string {
   return raw
-    // eslint-disable-next-line no-control-regex
     .replace(/[\x00-\x1F\x7F]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -49,7 +48,7 @@ export async function POST(req: NextRequest) {
   // the most-recent un-removed player row for this device — that's the
   // night they're "in." If they're not in any night, deny.
   const admin = getSupabaseAdmin();
-  const { data: player } = await admin
+  const { data: player, error: playerError } = await admin
     .from("players")
     .select("id, night_id")
     .eq("device_id", deviceId)
@@ -57,15 +56,17 @@ export async function POST(req: NextRequest) {
     .order("joined_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (playerError) return serverError();
   if (!player) return forbidden("not in any active night");
 
-  const { data: existing } = await admin
+  const { data: existing, error: existingError } = await admin
     .from("topic_suggestions")
     .select("id, text, created_at")
     .eq("player_id", player.id)
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
+  if (existingError) return serverError();
 
   if (existing?.id) {
     const { data, error } = await admin
@@ -74,7 +75,7 @@ export async function POST(req: NextRequest) {
       .eq("id", existing.id)
       .select("id, text, created_at")
       .single();
-    if (error || !data) return serverError(error?.message ?? "could not update suggestion");
+    if (error || !data) return serverError();
     return ok({
       suggestionId: data.id,
       text: data.text,
@@ -88,7 +89,7 @@ export async function POST(req: NextRequest) {
     .insert({ player_id: player.id, text: cleaned })
     .select("id, text, created_at")
     .single();
-  if (error || !data) return serverError(error?.message ?? "could not save suggestion");
+  if (error || !data) return serverError();
   // 404 here would only occur if the player row vanished mid-insert (cascade
   // delete on night close); surface it cleanly rather than spinning.
   if (!data.id) return notFound("suggestion did not persist");

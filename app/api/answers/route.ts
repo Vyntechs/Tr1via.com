@@ -45,50 +45,55 @@ export async function POST(req: NextRequest) {
 
   // Look up the question, then its category, then the game and night.
   // (Avoids the join-typings issue with our stub types.)
-  const { data: q } = await admin
+  const { data: q, error: questionError } = await admin
     .from("questions")
     .select("id, category_id, played_at, finished_at, correct_index")
     .eq("id", parsed.data.questionId)
     .maybeSingle();
+  if (questionError) return serverError();
   if (!q) return notFound("question not found");
   if (!q.played_at) return conflict("question is not live");
   if (q.finished_at) return conflict("question is closed");
 
-  const { data: cat } = await admin
+  const { data: cat, error: categoryError } = await admin
     .from("categories")
     .select("id, game_id")
     .eq("id", q.category_id)
     .maybeSingle();
+  if (categoryError) return serverError();
   if (!cat) return notFound("category not found");
   const gameId = cat.game_id;
 
-  const { data: game } = await admin
+  const { data: game, error: gameError } = await admin
     .from("games")
     .select("id, night_id")
     .eq("id", gameId)
     .maybeSingle();
+  if (gameError) return serverError();
   if (!game) return notFound("game not found");
   const nightId = game.night_id;
 
   // Resolve the player row for this device + night.
-  const { data: player } = await admin
+  const { data: player, error: playerError } = await admin
     .from("players")
     .select("id, removed_at")
     .eq("night_id", nightId)
     .eq("device_id", deviceId)
     .maybeSingle();
+  if (playerError) return serverError();
   if (!player) return forbidden("not joined to this night");
   if (player.removed_at) return forbidden("you have been removed");
 
   // Verify per-game participation. Players who joined the night but didn't
   // opt into this game (e.g. arrived after game 1 ended, didn't hit Join
   // Game 2) shouldn't be able to answer.
-  const { data: participation } = await admin
+  const { data: participation, error: participationError } = await admin
     .from("game_participations")
     .select("id")
     .eq("game_id", gameId)
     .eq("player_id", player.id)
     .maybeSingle();
+  if (participationError) return serverError();
   if (!participation) return forbidden("not in this game");
 
   // Anti-tamper: the scramble the client sent must equal what we compute
@@ -128,7 +133,7 @@ export async function POST(req: NextRequest) {
     // rules say one answer per (player, question); surface as 409 so
     // the UI can show "you already answered" rather than spinning.
     if (error.code === "23505") return conflict("already answered");
-    return serverError(error.message);
+    return serverError();
   }
 
   return noContent();

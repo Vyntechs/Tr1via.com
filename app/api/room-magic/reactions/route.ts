@@ -56,7 +56,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .select("id, category_id, played_at, finished_at")
     .eq("id", parsed.data.questionId)
     .maybeSingle();
-  if (questionError) return serverError(questionError.message);
+  if (questionError) return serverError();
   if (!question) return notFound("question not found");
   if (!question.played_at || !question.finished_at) {
     return conflict("question is not resolved");
@@ -67,7 +67,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .select("id, game_id")
     .eq("id", question.category_id)
     .maybeSingle();
-  if (categoryError) return serverError(categoryError.message);
+  if (categoryError) return serverError();
   if (!category) return notFound("category not found");
 
   const { data: game, error: gameError } = await admin
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .select("id, night_id")
     .eq("id", category.game_id)
     .maybeSingle();
-  if (gameError) return serverError(gameError.message);
+  if (gameError) return serverError();
   if (!game) return notFound("game not found");
 
   const { data: night, error: nightError } = await admin
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .select("id, room_code, room_magic_enabled")
     .eq("id", game.night_id)
     .maybeSingle();
-  if (nightError) return serverError(nightError.message);
+  if (nightError) return serverError();
   if (!night) return notFound("night not found");
   if (night.room_magic_enabled !== true) {
     return forbidden("room magic disabled");
@@ -96,7 +96,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .eq("device_id", deviceId)
     .is("removed_at", null)
     .maybeSingle();
-  if (playerError) return serverError(playerError.message);
+  if (playerError) return serverError();
   if (!player) return forbidden("not joined to this night");
 
   const { data: participation, error: participationError } = await admin
@@ -105,7 +105,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     .eq("game_id", game.id)
     .eq("player_id", player.id)
     .maybeSingle();
-  if (participationError) return serverError(participationError.message);
+  if (participationError) return serverError();
   if (!participation) return forbidden("not in this game");
 
   const { data: insertedReaction, error: insertError } = await admin
@@ -124,10 +124,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     if (insertError.code === "23505") {
       return ok({ accepted: false, reason: "already_sent" as const });
     }
-    return serverError(insertError.message);
+    return serverError();
   }
   if (!insertedReaction?.id || !insertedReaction.created_at) {
-    return serverError("room magic reaction insert returned no receipt");
+    return serverError();
   }
 
   try {

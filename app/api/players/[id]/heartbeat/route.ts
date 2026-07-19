@@ -66,13 +66,13 @@ export async function POST(
         app_switch_total_seconds: owned.player.app_switch_total_seconds + parsedSeconds,
       })
       .eq("id", id);
-    if (error) return serverError(error.message);
+    if (error) return serverError();
   } else {
     const { error } = await admin
       .from("players")
       .update({ last_seen_at: now })
       .eq("id", id);
-    if (error) return serverError(error.message);
+    if (error) return serverError();
   }
   return noContent();
 }

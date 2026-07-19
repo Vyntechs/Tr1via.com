@@ -34,7 +34,7 @@ export async function GET(
     .eq("room_code", code)
     .is("closed_at", null)
     .maybeSingle();
-  if (error) return serverError(error.message ?? "lookup failed");
+  if (error) return serverError();
   if (!data) return notFound("room not found");
 
   // Supabase returns the joined `hosts` field as either an object or an

@@ -5,11 +5,12 @@
 // resolve_question() does a `select … for update` on the questions row, so
 // the second caller sees finished_at set and returns no-op.
 //
-// Authentication: no specific auth required because (a) the proc is
-// idempotent and (b) the question's questionId is needed to call this —
-// any device that has the questionId already saw the reveal (RLS gates
-// the questions read on `played_at IS NOT NULL`). Race callers from
-// outside the room would need a guessed UUID; not worth gating further.
+// Authentication: the normal timer trigger remains anonymous so the venue TV
+// and player phones can race safely at T+30. Possessing the live question UUID
+// is not authority to end it early, though: this handler checks the
+// server-recorded reveal time against the same theme duration used by clients
+// before invoking the service-role RPC. The authenticated host-only end-early
+// route remains the sole production path for an early close.
 //
 // On success, we:
 //   1. Run the RPC (does is_correct + awarded_points for every answer,
@@ -19,12 +20,15 @@
 //      simultaneously with the TV (without each waiting for the slower
 //      Postgres Changes notification).
 
-import { ok, serverError, notFound } from "@/lib/api/responses";
+import { conflict, ok, serverError, notFound } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastToRoom, broadcastFireworks } from "@/lib/api/broadcast";
+import { isTestModeEnabled } from "@/lib/api/require-test-mode";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 
 export async function POST(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: questionId } = await ctx.params;
@@ -33,43 +37,78 @@ export async function POST(
   // Look up question → category → game → night.room_code through three
   // sequential queries. The stub types don't model FK relationships for
   // joined selects, so a single nested-select wouldn't typecheck.
-  const { data: q } = await admin
+  const { data: q, error: questionError } = await admin
     .from("questions")
-    .select("id, category_id, correct_index")
+    .select("id, category_id, correct_index, played_at, finished_at")
     .eq("id", questionId)
     .maybeSingle();
+  if (questionError) return serverError();
   if (!q) return notFound("question not found");
-  const { data: cat } = await admin
+  const { data: cat, error: categoryError } = await admin
     .from("categories")
     .select("game_id")
     .eq("id", q.category_id)
     .maybeSingle();
+  if (categoryError) return serverError();
   if (!cat) return notFound("category not found");
-  const { data: game } = await admin
+  const { data: game, error: gameError } = await admin
     .from("games")
     .select("night_id")
     .eq("id", cat.game_id)
     .maybeSingle();
+  if (gameError) return serverError();
   if (!game) return notFound("game not found");
-  const { data: night } = await admin
+  const { data: night, error: nightError } = await admin
     .from("nights")
-    .select("room_code")
+    .select("room_code, theme_key, hosts!inner(default_theme_key)")
     .eq("id", game.night_id)
     .maybeSingle();
+  if (nightError) return serverError();
   if (!night) return notFound("night not found");
   const roomCode = night.room_code;
+
+  // The test-only fast-forward proxy is already protected by the two-part
+  // TEST_AUTH_ENABLED + x-test-secret gate. Re-check that same gate here so
+  // its request can skip elapsed time without introducing a body/query force
+  // flag that could ever work in production.
+  const isTestFastForward = isTestModeEnabled(req);
+  if (!isTestFastForward) {
+    if (!q.played_at) {
+      return conflict("question is not live");
+    }
+
+    // Once resolved, keep the route's existing idempotent behavior: the RPC
+    // no-ops and a retry can rebuild/broadcast the canonical result. The
+    // deadline guard is needed only while the question remains live.
+    if (!q.finished_at) {
+      const playedAtMs = new Date(q.played_at).getTime();
+      if (!Number.isFinite(playedAtMs)) return serverError();
+
+      const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
+      const themeKey = resolveTheme(
+        { theme_key: night.theme_key },
+        { default_theme_key: host?.default_theme_key ?? null },
+      );
+      const resolveAtMs =
+        playedAtMs + questionDurationFor(themeKey) * 1_000;
+      if (Date.now() < resolveAtMs) {
+        return conflict("question answer window is still open");
+      }
+    }
+  }
 
   const { error: rpcError } = await admin.rpc("resolve_question", {
     p_question_id: questionId,
   });
-  if (rpcError) return serverError(rpcError.message);
+  if (rpcError) return serverError();
 
   // Read the awards back for the broadcast payload. Done after the RPC so
   // is_correct/awarded_points are populated.
-  const { data: awards } = await admin
+  const { data: awards, error: awardsError } = await admin
     .from("answers")
     .select("player_id, is_correct, awarded_points")
     .eq("question_id", questionId);
+  if (awardsError) return serverError();
 
   const payload = {
     questionId,
