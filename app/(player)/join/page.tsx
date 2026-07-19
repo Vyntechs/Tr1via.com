@@ -26,7 +26,10 @@ import {
   Eyebrow,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
-import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
+import {
+  useDeviceSession,
+  type DeviceSession,
+} from "@/lib/hooks/useDeviceSession";
 import {
   formatRoomCode,
   isValidRoomCode,
@@ -67,6 +70,7 @@ export default function PlayerJoinPage() {
 function JoinPageInner() {
   const router = useRouter();
   const params = useSearchParams();
+  const deviceSession = useDeviceSession();
   const rawCode = params.get("code");
   const code = rawCode ? parseRoomCode(rawCode) : null;
   const hasValidCode = code !== null && isValidRoomCode(code);
@@ -74,7 +78,7 @@ function JoinPageInner() {
   if (!hasValidCode) {
     return <CodeEntryScreen onSubmit={(c) => router.push(`/join?code=${c}`)} />;
   }
-  return <JoinWithCode roomCode={code} />;
+  return <JoinWithCode roomCode={code} deviceSession={deviceSession} />;
 }
 
 // ─── No-code state: type/scan a room code ────────────────────────────────
@@ -216,9 +220,15 @@ function CodeEntryBody({ onSubmit }: { onSubmit: (code: string) => void }) {
 
 // ─── With-code state: look up the night, then show PlayerJoin ────────────
 
-function JoinWithCode({ roomCode }: { roomCode: string }) {
+function JoinWithCode({
+  roomCode,
+  deviceSession,
+}: {
+  roomCode: string;
+  deviceSession: DeviceSession;
+}) {
   const router = useRouter();
-  const { isReady: sessionReady, isLoading: deviceLoading } = useDeviceSession();
+  const { isReady: sessionReady, isLoading: deviceLoading } = deviceSession;
   const [lookup, setLookup] = useState<LookupState>({ kind: "loading" });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
