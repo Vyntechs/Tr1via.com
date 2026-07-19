@@ -26,17 +26,25 @@ vi.mock("@/lib/supabase/admin", () => adminMock);
 
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
 const CODE = "ABCDEF"; // valid: alphabet excludes I/L/O/0/1
+const PLAYER_ID = "22222222-2222-4222-8222-222222222222";
+const OTHER_PLAYER_ID = "33333333-3333-4333-8333-333333333333";
+const ANSWER_ID = "44444444-4444-4444-8444-444444444444";
+const OTHER_ANSWER_ID = "55555555-5555-4555-8555-555555555555";
 
 // A chainable, awaitable query stub. Chain methods return `this`; filters
 // (eq/is/not) actually narrow the seeded rows so the route's two distinct
 // `questions` queries (picked vs live) resolve to faithful subsets; the object
 // is thenable so `await`/`Promise.all` resolve it to { data, error }.
-function qb(rows: Record<string, unknown>[]) {
+function qb(rows: Record<string, unknown>[], error: { message: string } | null = null) {
   let data = [...rows];
   const b: Record<string, unknown> = {
     select: () => b,
     eq: (c: string, v: unknown) => {
       data = data.filter((r) => r[c] === v);
+      return b;
+    },
+    neq: (c: string, v: unknown) => {
+      data = data.filter((r) => r[c] !== v);
       return b;
     },
     is: (c: string, v: unknown) => {
@@ -49,9 +57,9 @@ function qb(rows: Record<string, unknown>[]) {
     },
     order: () => b,
     limit: () => b,
-    maybeSingle: () => Promise.resolve({ data: data[0] ?? null, error: null }),
-    then: (onF: (v: { data: unknown; error: null }) => unknown) =>
-      Promise.resolve({ data, error: null }).then(onF),
+    maybeSingle: () => Promise.resolve({ data: data[0] ?? null, error }),
+    then: (onF: (v: { data: unknown; error: { message: string } | null }) => unknown) =>
+      Promise.resolve({ data, error }).then(onF),
   };
   return b;
 }
@@ -74,52 +82,105 @@ const Q_RESOLVED = {
   finished_at: "2026-06-07T00:00:20Z", is_picked: true,
 };
 
-function makeAdmin({ live = true }: { live?: boolean } = {}) {
+function makeAdmin({
+  live = true,
+  resilient = false,
+  secondGame = false,
+  playGameId = "G1",
+  errorTable,
+}: {
+  live?: boolean;
+  resilient?: boolean;
+  secondGame?: boolean;
+  playGameId?: "G1" | "G2";
+  errorTable?: string;
+} = {}) {
   const seed: Record<string, Record<string, unknown>[]> = {
     nights: [{
       id: NIGHT_ID, venue_name: "V", theme_key: "house", room_code: CODE,
       opened_at: null, closed_at: null, scheduled_at: null, is_locked: false,
+      answer_engine: resilient ? "resilient_v1" : "legacy",
+      current_run_id: resilient ? "run-1" : null,
+      room_revision: resilient ? 8 : 0,
+      control_revision: resilient ? 5 : 0,
       hosts: { default_theme_key: "house" },
     }],
     games: [{
       id: "G1", game_no: 1, state: "live", started_at: null, ended_at: null,
       category_count: 1, question_count: 7, night_id: NIGHT_ID,
-    }],
+      ...(secondGame ? { state: "done", ended_at: "2026-06-07T00:10:00Z" } : {}),
+    }, ...(secondGame ? [{
+      id: "G2", game_no: 2, state: "live", started_at: "2026-06-07T00:11:00Z",
+      ended_at: null, category_count: 1, question_count: 7, night_id: NIGHT_ID,
+    }] : [])],
     categories: [{
       id: "C1", game_id: "G1", name: "Cat", topic: "t", position: 0,
       color: null, state: "ready",
-    }],
+    }, ...(secondGame ? [{
+      id: "C2", game_id: "G2", name: "Cat 2", topic: "t2", position: 0,
+      color: null, state: "ready",
+    }] : [])],
     // With `live: false` there's no open question, so the TV targets the
     // most-recently-resolved one (the reveal screen) via the 'resolve' reveal.
     questions: live ? [Q_UNPLAYED, Q_LIVE, Q_RESOLVED] : [Q_UNPLAYED, Q_RESOLVED],
     players: [
-      { id: "P1", display_name: "Alice", night_id: NIGHT_ID,
+      { id: PLAYER_ID, display_name: "Alice", night_id: NIGHT_ID,
         joined_at: "2026-06-07T00:00:00Z", last_seen_at: null, removed_at: null },
-      { id: "P2", display_name: "Bob", night_id: NIGHT_ID,
+      { id: OTHER_PLAYER_ID, display_name: "Bob", night_id: NIGHT_ID,
         joined_at: "2026-06-07T00:00:01Z", last_seen_at: null, removed_at: null },
     ],
     reveals: live ? [] : [{
       id: "r1", game_id: "G1", question_id: "q-resolved", event: "resolve",
       occurred_at: "2026-06-07T00:00:21Z", metadata: null,
     }],
-    game_scores: [],
+    game_scores: [{
+      game_id: "G1", player_id: PLAYER_ID, display_name: "Alice", score: 500,
+      answered_count: 1, correct_count: 1, fastest_correct_ms: 1200,
+    }],
     answers: [
       // Another player's pick on the LIVE question — the anti-cheat target a
       // player must never read off this public feed while the question is open.
-      { id: "a-live", player_id: "P2", question_id: "q-live", chosen_index: 2,
+      { id: OTHER_ANSWER_ID, player_id: OTHER_PLAYER_ID, question_id: "q-live", chosen_index: 2,
         scramble: [0, 1, 2, 3], ms_to_lock: 850, is_correct: null,
         awarded_points: null, locked_at: "2026-06-07T00:00:05Z" },
       // A pick on the RESOLVED question — the reveal screen legitimately reads it.
-      { id: "a-res", player_id: "P1", question_id: "q-resolved", chosen_index: 3,
+      { id: ANSWER_ID, player_id: PLAYER_ID, question_id: "q-resolved", chosen_index: 3,
         scramble: [0, 1, 2, 3], ms_to_lock: 1200, is_correct: true,
         awarded_points: 500, locked_at: "2026-06-07T00:00:10Z" },
     ],
+    question_plays: resilient ? [{
+      id: "play-1", night_id: NIGHT_ID, run_id: "run-1", game_id: playGameId,
+      category_id: playGameId === "G2" ? "C2" : "C1",
+      question_id: live ? "q-live" : "q-resolved",
+      status: live ? "accepting" : "resolved",
+      opened_at: "2026-06-07T00:00:00Z",
+      main_zero_at: "2026-06-07T00:00:30Z",
+      final_window_starts_at: null,
+      final_window_ends_at: "2026-06-07T00:00:32Z", finalize_at: null,
+      eligible_count: 2, confirmed_count: 1,
+    }] : [],
+    question_play_eligibility: [{
+      play_id: "play-1", player_id: "P1", eligibility_reason: "DO-NOT-LEAK",
+    }],
+    question_play_answers: [{
+      play_id: "play-1", player_id: "P1", submission_id: "SUBMISSION-LEAK",
+      visible_slot: 2, canonical_index: 1, is_correct: true,
+      device_id: "DEVICE-LEAK",
+    }],
   };
-  return { from: vi.fn((table: string) => qb(seed[table] ?? [])) };
+  return {
+    from: vi.fn((table: string) => qb(
+      seed[table] ?? [],
+      table === errorTable ? { message: "RAW-DATABASE-ERROR-LEAK" } : null,
+    )),
+  };
 }
 
 describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.SESSION_SECRET = "snapshot-test-secret";
+  });
 
   it("withholds correctIndex for unplayed + live questions, exposes it for resolved", async () => {
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
@@ -172,6 +233,34 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
     expect(JSON.stringify(body.liveAnswers)).not.toContain('"chosen_index":2');
   });
 
+  it("never serializes raw night, player, or answer identifiers anywhere in the public TV response", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const json = JSON.stringify(body);
+
+    for (const rawIdentifier of [
+      NIGHT_ID,
+      PLAYER_ID,
+      OTHER_PLAYER_ID,
+      ANSWER_ID,
+      OTHER_ANSWER_ID,
+    ]) {
+      expect(json).not.toContain(rawIdentifier);
+    }
+    expect(body.players[0]).toMatchObject({ displayName: "Alice" });
+    expect(body.players[0].id).toEqual(expect.any(String));
+    expect(body.scores[0]).toMatchObject({ display_name: "Alice", score: 500 });
+    expect(body.scores[0]).not.toHaveProperty("player_id");
+    expect(body.liveAnswers[0]).not.toHaveProperty("id");
+    expect(body.liveAnswers[0]).not.toHaveProperty("player_id");
+  });
+
   it("exposes chosen_index + is_correct once the target question is RESOLVED (reveal screen)", async () => {
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({ live: false }));
     const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
@@ -189,5 +278,78 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
     // The reveal screen ("who got it right", fastest-five) reads these.
     expect(body.liveAnswers[0].chosen_index).toBe(3);
     expect(body.liveAnswers[0].is_correct).toBe(true);
+  });
+
+  it("projects aggregate resilient play state without any selected answer or eligibility identity", async () => {
+    const admin = makeAdmin({ resilient: true });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.live).toEqual({
+      runId: "run-1",
+      roomRevision: 8,
+      controlRevision: 5,
+      playId: "play-1",
+      play: {
+        playId: "play-1",
+        gameId: "G1",
+        questionId: "q-live",
+        state: "accepting",
+        openedAt: "2026-06-07T00:00:00Z",
+        mainZeroAt: "2026-06-07T00:00:30Z",
+        finalWindowStartsAt: null,
+        finalWindowEndsAt: "2026-06-07T00:00:32Z",
+        finalizeAt: null,
+        eligibleCount: 2,
+        confirmedCount: 1,
+      },
+    });
+    const json = JSON.stringify(body.live);
+    expect(json).not.toContain("P1");
+    expect(json).not.toContain("DO-NOT-LEAK");
+    expect(json).not.toContain("SUBMISSION-LEAK");
+    expect(json).not.toContain("DEVICE-LEAK");
+    expect(json).not.toContain("canonical");
+    expect(json).not.toContain("isCorrect");
+    expect(json).not.toContain("selected");
+  });
+
+  it("does not project Game 1 play state after Game 2 starts before its first question", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      resilient: true,
+      live: false,
+      secondGame: true,
+      playGameId: "G1",
+    }));
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.currentGameId).toBe("G2");
+    expect(body.live).toMatchObject({ playId: null, play: null });
+  });
+
+  it("maps a public snapshot database failure to a generic typed error", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({ errorTable: "nights" }));
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "server error" });
+    expect(JSON.stringify(body)).not.toContain("RAW-DATABASE-ERROR-LEAK");
   });
 });

@@ -20,6 +20,8 @@ import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
+import { presentationKey } from "@/lib/room/presentationKey";
 import {
   serializeBoardQuestion,
   type TVBoardQuestionRow,
@@ -43,13 +45,18 @@ export async function GET(
   const { data: night, error: nightError } = await admin
     .from("nights")
     .select(
-      "id, venue_name, theme_key, room_code, opened_at, closed_at, scheduled_at, is_locked, room_magic_enabled, hosts!inner(default_theme_key)",
+      "id, venue_name, theme_key, room_code, opened_at, closed_at, scheduled_at, is_locked, room_magic_enabled, answer_engine, current_run_id, room_revision, control_revision, hosts!inner(default_theme_key)",
     )
     .eq("room_code", code)
     .maybeSingle();
-  if (nightError) return serverError(nightError.message);
+  if (nightError) return serverError();
   if (!night) return notFound("room not found");
   const nightId = night.id;
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) return serverError();
+  const nightKey = presentationKey(secret, "tv", "night", nightId, nightId);
+  const playerKeyFor = (rawPlayerId: string) =>
+    presentationKey(secret, "tv", "player", nightId, rawPlayerId);
   const roomMagicEnabled = Boolean(
     (night as { room_magic_enabled?: boolean | null }).room_magic_enabled,
   );
@@ -58,6 +65,22 @@ export async function GET(
   const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
   const hostDefaultThemeKey: string | null =
     host?.default_theme_key ?? null;
+
+  let currentPlay: Parameters<typeof projectLiveRoom>[0]["play"] = null;
+  if (night.answer_engine === "resilient_v1" && night.current_run_id) {
+    const { data: playRows, error: playError } = await admin
+      .from("question_plays")
+      .select(
+        "id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count",
+      )
+      .eq("night_id", nightId)
+      .eq("run_id", night.current_run_id)
+      .neq("status", "undone")
+      .order("opened_at", { ascending: false })
+      .limit(1);
+    if (playError) return serverError();
+    currentPlay = playRows?.[0] ?? null;
+  }
 
   const [
     gamesRes,
@@ -122,13 +145,14 @@ export async function GET(
       : Promise.resolve({ data: [], error: null }),
   ]);
 
-  if (gamesRes.error) return serverError(gamesRes.error.message);
-  if (playersRes.error) return serverError(playersRes.error.message);
-  if (categoriesRes.error) return serverError(categoriesRes.error.message);
-  if (pickedQuestionsRes.error) return serverError(pickedQuestionsRes.error.message);
-  if (recentRevealsRes.error) return serverError(recentRevealsRes.error.message);
+  if (gamesRes.error) return serverError();
+  if (playersRes.error) return serverError();
+  if (categoriesRes.error) return serverError();
+  if (pickedQuestionsRes.error) return serverError();
+  if (liveQuestionRes.error) return serverError();
+  if (recentRevealsRes.error) return serverError();
   if (recentRoomMagicReactionsRes.error) {
-    return serverError(recentRoomMagicReactionsRes.error.message);
+    return serverError();
   }
 
   const games = gamesRes.data ?? [];
@@ -169,10 +193,23 @@ export async function GET(
     : null;
   const readyGame = games.find((g) => g.state === "ready") ?? null;
   const currentGame = liveGame ?? lastDone ?? readyGame ?? games[0] ?? null;
+  const live = night.answer_engine === "resilient_v1" && night.current_run_id
+    ? projectLiveRoom({
+        night: {
+          current_run_id: night.current_run_id,
+          room_revision: night.room_revision,
+          control_revision: night.control_revision,
+        },
+        play:
+          liveGame && currentPlay?.game_id === liveGame.id
+            ? currentPlay
+            : null,
+      })
+    : null;
 
   // Fetch game_scores for currentGame (used by Grid/Leaderboard/Finale).
   let scores: Array<{
-    player_id: string;
+    player_key: string;
     display_name: string;
     score: number;
     correct_count: number;
@@ -180,10 +217,11 @@ export async function GET(
     fastest_correct_ms: number | null;
   }> = [];
   if (currentGame) {
-    const { data: scoreRows } = await admin
+    const { data: scoreRows, error: scoresError } = await admin
       .from("game_scores")
       .select("*")
       .eq("game_id", currentGame.id);
+    if (scoresError) return serverError();
     if (scoreRows) {
       // game_scores is a LEFT JOIN view so player_id + display_name can
       // technically be null. In practice every game_participation pins a
@@ -193,7 +231,7 @@ export async function GET(
           r.player_id !== null && r.display_name !== null,
         )
         .map((r) => ({
-          player_id: r.player_id,
+          player_key: playerKeyFor(r.player_id),
           display_name: r.display_name,
           score: Number(r.score ?? 0),
           correct_count: Number(r.correct_count ?? 0),
@@ -231,27 +269,26 @@ export async function GET(
   const targetResolved = targetQuestionRow?.finished_at != null;
 
   let liveAnswers: Array<{
-    id: string;
     question_id: string;
-    player_id: string;
+    player_key: string;
     player_name: string;
     ms_to_lock: number;
     is_correct: boolean | null;
     chosen_index: 0 | 1 | 2 | 3 | null;
   }> = [];
   if (targetQuestionId) {
-    const { data: ans } = await admin
+    const { data: ans, error: answersError } = await admin
       .from("answers")
-      .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
+      .select("question_id, player_id, ms_to_lock, is_correct, chosen_index")
       .eq("question_id", targetQuestionId);
+    if (answersError) return serverError();
     if (ans && ans.length > 0) {
       const playerMap = new Map(
         (playersRes.data ?? []).map((p) => [p.id, p.display_name] as const),
       );
       liveAnswers = ans.map((a) => ({
-        id: a.id,
         question_id: a.question_id,
-        player_id: a.player_id,
+        player_key: playerKeyFor(a.player_id),
         player_name: playerMap.get(a.player_id) ?? "—",
         ms_to_lock: Number(a.ms_to_lock ?? 0),
         // Withheld until the target question is resolved (see SECURITY note above).
@@ -265,8 +302,9 @@ export async function GET(
   }
 
   return ok({
+    live,
     night: {
-      id: night.id,
+      id: nightKey,
       venueName: night.venue_name,
       themeKey: night.theme_key,
       hostDefaultThemeKey,
@@ -302,7 +340,7 @@ export async function GET(
     liveQuestionId: liveQuestion?.id ?? null,
     targetQuestionId,
     players: (playersRes.data ?? []).map((p) => ({
-      id: p.id,
+      id: playerKeyFor(p.id),
       displayName: p.display_name,
       joinedAt: p.joined_at,
       lastSeenAt: p.last_seen_at,

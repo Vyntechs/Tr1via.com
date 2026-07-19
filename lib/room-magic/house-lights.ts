@@ -17,6 +17,7 @@ export interface HouseLightsPresence {
 export interface HouseLightsAnswer {
   id?: string | null;
   player_id?: string | null;
+  player_key?: string | null;
   question_id?: string | null;
 }
 
@@ -27,8 +28,11 @@ export function countHouseLightsLocks(
   const seen = new Set<string>();
 
   for (const answer of answers) {
-    const playerId =
-      typeof answer.player_id === "string" ? answer.player_id : "";
+    const playerId = typeof answer.player_key === "string"
+      ? answer.player_key
+      : typeof answer.player_id === "string"
+        ? answer.player_id
+        : "";
     if (!playerId) continue;
     if (activeQuestionId && answer.question_id !== activeQuestionId) {
       continue;

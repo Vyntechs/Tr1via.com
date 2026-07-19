@@ -7,20 +7,13 @@
 // of truth and the per-surface routing layer just maps the snapshot to a
 // component.
 //
-// Two real-time channels:
-//   1. Broadcast on `room:{code}` — low-latency reveal/undo/resolve hints
-//      that let the UI animate within ~80ms of the host press, *before*
-//      Postgres Changes lands.
-//   2. Postgres Changes on the 6 affected tables (players, answers,
-//      reveals, questions, categories, games). Durable, slower (~300ms)
-//      but the source of truth on reload.
-//
-// Both channels write into the same state shape, so a missed broadcast
-// (network blip) self-heals on the next Postgres Change.
+// Host surfaces retain authenticated direct reads plus Postgres Changes.
+// Player surfaces use the signed-cookie snapshot route as their only durable
+// source and treat allowlisted `room:{code}` broadcasts as refetch signals.
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
 import { useRevalidateOnFocus } from "@/lib/hooks/useRevalidateOnFocus";
@@ -32,7 +25,11 @@ import { useUnreachableRetry } from "@/lib/hooks/useUnreachableRetry";
 import { useRoomRoutePoll } from "@/lib/hooks/useRoomRoutePoll";
 import { pickCurrentGame } from "@/lib/room/pickCurrentGame";
 import { fetchRoomSnapshotPayload } from "@/lib/room/fetchRoomSnapshot";
-import { payloadToRoomSnapshot } from "@/lib/room/roomSnapshotPayload";
+import {
+  payloadToRoomSnapshot,
+  toRoomFallbackPayload,
+  type RoomSnapshotPayload,
+} from "@/lib/room/roomSnapshotPayload";
 import { publishRoomFallback, setBackupMode } from "@/lib/room/roomFallbackStore";
 import { clearEndedGameQuestions } from "@/lib/player/betweenGames";
 import { pickNewerResolvedQuestion } from "@/lib/hooks/resolvedQuestionState";
@@ -45,7 +42,9 @@ import type {
   AnswerRow,
   CategoryRow,
   GameRow,
+  GameScoreRow,
   NightRow,
+  ParticipationRow,
   PlayerRow,
   QuestionRow,
   RevealRow,
@@ -89,14 +88,34 @@ export interface RoomSnapshot {
   lastRoomMagicReaction: RoomMagicReactionEvent | null;
   /** Durable Room Magic reactions carried only by server-route fallback. */
   roomMagicReactions?: RoomMagicReactionEvent[];
+  /** Signed-cookie player identity. Null on host snapshots. */
+  self?: PlayerRow | null;
+  /** Canonical answers owned by the signed player. Empty on host snapshots. */
+  myAnswers?: AnswerRow[];
+  /** Games joined by the signed player. Empty on host snapshots. */
+  myParticipations?: ParticipationRow[];
+  /** Current game's canonical leaderboard. */
+  scores?: GameScoreRow[];
+  /** Canonical leaderboards across every game in the night. */
+  allScores?: GameScoreRow[];
+  /** Picked questions used for player-only recap/category derivation. */
+  allQuestions?: QuestionRow[];
+  /** Server-derived visible answer order for the signed player. Raw player
+   * identity stays server-side; resilient submission must remain slot-only. */
+  questionScrambles?: Record<string, [number, number, number, number]>;
+  /** Authenticated-host-only raw-to-TV presentation map. Values are produced
+   * server-side; audience components must never derive HMAC keys in-browser. */
+  tvPlayerKeys?: Record<string, string>;
+  /** Ask the signed player route for a fresh canonical snapshot. */
+  requestRefresh?: () => void;
   /** True while the initial snapshot fetch is in flight. */
   isLoading: boolean;
 }
 
 export interface BroadcastTag {
-  event: "reveal" | "undo" | "resolve" | "end-early" | "player-joined";
+  event: "reveal" | "undo" | "resolve" | "end-early" | "roster-changed";
   /** Question id for reveal/undo/resolve/end-early; empty string for
-   *  player-joined (which is keyed on a playerId instead). Kept on the
+   *  roster-changed. Kept on the
    *  union so existing consumers don't have to narrow before reading. */
   questionId: string;
   /** Server's "now" at broadcast time. ISO string. */
@@ -105,15 +124,13 @@ export interface BroadcastTag {
   revealedAt?: string;
   /** Resolve-specific: canonical correct option index. */
   correctIndex?: number;
-  /** Resolve-specific: per-player award rows. */
-  awards?: Array<{ playerId: string; awarded: number; isCorrect: boolean }>;
-  /** player-joined specific: the new player's id. */
-  playerId?: string;
-  /** player-joined specific: the joined display name. */
+  /** roster-changed specific: ephemeral event identity, never a database id. */
+  joinToken?: string;
+  /** roster-changed specific: the joined display name. */
   displayName?: string;
-  /** player-joined specific: deterministic palette index (see lib/player/playerColor.ts). */
+  /** roster-changed specific: deterministic palette index (see lib/player/playerColor.ts). */
   colorKey?: number;
-  /** player-joined specific: ISO timestamp the row was inserted. */
+  /** roster-changed specific: ISO timestamp the row was inserted. */
   joinedAt?: string;
 }
 
@@ -135,18 +152,25 @@ const EMPTY: RoomSnapshot = {
   lastFireworksBeat: null,
   lastRoomMagicReaction: null,
   roomMagicReactions: [],
+  self: null,
+  myAnswers: [],
+  myParticipations: [],
+  scores: [],
+  allScores: [],
+  allQuestions: [],
+  questionScrambles: {},
+  tvPlayerKeys: {},
   isLoading: true,
 };
 
 export interface UseRoomArgs {
   /** Display-formatted or stored room code. Normalized internally. */
   roomCode: string | null;
-  /** Player's device id. When the caller passes this prop, bootstrap waits
-   *  until it resolves to a non-empty value so the very first anon Supabase
-   *  fetch carries the `x-tr1via-device` header that RLS uses to find the
-   *  player. Omit on host surfaces — hosts authenticate via session JWT,
-   *  not the device cookie, so they don't need to wait. */
-  deviceId?: string | null;
+  /** Explicit trust boundary: hosts retain authenticated direct reads; players
+   *  receive only the audience-shaped signed-cookie route payload. */
+  audience: "host" | "player";
+  /** Player session initialization must finish before the signed route runs. */
+  sessionReady?: boolean;
 }
 
 // Every `questions` column EXCEPT correct_index. The phone fetches the live
@@ -165,12 +189,14 @@ export interface UseRoomArgs {
 const PLAYER_QUESTION_COLUMNS =
   "id, category_id, difficulty, fact_blurb, finished_at, image_attribution, image_source, image_url, is_picked, options, played_at, point_value, prompt, source";
 
-export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
+export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs): RoomSnapshot {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(EMPTY);
-  // Player call sites pass `deviceId`. Until it's a real value we hold off so
-  // the bootstrap fetch can attach `x-tr1via-device` and pass `nights_player_read`.
-  // `undefined` means "caller didn't opt in" (host surface) — fire immediately.
-  const waitingForDevice = deviceId === null || deviceId === "";
+  const playerRefreshRef = useRef<(() => void) | null>(null);
+  const hostTVKeyRefreshSequenceRef = useRef(0);
+  const requestPlayerRefresh = useCallback(() => {
+    playerRefreshRef.current?.();
+  }, []);
+  const waitingForSession = audience === "player" && !sessionReady;
 
   // Bumps when the tab returns from background OR the network comes back.
   // Wired into the main effect's deps below to force a full re-bootstrap
@@ -198,10 +224,10 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   // headroom proven by the 30-phone load test.
   const [heartbeatTick, setHeartbeatTick] = useState(0);
   useEffect(() => {
-    if (!roomCode || waitingForDevice) return;
+    if (!roomCode || waitingForSession) return;
     const id = setInterval(() => setHeartbeatTick((t) => t + 1), 15000);
     return () => clearInterval(id);
-  }, [roomCode, waitingForDevice]);
+  }, [roomCode, waitingForSession]);
 
   // ── Layer 4: freshness watchdog (HOST ONLY) ───────────────────────────
   // Layers 1-3 above all trust channel STATUS. None notices a socket that
@@ -210,7 +236,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   // wake-from-sleep gap and forces a brand-NEW socket (the one thing the
   // others don't do). Host surfaces omit `deviceId` (see UseRoomArgs); we
   // gate on that so players' phones are completely untouched.
-  const isHost = deviceId === undefined;
+  const isHost = audience === "host";
   const lastMessageAtRef = useRef(Date.now());
   const [watchdogTick, setWatchdogTick] = useState(0);
   useFreshnessWatchdog({
@@ -281,7 +307,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
     setBackupMode(backupMode);
   }, [backupMode]);
   useRoomRoutePoll({
-    enabled: backupMode && !!roomCode,
+    enabled: isHost && backupMode && !!roomCode,
     fetchPayload: () => fetchRoomSnapshotPayload(parseRoomCode(roomCode as string)),
     onPayload: (payload) => {
       publishRoomFallback(payload);
@@ -296,7 +322,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
   });
 
   useEffect(() => {
-    if (!roomCode || waitingForDevice) {
+    if (!roomCode || waitingForSession) {
       if (!roomCode) {
         setSnapshot(EMPTY);
         // No room to reach → clear any stale "unreachable" / backup mode so a
@@ -317,9 +343,160 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
 
     const supa = getSupabaseBrowser();
 
+    // Players never bootstrap or recover from browser-readable tables. The
+    // signed-cookie route is the sole durable source; the room broadcast is
+    // only a low-latency wake-up signal to refetch that confirmed snapshot.
+    if (audience === "player") {
+      let requestVersion = 0;
+
+      async function refreshPlayerSnapshot(): Promise<void> {
+        const version = ++requestVersion;
+        try {
+          const payload = await fetchRoomSnapshotPayload(code, {
+            signal: bootstrapAbort.signal,
+          });
+          if (cancelled || version !== requestVersion || payload.audience !== "player") return;
+          const confirmed = playerPayloadToRoomSnapshot(payload);
+          setSnapshot((prev) => ({
+            ...confirmed,
+            // Cosmetic and broadcast tags are local realtime state. A durable
+            // refetch must not erase them while the corresponding animation is
+            // still rendering.
+            lastBroadcast: prev.lastBroadcast,
+            lastFireworksBeat: prev.lastFireworksBeat,
+            lastRoomMagicReaction: prev.lastRoomMagicReaction,
+          }));
+          setReachability("ok");
+        } catch {
+          if (cancelled || bootstrapAbort.signal.aborted || version !== requestVersion) return;
+          setReachability("unreachable");
+          // Only the initial empty snapshot stops loading on failure. A later
+          // recovery failure leaves the last confirmed room fully visible.
+          setSnapshot((prev) => ({ ...prev, isLoading: false }));
+        }
+      }
+
+      const requestRefresh = () => void refreshPlayerSnapshot();
+      playerRefreshRef.current = requestRefresh;
+
+      function refetchForBroadcast(tag?: BroadcastTag): void {
+        if (tag) {
+          setSnapshot((prev) => ({ ...prev, lastBroadcast: tag }));
+        }
+        void refreshPlayerSnapshot();
+      }
+
+      const roomChannel = supa
+        .channel(`room:${code}`)
+        .on("broadcast", { event: "reveal" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          refetchForBroadcast({
+            event: "reveal",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+            revealedAt: typeof p.revealedAt === "string" ? p.revealedAt : undefined,
+          });
+        })
+        .on("broadcast", { event: "undo" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          refetchForBroadcast({
+            event: "undo",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+          });
+        })
+        .on("broadcast", { event: "resolve" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          refetchForBroadcast({
+            event: "resolve",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+            correctIndex: typeof p.correctIndex === "number" ? p.correctIndex : undefined,
+          });
+        })
+        .on("broadcast", { event: "end-early" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          refetchForBroadcast({
+            event: "end-early",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+            correctIndex: typeof p.correctIndex === "number" ? p.correctIndex : undefined,
+          });
+        })
+        .on("broadcast", { event: "game-ended" }, () => {
+          refetchForBroadcast();
+        })
+        .on("broadcast", { event: "roster-changed" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          refetchForBroadcast({
+            event: "roster-changed",
+            questionId: "",
+            serverNow: String(p.serverNow ?? ""),
+            joinToken: typeof p.joinToken === "string" ? p.joinToken : undefined,
+            displayName: typeof p.displayName === "string" ? p.displayName : undefined,
+            colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
+            joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
+          });
+        })
+        .on("broadcast", { event: "fireworks" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          if (typeof p.fireAt !== "string" || typeof p.serverNow !== "string") return;
+          setSnapshot((prev) => ({
+            ...prev,
+            lastFireworksBeat: {
+              kind: p.kind === "finale" ? "finale" : "salvo",
+              fireAt: p.fireAt as string,
+              serverNow: p.serverNow as string,
+              receivedAtMs: Date.now(),
+              questionId: typeof p.questionId === "string" ? p.questionId : undefined,
+            },
+          }));
+        })
+        .on("broadcast", { event: "room-magic-reaction" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          const kind = p.kind;
+          if (
+            typeof p.id !== "string" ||
+            !isRoomMagicReactionKind(kind) ||
+            typeof p.serverNow !== "string"
+          ) {
+            return;
+          }
+          setSnapshot((prev) => ({
+            ...prev,
+            lastRoomMagicReaction: {
+              id: p.id as string,
+              kind,
+              serverNow: p.serverNow as string,
+            },
+          }));
+        })
+        .subscribe((status) => {
+          if (cancelled) return;
+          setChannelHealth(status);
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            const now = Date.now();
+            if (now - lastReconnectAtRef.current < 2000) return;
+            lastReconnectAtRef.current = now;
+            setReconnectCounter((count) => count + 1);
+          }
+        });
+
+      void refreshPlayerSnapshot();
+      return () => {
+        cancelled = true;
+        if (playerRefreshRef.current === requestRefresh) {
+          playerRefreshRef.current = null;
+        }
+        bootstrapAbort.abort();
+        void supa.removeChannel(roomChannel);
+        setChannelHealth(undefined);
+      };
+    }
+
     /**
      * Re-fetch the players list and merge it into the snapshot. Called as a
-     * fallback from the `player-joined` broadcast handler so the host's
+     * fallback from the `roster-changed` broadcast handler so the host's
      * lobby roster doesn't sit stale waiting on `postgres_changes` — which
      * can drop INSERTs under burst-join load (e.g., 10–15 patrons scanning
      * the QR within a couple seconds at the start of a night), or get
@@ -339,6 +516,32 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       if (cancelled || error) return;
       const next = (data ?? []) as PlayerRow[];
       setSnapshot((prev) => ({ ...prev, players: next }));
+    }
+
+    async function refreshHostTVPlayerKeys(expectedNightId: string): Promise<void> {
+      if (cancelled) return;
+      const requestSequence = ++hostTVKeyRefreshSequenceRef.current;
+      try {
+        const payload = await fetchRoomSnapshotPayload(code, {
+          signal: bootstrapAbort.signal,
+        });
+        if (
+          cancelled ||
+          requestSequence !== hostTVKeyRefreshSequenceRef.current ||
+          payload.audience !== "host" ||
+          payload.night?.id !== expectedNightId
+        ) {
+          return;
+        }
+        setSnapshot((prev) =>
+          prev.night?.id === expectedNightId
+            ? { ...prev, tvPlayerKeys: payload.tvPlayerKeys }
+            : prev,
+        );
+      } catch {
+        // The host's direct room state remains usable. The next roster signal
+        // or heartbeat retries the server projection; raw ids never substitute.
+      }
     }
 
     /**
@@ -730,7 +933,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       // returning 406 from PostgREST on iPhones.
       const cleanNight = (nightRow.data ?? null) as NightRow | null;
       const hostDefaultThemeKey = lookupHostDefaultThemeKey;
-      setSnapshot({
+      setSnapshot((prev) => ({
         night: cleanNight,
         hostDefaultThemeKey,
         games,
@@ -744,8 +947,13 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
         lastFireworksBeat: null,
         lastRoomMagicReaction: null,
         roomMagicReactions: [],
+        tvPlayerKeys:
+          cleanNight && prev.night?.id === cleanNight.id
+            ? prev.tvPlayerKeys ?? {}
+            : {},
         isLoading: false,
-      });
+      }));
+      void refreshHostTVPlayerKeys(nightId);
 
       // Subscribe to broadcast + 6 tables of postgres changes.
       const filterBy = `night_id=eq.${nightId}`;
@@ -817,9 +1025,6 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
             serverNow: String(p.serverNow),
             correctIndex:
               typeof p.correctIndex === "number" ? p.correctIndex : undefined,
-            awards: Array.isArray(p.awards)
-              ? (p.awards as BroadcastTag["awards"])
-              : undefined,
           });
           // Same fallback as reveal: pull current state over HTTP so the
           // finished_at stamp + any answer rows propagate even when
@@ -857,7 +1062,7 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           // game 2). Doesn't need a questionId — game-level wake-up.
           void refreshLiveState(nightId);
         })
-        .on("broadcast", { event: "player-joined" }, (msg) => {
+        .on("broadcast", { event: "roster-changed" }, (msg) => {
           // Magic-Welcome wake-up. Tags the lastBroadcast so the host live
           // console can fire the slide-in tile + chime within ~300ms of
           // the join. We ALSO refetch the players list over REST — under
@@ -869,16 +1074,17 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
           // pattern as `refreshLiveState` for reveal/undo/resolve events.
           const p = msg.payload as Record<string, unknown>;
           mergeBroadcast({
-            event: "player-joined",
+            event: "roster-changed",
             questionId: "",
             serverNow: String(p.serverNow ?? ""),
-            playerId: typeof p.playerId === "string" ? p.playerId : undefined,
+            joinToken: typeof p.joinToken === "string" ? p.joinToken : undefined,
             displayName:
               typeof p.displayName === "string" ? p.displayName : undefined,
             colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
             joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
           });
           void refreshPlayers(nightId);
+          void refreshHostTVPlayerKeys(nightId);
         })
         .on("broadcast", { event: "fireworks" }, (msg) => {
           // Cosmetic synchronized firework beat (July). Surface it on its OWN
@@ -1103,12 +1309,35 @@ export function useRoom({ roomCode, deviceId }: UseRoomArgs): RoomSnapshot {
       // between retries. It's reset only when there's no room (effect top).
       setChannelHealth(undefined);
     };
-  }, [roomCode, waitingForDevice, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick]);
+  }, [roomCode, audience, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick]);
 
-  return snapshot;
+  return useMemo(
+    () =>
+      audience === "player"
+        ? { ...snapshot, requestRefresh: requestPlayerRefresh }
+        : snapshot,
+    [audience, requestPlayerRefresh, snapshot],
+  );
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
+
+function playerPayloadToRoomSnapshot(
+  payload: Extract<RoomSnapshotPayload, { audience: "player" }>,
+): RoomSnapshot {
+  const room = payloadToRoomSnapshot(payload);
+  const fallback = toRoomFallbackPayload(payload);
+  return {
+    ...room,
+    self: room.self ?? null,
+    myAnswers: fallback.myAnswers,
+    myParticipations: fallback.myParticipations,
+    scores: fallback.scores,
+    allScores: fallback.allScores,
+    allQuestions: fallback.allQuestions,
+    questionScrambles: fallback.questionScrambles,
+  };
+}
 
 interface ChangePayload<T> {
   eventType: "INSERT" | "UPDATE" | "DELETE";

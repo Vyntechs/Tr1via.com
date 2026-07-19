@@ -18,11 +18,13 @@
 // whole reason TR1VIA feels cinematic instead of janky.
 
 import type { NextRequest } from "next/server";
-import { RevealSchema } from "@/lib/api/schemas";
+import { RevealSchema, ResilientRevealSchema } from "@/lib/api/schemas";
 import { badRequest, ok, forbidden, unauthorized, serverError, notFound, conflict } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { broadcastToRoom } from "@/lib/api/broadcast";
+import { broadcastAppliedLiveRoomEvent, broadcastToRoom } from "@/lib/api/broadcast";
+import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
+import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 
 export async function POST(
   req: NextRequest,
@@ -42,10 +44,57 @@ export async function POST(
   } catch {
     return badRequest("invalid JSON");
   }
-  const parsed = RevealSchema.safeParse(body);
+  const parsed = (
+    owned.night.answer_engine === "resilient_v1"
+      ? ResilientRevealSchema
+      : RevealSchema
+  ).safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
 
   const admin = getSupabaseAdmin();
+  if (owned.night.answer_engine === "resilient_v1") {
+    const command = ResilientRevealSchema.parse(parsed.data);
+    const { data, error } = await admin.rpc("open_question_play", {
+      p_game_id: gameId,
+      p_question_id: command.questionId,
+      p_run_id: command.runId,
+      p_command_id: command.commandId,
+      p_expected_control_revision: command.expectedControlRevision,
+    });
+    if (error) return serverError("could not update live game");
+    const envelope = parseLiveCommandRpcEnvelope(data);
+    if (!envelope) return serverError("could not update live game");
+    if (
+      "eventKind" in envelope.result &&
+      (envelope.result.eventKind !== "play_opened" ||
+        !("gameId" in envelope.result) ||
+        envelope.result.gameId !== gameId ||
+        !("playId" in envelope.result) ||
+        ("questionId" in envelope.result &&
+          envelope.result.questionId !== undefined &&
+          envelope.result.questionId !== command.questionId))
+    ) {
+      return serverError("could not update live game");
+    }
+    const fresh = freshLiveEventFromRpc(envelope);
+    if (fresh) {
+      const live = await projectExactLiveEvent(owned.night.id, fresh);
+      if (live) {
+        try {
+          await broadcastAppliedLiveRoomEvent(owned.night.room_code, {
+            applied: true,
+            freshness: "transaction_winner",
+            kind: fresh.kind,
+            serverNow: new Date().toISOString(),
+            live,
+          });
+        } catch {
+          console.warn("broadcast play-opened failed");
+        }
+      }
+    }
+    return ok(envelope.result);
+  }
 
   // Verify the question belongs to this game, is unrevealed, and is picked
   // (you can't reveal a candidate question that's not on the board). Two

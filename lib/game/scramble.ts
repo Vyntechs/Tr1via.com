@@ -18,6 +18,34 @@
 const STRING_DELIMITER = ":";
 
 /**
+ * Fixed cross-runtime vectors used to keep the database and browser
+ * implementations byte-for-byte compatible. UUIDs are intentional: the
+ * authoritative SQL path never receives arbitrary display strings.
+ */
+export const SCRAMBLE_TEST_VECTORS = [
+  {
+    questionId: "30000000-0000-0000-0000-000000000006",
+    playerId: "30000000-0000-0000-0000-000000000007",
+    scramble: [0, 1, 2, 3],
+  },
+  {
+    questionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    playerId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+    scramble: [0, 3, 1, 2],
+  },
+  {
+    questionId: "00000000-0000-0000-0000-000000000000",
+    playerId: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+    scramble: [0, 3, 2, 1],
+  },
+  {
+    questionId: "123e4567-e89b-12d3-a456-426614174000",
+    playerId: "987e6543-e21b-12d3-a456-426614174999",
+    scramble: [1, 3, 0, 2],
+  },
+] as const;
+
+/**
  * FNV-1a 32-bit hash of a UTF-16 code-point stream. Used as the seed for
  * Mulberry32. Operates entirely in unsigned-32 space via `>>> 0`.
  */

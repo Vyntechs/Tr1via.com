@@ -11,7 +11,7 @@
 import type { NextRequest } from "next/server";
 import { JoinGameSchema } from "@/lib/api/schemas";
 import { badRequest, ok, serverError, unauthorized, notFound, forbidden } from "@/lib/api/responses";
-import { requireOwnedPlayer } from "@/lib/api/auth";
+import { requireOwnedPlayerReference } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(
@@ -19,7 +19,7 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: playerId } = await ctx.params;
-  const owned = await requireOwnedPlayer(playerId);
+  const owned = await requireOwnedPlayerReference(playerId);
   if (!owned.ok) {
     return owned.status === 401 ? unauthorized(owned.error) : notFound(owned.error);
   }
@@ -38,12 +38,13 @@ export async function POST(
   // Look up the corresponding game in this player's night. Schema constrains
   // game_no to literal 1|2; Zod gives us number, narrow before the .eq.
   const gameNo = parsed.data.gameNo as 1 | 2;
-  const { data: game } = await admin
+  const { data: game, error: gameError } = await admin
     .from("games")
     .select("id, state")
     .eq("night_id", owned.player.night_id)
     .eq("game_no", gameNo)
     .maybeSingle();
+  if (gameError) return serverError();
   if (!game) return notFound("game not found");
   if (game.state === "done") return forbidden("game is over");
 
@@ -51,9 +52,9 @@ export async function POST(
   // can call this whether or not they're already in.
   const { error: insertError } = await admin
     .from("game_participations")
-    .insert({ game_id: game.id, player_id: playerId });
+    .insert({ game_id: game.id, player_id: owned.player.id });
   if (insertError && insertError.code !== "23505") {
-    return serverError(insertError.message);
+    return serverError();
   }
 
   return ok({ gameId: game.id });

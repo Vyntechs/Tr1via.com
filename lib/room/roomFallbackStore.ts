@@ -14,11 +14,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { RoomSnapshotPayload } from "./roomSnapshotPayload";
+import {
+  toRoomFallbackPayload,
+  type RoomFallbackPayload,
+  type RoomSnapshotPayload,
+} from "./roomSnapshotPayload";
 
 export interface RoomFallbackState {
   backupMode: boolean;
-  payload: RoomSnapshotPayload | null;
+  payload: RoomFallbackPayload | null;
 }
 
 type Listener = (state: RoomFallbackState) => void;
@@ -41,7 +45,10 @@ export function setBackupMode(on: boolean): void {
 
 /** Publish the latest route payload (from the bootstrap fallback or the poll). */
 export function publishRoomFallback(payload: RoomSnapshotPayload | null): void {
-  current = { ...current, payload };
+  current = {
+    ...current,
+    payload: payload === null ? null : toRoomFallbackPayload(payload),
+  };
   emit();
 }
 

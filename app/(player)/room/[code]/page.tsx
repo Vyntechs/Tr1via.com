@@ -1,8 +1,8 @@
 // Player ROOM — the live game.
 //
 // One client component drives the entire phone surface. It:
-//   - Subscribes via `useRoom(code)` for the room snapshot and broadcasts.
-//   - Resolves "which player am I" by matching the device cookie + night.
+//   - Subscribes via `useRoom` for signed snapshots and room broadcasts.
+//   - Receives "which player am I" from the server-verified session snapshot.
 //   - Picks a screen from the snapshot state (lobby/question/locked/reveals/
 //     join-game-2/etc.) — the same state-machine pattern documented in
 //     Phase 8.1.
@@ -14,8 +14,8 @@
 //     when the player returns.
 //
 // All API calls are best-effort: a failure logs to the console but never
-// crashes the UI. The room state updates from Postgres Changes — the
-// player's phone can recover from any blip.
+// crashes the UI. Room broadcasts wake a signed snapshot refetch, so the
+// player's phone can recover from any blip without raw table access.
 
 "use client";
 
@@ -52,7 +52,6 @@ import {
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useReachability } from "@/lib/realtime/reachability";
-import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { useLockCount } from "@/lib/hooks/useLockCount";
 import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
@@ -63,7 +62,6 @@ import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
-import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { playerColorHex } from "@/lib/player/playerColor";
 import {
   selectBetweenGamesView,
@@ -72,7 +70,7 @@ import {
   type StandingRow,
 } from "@/lib/player/betweenGames";
 import { buildNeighborhood, type Neighborhood } from "@/lib/player/standings";
-import { summarizeResolve, type ResolveSummary } from "@/lib/player/celebrationCopy";
+import type { ResolveSummary } from "@/lib/player/celebrationCopy";
 import { gateBeatForPlayer, playerWasCorrect } from "@/lib/game/revealOutcome";
 import { selectLobbyTopicsFromRoom, type LobbyTopic } from "@/lib/tv/lobbyTopics";
 import { playWelcomeChime, triggerWelcomeHaptic } from "@/lib/audio/welcomeChime";
@@ -96,6 +94,10 @@ import type {
 } from "@/lib/supabase/types";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const EMPTY_ANSWERS: AnswerRow[] = [];
+const EMPTY_PARTICIPATIONS: ParticipationRow[] = [];
+const EMPTY_SCORES: GameScoreRow[] = [];
+const EMPTY_QUESTIONS: QuestionRow[] = [];
 
 export default function PlayerRoomPage() {
   const params = useParams<{ code: string }>();
@@ -114,8 +116,12 @@ export default function PlayerRoomPage() {
 }
 
 function PlayerRoomInner({ roomCode }: { roomCode: string }) {
-  const { deviceId, isLoading: deviceLoading } = useDeviceSession();
-  const snapshot = useRoom({ roomCode, deviceId });
+  const { isReady: sessionReady, isLoading: deviceLoading } = useDeviceSession();
+  const snapshot = useRoom({
+    roomCode,
+    audience: "player",
+    sessionReady: !deviceLoading && sessionReady,
+  });
 
   // Seed the first paint from the /join → /room hand-off so the room shows the
   // night's real theme immediately instead of flashing resolveTheme's month/
@@ -140,7 +146,6 @@ function PlayerRoomInner({ roomCode }: { roomCode: string }) {
       <RoomBody
         roomCode={roomCode}
         snapshot={snapshot}
-        deviceId={deviceId}
         deviceLoading={deviceLoading}
         themeKey={themeKey}
       />
@@ -153,22 +158,16 @@ function PlayerRoomInner({ roomCode }: { roomCode: string }) {
 function RoomBody({
   roomCode,
   snapshot,
-  deviceId,
   deviceLoading,
   themeKey,
 }: {
   roomCode: string;
   snapshot: ReturnType<typeof useRoom>;
-  deviceId: string | null;
   deviceLoading: boolean;
   themeKey: ThemeKey;
 }) {
   const router = useRouter();
-  // Find the current player row for this device.
-  const me = useMemo<PlayerRow | null>(() => {
-    if (!deviceId) return null;
-    return snapshot.players.find((p) => p.device_id === deviceId) ?? null;
-  }, [snapshot.players, deviceId]);
+  const me = snapshot.self ?? null;
 
   // ── Side effects: heartbeat + visibility tracking ──
   useHeartbeat(me?.id ?? null, roomCode);
@@ -184,23 +183,10 @@ function RoomBody({
   useEffect(() => {
     if (!snapshot.night?.closed_at) return;
     if (!me || !finalGame) return;
-    // We need a leaderboard to know who's #1. We fire a small query rather
-    // than threading it through useRoom — happens once on close.
-    let cancelled = false;
-    void (async () => {
-      try {
-        const winnerId = await fetchWinnerId(finalGame.id);
-        if (cancelled) return;
-        const path = winnerId === me.id ? "won" : "recap";
-        router.replace(`/room/${roomCode}/${path}`);
-      } catch (e) {
-        console.warn("winner lookup failed", e);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [snapshot.night?.closed_at, me, finalGame, roomCode, router]);
+    const winnerId = snapshot.scores?.[0]?.player_id ?? null;
+    const path = winnerId === me.id ? "won" : "recap";
+    router.replace(`/room/${roomCode}/${path}`);
+  }, [snapshot.night?.closed_at, snapshot.scores, me, finalGame, roomCode, router]);
 
   // ── Unreachable: the browser→Supabase reads are blocked (restrictive venue
   //    WiFi). Show an actionable "switch to a hotspot" screen instead of an
@@ -263,85 +249,23 @@ function RoomStateMachine({
     return snapshot.categories.find((c) => c.id === currentQuestion.category_id) ?? null;
   }, [currentQuestion, snapshot.categories]);
 
-  // Subscribe to ALL of this player's answers in this night so we can know
-  // whether they've answered the current question + look up their reveal
-  // state. Filtered by player_id; cheap (a single player can produce at most
-  // 14 answers across both games).
-  //
-  // Pass lastBroadcast.serverNow as a refetch trigger — every reveal /
-  // resolve / undo / end-early broadcast bumps it, and useMyAnswers re-pulls
-  // the latest rows from REST. Necessary because postgres_changes on the
-  // answers UPDATE (where is_correct + awarded_points get filled in by the
-  // resolve route) silently drops for device-cookie sessions.
-  const realAnswers = useMyAnswers(me.id, snapshot.lastBroadcast?.serverNow ?? null);
-
-  // Optimistic local copy of answers the player just submitted. Lets the UI
-  // flip to PlayerLocked the moment the tap fires, without waiting for the
-  // postgres_changes round-trip (which is unreliable for device-cookie
-  // sessions — the cookie can't ride the WebSocket). Eventually the real
-  // row arrives from useMyAnswers and supersedes the optimistic one.
-  const [optimisticAnswers, setOptimisticAnswers] = useState<AnswerRow[]>([]);
-  const recordOptimisticAnswer = useCallback(
-    (row: AnswerRow) => {
-      setOptimisticAnswers((prev) => {
-        const without = prev.filter((p) => p.question_id !== row.question_id);
-        return [...without, row];
-      });
-    },
-    [],
-  );
-  // Drop optimistic answers once the real DB row arrives for the same question.
-  useEffect(() => {
-    if (optimisticAnswers.length === 0) return;
-    const realIds = new Set(realAnswers.map((a) => a.question_id));
-    if (optimisticAnswers.some((o) => realIds.has(o.question_id))) {
-      setOptimisticAnswers((prev) => prev.filter((o) => !realIds.has(o.question_id)));
-    }
-  }, [realAnswers, optimisticAnswers]);
-  const myAnswers = useMemo<AnswerRow[]>(() => {
-    if (optimisticAnswers.length === 0) return realAnswers;
-    const realIds = new Set(realAnswers.map((a) => a.question_id));
-    const merged: AnswerRow[] = [...realAnswers];
-    for (const opt of optimisticAnswers) {
-      if (!realIds.has(opt.question_id)) merged.push(opt);
-    }
-    return merged.sort((a, b) => a.locked_at.localeCompare(b.locked_at));
-  }, [realAnswers, optimisticAnswers]);
+  // Only server-confirmed answers from the signed snapshot may enter scoring
+  // or move this state machine into PlayerLocked.
+  const myAnswers = snapshot.myAnswers ?? EMPTY_ANSWERS;
+  const allQuestions = snapshot.allQuestions ?? EMPTY_QUESTIONS;
 
   // Map every picked question_id → its game_id for the whole night so the reveal
-  // running total can be scoped to the CURRENT game — the phone must match the
-  // TV's per-game leaderboard, not sum both games together (#2). The room
-  // snapshot only carries the live + last-resolved question, so fetch the night's
-  // question→category once (categories already carry game_id; players may read
-  // id/category_id but not correct_index per the column grant). Refreshes if the
-  // category set changes — game 2's categories are added during setup.
-  const [questionGameMap, setQuestionGameMap] = useState<Map<string, string>>(
-    () => new Map(),
-  );
-  useEffect(() => {
-    const categories = snapshot.categories;
-    if (categories.length === 0) return;
-    const categoryGame = new Map(categories.map((c) => [c.id, c.game_id]));
-    const categoryIds = categories.map((c) => c.id);
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    void (async () => {
-      const { data } = await supa
-        .from("questions")
-        .select("id, category_id")
-        .in("category_id", categoryIds);
-      if (cancelled || !data) return;
-      const map = new Map<string, string>();
-      for (const row of data as Array<{ id: string; category_id: string }>) {
-        const gameId = categoryGame.get(row.category_id);
-        if (gameId) map.set(row.id, gameId);
-      }
-      setQuestionGameMap(map);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [snapshot.categories]);
+  // running total can be scoped to the CURRENT game. The signed payload carries
+  // every picked question needed for that derivation.
+  const questionGameMap = useMemo(() => {
+    const categoryGame = new Map(snapshot.categories.map((c) => [c.id, c.game_id]));
+    const map = new Map<string, string>();
+    for (const question of allQuestions) {
+      const gameId = categoryGame.get(question.category_id);
+      if (gameId) map.set(question.id, gameId);
+    }
+    return map;
+  }, [snapshot.categories, allQuestions]);
 
   // June: the water reflects the reveal the moment this phone enters it. The
   // snapshot clears currentQuestion when finished_at fires and holds the reveal
@@ -402,116 +326,51 @@ function RoomStateMachine({
   useLockInSync({
     gameId: currentGame?.id ?? "",
     active: themeKey === "june" && !!currentGame?.id,
-    acknowledged: rippledLocksRef.current,
     onMissed: (lock) => rippleForLocks([lock.playerId]),
   });
 
-  // ── load + subscribe to game_scores for the current game ───────────────
-  // Same load+subscribe pattern HostLiveConsoleClient + the recap page use.
-  // Tri-state: `null` = pending (haven't completed a fetch yet) so the reveal
-  // surfaces render an unnumbered "in the mix" tag instead of "#0" while
-  // the initial REST query is in flight, or when the player is missing from
-  // the view (no game_participations row → silently absent forever).
-  const [directScores, setDirectScores] = useState<GameScoreRow[] | null>(null);
-  const currentGameId = currentGame?.id ?? null;
-  // Degraded network: prefer the server-route scores over the direct
-  // subscription. The subscription stays mounted so it's warm on recovery.
-  const { backupMode: scoresBackupMode, payload: scoresPayload } = useRoomFallback();
-  const scores = scoresBackupMode && scoresPayload ? scoresPayload.scores : directScores;
-  useEffect(() => {
-    if (!currentGameId) {
-      setDirectScores(null);
-      return;
-    }
-    const gameId = currentGameId;
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    async function load() {
-      const { data } = await supa
-        .from("game_scores")
-        .select("*")
-        .eq("game_id", gameId)
-        .order("score", { ascending: false });
-      if (cancelled) return;
-      setDirectScores((data as GameScoreRow[] | null) ?? []);
-    }
-    void load();
-    const channel = supa
-      .channel(`player-scores:${gameId}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "answers" },
-        () => void load(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "adjustments" },
-        () => void load(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "game_participations" },
-        () => void load(),
-      )
-      .subscribe();
-    return () => {
-      cancelled = true;
-      void supa.removeChannel(channel);
-    };
-  }, [currentGameId]);
+  const scores = snapshot.scores ?? EMPTY_SCORES;
+  const allScores = snapshot.allScores ?? scores;
 
   // 1-based rank, or `null` if the scores fetch hasn't landed yet OR the
   // player isn't in the view (missing participation row). `null` propagates
   // down to the reveal components, which render "in the mix" instead of "#0".
   const myRank = useMemo<number | null>(() => {
-    if (scores === null) return null;
     const idx = scores.findIndex((s) => s.player_id === me.id);
     return idx >= 0 ? idx + 1 : null;
   }, [scores, me.id]);
 
   // Bolt ceremony: fires when the server confirms the player's answer.
-  // Rendered once outside all branch returns (position:fixed, pointer-events:none)
-  // so the overlay survives the QuestionView→LockedView switch on optimistic lock-in.
+  // Rendered once outside all branch returns (position:fixed, pointer-events:none).
   // The phone bolt is a LIGHTNING visual, so it's gated to the lightning ceremony
   // (May) specifically — NOT generic hasCeremony(). July's ceremony is "fireworks",
   // and July phones get their earned reveal fireworks (Phase 3) instead of a strike;
   // a lightning bolt on the 4th would be off-theme.
   const [boltActive, setBoltActive] = useState(false);
+  const requestSnapshotRefresh = snapshot.requestRefresh;
   const handleServerConfirm = useCallback(() => {
+    requestSnapshotRefresh?.();
     if (lockInCeremonyFor(themeKey).ceremony !== "lightning") return;
     setBoltActive(true);
-  }, [themeKey]);
+  }, [requestSnapshotRefresh, themeKey]);
   // Reset if a new question arrives while the bolt is still playing.
   useEffect(() => {
     setBoltActive(false);
   }, [currentQuestion?.id]);
 
-  // Player's game-2 opt-in (separate read; one row per game/player).
-  const myParticipations = useMyParticipations(me.id);
+  const myParticipations = snapshot.myParticipations ?? EMPTY_PARTICIPATIONS;
   // Optimistic flag: postgres_changes for game_participations doesn't reach
   // device-cookie sessions (RLS evaluation differs from REST). When the
   // player taps Join Game 2, the API succeeds but the local hook never sees
   // the new row, so the screen would never advance. Flip this on success so
-  // the state machine moves forward immediately. Same pattern as the
-  // optimistic answer fix.
+  // the state machine moves forward immediately. Answers deliberately do not
+  // use this shortcut because their canonical row drives locking and scoring.
   const [optimisticInGame2, setOptimisticInGame2] = useState(false);
   const inGame2 = useMemo(() => {
     if (optimisticInGame2) return true;
     if (!game2) return false;
     return myParticipations.some((p) => p.game_id === game2.id);
   }, [myParticipations, game2, optimisticInGame2]);
-
-  // ── July fireworks (Phase 3) ───────────────────────────────────────────
-  // The resolve broadcast carries per-player `awards` (already on the phone — no
-  // new read). Derive the social counts straight from it for the matching
-  // question. Read from state during render (not a ref) so it stays consistent;
-  // if a later broadcast supersedes lastBroadcast, the line simply stops showing
-  // (graceful) rather than rendering a stale/wrong count.
-  const summaryFor = (qid: string | undefined): ResolveSummary | undefined => {
-    const b = snapshot.lastBroadcast;
-    if (!qid || !b || b.event !== "resolve" || b.questionId !== qid) return undefined;
-    return summarizeResolve(b.awards);
-  };
 
   // Did I get the just-resolved question right? Drives the correct-only salvo
   // gate below (a finale fires for everyone; a salvo fires only on a correct
@@ -524,11 +383,11 @@ function RoomStateMachine({
     ? myAnswers.find((a) => a.question_id === resolvedQuestion.id) ?? null
     : null;
   const amCorrect = playerWasCorrect(myResolvedAnswer, resolvedQuestion?.correct_index ?? null);
-  const neighborhood: Neighborhood = buildNeighborhood(scores ?? [], me.id, 4);
+  const neighborhood: Neighborhood = buildNeighborhood(scores, me.id, 4);
 
   // ── Compute the screen content. The bolt overlay is rendered once below,
   //    outside this branch, so it persists across the QuestionView→LockedView
-  //    transition that happens on optimistic lock-in.
+  //    transition after the signed snapshot confirms the answer row.
   let inner: React.ReactNode;
 
   // ── Between games: 'join' recap (not opted in) or 'waiting' (opted in, G2 not started) ──
@@ -556,6 +415,8 @@ function RoomStateMachine({
         playerName={me.display_name}
         myAnswers={myAnswers}
         categories={snapshot.categories}
+        allQuestions={allQuestions}
+        scores={allScores}
         joined={betweenView === "waiting" || waitingForGame2FirstQuestion}
         onJoinSuccess={() => setOptimisticInGame2(true)}
         // The same "Tonight's Topics" the TV/lobby show — here it resolves to the
@@ -589,8 +450,8 @@ function RoomStateMachine({
             categories={snapshot.categories}
             game={currentGame}
             themeKey={themeKey}
-            standings={buildGame1Standings(scores ?? [], me.id)}
-            totalPlayers={scores && scores.length > 0 ? scores.length : snapshot.players.length}
+            standings={buildGame1Standings(scores, me.id)}
+            totalPlayers={scores.length > 0 ? scores.length : snapshot.players.length}
             roomMagicEnabled={roomMagicEnabled}
           />
         );
@@ -604,9 +465,9 @@ function RoomStateMachine({
             revealBroadcast={snapshot.lastBroadcast}
             game={currentGame}
             categories={snapshot.categories}
-            onAnswerOptimistic={recordOptimisticAnswer}
             onServerConfirm={handleServerConfirm}
             themeKey={themeKey}
+            serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
           />
         );
       }
@@ -625,9 +486,10 @@ function RoomStateMachine({
           questionGameMap={questionGameMap}
           rank={myRank}
           themeKey={themeKey}
-          summary={summaryFor(currentQuestion.id)}
+          summary={undefined}
           neighborhood={neighborhood}
           roomMagicEnabled={roomMagicEnabled}
+          serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
         />
       );
     }
@@ -658,9 +520,10 @@ function RoomStateMachine({
             questionGameMap={questionGameMap}
             rank={myRank}
             themeKey={themeKey}
-            summary={summaryFor(lastResolvedQuestion.id)}
+            summary={undefined}
             neighborhood={neighborhood}
             roomMagicEnabled={roomMagicEnabled}
+            serverScramble={snapshot.questionScrambles?.[lastResolvedQuestion.id]}
           />
         );
       }
@@ -873,9 +736,9 @@ function QuestionView({
   revealBroadcast,
   game: _game,
   categories,
-  onAnswerOptimistic,
   onServerConfirm,
   themeKey,
+  serverScramble,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -884,16 +747,19 @@ function QuestionView({
   revealBroadcast: ReturnType<typeof useRoom>["lastBroadcast"];
   game: GameRow;
   categories: CategoryRow[];
-  onAnswerOptimistic: (row: AnswerRow) => void;
   /** Called the moment the server confirms the answer. Used to fire
    *  the bolt ceremony from the parent, which survives this unmount. */
   onServerConfirm: () => void;
   themeKey?: ThemeKey;
+  serverScramble?: [number, number, number, number];
 }) {
   // Compute the player-specific scramble. Same fn the server runs to verify
   // submissions, so the slot the player taps maps back to the canonical
   // option index identically on both sides.
-  const scramble = useMemo(() => scrambleFor(question.id, player.id), [question.id, player.id]);
+  const scramble = useMemo(
+    () => serverScramble ?? scrambleFor(question.id, player.id),
+    [question.id, player.id, serverScramble],
+  );
   const optionsInScrambleOrder = useMemo<[string, string, string, string]>(() => {
     const raw = question.options;
     return [
@@ -936,19 +802,18 @@ function QuestionView({
     onZero: handleZero,
   });
 
-  // Optimistic submit with exponential-backoff retry on transient failures.
-  // The UI flips to "locked" the moment the player taps; the hook keeps
-  // retrying in the background. A failed-after-retries state surfaces a
-  // small retry prompt the player can tap to re-attempt manually.
+  // Submit with exponential-backoff retry on transient failures. The tapped
+  // question disables while sending, but PlayerLocked waits for the signed
+  // snapshot to carry the canonical answer. A failed-after-retries state
+  // surfaces a small retry prompt the player can tap to re-attempt manually.
   const { submit, status: submitStatus, retry, confirmedAt } = useAnswerSubmit({
     questionId: question.id,
     scramble: Array.from(scramble),
   });
 
-  // Propagate server confirmation up to the parent (RoomStateMachine) so
-  // the bolt overlay can survive the QuestionView→LockedView unmount.
-  // confirmedAt fires ~150-300ms after the tap; by that point QuestionView
-  // may already be gone if the optimistic answer flipped the parent screen.
+  // Propagate server confirmation so the parent immediately refreshes the
+  // signed snapshot and can keep any themed bolt across the canonical
+  // QuestionView→LockedView transition.
   useEffect(() => {
     if (!confirmedAt) return;
     onServerConfirm();
@@ -959,27 +824,11 @@ function QuestionView({
 
   const handleTap = useCallback(
     (slot: PlayerQuestionSlot) => {
-      // Record optimistic answer locally so the page transitions to PlayerLocked
-      // IMMEDIATELY, without waiting for postgres_changes (which is unreliable
-      // for device-cookie sessions). The real row from useMyAnswers will
-      // arrive moments later and supersede this one.
-      const nowMs = Date.now();
-      const msToLock = revealedAtMs !== null ? Math.max(0, nowMs - revealedAtMs) : 0;
-      const chosenIndex = scramble[slot - 1] as 0 | 1 | 2 | 3;
-      onAnswerOptimistic({
-        id: `optimistic-${question.id}-${player.id}`,
-        question_id: question.id,
-        player_id: player.id,
-        chosen_index: chosenIndex,
-        scramble: [scramble[0], scramble[1], scramble[2], scramble[3]] as [number, number, number, number],
-        locked_at: new Date(nowMs).toISOString(),
-        ms_to_lock: msToLock,
-        is_correct: null,
-        awarded_points: null,
-      });
+      // The tap is submission intent only. PlayerLocked and scoring wait for
+      // the signed snapshot to return the canonical answer row.
       submit(slot);
     },
-    [submit, onAnswerOptimistic, scramble, question.id, player.id, revealedAtMs],
+    [submit],
   );
 
   const questionNumber = computeQuestionNumber(question, categories);
@@ -1138,6 +987,7 @@ function RevealView({
   summary,
   neighborhood,
   roomMagicEnabled,
+  serverScramble,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -1161,10 +1011,11 @@ function RevealView({
   neighborhood: Neighborhood;
   /** Night-level Room Magic flag. Controls still mount only post-resolve. */
   roomMagicEnabled: boolean;
+  serverScramble?: [number, number, number, number];
 }) {
   // Use the player's saved scramble when we have an answer; otherwise compute
   // it deterministically so the correct slot still maps correctly.
-  const scramble = myAnswer?.scramble ?? scrambleFor(question.id, player.id);
+  const scramble = myAnswer?.scramble ?? serverScramble ?? scrambleFor(question.id, player.id);
 
   // The answer (correct_index) reaches the player post-resolve via the resolve/
   // end-early broadcast hint or the 'resolve' reveal metadata — players can't
@@ -1363,6 +1214,8 @@ function PlayerBetweenGamesWired({
   playerName,
   myAnswers,
   categories,
+  allQuestions,
+  scores,
   joined,
   onJoinSuccess,
   topics,
@@ -1374,6 +1227,8 @@ function PlayerBetweenGamesWired({
   playerName: string;
   myAnswers: AnswerRow[];
   categories: CategoryRow[];
+  allQuestions: QuestionRow[];
+  scores: GameScoreRow[];
   /** Player has opted into game 2 and is waiting for it to start → render the
    *  Between Games screen (Look B). Otherwise the join recap (Look A). */
   joined: boolean;
@@ -1385,90 +1240,28 @@ function PlayerBetweenGamesWired({
 }) {
   const [submitting, setSubmitting] = useState(false);
 
-  // RoomSnapshot doesn't carry every question for the night (only the live
-  // and most-recently-resolved one), but the wrap screen needs to know which
-  // category each answered question belongs to so the "best category" stat
-  // can pick from the actually-played categories instead of a placeholder.
-  // One-shot fetch on mount — game 1 is done at this point so the data is
-  // settled (no realtime subscription needed).
-  const [questionCategoryMap, setQuestionCategoryMap] = useState<
-    Map<string, string>
-  >(new Map());
-  useEffect(() => {
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
+  const questionCategoryMap = useMemo(() => {
     const game1CategoryIds = categories
       .filter((c) => c.game_id === game1Id)
       .map((c) => c.id);
-    if (game1CategoryIds.length === 0) return;
-    async function load() {
-      const { data } = await supa
-        .from("questions")
-        .select("id, category_id")
-        .in("category_id", game1CategoryIds);
-      if (cancelled || !data) return;
-      const map = new Map<string, string>();
-      for (const row of data as Array<{ id: string; category_id: string }>) {
-        map.set(row.id, row.category_id);
+    const allowedCategories = new Set(game1CategoryIds);
+    const map = new Map<string, string>();
+    for (const question of allQuestions) {
+      if (allowedCategories.has(question.category_id)) {
+        map.set(question.id, question.category_id);
       }
-      setQuestionCategoryMap(map);
     }
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [categories, game1Id]);
+    return map;
+  }, [allQuestions, categories, game1Id]);
 
   const stats = useMemo(
     () => summarizeGame(myAnswers, categories, questionCategoryMap),
     [myAnswers, categories, questionCategoryMap],
   );
 
-  // The parent RoomStateMachine's scores subscription is scoped to
-  // `currentGame` which here is game 2 (game 1 is done) — wrong game for this
-  // screen. Scope a separate load+subscribe to game 1's scores so we can
-  // render the player's game-1 final placement. Tri-state `null` = pending
-  // → renders "Wrapped. Nice run." instead of "#0" while in flight.
-  const [game1Scores, setGame1Scores] = useState<GameScoreRow[] | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    async function load() {
-      const { data } = await supa
-        .from("game_scores")
-        .select("*")
-        .eq("game_id", game1Id)
-        .order("score", { ascending: false });
-      if (cancelled) return;
-      setGame1Scores((data as GameScoreRow[] | null) ?? []);
-    }
-    void load();
-    const channel = supa
-      .channel(`player-join-g2-scores:${game1Id}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "answers" },
-        () => void load(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "adjustments" },
-        () => void load(),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "game_participations" },
-        () => void load(),
-      )
-      .subscribe();
-    return () => {
-      cancelled = true;
-      void supa.removeChannel(channel);
-    };
-  }, [game1Id]);
+  const game1Scores = scores.filter((score) => score.game_id === game1Id);
 
   const finalRank = useMemo<number | null>(() => {
-    if (game1Scores === null) return null;
     const idx = game1Scores.findIndex((s) => s.player_id === me.id);
     return idx >= 0 ? idx + 1 : null;
   }, [game1Scores, me.id]);
@@ -1749,150 +1542,6 @@ function useAppSwitchTracking(playerId: string | null) {
   }, [playerId]);
 }
 
-// ─── DATA HOOKS (player-scoped) ──────────────────────────────────────────
-
-/**
- * Subscribes to all of this player's answers across the night.
- *
- * `refreshKey` is an external bump (typically the most recent broadcast's
- * serverNow) — when it changes, we re-fetch from REST in addition to the
- * postgres_changes subscription. This compensates for the known device-
- * cookie-session RLS quirk: postgres_changes UPDATEs on the answers row
- * (where the resolve route sets is_correct + awarded_points) often DON'T
- * land for player sessions, so the local row stays at is_correct=null and
- * RevealView falls into PlayerRevealWrong for everyone. A REST refetch on
- * the resolve broadcast pulls the authoritative state.
- */
-function useMyAnswers(playerId: string | null, refreshKey: string | null): AnswerRow[] {
-  const [rows, setRows] = useState<AnswerRow[]>([]);
-  // Degraded network: prefer the server-route payload (this player's answers)
-  // over the direct subscription, which is stalling. The subscription keeps
-  // running so it's warm when realtime recovers.
-  const { backupMode, payload } = useRoomFallback();
-  useEffect(() => {
-    if (!playerId) {
-      setRows([]);
-      return;
-    }
-    const pid = playerId;
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    async function refetch() {
-      const { data } = await supa
-        .from("answers")
-        .select("*")
-        .eq("player_id", pid)
-        .order("locked_at", { ascending: true });
-      if (cancelled) return;
-      setRows((data as AnswerRow[] | null) ?? []);
-    }
-    void refetch();
-
-    const channel = supa
-      .channel(`answers:${pid}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "answers",
-          filter: `player_id=eq.${pid}`,
-        },
-        (payload) => {
-          if (cancelled) return;
-          setRows((prev) =>
-            applyAnswerChange(prev, payload as unknown as ChangePayload<AnswerRow>),
-          );
-        },
-      )
-      .subscribe();
-
-    return () => {
-      cancelled = true;
-      void supa.removeChannel(channel);
-    };
-  }, [playerId, refreshKey]);
-  return backupMode && payload ? payload.myAnswers : rows;
-}
-
-/** Subscribes to this player's game_participations rows (which games they joined). */
-function useMyParticipations(playerId: string | null): ParticipationRow[] {
-  const [rows, setRows] = useState<ParticipationRow[]>([]);
-  const { backupMode, payload } = useRoomFallback();
-  useEffect(() => {
-    if (!playerId) {
-      setRows([]);
-      return;
-    }
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    void supa
-      .from("game_participations")
-      .select("*")
-      .eq("player_id", playerId)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setRows((data as ParticipationRow[] | null) ?? []);
-      });
-    const channel = supa
-      .channel(`participations:${playerId}`)
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
-          table: "game_participations",
-          filter: `player_id=eq.${playerId}`,
-        },
-        (payload) => {
-          if (cancelled) return;
-          setRows((prev) =>
-            applyParticipationChange(
-              prev,
-              payload as unknown as ChangePayload<ParticipationRow>,
-            ),
-          );
-        },
-      )
-      .subscribe();
-    return () => {
-      cancelled = true;
-      void supa.removeChannel(channel);
-    };
-  }, [playerId]);
-  return backupMode && payload ? payload.myParticipations : rows;
-}
-
-interface ChangePayload<T> {
-  eventType: "INSERT" | "UPDATE" | "DELETE";
-  new: T | Record<string, never>;
-  old: T | Record<string, never>;
-}
-
-function applyAnswerChange(prev: AnswerRow[], payload: ChangePayload<AnswerRow>): AnswerRow[] {
-  if (payload.eventType === "DELETE") {
-    const old = payload.old as AnswerRow;
-    return prev.filter((a) => a.id !== old.id);
-  }
-  const next = payload.new as AnswerRow;
-  const exists = prev.some((a) => a.id === next.id);
-  const merged = exists ? prev.map((a) => (a.id === next.id ? next : a)) : [...prev, next];
-  return [...merged].sort((a, b) => a.locked_at.localeCompare(b.locked_at));
-}
-
-function applyParticipationChange(
-  prev: ParticipationRow[],
-  payload: ChangePayload<ParticipationRow>,
-): ParticipationRow[] {
-  if (payload.eventType === "DELETE") {
-    const old = payload.old as ParticipationRow;
-    return prev.filter((p) => p.id !== old.id);
-  }
-  const next = payload.new as ParticipationRow;
-  const exists = prev.some((p) => p.id === next.id);
-  return exists ? prev.map((p) => (p.id === next.id ? next : p)) : [...prev, next];
-}
-
 // ─── ANALYTICS / DERIVED ─────────────────────────────────────────────────
 
 function computeQuestionNumber(
@@ -2024,17 +1673,3 @@ function summarizeGame(
 
 // pickRecentReveal removed: its job is now handled by useRoom's
 // lastResolvedQuestion + the new RevealView fallback in RoomBody.
-
-// ─── WINNER LOOKUP ───────────────────────────────────────────────────────
-
-async function fetchWinnerId(gameId: string): Promise<string | null> {
-  const supa = getSupabaseBrowser();
-  const { data } = await supa
-    .from("game_scores")
-    .select("player_id, score")
-    .eq("game_id", gameId)
-    .order("score", { ascending: false })
-    .limit(1);
-  if (!data || data.length === 0) return null;
-  return (data[0] as { player_id: string }).player_id;
-}

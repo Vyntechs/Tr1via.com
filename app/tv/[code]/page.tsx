@@ -53,7 +53,7 @@ export default function TVPage({
 
   // Hooks must run on every render — call BEFORE any conditional return.
   // (`snapshot` is null until the room loads; the hook reads `players?.length`
-  //  defensively and only acts on a `player-joined` broadcast, so passing
+  //  defensively and only acts on a `roster-changed` broadcast, so passing
   //  `snapshot?.players ?? []` is safe.) Leaving this below the early returns
   //  meant it was skipped while loading and suddenly ran once ready — the hook
   //  count changed between renders and React crashed the whole TV (React #310).
@@ -119,7 +119,7 @@ export default function TVPage({
 }
 
 /**
- * Lifts `useTVRoom`'s `lastBroadcast` (which carries the `player-joined`
+ * Lifts `useTVRoom`'s `lastBroadcast` (which carries the `roster-changed`
  * event) into a UI-shaped welcome event, holds it for ~3 seconds, then
  * unmounts. Also plays the chime locally on the TV the moment a join
  * lands.
@@ -128,24 +128,30 @@ function useTVWelcomeEvent(
   lastBroadcast: TVBroadcast | null,
   players: TVSnapshot["players"],
 ): TVLobbyWelcomeEvent | null {
-  const [event, setEvent] = useState<TVLobbyWelcomeEvent | null>(null);
+  const [heldEvent, setHeldEvent] = useState<{
+    sourceJoinToken: string;
+    value: TVLobbyWelcomeEvent;
+  } | null>(null);
   const reduced = usePrefersReducedMotion();
 
   useEffect(() => {
-    if (!lastBroadcast || lastBroadcast.event !== "player-joined") return;
-    if (!lastBroadcast.playerId || !lastBroadcast.displayName) return;
+    if (!lastBroadcast || lastBroadcast.event !== "roster-changed") return;
+    if (!lastBroadcast.joinToken || !lastBroadcast.displayName) return;
     // joinIndex = 1-based position in the join queue. We approximate by
     // counting how many roster entries already exist when this broadcast
     // arrives — players is updated by useTVRoom's snapshot refetch but
     // may lag the broadcast by one render tick, so worst case we
     // off-by-one (sparkle on player 6 instead of 5). Acceptable.
     const idx = Math.max(1, (players?.length ?? 0));
-    setEvent({
-      playerId: lastBroadcast.playerId,
-      name: lastBroadcast.displayName,
-      colorKey: lastBroadcast.colorKey,
-      joinIndex: idx,
-      prefersReducedMotion: reduced,
+    setHeldEvent({
+      sourceJoinToken: lastBroadcast.joinToken,
+      value: {
+        joinToken: lastBroadcast.joinToken,
+        name: lastBroadcast.displayName,
+        colorKey: lastBroadcast.colorKey,
+        joinIndex: idx,
+        prefersReducedMotion: reduced,
+      },
     });
     // Local chime on the TV — the host's HDMI'd laptop will play this
     // through the venue speakers. Best-effort.
@@ -154,14 +160,17 @@ function useTVWelcomeEvent(
     } catch {
       /* silent */
     }
-    const handle = window.setTimeout(() => setEvent(null), WELCOME_OVERLAY_DURATION_MS);
+    const handle = window.setTimeout(
+      () => setHeldEvent(null),
+      WELCOME_OVERLAY_DURATION_MS,
+    );
     return () => window.clearTimeout(handle);
     // Trigger off the broadcast's identity. `serverNow` changes per emit;
-    // playerId changes per joiner — either is sufficient to detect a new
+    // joinToken changes per join — either is sufficient to detect a new
     // welcome.
   }, [
     lastBroadcast?.event,
-    lastBroadcast?.playerId,
+    lastBroadcast?.joinToken,
     lastBroadcast?.serverNow,
     // Intentionally omit `players` and `reduced` from the deps — they're
     // read at trigger time, and we don't want a roster mutation to
@@ -169,7 +178,15 @@ function useTVWelcomeEvent(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
-  return event;
+  if (
+    !heldEvent ||
+    lastBroadcast?.event !== "roster-changed" ||
+    lastBroadcast.joinToken !== heldEvent.sourceJoinToken
+  ) {
+    return null;
+  }
+
+  return heldEvent.value;
 }
 
 function SectionCompleteOverlay({

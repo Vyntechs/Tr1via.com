@@ -54,7 +54,7 @@ function fnv1a(input: string): number {
 
 /**
  * Returns the 0-indexed palette slot for this player. Stable per id.
- * Sent in the `player-joined` broadcast so receivers can render the
+ * Sent in the identity-free `roster-changed` broadcast so receivers can render the
  * same color without re-hashing (and so future renames of the
  * algorithm don't desync producers and consumers mid-night).
  */

@@ -16,8 +16,9 @@ import { CreatePlayerSchema } from "@/lib/api/schemas";
 import { badRequest, ok, serverError, unauthorized, notFound, forbidden } from "@/lib/api/responses";
 import { getDeviceId } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { broadcastPlayerJoined } from "@/lib/api/broadcast";
+import { broadcastRosterChanged } from "@/lib/api/broadcast";
 import { playerColorKey } from "@/lib/player/playerColor";
+import { serializeRoomPlayer } from "@/lib/room/roomAudience";
 
 export async function POST(req: NextRequest) {
   const deviceId = await getDeviceId();
@@ -36,7 +37,7 @@ export async function POST(req: NextRequest) {
 
   // Pre-flight: the night must exist, not be closed, and not be locked.
   // (Lock = host's "private game" toggle; closed = night is over.)
-  // We also pull `room_code` so the player-joined broadcast below can
+  // We also pull `room_code` so the roster-changed broadcast below can
   // address the right channel without a second lookup.
   const { data: night } = await admin
     .from("nights")
@@ -70,16 +71,21 @@ export async function POST(req: NextRequest) {
         device_id: deviceId,
         display_name: parsed.data.displayName,
         last_seen_at: now,
+        // Migration 0022 makes signed-device players eligible to answer.
+        // The cast is temporary until the planned Task 5 type regeneration.
+        can_answer: true,
         // Clear any prior soft-removal: if a host removed someone and they
         // rejoin, the host can re-remove. Otherwise being "stuck" is worse.
         removed_at: null,
-      },
+      } as never,
       { onConflict: "night_id,device_id" },
     )
-    .select("*")
+    .select(
+      "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds",
+    )
     .single();
   if (error || !player) {
-    return serverError(error?.message ?? "could not join");
+    return serverError();
   }
 
   // Magic-Welcome broadcast — fire-and-forget. The TV's safety poll and
@@ -93,8 +99,7 @@ export async function POST(req: NextRequest) {
   if (isFirstJoin && night.room_code) {
     const colorKey = playerColorKey(player.id);
     try {
-      await broadcastPlayerJoined(night.room_code, {
-        id: player.id,
+      await broadcastRosterChanged(night.room_code, {
         displayName: player.display_name,
         joinedAt: player.joined_at,
         colorKey,
@@ -103,7 +108,7 @@ export async function POST(req: NextRequest) {
       // Best-effort: the durable players row already landed; the welcome
       // overlay will just lag by up to the TV safety-poll interval. Don't
       // fail the join.
-      console.warn("broadcast player-joined failed", e);
+      console.warn("broadcast roster-changed failed", e);
     }
   }
 
@@ -131,5 +136,5 @@ export async function POST(req: NextRequest) {
       .maybeSingle();
   }
 
-  return ok({ player }, 201);
+  return ok({ player: serializeRoomPlayer(player) }, 201);
 }

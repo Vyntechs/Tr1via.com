@@ -89,6 +89,10 @@ describe("roomToTVSnapshot House Lights answer scoping", () => {
       lastBroadcast: null,
       lastFireworksBeat: null,
       lastRoomMagicReaction: null,
+      tvPlayerKeys: {
+        "player-1": "tv-player-key-1",
+        "player-2": "tv-player-key-2",
+      },
       isLoading: false,
     } satisfies RoomSnapshot;
 
@@ -118,9 +122,12 @@ describe("roomToTVSnapshot House Lights answer scoping", () => {
 
     expect(snapshot?.liveAnswers).toHaveLength(1);
     expect(snapshot?.liveAnswers[0]).toMatchObject({
-      id: "answer-live",
       question_id: "q-live",
-      player_id: "player-1",
+      player_key: "tv-player-key-1",
     });
+    expect(snapshot?.players.map((player) => player.id)).toEqual([
+      "tv-player-key-1",
+      "tv-player-key-2",
+    ]);
   });
 });

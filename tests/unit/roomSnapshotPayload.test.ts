@@ -36,16 +36,16 @@ function rawQuestion(over: Partial<QuestionRow> & { id: string }): QuestionRow {
 }
 
 describe("serializeRoomQuestion — correct_index gating", () => {
-  it("withholds correct_index for an unplayed question", () => {
+  it("omits correctIndex for an unplayed question", () => {
     const q = serializeRoomQuestion(rawQuestion({ id: "q", played_at: null, finished_at: null, correct_index: 2 }));
-    expect(q.correct_index).toBeNull();
+    expect(q).not.toHaveProperty("correctIndex");
   });
 
-  it("withholds correct_index for a LIVE (played, not finished) question", () => {
+  it("omits correctIndex for a LIVE (played, not finished) question", () => {
     const q = serializeRoomQuestion(
       rawQuestion({ id: "q", played_at: "2026-06-07T00:00:00Z", finished_at: null, correct_index: 1 }),
     );
-    expect(q.correct_index).toBeNull();
+    expect(q).not.toHaveProperty("correctIndex");
   });
 
   it("exposes correct_index once the question is RESOLVED", () => {
@@ -57,7 +57,7 @@ describe("serializeRoomQuestion — correct_index gating", () => {
         correct_index: 3,
       }),
     );
-    expect(q.correct_index).toBe(3);
+    expect(q.correctIndex).toBe(3);
   });
 
   it("preserves all non-answer fields", () => {
@@ -66,6 +66,19 @@ describe("serializeRoomQuestion — correct_index gating", () => {
     expect(q.id).toBe("q");
     expect(q.prompt).toBe("Who?");
     expect(q.options).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("fails closed when an admin row grows browser-identity, submission, or live-answer fields", () => {
+    const row = rawQuestion({ id: "q", played_at: "2026-06-07T00:00:00Z", finished_at: null });
+    Object.assign(row as Record<string, unknown>, {
+      device_id: "DEVICE-ID-LEAK",
+      submission_id: "SUBMISSION-ID-LEAK",
+    });
+
+    const json = JSON.stringify(serializeRoomQuestion(row));
+    expect(json).not.toContain("DEVICE-ID-LEAK");
+    expect(json).not.toContain("SUBMISSION-ID-LEAK");
+    expect(json).not.toContain('"correctIndex"');
   });
 });
 
@@ -83,7 +96,7 @@ describe("payloadToRoomSnapshot", () => {
     }) as GameRow;
 
   const basePayload = (): RoomSnapshotPayload => ({
-    night: { id: "n1" } as RoomSnapshotPayload["night"],
+    night: { nightKey: "night-key-1" } as Extract<RoomSnapshotPayload, { audience: "player" }>["night"],
     hostDefaultThemeKey: "house",
     games: [game({ id: "g1", game_no: 1, state: "done", ended_at: "2026-01-01T00:00:00Z" }), game({ id: "g2", game_no: 2, state: "live" })],
     categories: [],
@@ -92,11 +105,20 @@ describe("payloadToRoomSnapshot", () => {
     lastResolvedQuestion: null,
     currentReveal: null,
     allQuestions: [],
-    me: null,
+    allScores: [],
+    audience: "player",
+    self: {
+      playerKey: "player-key-1",
+      displayName: "Player",
+      joinedAt: "2026-01-01T00:00:00Z",
+      lastSeenAt: "2026-01-01T00:00:00Z",
+      removedAt: null,
+      appSwitchTotalSeconds: 0,
+    },
     myAnswers: [],
     myParticipations: [],
+    questionScrambles: {},
     scores: [],
-    liveAnswers: [],
   });
 
   it("derives currentGame via pickCurrentGame (live wins)", () => {
@@ -109,13 +131,16 @@ describe("payloadToRoomSnapshot", () => {
     expect(snap.isLoading).toBe(false);
     expect(snap.lastBroadcast).toBeNull();
     expect(snap.lastRoomMagicReaction).toBeNull();
+    expect(snap.self?.id).toBe("player-key-1");
   });
 
   it("passes night/games/categories/players through unchanged", () => {
     const p = basePayload();
     const snap = payloadToRoomSnapshot(p);
-    expect(snap.night).toBe(p.night);
-    expect(snap.games).toBe(p.games);
+    expect(snap.night?.id).toBe("night-key-1");
+    expect(snap.games).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "g1", night_id: "night-key-1" }),
+    ]));
     expect(snap.hostDefaultThemeKey).toBe("house");
   });
 });

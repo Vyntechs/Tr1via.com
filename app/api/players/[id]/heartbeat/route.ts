@@ -12,7 +12,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { HeartbeatSchema } from "@/lib/api/schemas";
 import { badRequest, noContent, serverError, unauthorized, notFound } from "@/lib/api/responses";
-import { requireOwnedPlayer } from "@/lib/api/auth";
+import { requireOwnedPlayerReference } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(
@@ -20,7 +20,7 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
-  const owned = await requireOwnedPlayer(id);
+  const owned = await requireOwnedPlayerReference(id);
   if (!owned.ok) {
     return owned.status === 401 ? unauthorized(owned.error) : notFound(owned.error);
   }
@@ -65,14 +65,14 @@ export async function POST(
         last_seen_at: now,
         app_switch_total_seconds: owned.player.app_switch_total_seconds + parsedSeconds,
       })
-      .eq("id", id);
-    if (error) return serverError(error.message);
+      .eq("id", owned.player.id);
+    if (error) return serverError();
   } else {
     const { error } = await admin
       .from("players")
       .update({ last_seen_at: now })
-      .eq("id", id);
-    if (error) return serverError(error.message);
+      .eq("id", owned.player.id);
+    if (error) return serverError();
   }
   return noContent();
 }

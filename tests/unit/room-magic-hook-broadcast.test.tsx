@@ -172,6 +172,17 @@ describe("Room Magic broadcast hooks", () => {
             json: async () => readyTVSnapshot(),
           };
         }
+        if (url.includes("/api/room/")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              audience: "host",
+              night: { id: "night-1" },
+              tvPlayerKeys: { "raw-player-1": "pk_tv_player_1" },
+            }),
+          };
+        }
         throw new Error(`unexpected fetch ${url}`);
       }),
     );
@@ -184,9 +195,16 @@ describe("Room Magic broadcast hooks", () => {
 
   it("useRoom stores Room Magic reactions separately without mutating lastBroadcast or refetching", async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
-    const { result } = renderHook(() => useRoom({ roomCode: "ABCDEF" }));
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "host" }),
+    );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
+    await waitFor(() =>
+      expect(result.current.tvPlayerKeys).toEqual({
+        "raw-player-1": "pk_tv_player_1",
+      }),
+    );
     const fetchCountBefore = fetchMock.mock.calls.length;
     const fromCountBefore = supaMock.client.fromCallCount();
 
@@ -201,7 +219,9 @@ describe("Room Magic broadcast hooks", () => {
   });
 
   it("useRoom ignores malformed Room Magic reaction payloads", async () => {
-    const { result } = renderHook(() => useRoom({ roomCode: "ABCDEF" }));
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "host" }),
+    );
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
@@ -214,6 +234,42 @@ describe("Room Magic broadcast hooks", () => {
     });
 
     expect(result.current.lastRoomMagicReaction).toBeNull();
+  });
+
+  it("useRoom stores only the identity-free roster event and refreshes host projections", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "host" }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const roomFetchesBefore = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/api/room/"),
+    ).length;
+
+    act(() => {
+      supaMock.client.broadcast("roster-changed", {
+        joinToken: "host-join-event-token",
+        displayName: "Blair",
+        joinedAt: "2026-06-30T12:00:31.000Z",
+        colorKey: 4,
+        serverNow: "2026-06-30T12:00:31.000Z",
+        playerId: "22222222-2222-4222-8222-222222222222",
+      });
+    });
+
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.filter(([input]) =>
+          String(input).includes("/api/room/"),
+        ).length,
+      ).toBe(roomFetchesBefore + 1),
+    );
+    expect(result.current.lastBroadcast).toMatchObject({
+      event: "roster-changed",
+      joinToken: "host-join-event-token",
+      displayName: "Blair",
+    });
+    expect(result.current.lastBroadcast).not.toHaveProperty("playerId");
   });
 
   it("useTVRoom stores Room Magic reactions separately without mutating lastBroadcast or refetching", async () => {
@@ -230,5 +286,32 @@ describe("Room Magic broadcast hooks", () => {
     expect(result.current.lastRoomMagicReaction).toEqual(roomMagicEvent);
     expect(result.current.lastBroadcast).toBeNull();
     expect(fetchMock).toHaveBeenCalledTimes(fetchCountBefore);
+  });
+
+  it("useTVRoom treats roster-changed as an identity-free snapshot wake-up", async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    const fetchCountBefore = fetchMock.mock.calls.length;
+
+    act(() => {
+      supaMock.client.broadcast("roster-changed", {
+        joinToken: "join-event-token",
+        displayName: "Blair",
+        joinedAt: "2026-06-30T12:00:31.000Z",
+        colorKey: 4,
+        serverNow: "2026-06-30T12:00:31.000Z",
+        playerId: "22222222-2222-4222-8222-222222222222",
+      });
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(fetchCountBefore + 1));
+    expect(result.current.lastBroadcast).toMatchObject({
+      event: "roster-changed",
+      joinToken: "join-event-token",
+      displayName: "Blair",
+    });
+    expect(result.current.lastBroadcast).not.toHaveProperty("playerId");
   });
 });

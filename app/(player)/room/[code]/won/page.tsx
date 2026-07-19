@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ThemeProvider, useTheme, Display } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
@@ -13,8 +13,7 @@ import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { isValidRoomCode, parseRoomCode, formatRoomCode } from "@/lib/game/room-code";
 import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
-import { getSupabaseBrowser } from "@/lib/supabase/client";
-import type { AnswerRow, CategoryRow, GameScoreRow, GameRow, PlayerRow } from "@/lib/supabase/types";
+import type { AnswerRow, CategoryRow, GameScoreRow, GameRow } from "@/lib/supabase/types";
 
 export default function PlayerWonPage() {
   const params = useParams<{ code: string }>();
@@ -29,18 +28,19 @@ export default function PlayerWonPage() {
 }
 
 function PlayerWonInner({ roomCode }: { roomCode: string }) {
-  const { deviceId, isLoading: deviceLoading } = useDeviceSession();
-  const snapshot = useRoom({ roomCode, deviceId });
+  const { isReady: sessionReady, isLoading: deviceLoading } = useDeviceSession();
+  const snapshot = useRoom({
+    roomCode,
+    audience: "player",
+    sessionReady: !deviceLoading && sessionReady,
+  });
 
   const themeKey: ThemeKey = resolveTheme(
     snapshot.night,
     { default_theme_key: snapshot.hostDefaultThemeKey },
   );
 
-  const me = useMemo<PlayerRow | null>(() => {
-    if (!deviceId) return null;
-    return snapshot.players.find((p) => p.device_id === deviceId) ?? null;
-  }, [snapshot.players, deviceId]);
+  const me = snapshot.self ?? null;
 
   // Final game = game with highest game_no.
   const finalGame = useMemo<GameRow | null>(() => {
@@ -48,43 +48,8 @@ function PlayerWonInner({ roomCode }: { roomCode: string }) {
     return [...snapshot.games].sort((a, b) => b.game_no - a.game_no)[0] ?? null;
   }, [snapshot.games]);
 
-  const [scores, setScores] = useState<GameScoreRow[]>([]);
-  const [answers, setAnswers] = useState<AnswerRow[]>([]);
-
-  useEffect(() => {
-    if (!finalGame) return;
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    void supa
-      .from("game_scores")
-      .select("*")
-      .eq("game_id", finalGame.id)
-      .order("score", { ascending: false })
-      .then(({ data }) => {
-        if (cancelled) return;
-        setScores((data as GameScoreRow[] | null) ?? []);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [finalGame]);
-
-  useEffect(() => {
-    if (!me) return;
-    let cancelled = false;
-    const supa = getSupabaseBrowser();
-    void supa
-      .from("answers")
-      .select("*")
-      .eq("player_id", me.id)
-      .then(({ data }) => {
-        if (cancelled) return;
-        setAnswers((data as AnswerRow[] | null) ?? []);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [me]);
+  const scores = snapshot.scores ?? [];
+  const answers = snapshot.myAnswers ?? [];
 
   if (snapshot.isLoading || deviceLoading || !snapshot.night || !me || !finalGame) {
     return (

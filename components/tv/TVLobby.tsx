@@ -23,8 +23,8 @@ import { TVLobbyTopics } from "./TVLobbyTopics";
 import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 
 export interface TVLobbyWelcomeEvent {
-  /** Stable id of the joining player — also the React key for the overlay. */
-  playerId: string;
+  /** Ephemeral identity for this join event — also the React key. */
+  joinToken: string;
   /** Display name to render on the slide-in tile. */
   name: string;
   /** Hex color for the tile + dot. Either passed in directly OR derived
@@ -296,17 +296,17 @@ function TVLobbyInner({
           /* The key forces a fresh mount each time a new player joins so
              the entrance animation replays from frame 0 — without it,
              back-to-back joins would skip the slide and just flash. */
-          key={welcomeEvent.playerId}
+          key={welcomeEvent.joinToken}
           name={welcomeEvent.name}
           color={
             welcomeEvent.color ??
             (welcomeEvent.colorKey !== undefined
               ? colorHexFromKey(welcomeEvent.colorKey)
-              : playerColorHex(welcomeEvent.playerId))
+              : playerColorHex(welcomeEvent.joinToken))
           }
           isHeroEntrance={welcomeEvent.joinIndex <= 5}
           prefersReducedMotion={welcomeEvent.prefersReducedMotion}
-          joinToken={welcomeEvent.playerId}
+          joinToken={welcomeEvent.joinToken}
         />
       ) : null}
     </TVStage>

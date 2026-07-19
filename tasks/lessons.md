@@ -147,3 +147,23 @@ Reason: A healthy generator can be deleted and falsely blamed when one harness r
 Trigger: An async progress observer overwrote needs-attention after partial certified generation stopped.
 Rule: Await every durable progress write; never let fire-and-forget writes follow a terminal state.
 Reason: Late nonterminal writes hide retry and strand safe checkpoints.
+
+### founder-product-decisions-need-plain-scenarios
+Trigger: Brandon cannot understand a product recommendation because it leads with system contracts, invariants, and edge-case tables.
+Rule: Explain the ordinary player and host experience first in three plain scenarios; keep implementation mechanics out unless requested.
+Reason: Technical completeness is useless when the founder cannot visualize what people will experience.
+
+### reconcile-before-calling-an-answer-missing
+Trigger: Network design describes an answer as never arriving without distinguishing an unsent request from a lost confirmation.
+Rule: Reconcile against server truth first; label committed, still sending, rejected, and genuinely unsent as separate outcomes.
+Reason: Lost acknowledgements are recoverable, while calling them missing misstates severity and undermines player trust.
+
+### browser-device-id-is-not-authorization
+Trigger: Shared player data exposed device identifiers while database policies trusted a browser-controlled device header.
+Rule: Keep bearer identity private; HMAC-verify mutations server-side and revoke direct anonymous writes.
+Reason: A mutable header plus leaked identifier lets one player impersonate another.
+
+### visible-deadline-must-match-accepted-deadline
+Trigger: Player controls froze before the server stopped accepting first-time answers.
+Rule: Make the official input deadline match server acceptance unless authoritative pre-deadline proof exists.
+Reason: A hidden grace period rewards modified clients and breaks fairness.

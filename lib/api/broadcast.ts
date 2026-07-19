@@ -24,7 +24,10 @@
 
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
+import type { LiveRoomBroadcastAttempt } from "@/lib/live-answer/contracts";
 import type {
   RoomMagicReactionEvent,
   RoomMagicReactionKind,
@@ -36,8 +39,9 @@ export type RoomEventName =
   | "resolve"
   | "end-early"
   | "game-ended"
-  | "player-joined"
+  | "roster-changed"
   | "room-magic-reaction"
+  | "live-room-event"
   | "fireworks";
 export type CategoryEventName =
   | "progress"
@@ -51,7 +55,7 @@ export interface BroadcastPayload {
   // Server's idea of "now" at broadcast time. Clients compare to their
   // local clock to compute display offsets. Always ISO string.
   serverNow: string;
-  // Event-specific extras (revealedAt, correctIndex, awards…).
+  // Event-specific extras (revealedAt, correctIndex, refetch…).
   [extra: string]: unknown;
 }
 
@@ -97,6 +101,11 @@ interface BroadcastMessage {
   private?: boolean;
 }
 
+// Realtime normally accepts a REST broadcast in 50-100ms. Keep enough room
+// for a transient regional delay without letting a stuck transport consume the
+// full serverless invocation or hold a committed answer acknowledgement open.
+const LIVE_BROADCAST_TIMEOUT_MS = 750;
+
 /**
  * Low-level: post one or more broadcast messages to the Realtime REST
  * endpoint. Resolves once Supabase returns 202 Accepted (~50-100ms from
@@ -110,18 +119,28 @@ async function postBroadcasts(messages: BroadcastMessage[]): Promise<void> {
   if (!url || !key) {
     throw new Error("broadcastToRoom: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   }
-  const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({ messages }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`broadcast HTTP ${res.status}: ${body}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    LIVE_BROADCAST_TIMEOUT_MS,
+  );
+  try {
+    const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ messages }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`broadcast HTTP ${res.status}: ${body}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
@@ -145,8 +164,61 @@ export async function broadcastToRoom(
 }
 
 /**
- * Broadcast that a new player just joined the night. Carries the new player's
- * id, display name, joined-at, and a stable color key so every surface
+ * Fail-closed boundary for the server-authoritative answer engine.
+ *
+ * The caller must provide the transaction-winner/replay discriminator from a
+ * durable source. We never infer freshness from `applied`, revisions, request
+ * data, or process memory. Extra source fields are discarded by constructing
+ * an explicit audience-safe payload below.
+ */
+export async function broadcastAppliedLiveRoomEvent(
+  roomCode: string,
+  attempt: LiveRoomBroadcastAttempt,
+): Promise<boolean> {
+  if (
+    attempt.applied !== true ||
+    attempt.freshness !== "transaction_winner"
+  ) {
+    return false;
+  }
+
+  const play = attempt.live.play;
+  if (attempt.kind === "answer_progress" && !play) return false;
+
+  const payload: Record<string, unknown> = {
+    kind: attempt.kind,
+    serverNow: attempt.serverNow,
+    runId: attempt.live.runId,
+    roomRevision: attempt.live.roomRevision,
+    controlRevision: attempt.live.controlRevision,
+    playId: attempt.live.playId,
+  };
+
+  if (play) {
+    payload.state = play.state;
+    payload.openedAt = play.openedAt;
+    payload.mainZeroAt = play.mainZeroAt;
+    payload.finalWindowStartsAt = play.finalWindowStartsAt;
+    payload.finalWindowEndsAt = play.finalWindowEndsAt;
+    payload.eligibleCount = play.eligibleCount;
+    payload.confirmedCount = play.confirmedCount;
+    payload.finalizeAt = play.finalizeAt;
+  }
+  if (attempt.kind === "play_resolved") {
+    payload.refetch = true;
+  }
+
+  await postBroadcasts([{
+    topic: `room:${roomCode}`,
+    event: "live-room-event",
+    payload,
+  }]);
+  return true;
+}
+
+/**
+ * Broadcast that the roster changed. Carries an ephemeral join token, display
+ * name, joined-at, and a stable color key so every surface
  * (TV, host live console, the joining player's own phone) lights up the
  * "magic welcome" moment within ~300ms — without waiting on the 4-second
  * snapshot poll that useTVRoom uses as a fallback.
@@ -154,10 +226,9 @@ export async function broadcastToRoom(
  * Best-effort. If the broadcast fails, the persistent state (the inserted
  * players row) will still propagate via postgres_changes / the safety poll.
  */
-export async function broadcastPlayerJoined(
+export async function broadcastRosterChanged(
   roomCode: string,
   player: {
-    id: string;
     displayName: string;
     joinedAt: string;
     colorKey: number;
@@ -166,9 +237,9 @@ export async function broadcastPlayerJoined(
   await postBroadcasts([
     {
       topic: `room:${roomCode}`,
-      event: "player-joined",
+      event: "roster-changed",
       payload: {
-        playerId: player.id,
+        joinToken: `join_${randomUUID()}`,
         displayName: player.displayName,
         joinedAt: player.joinedAt,
         colorKey: player.colorKey,

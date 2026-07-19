@@ -222,6 +222,20 @@ describe("POST /api/room-magic/reactions", () => {
     expect(broadcastMock.broadcastRoomMagicReaction).not.toHaveBeenCalled();
   });
 
+  it("never exposes a room magic database error", async () => {
+    const sentinel = "SENTINEL room_magic_reactions private constraint";
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      makeAdmin({ insertError: { code: "XX000", message: sentinel } }).client,
+    );
+
+    const res = await callRoute({ questionId: QUESTION_ID, kind: "wow" });
+    const body = await res.json();
+
+    expect(res.status).toBe(500);
+    expect(body).toEqual({ error: "server error" });
+    expect(JSON.stringify(body)).not.toContain(sentinel);
+  });
+
   it("keeps gameplay unblocked when broadcast fails", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     broadcastMock.broadcastRoomMagicReaction.mockRejectedValue(

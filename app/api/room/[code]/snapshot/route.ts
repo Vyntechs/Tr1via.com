@@ -26,9 +26,23 @@ import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getAuthedHost, getDeviceId } from "@/lib/api/auth";
-import { serializeRoomQuestion } from "@/lib/room/roomSnapshotPayload";
+import {
+  projectHostLiveRoom,
+  projectPlayerLiveRoom,
+} from "@/lib/live-answer/projectPlay";
+import {
+  serializeHostLiveAnswer,
+  serializeParticipation,
+  serializePlayerCanonicalAnswer,
+  serializePlayerRoomPlayer,
+  serializePlayerScore,
+  serializePlayerSelf,
+  serializeRoomPlayer,
+  serializeRoomQuestion,
+} from "@/lib/room/roomAudience";
+import { presentationKey } from "@/lib/room/presentationKey";
+import { scrambleFor } from "@/lib/game/scramble";
 import type {
-  AnswerRow,
   CategoryRow,
   GameRow,
   GameScoreRow,
@@ -38,6 +52,17 @@ import type {
   QuestionRow,
   RevealRow,
 } from "@/lib/supabase/types";
+
+type SafePlayerRow = Pick<
+  PlayerRow,
+  | "id"
+  | "night_id"
+  | "display_name"
+  | "joined_at"
+  | "last_seen_at"
+  | "removed_at"
+  | "app_switch_total_seconds"
+>;
 
 const RECENT_REACTION_WINDOW_MS = 30_000;
 const RECENT_REACTION_LIMIT = 25;
@@ -59,7 +84,7 @@ export async function GET(
     .select("*, hosts!inner(default_theme_key)")
     .eq("room_code", code)
     .maybeSingle();
-  if (nightErr) return serverError(nightErr.message);
+  if (nightErr) return serverError();
   if (!nightRaw) return notFound("room not found");
 
   type HostJoin = { default_theme_key: string | null };
@@ -75,7 +100,7 @@ export async function GET(
 
   // ── Authorize: host-owns-night OR device-cookie player in this night ──────
   let mode: "host" | "player";
-  let me: PlayerRow | null = null;
+  let playerRow: SafePlayerRow | null = null;
 
   const hostAuth = await getAuthedHost();
   if (hostAuth.ok && (night as { host_id?: string }).host_id === hostAuth.host.id) {
@@ -85,14 +110,58 @@ export async function GET(
     if (!deviceId) return forbidden("not authorized for this room");
     const { data: player } = await admin
       .from("players")
-      .select("*")
+      .select(
+        "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds, device_id",
+      )
       .eq("night_id", nightId)
       .eq("device_id", deviceId)
-      .is("removed_at", null)
       .maybeSingle();
     if (!player) return forbidden("not a player in this room");
     mode = "player";
-    me = player as PlayerRow;
+    playerRow = player as SafePlayerRow;
+  }
+
+  // Resilient nights expose one explicit audience-safe projection. Raw plays,
+  // frozen eligibility rows, and canonical answers never cross this route.
+  let currentPlay: Record<string, unknown> | null = null;
+  let playerEligibility: { play_id: string } | null = null;
+  let playerCanonicalAnswer: Record<string, unknown> | null = null;
+  const resilient = night.answer_engine === "resilient_v1";
+  if (resilient && night.current_run_id) {
+    const { data: playRows, error: playError } = await admin
+      .from("question_plays")
+      .select(
+        "id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count",
+      )
+      .eq("night_id", nightId)
+      .eq("run_id", night.current_run_id)
+      .neq("status", "undone")
+      .order("opened_at", { ascending: false })
+      .limit(1);
+    if (playError) return serverError();
+    currentPlay = playRows?.[0] ?? null;
+
+    if (mode === "player" && playerRow && currentPlay) {
+      const [eligibilityRes, canonicalAnswerRes] = await Promise.all([
+        admin
+          .from("question_play_eligibility")
+          .select("play_id")
+          .eq("play_id", currentPlay.id as string)
+          .eq("player_id", playerRow.id)
+          .maybeSingle(),
+        admin
+          .from("question_play_answers")
+          .select(
+            "visible_slot, canonical_index, received_at, locked_at, ms_to_lock, is_correct, awarded_points",
+          )
+          .eq("play_id", currentPlay.id as string)
+          .eq("player_id", playerRow.id)
+          .maybeSingle(),
+      ]);
+      if (eligibilityRes.error || canonicalAnswerRes.error) return serverError();
+      playerEligibility = eligibilityRes.data;
+      playerCanonicalAnswer = canonicalAnswerRes.data;
+    }
   }
 
   // ── Room state (same reads useRoom's bootstrap does, server-side) ─────────
@@ -110,7 +179,9 @@ export async function GET(
         .order("position", { ascending: true }),
       admin
         .from("players")
-        .select("*")
+        .select(
+          "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds",
+        )
         .eq("night_id", nightId)
         .is("removed_at", null)
         .order("joined_at", { ascending: true }),
@@ -129,15 +200,15 @@ export async function GET(
         .limit(1),
     ]);
 
-  if (gamesRes.error) return serverError(gamesRes.error.message);
-  if (categoriesRes.error) return serverError(categoriesRes.error.message);
-  if (playersRes.error) return serverError(playersRes.error.message);
-  if (pickedRes.error) return serverError(pickedRes.error.message);
-  if (revealsRes.error) return serverError(revealsRes.error.message);
+  if (gamesRes.error) return serverError();
+  if (categoriesRes.error) return serverError();
+  if (playersRes.error) return serverError();
+  if (pickedRes.error) return serverError();
+  if (revealsRes.error) return serverError();
 
   const games = (gamesRes.data ?? []) as GameRow[];
   const categories = stripJoins(categoriesRes.data ?? [], "games") as CategoryRow[];
-  const players = (playersRes.data ?? []) as PlayerRow[];
+  const activePlayerRows = (playersRes.data ?? []) as SafePlayerRow[];
   const allQuestionsRaw = stripJoins(pickedRes.data ?? [], "categories") as QuestionRow[];
   const reveals = stripJoins(revealsRes.data ?? [], "games") as RevealRow[];
 
@@ -158,40 +229,86 @@ export async function GET(
   const readyGame = games.find((g) => g.state === "ready");
   const currentGame = liveGame ?? doneGame ?? readyGame ?? games[0] ?? null;
 
+  // A completed Game 1 play is not the current Game 2 play. This prevents the
+  // between-games snapshot from replaying old answer state before Game 2's
+  // first question opens.
+  const projectionPlay =
+    liveGame && currentPlay?.game_id === liveGame.id ? currentPlay : null;
+  const projectionEligibility =
+    projectionPlay && playerEligibility?.play_id === projectionPlay.id
+      ? playerEligibility
+      : null;
+  const projectionAnswer = projectionEligibility ? playerCanonicalAnswer : null;
+
+  // Removal stops access to future plays, but it cannot revoke eligibility
+  // that was frozen for a play already in progress.
+  if (mode === "player" && playerRow?.removed_at && !projectionEligibility) {
+    return forbidden("not a player in this room");
+  }
+
+  const live = resilient && night.current_run_id
+    ? mode === "player"
+      ? projectPlayerLiveRoom({
+          night: {
+            current_run_id: night.current_run_id,
+            room_revision: night.room_revision ?? 0,
+            control_revision: night.control_revision ?? 0,
+          },
+          play: projectionPlay as Parameters<typeof projectPlayerLiveRoom>[0]["play"],
+          eligibility: projectionEligibility,
+          answer: projectionAnswer as Parameters<
+            typeof projectPlayerLiveRoom
+          >[0]["answer"],
+        })
+      : projectHostLiveRoom({
+          night: {
+            current_run_id: night.current_run_id,
+            room_revision: night.room_revision ?? 0,
+            control_revision: night.control_revision ?? 0,
+          },
+          play: projectionPlay as Parameters<typeof projectHostLiveRoom>[0]["play"],
+        })
+    : null;
+
   // Target question for the host's lock count / reveal answers: the live one,
   // else the most-recently-resolved (mirrors HostLiveConsoleClient).
   const targetQuestionId = currentQuestionRaw?.id ?? lastResolvedRaw?.id ?? null;
 
   // ── Aux reads: scores + target-question answers + the player's own data ───
-  const [scoresRes, liveAnswersRes, myAnswersRes, myParticipationsRes, roomMagicReactionsRes] =
+  const [allScoresRes, liveAnswersRes, myAnswersRes, myParticipationsRes, roomMagicReactionsRes] =
     await Promise.all([
-      currentGame
+      games.length > 0
         ? admin
             .from("game_scores")
             .select("*")
-            .eq("game_id", currentGame.id)
+            .in("game_id", games.map((game) => game.id))
             .order("score", { ascending: false })
         : Promise.resolve({ data: [] as GameScoreRow[], error: null }),
       // ANTI-CHEAT: only the HOST receives the target question's answers (lock
       // counts + reveal data). A player must NOT see other players' picks while
       // the question is live — so player mode resolves to []. Explicit column
       // list (matches the TV route) so a future select("*") can't auto-ship a
-      // sensitive column, and it drops the over-exposed `scramble`.
+      // sensitive column.
       mode === "host" && targetQuestionId
         ? admin
             .from("answers")
             .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
             .eq("question_id", targetQuestionId)
-        : Promise.resolve({ data: [] as AnswerRow[], error: null }),
-      mode === "player" && me
+        : Promise.resolve({ data: [], error: null }),
+      mode === "player" && playerRow
         ? admin
             .from("answers")
-            .select("*")
-            .eq("player_id", me.id)
+            .select(
+              "question_id, chosen_index, scramble, ms_to_lock, is_correct, awarded_points, locked_at",
+            )
+            .eq("player_id", playerRow.id)
             .order("locked_at", { ascending: true })
-        : Promise.resolve({ data: [] as AnswerRow[], error: null }),
-      mode === "player" && me
-        ? admin.from("game_participations").select("*").eq("player_id", me.id)
+        : Promise.resolve({ data: [], error: null }),
+      mode === "player" && playerRow
+        ? admin
+            .from("game_participations")
+            .select("game_id, joined_at")
+            .eq("player_id", playerRow.id)
         : Promise.resolve({ data: [] as ParticipationRow[], error: null }),
       mode === "host" && night.room_magic_enabled === true
         ? admin
@@ -207,10 +324,21 @@ export async function GET(
         : Promise.resolve({ data: [], error: null }),
     ]);
 
-  const scores = (scoresRes.data ?? []) as GameScoreRow[];
-  const liveAnswers = (liveAnswersRes.data ?? []) as AnswerRow[];
-  const myAnswers = (myAnswersRes.data ?? []) as AnswerRow[];
-  const myParticipations = (myParticipationsRes.data ?? []) as ParticipationRow[];
+  const allScores = (allScoresRes.data ?? []) as GameScoreRow[];
+  const scores = currentGame
+    ? allScores.filter((score) => score.game_id === currentGame.id)
+    : [];
+  if (allScoresRes.error) return serverError();
+  if (liveAnswersRes.error) return serverError();
+  if (myAnswersRes.error) return serverError();
+  if (myParticipationsRes.error) return serverError();
+  if (roomMagicReactionsRes.error) return serverError();
+
+  const liveAnswers = (liveAnswersRes.data ?? []).map(serializeHostLiveAnswer);
+  const myAnswers = (myAnswersRes.data ?? []).map(serializePlayerCanonicalAnswer);
+  const myParticipations = ((myParticipationsRes.data ?? []) as ParticipationRow[]).map(
+    serializeParticipation,
+  );
   const roomMagicReactions = (roomMagicReactionsRes.data ?? [])
     .filter((row) => isRoomMagicReactionKind(row.kind))
     .map((row) => ({
@@ -219,23 +347,90 @@ export async function GET(
       serverNow: row.created_at,
     }));
 
-  return ok({
-    night,
+  const common = {
     hostDefaultThemeKey,
     games,
     categories,
-    players,
     // SECURITY: withhold correct_index for non-resolved questions.
     currentQuestion: currentQuestionRaw ? serializeRoomQuestion(currentQuestionRaw) : null,
     lastResolvedQuestion: lastResolvedRaw ? serializeRoomQuestion(lastResolvedRaw) : null,
     currentReveal: reveals[0] ?? null,
     allQuestions: allQuestionsRaw.map(serializeRoomQuestion),
-    me,
-    myAnswers,
-    myParticipations,
+    allScores,
     scores,
+    roomMagicReactions: mode === "host" ? roomMagicReactions : [],
+  };
+
+  if (mode === "player" && playerRow) {
+    const secret = process.env.SESSION_SECRET;
+    if (!secret) return serverError();
+    const nightKey = presentationKey(secret, "player", "night", nightId, nightId);
+    const keyForPlayer = (rawPlayerId: string) =>
+      presentationKey(secret, "player", "player", nightId, rawPlayerId);
+    const playerKeys = new Map(
+      activePlayerRows.map((player) => [player.id, keyForPlayer(player.id)] as const),
+    );
+    const playerScores = allScores.flatMap((score) => {
+      if (score.player_id === null) return [];
+      const serialized = serializePlayerScore(score, keyForPlayer(score.player_id));
+      return serialized ? [serialized] : [];
+    });
+    const safeNight = { ...night } as Partial<NightRow>;
+    delete safeNight.id;
+    delete safeNight.host_id;
+    delete safeNight.current_run_id;
+    const safeGames = games.map((game) => {
+      const safeGame = { ...game } as Partial<GameRow>;
+      delete safeGame.night_id;
+      return safeGame;
+    });
+    const questionScrambles = Object.fromEntries(
+      allQuestionsRaw.map((question) => [question.id, scrambleFor(question.id, playerRow.id)]),
+    );
+    return ok({
+      ...common,
+      night: { ...safeNight, nightKey },
+      games: safeGames,
+      players: activePlayerRows.map((player) =>
+        serializePlayerRoomPlayer(player, playerKeys.get(player.id) ?? keyForPlayer(player.id))),
+      allScores: playerScores,
+      scores: currentGame
+        ? playerScores.filter((score) => score.gameId === currentGame.id)
+        : [],
+      audience: "player" as const,
+      live,
+      self: serializePlayerSelf(playerRow, keyForPlayer(playerRow.id)),
+      myAnswers,
+      myParticipations,
+      questionScrambles,
+    });
+  }
+
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) return serverError();
+  const tvPlayerIds = new Set<string>(activePlayerRows.map((player) => player.id));
+  for (const score of allScores) {
+    if (score.player_id) tvPlayerIds.add(score.player_id);
+  }
+  for (const answer of liveAnswers) tvPlayerIds.add(answer.playerId);
+  const tvPlayerKeys = Object.fromEntries(
+    [...tvPlayerIds].map((rawPlayerId) => [
+      rawPlayerId,
+      presentationKey(secret, "tv", "player", nightId, rawPlayerId),
+    ]),
+  );
+
+  return ok({
+    ...common,
+    night,
+    players: activePlayerRows.map(serializeRoomPlayer),
+    allScores,
+    scores,
+    audience: "host" as const,
+    tvPlayerKeys,
+    live,
+    self: null,
     liveAnswers,
-    roomMagicReactions,
   });
 }
 

@@ -22,6 +22,7 @@ import {
   unauthorized,
 } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { serializeRoomPlayer } from "@/lib/room/roomAudience";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,11 +62,16 @@ export async function POST(
       device_id: deviceId,
       display_name: parsed.data.displayName,
       last_seen_at: now,
-    })
-    .select("*")
+      // Host-added roster names have no signed device and are score-only.
+      // The cast is temporary until the planned Task 5 type regeneration.
+      can_answer: false,
+    } as never)
+    .select(
+      "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds",
+    )
     .single();
   if (error || !player) {
-    return serverError(error?.message ?? "could not add player");
+    return serverError();
   }
 
   // Auto-opt into the currently active game (live > ready, prefer the
@@ -87,5 +93,5 @@ export async function POST(
       .insert({ game_id: activeGame.id, player_id: player.id });
   }
 
-  return ok({ player }, 201);
+  return ok({ player: serializeRoomPlayer(player) }, 201);
 }

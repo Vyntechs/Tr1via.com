@@ -12,6 +12,7 @@
     "lint": "next lint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:db-races": "vitest run -c vitest.db.config.ts",
     "test:e2e": "playwright test",
     "validate:room-magic": "playwright test tests/e2e/room-magic-house-lights.spec.ts --reporter=list",
     "typegen": "supabase gen types typescript --local --schema public > lib/supabase/types.ts"
@@ -41,6 +42,7 @@
     "@testing-library/react": "^16.1.0",
     "@testing-library/user-event": "^14.5.2",
     "@types/node": "^22.10.1",
+    "@types/pg": "^8.20.0",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
@@ -50,6 +52,7 @@
     "eslint-config-next": "^16.0.0",
     "jsdom": "^25.0.1",
     "msw": "^2.14.6",
+    "pg": "^8.22.0",
     "supabase": "2.108.0",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.2",

@@ -179,9 +179,9 @@ export default function PrivacyPolicyPage() {
 
       <Section title="Cookies and your device">
         <P>
-          TR1VIA uses a small number of first-party cookies and one browser
-          storage value. We do not use any advertising or third-party tracking
-          cookies.
+          TR1VIA uses a small number of first-party cookies. We do not use any
+          advertising or third-party tracking cookies, and we do not keep a
+          browser-readable copy of the player device identifier.
         </P>
         <Table
           head={["Name", "Set by", "Purpose", "Lasts"]}
@@ -189,14 +189,8 @@ export default function PrivacyPolicyPage() {
             [
               "tr1via_device",
               "TR1VIA",
-              "A signed cookie holding a random device identifier. It lets us recognize your device so we can keep your score during a game and recognize you if you rejoin. It is a persistent identifier and is stored with your player record.",
-              "Up to 1 year (httpOnly)",
-            ],
-            [
-              "tr1via_device_id",
-              "TR1VIA",
-              "A copy of the same device identifier kept in your browser’s local storage so the app can read it on your device.",
-              "Until cleared",
+              "A signed HTTP-only cookie holding a random device identifier. It lets us recognize your device so we can keep your score during a game and recognize you if you rejoin. Because it is HTTP-only, browser JavaScript cannot read it. It is a persistent identifier and is stored with your player record.",
+              "Up to 1 year",
             ],
             [
               "sb-…-auth-token",

@@ -51,6 +51,27 @@ describe("useAnswerSubmit", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("submits with the signed same-origin cookie and no browser-held identity", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonResponse(200));
+    const { result } = renderHook(() =>
+      useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3] }),
+    );
+
+    act(() => {
+      result.current.submit(2);
+    });
+    await waitFor(() => expect(result.current.status).toBe("sent"));
+
+    const [url, init] = fetchSpy.mock.calls[0] ?? [];
+    expect(url).toBe("/api/answers");
+    expect(init?.credentials).toBe("same-origin");
+
+    const serializedRequest = JSON.stringify(init).toLowerCase();
+    expect(serializedRequest).not.toContain("deviceid");
+    expect(serializedRequest).not.toContain("playerid");
+    expect(serializedRequest).not.toContain("x-tr1via-device");
+  });
+
   it("treats 409 (already answered) as 'sent'", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(jsonResponse(409));
     const { result } = renderHook(() =>

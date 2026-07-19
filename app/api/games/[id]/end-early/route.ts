@@ -11,11 +11,13 @@
 // (the second sees `finished_at IS NOT NULL` and returns no-op).
 
 import type { NextRequest } from "next/server";
-import { EndEarlySchema } from "@/lib/api/schemas";
+import { EndEarlySchema, HostPlayCommandSchema } from "@/lib/api/schemas";
 import { badRequest, ok, forbidden, unauthorized, serverError, notFound, conflict } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { broadcastToRoom } from "@/lib/api/broadcast";
+import { broadcastAppliedLiveRoomEvent, broadcastFireworks, broadcastToRoom } from "@/lib/api/broadcast";
+import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
+import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 
 export async function POST(
   req: NextRequest,
@@ -35,10 +37,66 @@ export async function POST(
   } catch {
     return badRequest("invalid JSON");
   }
-  const parsed = EndEarlySchema.safeParse(body);
+  const parsed = (
+    owned.night.answer_engine === "resilient_v1"
+      ? HostPlayCommandSchema
+      : EndEarlySchema
+  ).safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
 
   const admin = getSupabaseAdmin();
+  if (owned.night.answer_engine === "resilient_v1") {
+    const command = HostPlayCommandSchema.parse(parsed.data);
+    const { data, error } = await admin.rpc("begin_question_play_final_window", {
+      p_game_id: gameId,
+      p_play_id: command.playId,
+      p_run_id: command.runId,
+      p_command_id: command.commandId,
+      p_expected_control_revision: command.expectedControlRevision,
+    });
+    if (error) return serverError("could not update live game");
+    const envelope = parseLiveCommandRpcEnvelope(data);
+    if (!envelope) return serverError("could not update live game");
+    if (
+      "eventKind" in envelope.result &&
+      ((envelope.result.eventKind !== "final_window_started" &&
+        envelope.result.eventKind !== "play_resolved") ||
+        !("playId" in envelope.result) ||
+        envelope.result.playId !== command.playId)
+    ) {
+      return serverError("could not update live game");
+    }
+    const fresh = freshLiveEventFromRpc(envelope);
+    if (fresh) {
+      const live = await projectExactLiveEvent(owned.night.id, fresh);
+      if (live) {
+        try {
+          await broadcastAppliedLiveRoomEvent(owned.night.room_code, {
+            applied: true,
+            freshness: "transaction_winner",
+            kind: fresh.kind,
+            serverNow: new Date().toISOString(),
+            live,
+          });
+        } catch {
+          console.warn("broadcast show-answer failed");
+        }
+        if (fresh.kind === "play_resolved" && live.play?.questionId) {
+          try {
+            await broadcastFireworks(
+              owned.night.room_code,
+              "salvo",
+              live.play.questionId,
+            );
+          } catch {
+            console.warn("broadcast question fireworks failed");
+          }
+        }
+      }
+    }
+    return ok(envelope.result);
+  }
+  const legacy = EndEarlySchema.parse(parsed.data);
 
   // Sanity: question must belong to this game and be in 'live' state
   // (played_at set, finished_at null). The stored proc raises on the
@@ -48,7 +106,7 @@ export async function POST(
   const { data: q } = await admin
     .from("questions")
     .select("id, category_id, played_at, finished_at, correct_index")
-    .eq("id", parsed.data.questionId)
+    .eq("id", legacy.questionId)
     .maybeSingle();
   if (!q) return notFound("question not found");
   const { data: cat } = await admin
@@ -61,11 +119,11 @@ export async function POST(
   if (!q.played_at) return conflict("question is not live");
   if (q.finished_at) return conflict("question is already resolved");
 
-  if (parsed.data.requireAllLocked) {
+  if (legacy.requireAllLocked) {
     const { data: didResolve, error: rpcError } = await admin.rpc(
       "resolve_question_if_all_locked",
       {
-        p_question_id: parsed.data.questionId,
+        p_question_id: legacy.questionId,
       },
     );
     if (rpcError) return serverError(rpcError.message);
@@ -74,7 +132,7 @@ export async function POST(
     }
   } else {
     const { error: rpcError } = await admin.rpc("resolve_question", {
-      p_question_id: parsed.data.questionId,
+      p_question_id: legacy.questionId,
     });
     if (rpcError) return serverError(rpcError.message);
   }
@@ -86,7 +144,7 @@ export async function POST(
   // correct_index off the questions row (migration 0014).
   try {
     await broadcastToRoom(owned.night.room_code, "end-early", {
-      questionId: parsed.data.questionId,
+      questionId: legacy.questionId,
       correctIndex: q.correct_index,
       serverNow: new Date().toISOString(),
     });
