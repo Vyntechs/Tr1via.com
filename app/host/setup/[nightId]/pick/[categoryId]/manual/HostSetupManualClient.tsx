@@ -28,6 +28,7 @@ export function HostSetupManualClient({
   themeKey,
 }: HostSetupManualClientProps) {
   const router = useRouter();
+  const draftKey = `host-manual:${nightId}:${categoryId}`;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,6 +54,11 @@ export function HostSetupManualClient({
         };
         throw new Error(body.error ?? "Could not save your questions.");
       }
+      try {
+        window.sessionStorage.removeItem(draftKey);
+      } catch {
+        // Draft persistence is best-effort; a successful save must still navigate.
+      }
       router.push(`/host/setup/${nightId}`);
       router.refresh();
     } catch (err) {
@@ -73,6 +79,7 @@ export function HostSetupManualClient({
       }
       isSubmitting={submitting}
       errorMessage={error}
+      draftKey={draftKey}
     />
   );
 }

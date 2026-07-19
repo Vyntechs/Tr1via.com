@@ -61,6 +61,7 @@ export function AdjustPointsModal({
       role="dialog"
       aria-modal="true"
       aria-label="Adjust points"
+      data-host-mobile-surface="true"
       style={{
         position: "fixed",
         inset: 0,
@@ -76,13 +77,17 @@ export function AdjustPointsModal({
     >
       <div
         style={{
-          width: 460,
+          width: "calc(100% - 32px)",
+          maxWidth: 460,
           background: "var(--paper)",
           borderRadius: 14,
           padding: 24,
           color: "var(--ink)",
           fontFamily: "var(--font-sans)",
           boxShadow: "0 24px 48px -12px rgba(0,0,0,.4)",
+          boxSizing: "border-box",
+          maxHeight: "calc(100dvh - 32px)",
+          overflowY: "auto",
         }}
       >
         <Eyebrow color="var(--ink-mute)" size={11}>

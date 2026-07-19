@@ -105,6 +105,7 @@ function HostLoginInner() {
 
   return (
     <div
+      data-host-mobile-surface="true"
       style={{
         // Natural height when stacked so the single column sits top-aligned
         // instead of the two rows centering apart with a gap between them.
@@ -112,7 +113,7 @@ function HostLoginInner() {
         display: "grid",
         gridTemplateColumns: compact ? "1fr" : "1fr 1fr",
         gap: compact ? 28 : 56,
-        padding: compact ? "32px 20px" : "40px 56px",
+        padding: compact ? "24px 20px max(24px, env(safe-area-inset-bottom))" : "40px 56px",
         overflow: compact ? "visible" : "hidden",
       }}
     >
@@ -363,4 +364,3 @@ function SignedInPanel({
     </div>
   );
 }
-

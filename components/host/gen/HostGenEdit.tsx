@@ -17,6 +17,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { StockImage } from "./_shared";
@@ -90,6 +91,7 @@ function HostGenEditInner({
   isSaving = false,
 }: Omit<HostGenEditProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const cc = categoryColor(topic, t.accent);
   const [prompt, setPrompt] = useState(initial.prompt);
   const [options, setOptions] = useState<[string, string, string, string]>(initial.options);
@@ -116,9 +118,14 @@ function HostGenEditInner({
 
   return (
     <LaptopShell>
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 540px", overflow: "hidden" }}>
+      <div
+        data-testid="host-gen-edit-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
+        style={{ flex: 1, display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "1fr 540px", overflow: mobile ? "visible" : "hidden", minWidth: 0 }}
+      >
         {/* Dimmed background — the pick workspace fading */}
-        <div style={{ background: t.paper, padding: "24px 56px", opacity: 0.35, pointerEvents: "none", display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ background: t.paper, padding: "24px 56px", opacity: 0.35, pointerEvents: "none", display: mobile ? "none" : "flex", flexDirection: "column", gap: 12 }}>
           <Eyebrow color={t.accent} size={11}>{topic.toUpperCase()}</Eyebrow>
           <Display size={32} color={t.ink}>Pick your seven.</Display>
           <div style={{ marginTop: 12, display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 12 }}>
@@ -131,17 +138,19 @@ function HostGenEditInner({
         {/* The edit panel */}
         <div style={{
           background: t.paper, color: t.ink,
-          borderLeft: `1px solid ${t.line}`,
-          padding: "28px 32px", display: "flex", flexDirection: "column", gap: 18,
-          overflow: "auto",
-          boxShadow: "-20px 0 60px -20px rgba(0,0,0,.3)",
+          borderLeft: mobile ? "none" : `1px solid ${t.line}`,
+          padding: mobile ? "18px 16px max(24px, env(safe-area-inset-bottom))" : "28px 32px", display: "flex", flexDirection: "column", gap: 18,
+          overflow: mobile ? "visible" : "auto",
+          boxShadow: mobile ? "none" : "-20px 0 60px -20px rgba(0,0,0,.3)",
+          minWidth: 0,
         }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <Eyebrow color={cc} size={11}>{eyebrow}</Eyebrow>
             <button
               type="button"
               onClick={onClose}
-              style={{ background: "transparent", border: "none", color: t.inkMid, cursor: "pointer", fontSize: 18 }}
+              aria-label="Close question editor"
+              style={{ background: "transparent", border: "none", color: t.inkMid, cursor: "pointer", fontSize: 18, width: mobile ? 44 : undefined, minHeight: mobile ? 44 : undefined }}
             >
               ×
             </button>
@@ -181,7 +190,7 @@ function HostGenEditInner({
                       setCorrectIndex(i as 0 | 1 | 2 | 3);
                     }}
                     style={{
-                      display: "flex", alignItems: "center", gap: 12,
+                      display: "flex", alignItems: "center", gap: 12, flexWrap: mobile ? "wrap" : undefined,
                       padding: "12px 14px", borderRadius: 10,
                       background: isCorrect ? (t.dark ? `${t.correct}12` : `${t.correct}10`) : t.surface,
                       border: `1.5px solid ${isCorrect ? t.correct : t.line}`,
@@ -194,7 +203,7 @@ function HostGenEditInner({
                       value={o}
                       onChange={(e) => updateOption(i, e.target.value)}
                       style={{
-                        flex: 1, fontSize: 14, color: t.ink, fontWeight: 500,
+                        flex: 1, minWidth: mobile ? "calc(100% - 46px)" : undefined, fontSize: 14, color: t.ink, fontWeight: 500,
                         background: "transparent", border: "none", outline: "none",
                         fontFamily: "var(--font-sans)",
                       }}
@@ -208,7 +217,7 @@ function HostGenEditInner({
                           e.stopPropagation();
                           setCorrectIndex(i as 0 | 1 | 2 | 3);
                         }}
-                        style={{ padding: "5px 12px", borderRadius: 99, border: `1.5px solid ${t.correct}`, color: t.correct, fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer", background: "transparent" }}
+                        style={{ padding: "5px 12px", borderRadius: 99, border: `1.5px solid ${t.correct}`, color: t.correct, fontFamily: "var(--font-sans)", fontSize: 12, fontWeight: 700, letterSpacing: "0.04em", cursor: "pointer", background: "transparent", marginLeft: mobile ? 26 : undefined }}
                       >
                         Make correct
                       </button>
@@ -219,7 +228,7 @@ function HostGenEditInner({
             </div>
           </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: "180px 1fr", gap: 16, alignItems: "flex-start" }}>
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "180px 1fr", gap: 16, alignItems: "flex-start" }}>
             <div>
               <Eyebrow color={t.inkMute} size={9}>IMAGE · AUTO-MATCHED</Eyebrow>
               <div style={{ marginTop: 8 }}>
@@ -249,7 +258,7 @@ function HostGenEditInner({
                     {pointValue === null ? "AUTO ON LOCK" : "PLACED"}
                   </span>
                 </div>
-                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 6 }}>
+                <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: mobile ? "repeat(4, minmax(0, 1fr))" : "repeat(7, 1fr)", gap: 6 }}>
                   {([100, 200, 300, 400, 500, 600, 700] as const).map((v) => {
                     const active = v === pointValue;
                     return (
@@ -302,11 +311,11 @@ function HostGenEditInner({
             </div>
           </div>
 
-          <div style={{ marginTop: "auto", display: "flex", gap: 8, paddingTop: 18, borderTop: `1px solid ${t.line}` }}>
+          <div style={{ marginTop: "auto", display: "flex", flexDirection: mobile ? "column-reverse" : "row", gap: 8, paddingTop: 18, borderTop: `1px solid ${t.line}`, position: mobile ? "sticky" : undefined, bottom: mobile ? "max(0px, env(safe-area-inset-bottom))" : undefined, background: t.paper, zIndex: mobile ? 4 : undefined }}>
             <button
               type="button"
               onClick={onClose}
-              style={{ flex: 1, padding: "12px 0", borderRadius: 10, border: `1px solid ${t.line}`, background: "transparent", color: t.inkMid, fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}
+              style={{ flex: 1, padding: "12px 0", minHeight: mobile ? 48 : undefined, borderRadius: 10, border: `1px solid ${t.line}`, background: "transparent", color: t.inkMid, fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}
             >
               Discard changes
             </button>
@@ -315,7 +324,7 @@ function HostGenEditInner({
               onClick={handleSave}
               disabled={isSaving}
               style={{
-                flex: 2, padding: "12px 0", borderRadius: 10, border: "none",
+                flex: 2, padding: "12px 0", minHeight: mobile ? 52 : undefined, borderRadius: 10, border: "none",
                 background: t.accent, color: "#FFF",
                 fontSize: 13, fontWeight: 700, fontFamily: "var(--font-sans)",
                 cursor: isSaving ? "default" : "pointer",

@@ -33,6 +33,7 @@ export function ResetGameConfirmModal({
       role="dialog"
       aria-modal="true"
       aria-label="Reset game confirmation"
+      data-host-mobile-surface="true"
       style={{
         position: "fixed",
         inset: 0,
@@ -52,6 +53,9 @@ export function ResetGameConfirmModal({
           width: "100%",
           borderRadius: 14,
           padding: "28px 32px",
+          boxSizing: "border-box",
+          maxHeight: "calc(100dvh - 40px)",
+          overflowY: "auto",
           fontFamily: "var(--font-sans)",
           boxShadow: "0 24px 64px -16px rgba(0,0,0,.6)",
         }}

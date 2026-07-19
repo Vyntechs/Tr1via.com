@@ -48,6 +48,7 @@ export default async function HostLivePage({
         nightId={owned.night.id}
         roomCode={owned.night.room_code}
         venueName={owned.night.venue_name}
+        hostName={owned.host.display_name}
         themeKey={resolveTheme(owned.night, owned.host)}
       />
     </div>

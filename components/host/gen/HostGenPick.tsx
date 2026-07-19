@@ -42,6 +42,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { computeReorderAssignments } from "@/lib/host/boardReorder";
@@ -180,6 +181,7 @@ function HostGenPickInner({
   isRegenerating = false,
 }: Omit<HostGenPickProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   void shellTitle;
   const cc = categoryColor(topic, t.accent);
   const picked = pickedIds ?? new Set(["1", "2", "3", "4", "7", "8"]);
@@ -214,8 +216,8 @@ function HostGenPickInner({
   }, [pickedQs]);
   return (
     <LaptopShell>
-      <div style={{ padding: "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div data-host-mobile-surface="true" style={{ padding: mobile ? "16px" : "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", justifyContent: "space-between", gap: mobile ? 16 : undefined, minWidth: 0 }}>
+        <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "flex-start" : "center", gap: mobile ? 10 : 16, minWidth: 0 }}>
           {onBack && (
             <button
               type="button"
@@ -279,7 +281,7 @@ function HostGenPickInner({
             )}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: mobile ? 8 : 12, flexWrap: "wrap" }}>
           <Eyebrow color={t.inkMute} size={10}>FLAVOR</Eyebrow>
           {(["easy", "normal", "hard"] as const).map((d) => {
             const active = d === difficulty;
@@ -351,10 +353,15 @@ function HostGenPickInner({
         </div>
       </div>
 
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 300px", overflow: "hidden" }}>
-        <div style={{ overflow: "auto", padding: "20px 36px 32px 56px" }}>
+      <div
+        data-testid="host-gen-pick-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
+        style={{ flex: 1, display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "1fr 300px", overflow: mobile ? "visible" : "hidden", minWidth: 0 }}
+      >
+        <div style={{ overflow: mobile ? "visible" : "auto", padding: mobile ? "18px 16px max(32px, env(safe-area-inset-bottom))" : "20px 36px 32px 56px", gridRow: mobile ? 2 : undefined, minWidth: 0 }}>
           {auditSummary && <HostGenAuditSummary summary={auditSummary} />}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(2, 1fr)", gap: 14 }}>
             {questions.map((q) => (
               <QuestionCard
                 key={q.id}
@@ -386,6 +393,7 @@ function HostGenPickInner({
           onReorder={onReorder}
           onLock={onLock}
           isLocking={isLocking}
+          mobile={mobile}
         />
       </div>
     </LaptopShell>
@@ -512,6 +520,7 @@ function PickSidebar({
   onReorder,
   onLock,
   isLocking,
+  mobile,
 }: {
   cc: string;
   picked: HostGenPickQuestion[];
@@ -528,6 +537,7 @@ function PickSidebar({
   onReorder?: (assignments: Array<{ id: string; pointValue: number }>) => void;
   onLock?: () => void;
   isLocking: boolean;
+  mobile: boolean;
 }) {
   const { t } = useTheme();
   const slots = [100, 200, 300, 400, 500, 600, 700];
@@ -591,7 +601,7 @@ function PickSidebar({
   });
 
   return (
-    <div style={{ borderLeft: `1px solid ${t.line}`, padding: "20px 24px 24px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ borderLeft: mobile ? "none" : `1px solid ${t.line}`, borderBottom: mobile ? `1px solid ${t.line}` : undefined, padding: mobile ? "18px 16px" : "20px 24px 24px", display: "flex", flexDirection: "column", overflow: mobile ? "visible" : "hidden", gridRow: mobile ? 1 : undefined, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
         <Eyebrow color={t.inkMid} size={10}>YOUR BOARD</Eyebrow>
         <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
@@ -602,7 +612,7 @@ function PickSidebar({
 
       <div
         data-testid="pick-sidebar-board"
-        style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1, overflow: "auto" }}
+        style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1, overflow: mobile ? "visible" : "auto" }}
       >
         {dndEnabled ? (
           <DndContext id="pick-board-reorder" sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -628,6 +638,7 @@ function PickSidebar({
             cursor: ready && !isLocking ? "pointer" : "not-allowed",
             opacity: isLocking ? 0.7 : 1,
             boxShadow: ready ? `0 10px 22px -10px ${t.accent}77` : "none",
+            minHeight: mobile ? 52 : undefined,
           }}
         >
           {isLocking ? "Locking…" : ready ? "Lock the category  →" : `Pick ${7 - picked.length} more to lock`}

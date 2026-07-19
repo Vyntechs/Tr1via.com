@@ -75,7 +75,9 @@ export default async function HostLayout({ children }: { children: ReactNode }) 
           // inside 100dvh so scrolling pages gain no scrollbar; the reserve is
           // published as --host-chip-reserve so the fixed-height live console
           // can subtract it (page.tsx) instead of overflowing.
-          ["--host-chip-reserve" as string]: email ? `${CHIP_RESERVE}px` : "0px",
+          ["--host-chip-reserve" as string]: email
+            ? `calc(${CHIP_RESERVE}px + env(safe-area-inset-top))`
+            : "0px",
           boxSizing: "border-box",
           paddingTop: "var(--host-chip-reserve)",
         } as CSSProperties}

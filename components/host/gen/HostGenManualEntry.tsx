@@ -12,7 +12,7 @@
 
 "use client";
 
-import { useState, type ChangeEvent } from "react";
+import { useEffect, useState, type ChangeEvent } from "react";
 import {
   Display,
   Eyebrow,
@@ -22,6 +22,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
@@ -42,6 +43,8 @@ export interface HostGenManualEntryProps {
   eyebrow?: string;
   /** Optional seed values (e.g. a partial in-progress draft). */
   initial?: HostGenManualQuestionInput[];
+  /** Session-storage key used to restore an unfinished phone draft. */
+  draftKey?: string;
   /** Called when the host submits 7 valid questions. */
   onSubmit?: (questions: HostGenManualQuestionInput[]) => void;
   /** Called when the host wants to bail back to generation / setup. */
@@ -67,6 +70,25 @@ function defaultRows(): HostGenManualQuestionInput[] {
   return POINT_VALUES.map(() => emptyRow());
 }
 
+function normalizeRows(
+  initial?: HostGenManualQuestionInput[],
+): HostGenManualQuestionInput[] {
+  if (!initial) return defaultRows();
+  const merged = initial.slice(0, 7).map((row) => ({
+    prompt: row?.prompt ?? "",
+    options: ([
+      row?.options?.[0] ?? "",
+      row?.options?.[1] ?? "",
+      row?.options?.[2] ?? "",
+      row?.options?.[3] ?? "",
+    ] as [string, string, string, string]),
+    correctIndex: (row?.correctIndex ?? 0) as 0 | 1 | 2 | 3,
+    imageUrl: row?.imageUrl ?? null,
+  }));
+  while (merged.length < 7) merged.push(emptyRow());
+  return merged;
+}
+
 export function HostGenManualEntry(props: HostGenManualEntryProps) {
   const { themeKey, ...rest } = props;
   if (themeKey) {
@@ -84,35 +106,51 @@ function HostGenManualEntryInner({
   topic = "Pixar Movies",
   eyebrow = "MANUAL ENTRY · 7 QUESTIONS",
   initial,
+  draftKey,
   onSubmit,
   onCancel,
   isSubmitting = false,
   errorMessage = null,
 }: Omit<HostGenManualEntryProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const cc = categoryColor(topic, t.accent);
 
-  const seed: HostGenManualQuestionInput[] = (() => {
-    const base = defaultRows();
-    if (!initial) return base;
-    // Pad up to 7, truncate beyond.
-    const merged = initial.slice(0, 7).map((row) => ({
-      prompt: row.prompt ?? "",
-      options: ([
-        row.options?.[0] ?? "",
-        row.options?.[1] ?? "",
-        row.options?.[2] ?? "",
-        row.options?.[3] ?? "",
-      ] as [string, string, string, string]),
-      correctIndex: (row.correctIndex ?? 0) as 0 | 1 | 2 | 3,
-      imageUrl: row.imageUrl ?? null,
-    }));
-    while (merged.length < 7) merged.push(emptyRow());
-    return merged;
-  })();
-
-  const [rows, setRows] = useState<HostGenManualQuestionInput[]>(seed);
+  const [rows, setRows] = useState<HostGenManualQuestionInput[]>(() =>
+    normalizeRows(initial),
+  );
   const [touched, setTouched] = useState(false);
+  const [draftReady, setDraftReady] = useState(!draftKey);
+
+  useEffect(() => {
+    if (!draftKey) {
+      setDraftReady(true);
+      return;
+    }
+    setDraftReady(false);
+    try {
+      const saved = window.sessionStorage.getItem(draftKey);
+      if (saved) {
+        const parsed: unknown = JSON.parse(saved);
+        if (Array.isArray(parsed)) {
+          setRows(normalizeRows(parsed as HostGenManualQuestionInput[]));
+        }
+      }
+    } catch {
+      // A malformed or unavailable draft should not block manual entry.
+    } finally {
+      setDraftReady(true);
+    }
+  }, [draftKey]);
+
+  useEffect(() => {
+    if (!draftKey || !draftReady) return;
+    try {
+      window.sessionStorage.setItem(draftKey, JSON.stringify(rows));
+    } catch {
+      // Draft recovery is best-effort and must never block editing.
+    }
+  }, [draftKey, draftReady, rows]);
 
   function updateRow(
     idx: number,
@@ -178,12 +216,17 @@ function HostGenManualEntryInner({
   return (
     <LaptopShell>
       <div
+        data-testid="host-gen-manual-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
         style={{
-          padding: "20px 56px 14px",
+          padding: mobile ? "16px" : "20px 56px 14px",
           borderBottom: `1px solid ${t.line}`,
           display: "flex",
-          alignItems: "center",
+          flexDirection: mobile ? "column" : "row",
+          alignItems: mobile ? "flex-start" : "center",
           justifyContent: "space-between",
+          gap: mobile ? 12 : undefined,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
@@ -235,10 +278,11 @@ function HostGenManualEntryInner({
       </div>
 
       <div
+        data-host-mobile-surface="true"
         style={{
           flex: 1,
-          overflow: "auto",
-          padding: "24px 56px 28px",
+          overflow: mobile ? "visible" : "auto",
+          padding: mobile ? "18px 16px 24px" : "24px 56px 28px",
           display: "flex",
           flexDirection: "column",
           gap: 16,
@@ -255,16 +299,16 @@ function HostGenManualEntryInner({
                 borderRadius: 14,
                 border: `1.5px solid ${t.line}`,
                 background: t.dark ? "rgba(244,230,196,.03)" : "#FFF",
-                padding: "18px 20px",
+                padding: mobile ? "16px" : "18px 20px",
                 display: "grid",
-                gridTemplateColumns: "120px 1fr",
-                gap: 20,
+                gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "120px 1fr",
+                gap: mobile ? 14 : 20,
                 animation:
                   "tr1via-rise .35s cubic-bezier(.2,.7,.3,1) both",
                 animationDelay: `${idx * 40}ms`,
               }}
             >
-              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              <div style={{ display: "flex", flexDirection: mobile ? "row" : "column", alignItems: mobile ? "center" : undefined, justifyContent: mobile ? "space-between" : undefined, gap: 10 }}>
                 <Eyebrow color={t.inkMute} size={9}>
                   ROW {idx + 1}
                 </Eyebrow>
@@ -350,6 +394,7 @@ function HostGenManualEntryInner({
                           key={optIdx}
                           style={{
                             display: "flex",
+                            flexWrap: mobile ? "wrap" : undefined,
                             alignItems: "center",
                             gap: 10,
                             padding: "10px 12px",
@@ -382,6 +427,7 @@ function HostGenManualEntryInner({
                             placeholder={`Option ${optIdx + 1}`}
                             style={{
                               flex: 1,
+                              minWidth: mobile ? "calc(100% - 40px)" : undefined,
                               fontSize: 14,
                               color: t.ink,
                               fontWeight: 500,
@@ -394,7 +440,7 @@ function HostGenManualEntryInner({
                           {isCorrect ? (
                             <span
                               style={{
-                                padding: "3px 9px",
+                                padding: mobile ? "10px 12px" : "3px 9px",
                                 borderRadius: 99,
                                 background: t.correct,
                                 color: "#0E0805",
@@ -491,13 +537,18 @@ function HostGenManualEntryInner({
       </div>
 
       <div
+        data-host-mobile-surface="true"
         style={{
-          padding: "16px 56px 20px",
+          padding: mobile ? "14px 16px max(16px, env(safe-area-inset-bottom))" : "16px 56px 20px",
           borderTop: `1px solid ${t.line}`,
           display: "flex",
-          alignItems: "center",
+          flexDirection: mobile ? "column" : "row",
+          alignItems: mobile ? "stretch" : "center",
           gap: 12,
           background: t.paper,
+          position: mobile ? "sticky" : undefined,
+          bottom: mobile ? 0 : undefined,
+          zIndex: mobile ? 5 : undefined,
         }}
       >
         {errorMessage && (
@@ -539,6 +590,7 @@ function HostGenManualEntryInner({
           onClick={onCancel}
           style={{
             padding: "12px 18px",
+            minHeight: mobile ? 48 : undefined,
             borderRadius: 10,
             border: `1px solid ${t.line}`,
             background: "transparent",
@@ -557,6 +609,7 @@ function HostGenManualEntryInner({
           disabled={isSubmitting || (touched && !allValid)}
           style={{
             padding: "12px 24px",
+            minHeight: mobile ? 52 : undefined,
             borderRadius: 10,
             border: "none",
             background: allValid ? t.accent : t.surface,

@@ -19,6 +19,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { StockImage } from "./_shared";
@@ -86,6 +87,7 @@ function HostGenImageUploadInner({
   onErrorRetry,
 }: Omit<HostGenImageUploadProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const cc = categoryColor(topic, t.accent);
   void cc;
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -97,8 +99,13 @@ function HostGenImageUploadInner({
 
   return (
     <LaptopShell>
-      <div style={{ padding: "24px 56px 0", flex: 1, overflow: "hidden", display: "grid", gridTemplateColumns: "1fr 380px", gap: 36 }}>
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div
+        data-testid="host-gen-image-upload-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
+        style={{ padding: mobile ? "18px 16px max(24px, env(safe-area-inset-bottom))" : "24px 56px 0", flex: 1, overflow: mobile ? "visible" : "hidden", display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "1fr 380px", gap: mobile ? 24 : 36, minWidth: 0 }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", overflow: mobile ? "visible" : "hidden", minWidth: 0 }}>
           <Eyebrow color={t.pop} size={11}>IMAGE FOR · &quot;{prompt.toUpperCase()}&quot;</Eyebrow>
           <Display size={32} color={t.ink} style={{ marginTop: 8, display: "block" }} tracking={-0.025}>
             Use your own.
@@ -107,10 +114,10 @@ function HostGenImageUploadInner({
             When the library doesn&apos;t have the right thing — your venue photo, a press still, a personal shot — drop it here. It saves to <em style={{ fontStyle: "normal", fontWeight: 700, color: t.ink }}>My photos</em> for future questions.
           </div>
 
-          <div style={{ marginTop: 22, display: "flex", gap: 4, padding: 4, borderRadius: 99, background: t.surface, alignSelf: "flex-start" }}>
-            <span style={{ padding: "8px 16px", borderRadius: 99, color: t.inkMid, fontSize: 13, fontWeight: 600 }}>From the library</span>
-            <span style={{ padding: "8px 16px", borderRadius: 99, color: t.inkMid, fontSize: 13, fontWeight: 600 }}>My photos</span>
-            <span style={{ padding: "8px 16px", borderRadius: 99, background: t.ink, color: t.paper, fontSize: 13, fontWeight: 700 }}>Upload new</span>
+          <div style={{ marginTop: 22, display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(3, auto)", width: mobile ? "100%" : undefined, gap: 4, padding: 4, borderRadius: mobile ? 14 : 99, background: t.surface, alignSelf: "flex-start" }}>
+            <span style={{ padding: "10px 16px", borderRadius: 99, color: t.inkMid, fontSize: 13, fontWeight: 600 }}>From the library</span>
+            <span style={{ padding: "10px 16px", borderRadius: 99, color: t.inkMid, fontSize: 13, fontWeight: 600 }}>My photos</span>
+            <span style={{ padding: "10px 16px", borderRadius: 99, background: t.ink, color: t.paper, fontSize: 13, fontWeight: 700 }}>Upload new</span>
           </div>
 
           <input
@@ -141,13 +148,14 @@ function HostGenImageUploadInner({
                 lineHeight: 1.5,
                 fontWeight: 500,
                 display: "flex",
+                flexDirection: mobile ? "column" : "row",
                 gap: 12,
                 alignItems: "center",
                 justifyContent: "space-between",
               }}
             >
               <span>{errorMessage}</span>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+              <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", gap: 6, flexShrink: 0, width: mobile ? "100%" : undefined }}>
                 <button
                   type="button"
                   onClick={() => {
@@ -197,7 +205,7 @@ function HostGenImageUploadInner({
             onClick={() => fileInputRef.current?.click()}
             disabled={state === "uploading"}
             style={{
-              marginTop: 22, flex: 1, minHeight: 320,
+              marginTop: 22, flex: 1, minHeight: mobile ? 240 : 320,
               borderRadius: 14,
               border: `2px ${state === "uploading" ? "solid" : "dashed"} ${state === "uploading" ? t.pop : t.line}`,
               background: state === "uploading" ? (t.dark ? `${t.pop}10` : `${t.pop}06`) : t.surface,
@@ -243,7 +251,7 @@ function HostGenImageUploadInner({
           </button>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 24, overflow: "auto" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 24, overflow: mobile ? "visible" : "auto", minWidth: 0 }}>
           <Eyebrow color={t.inkMute} size={10}>RECENT · MY PHOTOS</Eyebrow>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             {recent.map((p) => (

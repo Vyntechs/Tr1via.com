@@ -19,6 +19,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
@@ -67,6 +68,7 @@ function HostGenErrorInner({
   isRetrying = false,
 }: Omit<HostGenErrorProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const cc = categoryColor(topic, t.accent);
   const friendlyMessage =
     message?.trim().length
@@ -75,13 +77,14 @@ function HostGenErrorInner({
   return (
     <LaptopShell>
       <div
+        data-host-mobile-surface="true"
         style={{
           flex: 1,
-          padding: "56px 56px 40px",
+          padding: mobile ? "24px 16px max(24px, env(safe-area-inset-bottom))" : "56px 56px 40px",
           display: "flex",
-          alignItems: "center",
+          alignItems: mobile ? "flex-start" : "center",
           justifyContent: "center",
-          overflow: "hidden",
+          overflow: mobile ? "visible" : "hidden",
         }}
       >
         <div
@@ -111,7 +114,7 @@ function HostGenErrorInner({
           </div>
 
           <Display
-            size={48}
+            size={mobile ? 36 : 48}
             color={t.ink}
             tracking={-0.03}
             style={{ display: "block" }}
@@ -176,7 +179,8 @@ function HostGenErrorInner({
               onClick={onRetry}
               disabled={isRetrying}
               style={{
-                flex: "1 1 220px",
+                flex: mobile ? "1 1 100%" : "1 1 220px",
+                minHeight: mobile ? 52 : undefined,
                 padding: "14px 22px",
                 borderRadius: 12,
                 border: "none",
@@ -196,7 +200,8 @@ function HostGenErrorInner({
               type="button"
               onClick={onEnterManually}
               style={{
-                flex: "1 1 220px",
+                flex: mobile ? "1 1 100%" : "1 1 220px",
+                minHeight: mobile ? 48 : undefined,
                 padding: "14px 22px",
                 borderRadius: 12,
                 border: `1px solid ${t.ink}`,

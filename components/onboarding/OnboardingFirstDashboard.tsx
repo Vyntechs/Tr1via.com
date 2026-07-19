@@ -75,6 +75,7 @@ function OnboardingFirstDashboardInner({
     <LaptopShell>
       <div
         data-testid="host-onboarding-first"
+        data-host-mobile-surface="true"
         style={{
           padding: compact ? "28px 20px" : "40px 56px",
           display: "grid",

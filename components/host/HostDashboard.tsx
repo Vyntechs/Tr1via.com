@@ -176,6 +176,7 @@ function HostDashboardInner({
     <LaptopShell>
       <div
         data-testid="host-dashboard"
+        data-host-mobile-surface="true"
         style={{
           padding: compact ? "24px 20px" : "40px 56px",
           display: "grid",
