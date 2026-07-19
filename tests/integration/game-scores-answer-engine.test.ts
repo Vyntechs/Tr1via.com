@@ -204,11 +204,12 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         const playId = await insertId(
           `${prefix}-play`,
           `insert into question_plays (
-             night_id, run_id, game_id, question_id, status, opened_at, main_zero_at,
+             night_id, run_id, game_id, category_id, question_id, status, opened_at, main_zero_at,
              final_window_starts_at, final_window_ends_at, finalize_at, resolved_at,
              resolution_reason, eligible_count, confirmed_count
            ) values (
-             $1, $2, $3, $4, $5, now() - interval '30 seconds',
+             $1, $2, $3, (select category_id from questions where id = $4), $4, $5,
+             now() - interval '30 seconds',
              now() - interval '10 seconds', now() - interval '10 seconds',
              now() - interval '8 seconds', now() - interval '8 seconds',
              case when $5 = 'resolved' then now() else null end,
@@ -217,8 +218,8 @@ describe("game_scores branches by the night's immutable answer engine", () => {
           [nightId, runId, gameId, questionId, status],
         );
         await db.query(
-          "insert into question_play_eligibility (play_id, player_id) values ($1, $2)",
-          [playId, playerId],
+          "insert into question_play_eligibility (play_id, player_id, night_id) values ($1, $2, $3)",
+          [playId, playerId, nightId],
         );
         await db.query(
           `insert into question_play_answers (
