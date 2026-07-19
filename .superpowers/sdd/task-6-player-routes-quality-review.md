@@ -1,78 +1,77 @@
-# Task 6 player/public routes quality/security review
+# Task 6 player/public routes quality/security re-review
 
-Commit reviewed: `87ae046` only (`355c7b1..87ae046`)
+Commits reviewed: player/public route delivery through `b6741ad`; repair delta `6e8184f..b6741ad`.
 
 ## Ranked findings
 
-### P2 — Best-effort broadcasts can indefinitely withhold an already-committed response
+None. The prior P2 is closed.
 
-Each new resilient winner path waits for Realtime delivery before returning the canonical result (`app/api/answers/route.ts:185-204`; `app/api/questions/[id]/resolve/route.ts:179-205`; `app/api/room/[code]/plays/[playId]/finalize/route.ts:148-174`). The catches cover only rejection. `broadcastAppliedLiveRoomEvent` and fireworks ultimately call `fetch` without an abort signal or timeout (`lib/api/broadcast.ts:111-128`, `:193-198`, `:314-336`), so a nonsettling Realtime request can hold the HTTP response until the serverless function is killed even though the database transaction already committed. The tests model only immediate rejection (`tests/unit/api-answers-route.test.ts:364-383`; `tests/unit/api-public-finalize-route.test.ts:261-277`) and therefore do not prove the stated post-commit failure isolation. Bound the optional transport wait (and consume late rejection safely) or detach it behind a failure-contained delivery mechanism; add a never-settling broadcast regression proving the canonical response still completes.
+## Prior P2 closure
 
-## §5.1 Root cause fixed: FAIL
+`postBroadcasts` now creates one `AbortController`, aborts it after exactly 750ms, passes its signal to `fetch`, and clears the timer in `finally` (`lib/api/broadcast.ts:104-145`). The live answer broadcaster awaits that bounded helper (`lib/api/broadcast.ts:174-213`), and fireworks awaits the same helper (`lib/api/broadcast.ts:329-352`), so both healthy and stalled deliveries share one failure boundary.
 
-Evidence: `app/api/answers/route.ts:185-211` — the database owns the answer atomically, but an optional external fan-out still gates acknowledgement of that committed answer without a time bound.
+The exact fake-timer regression proves a signal-aware nonsettling fetch remains pending at 749ms, rejects at 750ms, observes an aborted signal, and leaves zero timers (`tests/unit/live-answer-broadcast.test.ts:103-139`). Its healthy case proves the request is actually sent and awaited to success, with zero residual timers (`tests/unit/live-answer-broadcast.test.ts:40-88`). The answer-route regression proves that a committed winner remains pending only through that bound, then returns canonical HTTP 200/`confirmed`; its catch emits only a fixed message and does not expose the rejected error (`tests/unit/api-answers-route.test.ts:368-400`). Because each promise rejection is awaited and caught at the route boundary, no detached promise can produce an unhandled rejection (`app/api/answers/route.ts:185-207`; `app/api/questions/[id]/resolve/route.ts:179-207`; `app/api/room/[code]/plays/[playId]/finalize/route.ts:148-176`).
+
+## §5.1 Root cause fixed: PASS
+
+Evidence: `lib/api/broadcast.ts:116-145` — the shared optional Realtime transport itself now owns the deadline and timer cleanup, closing the unbounded post-commit await rather than special-casing one caller.
 
 ## §5.2 No new abstractions: PASS
 
-Evidence: `app/api/room/[code]/plays/[playId]/finalize/route.ts:18-19` — the route adds one strict body schema and reuses the shared RPC parser, event projector, room projector, and broadcast boundary; no vendor or state abstraction was introduced.
+Evidence: `lib/api/broadcast.ts:104-145` — the repair adds one timeout constant and standard `AbortController` lifecycle inside the existing transport helper; it introduces no new service, state layer, or wrapper.
 
 ## §5.3 No dead code: PASS
 
-Evidence: `tests/unit/api-answers-route.test.ts:131-402` — resilient/legacy branches, authorization, replay, stale projection, malformed results, broadcast rejection, and database call shapes are exercised; the changed files add no TODO/FIXME, commented-out implementation, or debug statement.
+Evidence: `tests/unit/live-answer-broadcast.test.ts:40-139` — both healthy completion and timeout cleanup exercise the new controller/timer path; the three changed files contain no commented-out implementation, stray TODO/FIXME, or debug logging.
 
 ## §5.4 Honest naming: PASS
 
-Evidence: `app/api/questions/[id]/resolve/route.ts:158-207` — the resilient resolve route calls only `finalize_current_play_if_due`, and freshness, exact projection, current projection, and fireworks behavior match their identifiers.
+Evidence: `lib/api/broadcast.ts:104-107` — `LIVE_BROADCAST_TIMEOUT_MS` accurately names the 750ms live-delivery budget used by the shared broadcast transport.
 
-## §5.5 Failure modes considered: FAIL
+## §5.5 Failure modes considered: PASS
 
-Evidence: `tests/unit/api-public-finalize-route.test.ts:261-277` — rejection is covered, but a pending broadcast promise is not; the latter leaves the committed request pending because the production call is awaited without a timeout.
+Evidence: `tests/unit/live-answer-broadcast.test.ts:103-139` — load-independent nonsettling transport, exact boundary timing, abort propagation, rejected completion, and timer cleanup are covered; `tests/unit/api-answers-route.test.ts:368-400` proves the committed response and log-sanitization behavior after failure.
 
 ## Quality/security assessment
 
-- **Authorization/authority fields: PASS.** Resilient answers derive device identity from the signed cookie and use a strict body that excludes player/device/canonical answer/deadline fields (`app/api/answers/route.ts:103-120`, `:145-154`; `lib/api/schemas.ts:112-120`). The anonymous finalizers accept only opaque room/run/play identity and cannot supply reason, deadline, player, or answer (`app/api/room/[code]/plays/[playId]/finalize/route.ts:18`, `:81-95`, `:127-134`).
-- **Room/run/play ancestry: PASS.** Public finalize binds play to the room's night and current run before the service-role RPC (`app/api/room/[code]/plays/[playId]/finalize/route.ts:97-145`). The legacy resolve bridge selects the current non-undone play for the run and requires its question to equal the route question (`app/api/questions/[id]/resolve/route.ts:140-176`). Database foreign keys and the RPC recheck the ancestry under lock.
-- **Privacy: PASS.** Strict RPC parsers reject extra/raw database fields; answer responses omit device and canonical choice, and public finalizer projections contain only run/play identity, revisions, deadlines, state, and aggregate counts (`app/api/answers/route.ts:157-211`; `lib/live-answer/projectPlay.ts:45-67`).
-- **Stale/replay behavior: PASS.** Only `freshlyApplied` transaction winners can project/broadcast; exact retries skip broadcast and rebuild current durable room state (`app/api/answers/route.ts:185-211`; `app/api/room/[code]/plays/[playId]/finalize/route.ts:148-176`). Route regressions cover old-play answer and resolved-finalizer replay.
-- **One-write semantics: PASS.** Each resilient route invokes exactly one service-role mutation RPC and performs no route-level table write; the database's lock/revision/event transaction owns answer/finalize effects (`app/api/answers/route.ts:145-155`; `app/api/questions/[id]/resolve/route.ts:158-168`; `app/api/room/[code]/plays/[playId]/finalize/route.ts:127-137`). The 50-test direct database suite proves one winner/event and canonical replay.
-- **Exact-event projection: PASS.** Fresh events are reparsed, ancestry-checked, and projected at the exact winner revision before audience-safe broadcast; stale projection falls back without broadcasting (`app/api/questions/[id]/resolve/route.ts:167-207`; `lib/live-answer/projectEvent.ts:17-95`).
-- **Post-commit rejection: PASS.** Explicit broadcast rejection is swallowed with static logs and the committed response remains successful (`app/api/answers/route.ts:190-200`; `app/api/room/[code]/plays/[playId]/finalize/route.ts:153-169`).
-- **Post-commit nonsettling transport: FAIL.** The P2 above leaves all three resilient winner responses externally gated.
-- **Rate limiting: PASS for the specified database seam.** `finalize_current_play_if_due` owns a 120-attempt/10-second play bucket and returns typed `retry_later`; resolved replays bypass saturation (`supabase/migrations/0023_live_answer_engine_functions.sql:914-959`). Direct database regressions at `tests/integration/live-answer-engine-schema.test.ts:2016-2110` and `:2337-2354` pass.
-- **Legacy regressions: PASS.** Answer tests retain the exact 204 insert path, and the shared public-player error suite retains generic legacy database failures (`tests/unit/api-answers-route.test.ts:139-178`; `tests/unit/api-public-player-error-boundary.test.ts:87-129`).
-- **Raw logs: PASS for new paths.** New resilient catches log fixed messages only and do not include rejected error objects. The legacy resolve catch still logs its error object at `app/api/questions/[id]/resolve/route.ts:266-279`, but those lines predate this commit.
-- **Query scope/current projection: PASS.** Queries use explicit columns and no answer/device/cookie row is loaded for public projections. The before/play/after revision check prevents mixed-revision current snapshots and follows the existing snapshot convention (`app/api/answers/route.ts:44-100`; `app/api/room/[code]/snapshot/route.ts:126-142`).
+- **Authorization/authority fields: PASS.** Resilient answers derive device identity from the signed cookie and exclude player/device/canonical answer/deadline authority from the strict request body (`app/api/answers/route.ts:103-120`, `:145-154`). Anonymous finalizers accept only opaque room/run/play identity (`app/api/room/[code]/plays/[playId]/finalize/route.ts:77-95`, `:127-134`).
+- **Room/run/play ancestry: PASS.** Public finalize binds the play to the room night and current run before invoking the service-role RPC (`app/api/room/[code]/plays/[playId]/finalize/route.ts:97-145`).
+- **Privacy: PASS.** The live-answer broadcast builds an explicit aggregate-only payload and discards caller extras (`lib/api/broadcast.ts:174-212`); the regression asserts player, device, submission, eligibility, slot, and canonical-index data are absent (`tests/unit/live-answer-broadcast.test.ts:40-87`).
+- **Replay/one-write semantics: PASS.** Only the transaction winner can broadcast; replay and non-winner attempts return before fetch (`lib/api/broadcast.ts:174-186`; `tests/unit/live-answer-broadcast.test.ts:90-101`, `:141-154`). Each resilient route retains one mutation RPC and durable-current fallback.
+- **Fireworks bound: PASS.** Fireworks and live answer events both await the same bounded `postBroadcasts` implementation (`lib/api/broadcast.ts:208-213`, `:329-352`). Resilient callers swallow fireworks failure with static messages and still return durable canonical state (`app/api/questions/[id]/resolve/route.ts:195-207`; `app/api/room/[code]/plays/[playId]/finalize/route.ts:164-176`).
+- **Raw logs/unhandled rejection: PASS for resilient player/public paths.** The three catches use no error binding and log fixed strings only (`app/api/answers/route.ts:190-200`; `app/api/questions/[id]/resolve/route.ts:184-200`; `app/api/room/[code]/plays/[playId]/finalize/route.ts:153-169`). The older non-resilient resolve branch still logs caught errors, but it predates and is outside the repair delta (`app/api/questions/[id]/resolve/route.ts:266-279`).
 
 ## Type checker / linter
 
-`npx tsc --noEmit`: FAIL on the same seven established fixture diagnostics; no changed route or test appears.
+`npx tsc --noEmit`: FAIL on seven established fixture diagnostics plus two diagnostics from concurrent, untracked host-route work; no diagnostic names any file in `6e8184f..b6741ad`.
 
 ```text
-tests/unit/collect-verified-questions.test.ts(59,5), (114,5), (139,5): TS2322 callback returns number, expected void/Promise<void>
-tests/unit/HostHomeClient-founder-build.test.tsx(30,19), (44,19): TS2739 missing previousGames and inSetup
+tests/unit/api-host-answer-engine-route.test.ts(99,13), (112,13): TS2339 concurrent untracked route has no GET export
+tests/unit/collect-verified-questions.test.ts(59,5), (114,5), (139,5): TS2322 callback returns number
+tests/unit/HostHomeClient-founder-build.test.tsx(30,19), (44,19): TS2739 fixture props missing
 tests/unit/prod-smoke-budget.test.ts(12,30), (38,30): TS2345 ProcessEnv missing NODE_ENV
 ```
 
 `npm run lint`: FAIL because the repository's Next 16 script treats `next lint` as a nonexistent `tr1via/lint` project directory.
 
-Direct ESLint over all seven changed route/test files: PASS.
+Direct ESLint over the transport, changed tests, and all three player/public routes: PASS.
 
 ## Verification
 
-- Read all seven changed files fully and traced request schemas, RPC parsers, exact/current projectors, broadcast transport, and database finalizer/rate-limit logic.
-- Focused/shared/security unit regressions: PASS — 9 files, 61/61 tests.
+- Read all three repair files fully and retraced all three player/public resilient call chains from database result through projection, delivery, catch, and canonical response.
+- Focused plus extended unit regressions: PASS — 9 files, 58/58 tests.
 - Direct database live-engine regressions: PASS — 1 file, 50/50 tests.
-- Direct ESLint over all changed route/test files: PASS.
-- `git diff --check 87ae046^..87ae046`: PASS.
+- Direct ESLint: PASS — transport, changed tests, and three player/public routes.
+- `git diff --check 6e8184f..b6741ad`: PASS; repair delta is exactly 3 files, 93 insertions, 17 deletions.
 
-## Verdict: REQUEST-CHANGES
+## Verdict: APPROVE
 
-The authorization, privacy, idempotency, projection, and database-rate-limit boundaries are sound, but optional Realtime delivery still has an unbounded post-commit denial path.
+The shared 750ms abort boundary closes the prior P2 while preserving healthy awaited delivery, canonical committed success, timer cleanup, fireworks containment, sanitized logs, and rejection handling.
 
 ## Skipped/Failed:
 
-- `tasks/workflow.md` and `tasks/todo.md` do not exist in this worktree; used the supplied §5 rubric, the authoritative resilience design/plan, and commit-specific review contract.
-- A true never-settling transport probe was not run because it intentionally has no completion condition; static call-chain inspection proves the unbounded await, and existing tests cover rejection only.
-- Repository-wide type-check and lint remain blocked by the documented baseline failures above; focused/shared/database tests and direct ESLint pass.
-- Unrelated pre-existing `tasks/lessons.md` and concurrent untracked migration/integration files were not read, changed, staged, or reviewed.
-- No product code, lesson, deployment, push, merge, or production state was changed.
+- `tasks/workflow.md` and `tasks/todo.md` do not exist in this worktree; used the supplied §5 rubric and the existing task-specific review contract.
+- Repository-wide type-check and `npm run lint` remain blocked by the documented baseline/concurrent failures; focused tests, database tests, direct ESLint, and diff checks pass.
+- The failed `/dev/stdin` `vite-node` experiment could not load a virtual script; no repository file was created or changed. Fireworks' shared timeout is proved directly by its call to the same bounded private helper.
+- Unrelated dirty host/game-route/lesson work was not read, changed, staged, or reviewed.
+- No product code, deployment, push, merge, migration, or production state was changed.
