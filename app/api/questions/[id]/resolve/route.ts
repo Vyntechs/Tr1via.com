@@ -1,9 +1,9 @@
-// POST /api/questions/:id/resolve — resolve a question (the T+20 path).
+// POST /api/questions/:id/resolve — advance the due question.
 //
-// The first phone whose local timer reaches 0 pings this. It's also the
-// fallback if the TV's `useTimer` reaches 0 first. Either way, race-safe:
-// resolve_question() does a `select … for update` on the questions row, so
-// the second caller sees finished_at set and returns no-op.
+// Legacy nights keep the security-gated resolve_question path below.
+// Resilient nights resolve the server-selected current play only through
+// finalize_current_play_if_due, so no phone timer can choose a deadline,
+// reason, answer, player, or alternate play.
 //
 // Authentication: the normal timer trigger remains anonymous so the venue TV
 // and player phones can race safely at T+30. Possessing the live question UUID
@@ -12,7 +12,7 @@
 // before invoking the service-role RPC. The authenticated host-only end-early
 // route remains the sole production path for an early close.
 //
-// On success, we:
+// On legacy success, we:
 //   1. Run the RPC (does is_correct + awarded_points for every answer,
 //      stamps finished_at, inserts 'resolve' event).
 //   2. Read back the canonical correct_index + the per-player awards.
@@ -22,10 +22,78 @@
 
 import { conflict, ok, serverError, notFound } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { broadcastToRoom, broadcastFireworks } from "@/lib/api/broadcast";
+import {
+  broadcastAppliedLiveRoomEvent,
+  broadcastToRoom,
+  broadcastFireworks,
+} from "@/lib/api/broadcast";
 import { isTestModeEnabled } from "@/lib/api/require-test-mode";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
+import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
+import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
+import {
+  freshLiveEventFromRpc,
+  parseLiveFinalizeRpcEnvelope,
+} from "@/lib/live-answer/rpcResult";
+
+type AdminClient = ReturnType<typeof getSupabaseAdmin>;
+
+async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const { data: before, error: beforeError } = await admin
+      .from("nights")
+      .select(
+        "answer_engine, current_run_id, room_revision, control_revision",
+      )
+      .eq("id", nightId)
+      .maybeSingle();
+    if (
+      beforeError ||
+      !before ||
+      before.answer_engine !== "resilient_v1" ||
+      !before.current_run_id
+    ) {
+      return null;
+    }
+    const { data: currentPlay, error: playError } = await admin
+      .from("question_plays")
+      .select(
+        "id, night_id, run_id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count",
+      )
+      .eq("night_id", nightId)
+      .eq("run_id", before.current_run_id)
+      .neq("status", "undone")
+      .order("opened_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (playError) return null;
+    const { data: after, error: afterError } = await admin
+      .from("nights")
+      .select("answer_engine, current_run_id, room_revision, control_revision")
+      .eq("id", nightId)
+      .maybeSingle();
+    if (afterError || !after || after.answer_engine !== "resilient_v1") {
+      return null;
+    }
+    if (
+      before.current_run_id !== after.current_run_id ||
+      before.room_revision !== after.room_revision ||
+      before.control_revision !== after.control_revision
+    ) {
+      continue;
+    }
+    return projectLiveRoom({
+      night: {
+        current_run_id: after.current_run_id,
+        room_revision: after.room_revision,
+        control_revision: after.control_revision,
+      },
+      play: currentPlay,
+    });
+  }
+  return null;
+}
 
 export async function POST(
   req: Request,
@@ -60,12 +128,84 @@ export async function POST(
   if (!game) return notFound("game not found");
   const { data: night, error: nightError } = await admin
     .from("nights")
-    .select("room_code, theme_key, hosts!inner(default_theme_key)")
+    .select(
+      "id, room_code, theme_key, answer_engine, current_run_id, room_revision, control_revision, hosts!inner(default_theme_key)",
+    )
     .eq("id", game.night_id)
     .maybeSingle();
   if (nightError) return serverError();
   if (!night) return notFound("night not found");
   const roomCode = night.room_code;
+
+  if (night.answer_engine === "resilient_v1") {
+    if (!night.current_run_id) return serverError();
+    const { data: plays, error: playError } = await admin
+      .from("question_plays")
+      .select(
+        "id, night_id, run_id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count",
+      )
+      .eq("night_id", night.id)
+      .eq("run_id", night.current_run_id)
+      .neq("status", "undone")
+      .order("opened_at", { ascending: false })
+      .limit(1);
+    if (playError) return serverError();
+    const play = plays?.[0];
+    if (!play || play.question_id !== questionId) {
+      return conflict("question is not the current play");
+    }
+
+    const { data: rpcData, error: finalizeError } = await admin.rpc(
+      "finalize_current_play_if_due",
+      {
+        p_room_code: roomCode,
+        p_run_id: night.current_run_id,
+        p_play_id: play.id,
+      },
+    );
+    if (finalizeError) return serverError();
+    const envelope = parseLiveFinalizeRpcEnvelope(rpcData);
+    if (!envelope) return serverError();
+    const result = envelope.result;
+    if (
+      ("runId" in result && result.runId !== night.current_run_id) ||
+      ("playId" in result && result.playId !== play.id) ||
+      ("gameId" in result && result.gameId !== undefined && result.gameId !== play.game_id) ||
+      ("questionId" in result && result.questionId !== undefined && result.questionId !== play.question_id)
+    ) {
+      return serverError();
+    }
+
+    let exactLive = null;
+    const freshEvent = freshLiveEventFromRpc(envelope);
+    if (freshEvent) {
+      exactLive = await projectExactLiveEvent(night.id, freshEvent);
+      if (exactLive) {
+        try {
+          await broadcastAppliedLiveRoomEvent(roomCode, {
+            applied: true,
+            freshness: "transaction_winner",
+            kind: freshEvent.kind,
+            serverNow: new Date().toISOString(),
+            live: exactLive,
+          });
+        } catch {
+          console.warn("live finalize broadcast failed");
+        }
+        if (freshEvent.kind === "play_resolved") {
+          try {
+            await broadcastFireworks(roomCode, "salvo", questionId);
+          } catch {
+            console.warn("broadcast fireworks(salvo) failed");
+          }
+        }
+      }
+    }
+
+    const responseLive = exactLive ?? await loadCurrentLiveRoom(admin, night.id);
+    if (!responseLive) return serverError();
+    return ok({ result, live: responseLive });
+  }
 
   // The test-only fast-forward proxy is already protected by the two-part
   // TEST_AUTH_ENABLED + x-test-secret gate. Re-check that same gate here so

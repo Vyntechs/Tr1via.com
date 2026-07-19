@@ -99,6 +99,7 @@ describe("public and signed-player route error boundary", () => {
       },
       categories: { data: { id: CATEGORY_ID, game_id: GAME_ID }, error: null },
       games: { data: { id: GAME_ID, night_id: NIGHT_ID }, error: null },
+      nights: { data: { id: NIGHT_ID, answer_engine: "legacy" }, error: null },
       players: { data: { id: PLAYER_ID, removed_at: null }, error: null },
       game_participations: { data: { id: "participation-1" }, error: null },
     };
