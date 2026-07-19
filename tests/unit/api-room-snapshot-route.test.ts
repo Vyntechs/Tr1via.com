@@ -6,6 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { NextRequest } from "next/server";
+import { scrambleFor } from "@/lib/game/scramble";
 
 const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
 const authMock = vi.hoisted(() => ({
@@ -19,7 +20,11 @@ const CODE = "ABCDEF";
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
 const HOST_ID = "host-1";
 const DEVICE_ID = "DEVICE-ID-LEAK";
-const PLAYER_ID = "P1";
+const PLAYER_ID = "22222222-2222-4222-8222-222222222222";
+const OTHER_PLAYER_ID = "33333333-3333-4333-8333-333333333333";
+const ANSWER_ID = "44444444-4444-4444-8444-444444444444";
+const OTHER_ANSWER_ID = "55555555-5555-4555-8555-555555555555";
+const PARTICIPATION_ID = "66666666-6666-4666-8666-666666666666";
 const DEVICE_ID_LEAK = "DEVICE-ID-LEAK";
 const SCRAMBLE = [3, 1, 0, 2];
 
@@ -131,7 +136,7 @@ function makeAdmin(
       removed_at: removed ? "2026-06-07T00:00:03Z" : null,
       app_switch_total_seconds: 0,
     }, {
-      id: "P2", display_name: "Bob", night_id: NIGHT_ID,
+      id: OTHER_PLAYER_ID, display_name: "Bob", night_id: NIGHT_ID,
       device_id: "OTHER-DEVICE-ID-LEAK", joined_at: "2026-06-07T00:00:01Z",
       last_seen_at: null, removed_at: null, app_switch_total_seconds: 0,
     }],
@@ -144,17 +149,17 @@ function makeAdmin(
       answered_count: 0, correct_count: 0, fastest_correct_ms: null,
     }],
     answers: [{
-      id: "a1", player_id: PLAYER_ID, question_id: "q-resolved",
+      id: ANSWER_ID, player_id: PLAYER_ID, question_id: "q-resolved",
       chosen_index: 3, scramble: SCRAMBLE, ms_to_lock: 1200,
       is_correct: true, awarded_points: 500, locked_at: "2026-06-07T00:00:10Z",
     }, {
       // Another player's answer on the LIVE question — the anti-cheat target:
       // a player must NOT receive this via liveAnswers while the question is open.
-      id: "a2", player_id: "P2", question_id: "q-live",
+      id: OTHER_ANSWER_ID, player_id: OTHER_PLAYER_ID, question_id: "q-live",
       chosen_index: 0, scramble: [0, 1, 2, 3], ms_to_lock: 800,
       is_correct: null, awarded_points: null, locked_at: "2026-06-07T00:00:05Z",
     }],
-    game_participations: [{ id: "gp1", player_id: PLAYER_ID, game_id: "G1" }],
+    game_participations: [{ id: PARTICIPATION_ID, player_id: PLAYER_ID, game_id: "G1" }],
     room_magic_reactions: [{
       id: "reaction-1",
       night_id: NIGHT_ID,
@@ -216,6 +221,7 @@ async function callRoute() {
 describe("GET /api/room/[code]/snapshot", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.SESSION_SECRET = "snapshot-test-secret";
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
   });
 
@@ -247,16 +253,16 @@ describe("GET /api/room/[code]/snapshot", () => {
     // Player's own data present.
     expect(body).toMatchObject({
       audience: "player",
-      self: { id: PLAYER_ID, displayName: "Alice" },
+      self: { playerKey: expect.any(String), displayName: "Alice" },
     });
     expect(body.myAnswers).toHaveLength(1);
     expect(body.myAnswers[0]).toMatchObject({
       questionId: "q-resolved",
-      playerId: PLAYER_ID,
       chosenIndex: 3,
       scramble: SCRAMBLE,
     });
     expect(body.myParticipations).toHaveLength(1);
+    expect(body.questionScrambles["q-live"]).toEqual(scrambleFor("q-live", PLAYER_ID));
     expect(body.roomMagicReactions).toEqual([]);
   });
 
@@ -271,8 +277,38 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(json).not.toContain(DEVICE_ID_LEAK);
     expect(json).not.toContain("OTHER-DEVICE-ID-LEAK");
     expect(body.myAnswers[0].scramble).toEqual(SCRAMBLE);
-    expect(json).not.toContain('"id":"a2"');
+    expect(json).not.toContain(OTHER_ANSWER_ID);
     expect(body).not.toHaveProperty("liveAnswers");
+  });
+
+  it("PLAYER mode: never serializes raw night, player, answer, or participation identifiers anywhere in the response", async () => {
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const json = JSON.stringify(body);
+
+    for (const rawIdentifier of [
+      NIGHT_ID,
+      HOST_ID,
+      PLAYER_ID,
+      OTHER_PLAYER_ID,
+      ANSWER_ID,
+      OTHER_ANSWER_ID,
+      PARTICIPATION_ID,
+    ]) {
+      expect(json).not.toContain(rawIdentifier);
+    }
+    expect(body.self).toMatchObject({ displayName: "Alice" });
+    expect(body.self.playerKey).toEqual(expect.any(String));
+    expect(body.players.map((player: { displayName: string }) => player.displayName))
+      .toEqual(["Alice", "Bob"]);
+    expect(body.myAnswers[0]).not.toHaveProperty("id");
+    expect(body.myAnswers[0]).not.toHaveProperty("playerId");
+    expect(body.myParticipations[0]).not.toHaveProperty("id");
+    expect(body.myParticipations[0]).not.toHaveProperty("playerId");
   });
 
   it("PLAYER mode: carries prior-game standings separately from current-game scores", async () => {
@@ -284,11 +320,11 @@ describe("GET /api/room/[code]/snapshot", () => {
     const body = await res.json();
 
     expect(body.scores).toEqual([
-      expect.objectContaining({ game_id: "G2", player_id: PLAYER_ID, score: 0 }),
+      expect.objectContaining({ gameId: "G2", playerKey: expect.any(String), score: 0 }),
     ]);
     expect(body.allScores).toEqual(expect.arrayContaining([
-      expect.objectContaining({ game_id: "G1", player_id: PLAYER_ID, score: 500 }),
-      expect.objectContaining({ game_id: "G2", player_id: PLAYER_ID, score: 0 }),
+      expect.objectContaining({ gameId: "G1", playerKey: expect.any(String), score: 500 }),
+      expect.objectContaining({ gameId: "G2", playerKey: expect.any(String), score: 0 }),
     ]));
   });
 
@@ -333,7 +369,7 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(body.currentQuestion.id).toBe("q-live");
     expect(body).not.toHaveProperty("liveAnswers");
     // And the other player's chosen index appears nowhere in the payload.
-    expect(JSON.stringify(body)).not.toContain('"id":"a2"');
+    expect(JSON.stringify(body)).not.toContain(OTHER_ANSWER_ID);
   });
 
   it("HOST mode: still receives the LIVE question's answers (lock counts work)", async () => {
@@ -343,7 +379,7 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.liveAnswers).toHaveLength(1);
-    expect(body.liveAnswers[0].id).toBe("a2");
+    expect(body.liveAnswers[0].id).toBe(OTHER_ANSWER_ID);
     // The host needs chosen_index for lock counts / reveal data.
     expect(body.liveAnswers[0].chosenIndex).toBe(0);
     // And question_id, so host fallback mode can still match answers to the

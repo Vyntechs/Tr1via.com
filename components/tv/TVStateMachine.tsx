@@ -470,18 +470,18 @@ function TVQuestionView({
     return [...snapshot.liveAnswers]
       .sort((a, b) => a.ms_to_lock - b.ms_to_lock)
       .map((a) => ({
-        id: a.id,
+        id: `${a.question_id}:${a.player_key}`,
         name: a.player_name,
         t: `${(a.ms_to_lock / 1000).toFixed(1)}s`,
       }));
   }, [snapshot.liveAnswers]);
 
   // Build marquee chips from the full player roster — scores come from
-  // snapshot.scores (keyed by player_id, updated at reveal, static mid-question).
+  // snapshot.scores (keyed by audience-safe player_key, updated at reveal).
   const marqueeChips: MarqueeChip[] = useMemo(() => {
     if (!hasMarquee(themeKey)) return [];
     return snapshot.players.map((p, i) => {
-      const scoreRow = snapshot.scores.find((s) => s.player_id === p.id);
+      const scoreRow = snapshot.scores.find((s) => s.player_key === p.id);
       return {
         playerId: p.id,
         name: p.displayName.toUpperCase(),
@@ -515,19 +515,19 @@ function TVQuestionView({
     // ceremony queue, de-duped via its own ref so snapshot re-fetches don't
     // re-pulse for the same player.
     if (themeKey === "june") {
-      const newlyLockedJune = lockedAnswers.filter((a) => !juneSeenLocksRef.current.has(a.player_id));
+      const newlyLockedJune = lockedAnswers.filter((a) => !juneSeenLocksRef.current.has(a.player_key));
       if (newlyLockedJune.length > 0) {
-        for (const a of newlyLockedJune) juneSeenLocksRef.current.add(a.player_id);
+        for (const a of newlyLockedJune) juneSeenLocksRef.current.add(a.player_key);
         fireJuneBeat("lock");
       }
     }
     if (!hasCeremony(themeKey)) return;
-    const newlyLocked = lockedAnswers.filter((a) => !seenLocks.has(a.player_id));
-    for (const a of newlyLocked) seenLocks.add(a.player_id);
+    const newlyLocked = lockedAnswers.filter((a) => !seenLocks.has(a.player_key));
+    for (const a of newlyLocked) seenLocks.add(a.player_key);
     if (newlyLocked.length > 0) {
       const events = newlyLocked.map((a) => ({
-        playerId: a.player_id,
-        tint: playerColorHex(a.player_id),
+        playerId: a.player_key,
+        tint: playerColorHex(a.player_key),
         msToLock: a.ms_to_lock,
         receivedAtMs: Date.now(),
       }));
@@ -543,6 +543,7 @@ function TVQuestionView({
   useLockInSync({
     gameId: snapshot.currentGameId ?? "",
     active: hasCeremony(themeKey) && !!snapshot.currentGameId,
+    audience: "tv",
     acknowledged: seenLocks,
     onMissed: (lock) => {
       setCeremonyQueue((q) => [

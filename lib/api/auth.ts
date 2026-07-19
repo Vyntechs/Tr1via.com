@@ -19,6 +19,7 @@ import { getSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { cookies } from "next/headers";
 import { verifyDeviceCookie } from "@/lib/auth/device-cookie";
+import { presentationKey } from "@/lib/room/presentationKey";
 import type {
   CategoryRow,
   HostRow,
@@ -222,6 +223,41 @@ export async function requireOwnedPlayer(
   if (player.device_id !== deviceId) {
     return { ok: false, status: 401, error: "device mismatch" };
   }
+  return { ok: true, player: player as PlayerRow };
+}
+
+/**
+ * Resolve a player-only route reference without exposing the DB player id to
+ * browser JavaScript. Legacy raw-id references remain valid for already-open
+ * clients; both paths are still authorized by the signed device cookie.
+ */
+export async function requireOwnedPlayerReference(
+  playerReference: string,
+): Promise<PlayerLookupResult> {
+  const deviceId = await getDeviceId();
+  if (!deviceId) {
+    return { ok: false, status: 401, error: "no device session" };
+  }
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) {
+    return { ok: false, status: 401, error: "no device session" };
+  }
+  const admin = getSupabaseAdmin();
+  const { data: players } = await admin
+    .from("players")
+    .select("*")
+    .eq("device_id", deviceId);
+  const player = (players ?? []).find((candidate) => {
+    if (candidate.id === playerReference) return true;
+    return presentationKey(
+      secret,
+      "player",
+      "player",
+      candidate.night_id,
+      candidate.id,
+    ) === playerReference;
+  });
+  if (!player) return { ok: false, status: 404, error: "player not found" };
   return { ok: true, player: player as PlayerRow };
 }
 

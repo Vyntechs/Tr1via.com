@@ -31,6 +31,7 @@ import {
 const SAFETY_REFETCH_MS = 4000;
 
 export interface TVNight {
+  /** Audience-scoped presentation key, never the database night id. */
   id: string;
   venueName: string;
   /** Per-night theme override. Null when the host hasn't picked a special
@@ -90,6 +91,7 @@ export interface TVQuestion {
 }
 
 export interface TVPlayer {
+  /** Audience-scoped presentation key, never the database player id. */
   id: string;
   displayName: string;
   joinedAt: string;
@@ -97,7 +99,7 @@ export interface TVPlayer {
 }
 
 export interface TVScore {
-  player_id: string;
+  player_key: string;
   display_name: string;
   score: number;
   correct_count: number;
@@ -106,9 +108,8 @@ export interface TVScore {
 }
 
 export interface TVAnswer {
-  id: string;
   question_id: string;
-  player_id: string;
+  player_key: string;
   player_name: string;
   ms_to_lock: number;
   /** Withheld (null) until the question is RESOLVED — the public TV feed

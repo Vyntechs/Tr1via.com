@@ -1,5 +1,4 @@
-// roomSnapshotPayload — explicit wire contract and legacy-client adapters for
-// the resilient server-route fallback.
+// Explicit audience wire contracts plus local adapters for existing room UI.
 
 import type {
   AnswerRow,
@@ -18,56 +17,86 @@ import type {
   HostLiveProjection,
   PlayerLiveProjection,
 } from "@/lib/live-answer/contracts";
-import {
-  type HostLiveAnswer,
-  type ParticipationDTO,
-  type PlayerCanonicalAnswer,
-  type RoomPlayer,
-  type RoomQuestion,
+import type {
+  HostLiveAnswer,
+  ParticipationDTO,
+  PlayerCanonicalAnswer,
+  PlayerRoomPlayer,
+  PlayerScoreDTO,
+  RoomPlayer,
+  RoomQuestion,
 } from "./roomAudience";
 import { pickCurrentGame } from "./pickCurrentGame";
 
 export { serializeRoomQuestion } from "./roomAudience";
 
-interface RoomSnapshotBase {
-  night: NightRow | null;
+/** Player-safe night state: tenancy identifiers never cross the wire. */
+export interface PlayerNightDTO {
+  nightKey: string;
+  answer_engine?: string;
+  answer_engine_latched_at?: string | null;
+  closed_at: string | null;
+  control_revision?: number;
+  created_at: string;
+  is_locked: boolean;
+  opened_at: string | null;
+  room_code: string;
+  room_magic_enabled: boolean;
+  room_revision?: number;
+  scheduled_at: string | null;
+  theme_key: string | null;
+  venue_name: string;
+}
+
+export type PlayerGameDTO = Omit<GameRow, "night_id">;
+export type PlayerQuestionScrambles = Record<
+  string,
+  [number, number, number, number]
+>;
+
+interface SharedRoomSnapshotBase {
   hostDefaultThemeKey: string | null;
-  games: GameRow[];
   categories: CategoryRow[];
-  players: RoomPlayer[];
   currentQuestion: RoomQuestion | null;
   lastResolvedQuestion: RoomQuestion | null;
   currentReveal: RevealRow | null;
   allQuestions: RoomQuestion[];
-  allScores: GameScoreRow[];
-  scores: GameScoreRow[];
   roomMagicReactions?: RoomMagicReactionEvent[];
 }
 
-/** The response is intentionally audience-discriminated at the HTTP boundary. */
-export type RoomSnapshotPayload = RoomSnapshotBase & (
+/** The response is audience-discriminated at the complete HTTP boundary. */
+export type RoomSnapshotPayload = SharedRoomSnapshotBase & (
   | {
       audience: "player";
+      night: PlayerNightDTO | null;
+      games: PlayerGameDTO[];
+      players: PlayerRoomPlayer[];
+      allScores: PlayerScoreDTO[];
+      scores: PlayerScoreDTO[];
       live?: PlayerLiveProjection | null;
-      self: RoomPlayer;
+      self: PlayerRoomPlayer;
       myAnswers: PlayerCanonicalAnswer[];
       myParticipations: ParticipationDTO[];
+      questionScrambles: PlayerQuestionScrambles;
       liveAnswers?: never;
     }
   | {
       audience: "host";
+      night: NightRow | null;
+      games: GameRow[];
+      players: RoomPlayer[];
+      allScores: GameScoreRow[];
+      scores: GameScoreRow[];
       live?: HostLiveProjection | null;
       self: null;
       myAnswers?: never;
       myParticipations?: never;
+      questionScrambles?: never;
       liveAnswers: HostLiveAnswer[];
     }
 );
 
-/**
- * Local-only shape consumed by legacy fallback users. It is constructed below
- * from every allowlisted DTO field; it is never used as the wire contract.
- */
+/** Local-only legacy shape. Synthetic ids here never cross an HTTP boundary. */
 export interface RoomFallbackPayload {
   night: NightRow | null;
   hostDefaultThemeKey: string | null;
@@ -84,17 +113,31 @@ export interface RoomFallbackPayload {
   scores: GameScoreRow[];
   liveAnswers: AnswerRow[];
   roomMagicReactions: RoomMagicReactionEvent[];
+  questionScrambles?: PlayerQuestionScrambles;
 }
 
-/** Map the route payload into the RoomSnapshot shape useRoom already produces. */
 export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapshot {
+  const playerAudience = payload.audience === "player";
+  const night = playerAudience
+    ? payload.night
+      ? playerNightToRow(payload.night)
+      : null
+    : payload.night;
+  const games: GameRow[] = playerAudience
+    ? payload.games.map((game) => playerGameToRow(game, payload.night?.nightKey ?? ""))
+    : payload.games;
+  const players: PlayerRow[] = playerAudience
+    ? payload.players.map((player) =>
+        playerRoomPlayerToRow(player, payload.night?.nightKey ?? ""))
+    : payload.players.map(roomPlayerToRow);
+
   return {
-    night: payload.night,
+    night,
     hostDefaultThemeKey: payload.hostDefaultThemeKey,
-    games: payload.games,
+    games,
     categories: payload.categories,
-    players: payload.players.map(roomPlayerToRow),
-    currentGame: pickCurrentGame(payload.games),
+    players,
+    currentGame: pickCurrentGame(games),
     currentQuestion: payload.currentQuestion ? roomQuestionToRow(payload.currentQuestion) : null,
     lastResolvedQuestion: payload.lastResolvedQuestion
       ? roomQuestionToRow(payload.lastResolvedQuestion)
@@ -104,43 +147,74 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
     lastFireworksBeat: null,
     lastRoomMagicReaction: null,
     roomMagicReactions: payload.roomMagicReactions ?? [],
+    ...(playerAudience
+      ? { self: playerRoomPlayerToRow(payload.self, payload.night?.nightKey ?? "") }
+      : {}),
     isLoading: false,
   };
 }
 
-/** Explicitly adapt the safe HTTP DTO for the existing fallback-only consumers. */
 export function toRoomFallbackPayload(payload: RoomSnapshotPayload): RoomFallbackPayload {
+  const room = payloadToRoomSnapshot(payload);
   const common = {
-    night: payload.night,
+    night: room.night,
     hostDefaultThemeKey: payload.hostDefaultThemeKey,
-    games: payload.games,
+    games: room.games,
     categories: payload.categories,
-    players: payload.players.map(roomPlayerToRow),
+    players: room.players,
     currentQuestion: payload.currentQuestion ? roomQuestionToRow(payload.currentQuestion) : null,
     lastResolvedQuestion: payload.lastResolvedQuestion
       ? roomQuestionToRow(payload.lastResolvedQuestion)
       : null,
     currentReveal: payload.currentReveal,
     allQuestions: payload.allQuestions.map(roomQuestionToRow),
-    allScores: payload.allScores,
-    scores: payload.scores,
     roomMagicReactions: payload.roomMagicReactions ?? [],
   };
 
   if (payload.audience === "player") {
     return {
       ...common,
-      myAnswers: payload.myAnswers.map(playerCanonicalAnswerToRow),
-      myParticipations: payload.myParticipations.map(participationToRow),
+      allScores: payload.allScores.map(playerScoreToRow),
+      scores: payload.scores.map(playerScoreToRow),
+      myAnswers: payload.myAnswers.map((answer) =>
+        playerCanonicalAnswerToRow(answer, payload.self.playerKey)),
+      myParticipations: payload.myParticipations.map((participation) =>
+        participationToRow(participation, payload.self.playerKey)),
       liveAnswers: [],
+      questionScrambles: payload.questionScrambles,
     };
   }
 
   return {
     ...common,
+    allScores: payload.allScores,
+    scores: payload.scores,
     myAnswers: [],
     myParticipations: [],
     liveAnswers: payload.liveAnswers.map(hostLiveAnswerToRow),
+    questionScrambles: {},
+  };
+}
+
+function playerNightToRow(night: PlayerNightDTO): NightRow {
+  const { nightKey, ...safe } = night;
+  return { ...safe, id: nightKey, host_id: "", current_run_id: null };
+}
+
+function playerGameToRow(game: PlayerGameDTO, nightKey: string): GameRow {
+  return { ...game, night_id: nightKey };
+}
+
+function playerRoomPlayerToRow(player: PlayerRoomPlayer, nightKey: string): PlayerRow {
+  return {
+    id: player.playerKey,
+    night_id: nightKey,
+    display_name: player.displayName,
+    joined_at: player.joinedAt,
+    last_seen_at: player.lastSeenAt,
+    removed_at: player.removedAt,
+    app_switch_total_seconds: player.appSwitchTotalSeconds,
+    device_id: "",
   };
 }
 
@@ -153,8 +227,6 @@ function roomPlayerToRow(player: RoomPlayer): PlayerRow {
     last_seen_at: player.lastSeenAt,
     removed_at: player.removedAt,
     app_switch_total_seconds: player.appSwitchTotalSeconds,
-    // Room DTOs deliberately exclude bearer identity. Existing roster-only
-    // consumers require the generated row type, so use an inert local value.
     device_id: "",
   };
 }
@@ -175,17 +247,18 @@ function roomQuestionToRow(question: RoomQuestion): QuestionRow {
     point_value: question.pointValue,
     prompt: question.prompt,
     source: question.source,
-    // Consumers only inspect this after finish. A synthetic local value keeps
-    // their legacy type intact without adding a live answer to the wire DTO.
     correct_index: question.correctIndex ?? 0,
   };
 }
 
-function playerCanonicalAnswerToRow(answer: PlayerCanonicalAnswer): AnswerRow {
+function playerCanonicalAnswerToRow(
+  answer: PlayerCanonicalAnswer,
+  playerKey: string,
+): AnswerRow {
   return {
-    id: answer.id,
+    id: `answer:${answer.questionId}`,
     question_id: answer.questionId,
-    player_id: answer.playerId,
+    player_id: playerKey,
     chosen_index: answer.chosenIndex,
     scramble: answer.scramble,
     locked_at: answer.lockedAt,
@@ -201,8 +274,6 @@ function hostLiveAnswerToRow(answer: HostLiveAnswer): AnswerRow {
     question_id: answer.questionId,
     player_id: answer.playerId,
     chosen_index: answer.chosenIndex ?? 0,
-    // The host fallback never renders an answer's option order. This inert
-    // local value only satisfies the legacy raw-row consumer type.
     scramble: [0, 1, 2, 3],
     locked_at: "",
     ms_to_lock: answer.msToLock,
@@ -211,11 +282,26 @@ function hostLiveAnswerToRow(answer: HostLiveAnswer): AnswerRow {
   };
 }
 
-function participationToRow(participation: ParticipationDTO): ParticipationRow {
+function participationToRow(
+  participation: ParticipationDTO,
+  playerKey: string,
+): ParticipationRow {
   return {
-    id: participation.id,
-    player_id: participation.playerId,
+    id: `participation:${participation.gameId}`,
+    player_id: playerKey,
     game_id: participation.gameId,
     joined_at: participation.joinedAt,
+  };
+}
+
+function playerScoreToRow(score: PlayerScoreDTO): GameScoreRow {
+  return {
+    game_id: score.gameId,
+    player_id: score.playerKey,
+    display_name: score.displayName,
+    score: score.score,
+    correct_count: score.correctCount,
+    answered_count: score.answeredCount,
+    fastest_correct_ms: score.fastestCorrectMs,
   };
 }

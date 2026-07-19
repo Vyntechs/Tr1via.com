@@ -30,8 +30,7 @@ const payload = (tag: string): RoomSnapshotPayload => ({
   allScores: [],
   scores: [],
   self: {
-    id: "player-1",
-    nightId: tag,
+    playerKey: `player-${tag}`,
     displayName: "Alice",
     joinedAt: "2026-06-07T00:00:00Z",
     lastSeenAt: "2026-06-07T00:00:00Z",
@@ -39,9 +38,7 @@ const payload = (tag: string): RoomSnapshotPayload => ({
     appSwitchTotalSeconds: 0,
   },
   myAnswers: [{
-    id: "answer-1",
     questionId: "question-1",
-    playerId: "player-1",
     chosenIndex: 2,
     scramble: [2, 0, 3, 1],
     lockedAt: "2026-06-07T00:00:01Z",
@@ -50,6 +47,7 @@ const payload = (tag: string): RoomSnapshotPayload => ({
     awardedPoints: null,
   }],
   myParticipations: [],
+  questionScrambles: {},
 });
 
 describe("roomFallbackStore", () => {
@@ -75,9 +73,9 @@ describe("roomFallbackStore", () => {
     });
 
     expect(getRoomFallback().payload?.myAnswers).toEqual([{
-      id: "answer-1",
+      id: "answer:question-1",
       question_id: "question-1",
-      player_id: "player-1",
+      player_id: "player-n1",
       chosen_index: 2,
       scramble: [2, 0, 3, 1],
       locked_at: "2026-06-07T00:00:01Z",

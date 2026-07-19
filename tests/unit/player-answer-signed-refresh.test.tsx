@@ -93,8 +93,7 @@ function payload(
   return {
     audience: "player",
     night: {
-      id: "night-1",
-      host_id: "host-1",
+      nightKey: "night-key-1",
       venue_name: "Test Venue",
       room_code: "ABCDEF",
       scheduled_at: null,
@@ -108,7 +107,6 @@ function payload(
     hostDefaultThemeKey: "house",
     games: [{
       id: "game-1",
-      night_id: "night-1",
       game_no: 1,
       state: "live",
       started_at: "2026-07-18T18:05:00.000Z",
@@ -128,8 +126,7 @@ function payload(
       created_at: "2026-07-18T18:00:00.000Z",
     }],
     players: [{
-      id: "player-1",
-      nightId: "night-1",
+      playerKey: "player-key-1",
       displayName: "Maya",
       joinedAt: "2026-07-18T18:01:00.000Z",
       lastSeenAt: "2026-07-18T18:02:00.000Z",
@@ -156,8 +153,7 @@ function payload(
     currentReveal: null,
     allQuestions: [],
     self: {
-      id: "player-1",
-      nightId: "night-1",
+      playerKey: "player-key-1",
       displayName: "Maya",
       joinedAt: "2026-07-18T18:01:00.000Z",
       lastSeenAt: "2026-07-18T18:02:00.000Z",
@@ -166,21 +162,20 @@ function payload(
     },
     myAnswers,
     myParticipations: [{
-      id: "participation-1",
-      playerId: "player-1",
       gameId: "game-1",
       joinedAt: "2026-07-18T18:01:00.000Z",
     }],
     scores: [{
-      game_id: "game-1",
-      player_id: "player-1",
-      display_name: "Maya",
+      gameId: "game-1",
+      playerKey: "player-key-1",
+      displayName: "Maya",
       score: 0,
-      answered_count: 0,
-      correct_count: 0,
-      fastest_correct_ms: null,
+      answeredCount: 0,
+      correctCount: 0,
+      fastestCorrectMs: null,
     }],
     allScores: [],
+    questionScrambles: { "question-1": [0, 1, 2, 3] },
   };
 }
 
@@ -224,9 +219,7 @@ describe("player answer signed snapshot refresh", () => {
 
     await act(async () => {
       resolveCanonical(payload([{
-        id: "answer-1",
         questionId: "question-1",
-        playerId: "player-1",
         chosenIndex: 0,
         scramble: [0, 1, 2, 3],
         lockedAt: "2026-07-18T18:06:01.000Z",
@@ -257,29 +250,27 @@ describe("player answer signed snapshot refresh", () => {
     signed.myParticipations = [
       ...signed.myParticipations,
       {
-        id: "participation-2",
-        playerId: "player-1",
         gameId: "game-2",
         joinedAt: "2026-07-18T18:59:00.000Z",
       },
     ];
     signed.scores = [{
-      game_id: "game-2",
-      player_id: "player-1",
-      display_name: "Maya",
+      gameId: "game-2",
+      playerKey: "player-key-1",
+      displayName: "Maya",
       score: 0,
-      answered_count: 0,
-      correct_count: 0,
-      fastest_correct_ms: null,
+      answeredCount: 0,
+      correctCount: 0,
+      fastestCorrectMs: null,
     }];
     signed.allScores = [{
-      game_id: "game-1",
-      player_id: "player-1",
-      display_name: "Maya",
+      gameId: "game-1",
+      playerKey: "player-key-1",
+      displayName: "Maya",
       score: 500,
-      answered_count: 1,
-      correct_count: 1,
-      fastest_correct_ms: 1000,
+      answeredCount: 1,
+      correctCount: 1,
+      fastestCorrectMs: 1000,
     }];
     h.fetchSnapshot.mockResolvedValueOnce(signed);
     vi.stubGlobal(

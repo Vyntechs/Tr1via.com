@@ -34,10 +34,14 @@ import {
   serializeHostLiveAnswer,
   serializeParticipation,
   serializePlayerCanonicalAnswer,
+  serializePlayerRoomPlayer,
+  serializePlayerScore,
   serializePlayerSelf,
   serializeRoomPlayer,
   serializeRoomQuestion,
 } from "@/lib/room/roomAudience";
+import { presentationKey } from "@/lib/room/presentationKey";
+import { scrambleFor } from "@/lib/game/scramble";
 import type {
   CategoryRow,
   GameRow,
@@ -204,7 +208,7 @@ export async function GET(
 
   const games = (gamesRes.data ?? []) as GameRow[];
   const categories = stripJoins(categoriesRes.data ?? [], "games") as CategoryRow[];
-  const players = ((playersRes.data ?? []) as SafePlayerRow[]).map(serializeRoomPlayer);
+  const activePlayerRows = (playersRes.data ?? []) as SafePlayerRow[];
   const allQuestionsRaw = stripJoins(pickedRes.data ?? [], "categories") as QuestionRow[];
   const reveals = stripJoins(revealsRes.data ?? [], "games") as RevealRow[];
 
@@ -295,7 +299,7 @@ export async function GET(
         ? admin
             .from("answers")
             .select(
-              "id, player_id, question_id, chosen_index, scramble, ms_to_lock, is_correct, awarded_points, locked_at",
+              "question_id, chosen_index, scramble, ms_to_lock, is_correct, awarded_points, locked_at",
             )
             .eq("player_id", playerRow.id)
             .order("locked_at", { ascending: true })
@@ -303,7 +307,7 @@ export async function GET(
       mode === "player" && playerRow
         ? admin
             .from("game_participations")
-            .select("id, player_id, game_id, joined_at")
+            .select("game_id, joined_at")
             .eq("player_id", playerRow.id)
         : Promise.resolve({ data: [] as ParticipationRow[], error: null }),
       mode === "host" && night.room_magic_enabled === true
@@ -344,11 +348,9 @@ export async function GET(
     }));
 
   const common = {
-    night,
     hostDefaultThemeKey,
     games,
     categories,
-    players,
     // SECURITY: withhold correct_index for non-resolved questions.
     currentQuestion: currentQuestionRaw ? serializeRoomQuestion(currentQuestionRaw) : null,
     lastResolvedQuestion: lastResolvedRaw ? serializeRoomQuestion(lastResolvedRaw) : null,
@@ -360,18 +362,56 @@ export async function GET(
   };
 
   if (mode === "player" && playerRow) {
+    const secret = process.env.SESSION_SECRET;
+    if (!secret) return serverError();
+    const nightKey = presentationKey(secret, "player", "night", nightId, nightId);
+    const keyForPlayer = (rawPlayerId: string) =>
+      presentationKey(secret, "player", "player", nightId, rawPlayerId);
+    const playerKeys = new Map(
+      activePlayerRows.map((player) => [player.id, keyForPlayer(player.id)] as const),
+    );
+    const playerScores = allScores.flatMap((score) => {
+      if (score.player_id === null) return [];
+      const serialized = serializePlayerScore(score, keyForPlayer(score.player_id));
+      return serialized ? [serialized] : [];
+    });
+    const safeNight = { ...night } as Partial<NightRow>;
+    delete safeNight.id;
+    delete safeNight.host_id;
+    delete safeNight.current_run_id;
+    const safeGames = games.map((game) => {
+      const safeGame = { ...game } as Partial<GameRow>;
+      delete safeGame.night_id;
+      return safeGame;
+    });
+    const questionScrambles = Object.fromEntries(
+      allQuestionsRaw.map((question) => [question.id, scrambleFor(question.id, playerRow.id)]),
+    );
     return ok({
       ...common,
+      night: { ...safeNight, nightKey },
+      games: safeGames,
+      players: activePlayerRows.map((player) =>
+        serializePlayerRoomPlayer(player, playerKeys.get(player.id) ?? keyForPlayer(player.id))),
+      allScores: playerScores,
+      scores: currentGame
+        ? playerScores.filter((score) => score.gameId === currentGame.id)
+        : [],
       audience: "player" as const,
       live,
-      self: serializePlayerSelf(playerRow),
+      self: serializePlayerSelf(playerRow, keyForPlayer(playerRow.id)),
       myAnswers,
       myParticipations,
+      questionScrambles,
     });
   }
 
   return ok({
     ...common,
+    night,
+    players: activePlayerRows.map(serializeRoomPlayer),
+    allScores,
+    scores,
     audience: "host" as const,
     live,
     self: null,

@@ -118,9 +118,8 @@ describe("roomToTVSnapshot House Lights answer scoping", () => {
 
     expect(snapshot?.liveAnswers).toHaveLength(1);
     expect(snapshot?.liveAnswers[0]).toMatchObject({
-      id: "answer-live",
       question_id: "q-live",
-      player_id: "player-1",
+      player_key: "player-1",
     });
   });
 });

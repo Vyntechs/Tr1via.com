@@ -6,6 +6,7 @@ const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
 const authMock = vi.hoisted(() => ({
   getDeviceId: vi.fn(),
   requireOwnedPlayer: vi.fn(),
+  requireOwnedPlayerReference: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => adminMock);
@@ -50,6 +51,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
   authMock.requireOwnedPlayer.mockResolvedValue({
+    ok: true,
+    player: {
+      id: PLAYER_ID,
+      night_id: NIGHT_ID,
+      removed_at: null,
+      app_switch_total_seconds: 0,
+    },
+  });
+  authMock.requireOwnedPlayerReference.mockResolvedValue({
     ok: true,
     player: {
       id: PLAYER_ID,

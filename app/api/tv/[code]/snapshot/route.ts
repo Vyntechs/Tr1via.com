@@ -21,6 +21,7 @@ import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
+import { presentationKey } from "@/lib/room/presentationKey";
 import {
   serializeBoardQuestion,
   type TVBoardQuestionRow,
@@ -51,6 +52,11 @@ export async function GET(
   if (nightError) return serverError();
   if (!night) return notFound("room not found");
   const nightId = night.id;
+  const secret = process.env.SESSION_SECRET;
+  if (!secret) return serverError();
+  const nightKey = presentationKey(secret, "tv", "night", nightId, nightId);
+  const playerKeyFor = (rawPlayerId: string) =>
+    presentationKey(secret, "tv", "player", nightId, rawPlayerId);
   const roomMagicEnabled = Boolean(
     (night as { room_magic_enabled?: boolean | null }).room_magic_enabled,
   );
@@ -203,7 +209,7 @@ export async function GET(
 
   // Fetch game_scores for currentGame (used by Grid/Leaderboard/Finale).
   let scores: Array<{
-    player_id: string;
+    player_key: string;
     display_name: string;
     score: number;
     correct_count: number;
@@ -225,7 +231,7 @@ export async function GET(
           r.player_id !== null && r.display_name !== null,
         )
         .map((r) => ({
-          player_id: r.player_id,
+          player_key: playerKeyFor(r.player_id),
           display_name: r.display_name,
           score: Number(r.score ?? 0),
           correct_count: Number(r.correct_count ?? 0),
@@ -263,9 +269,8 @@ export async function GET(
   const targetResolved = targetQuestionRow?.finished_at != null;
 
   let liveAnswers: Array<{
-    id: string;
     question_id: string;
-    player_id: string;
+    player_key: string;
     player_name: string;
     ms_to_lock: number;
     is_correct: boolean | null;
@@ -274,7 +279,7 @@ export async function GET(
   if (targetQuestionId) {
     const { data: ans, error: answersError } = await admin
       .from("answers")
-      .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
+      .select("question_id, player_id, ms_to_lock, is_correct, chosen_index")
       .eq("question_id", targetQuestionId);
     if (answersError) return serverError();
     if (ans && ans.length > 0) {
@@ -282,9 +287,8 @@ export async function GET(
         (playersRes.data ?? []).map((p) => [p.id, p.display_name] as const),
       );
       liveAnswers = ans.map((a) => ({
-        id: a.id,
         question_id: a.question_id,
-        player_id: a.player_id,
+        player_key: playerKeyFor(a.player_id),
         player_name: playerMap.get(a.player_id) ?? "—",
         ms_to_lock: Number(a.ms_to_lock ?? 0),
         // Withheld until the target question is resolved (see SECURITY note above).
@@ -300,7 +304,7 @@ export async function GET(
   return ok({
     live,
     night: {
-      id: night.id,
+      id: nightKey,
       venueName: night.venue_name,
       themeKey: night.theme_key,
       hostDefaultThemeKey,
@@ -336,7 +340,7 @@ export async function GET(
     liveQuestionId: liveQuestion?.id ?? null,
     targetQuestionId,
     players: (playersRes.data ?? []).map((p) => ({
-      id: p.id,
+      id: playerKeyFor(p.id),
       displayName: p.display_name,
       joinedAt: p.joined_at,
       lastSeenAt: p.last_seen_at,

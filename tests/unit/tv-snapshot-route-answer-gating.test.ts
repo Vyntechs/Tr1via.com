@@ -26,6 +26,10 @@ vi.mock("@/lib/supabase/admin", () => adminMock);
 
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
 const CODE = "ABCDEF"; // valid: alphabet excludes I/L/O/0/1
+const PLAYER_ID = "22222222-2222-4222-8222-222222222222";
+const OTHER_PLAYER_ID = "33333333-3333-4333-8333-333333333333";
+const ANSWER_ID = "44444444-4444-4444-8444-444444444444";
+const OTHER_ANSWER_ID = "55555555-5555-4555-8555-555555555555";
 
 // A chainable, awaitable query stub. Chain methods return `this`; filters
 // (eq/is/not) actually narrow the seeded rows so the route's two distinct
@@ -120,24 +124,27 @@ function makeAdmin({
     // most-recently-resolved one (the reveal screen) via the 'resolve' reveal.
     questions: live ? [Q_UNPLAYED, Q_LIVE, Q_RESOLVED] : [Q_UNPLAYED, Q_RESOLVED],
     players: [
-      { id: "P1", display_name: "Alice", night_id: NIGHT_ID,
+      { id: PLAYER_ID, display_name: "Alice", night_id: NIGHT_ID,
         joined_at: "2026-06-07T00:00:00Z", last_seen_at: null, removed_at: null },
-      { id: "P2", display_name: "Bob", night_id: NIGHT_ID,
+      { id: OTHER_PLAYER_ID, display_name: "Bob", night_id: NIGHT_ID,
         joined_at: "2026-06-07T00:00:01Z", last_seen_at: null, removed_at: null },
     ],
     reveals: live ? [] : [{
       id: "r1", game_id: "G1", question_id: "q-resolved", event: "resolve",
       occurred_at: "2026-06-07T00:00:21Z", metadata: null,
     }],
-    game_scores: [],
+    game_scores: [{
+      game_id: "G1", player_id: PLAYER_ID, display_name: "Alice", score: 500,
+      answered_count: 1, correct_count: 1, fastest_correct_ms: 1200,
+    }],
     answers: [
       // Another player's pick on the LIVE question — the anti-cheat target a
       // player must never read off this public feed while the question is open.
-      { id: "a-live", player_id: "P2", question_id: "q-live", chosen_index: 2,
+      { id: OTHER_ANSWER_ID, player_id: OTHER_PLAYER_ID, question_id: "q-live", chosen_index: 2,
         scramble: [0, 1, 2, 3], ms_to_lock: 850, is_correct: null,
         awarded_points: null, locked_at: "2026-06-07T00:00:05Z" },
       // A pick on the RESOLVED question — the reveal screen legitimately reads it.
-      { id: "a-res", player_id: "P1", question_id: "q-resolved", chosen_index: 3,
+      { id: ANSWER_ID, player_id: PLAYER_ID, question_id: "q-resolved", chosen_index: 3,
         scramble: [0, 1, 2, 3], ms_to_lock: 1200, is_correct: true,
         awarded_points: 500, locked_at: "2026-06-07T00:00:10Z" },
     ],
@@ -170,7 +177,10 @@ function makeAdmin({
 }
 
 describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.SESSION_SECRET = "snapshot-test-secret";
+  });
 
   it("withholds correctIndex for unplayed + live questions, exposes it for resolved", async () => {
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
@@ -221,6 +231,34 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
     // The raw pick (2) must appear nowhere in the live-answers payload — catches
     // a re-inlined leak directly, the way the correctIndex guard above does.
     expect(JSON.stringify(body.liveAnswers)).not.toContain('"chosen_index":2');
+  });
+
+  it("never serializes raw night, player, or answer identifiers anywhere in the public TV response", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    const json = JSON.stringify(body);
+
+    for (const rawIdentifier of [
+      NIGHT_ID,
+      PLAYER_ID,
+      OTHER_PLAYER_ID,
+      ANSWER_ID,
+      OTHER_ANSWER_ID,
+    ]) {
+      expect(json).not.toContain(rawIdentifier);
+    }
+    expect(body.players[0]).toMatchObject({ displayName: "Alice" });
+    expect(body.players[0].id).toEqual(expect.any(String));
+    expect(body.scores[0]).toMatchObject({ display_name: "Alice", score: 500 });
+    expect(body.scores[0]).not.toHaveProperty("player_id");
+    expect(body.liveAnswers[0]).not.toHaveProperty("id");
+    expect(body.liveAnswers[0]).not.toHaveProperty("player_id");
   });
 
   it("exposes chosen_index + is_correct once the target question is RESOLVED (reveal screen)", async () => {

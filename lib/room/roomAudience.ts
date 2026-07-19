@@ -15,7 +15,7 @@ type SafePlayerRow = Pick<
   | "app_switch_total_seconds"
 >;
 
-/** The roster and player-self fields that are safe on a room-facing surface. */
+/** Authenticated-host roster row. Player audiences use PlayerRoomPlayer. */
 export interface RoomPlayer {
   id: string;
   nightId: string;
@@ -26,10 +26,18 @@ export interface RoomPlayer {
   appSwitchTotalSeconds: number;
 }
 
+/** Signed-player roster row. Correlates presentation state without DB ids. */
+export interface PlayerRoomPlayer {
+  playerKey: string;
+  displayName: string;
+  joinedAt: string;
+  lastSeenAt: string;
+  removedAt: string | null;
+  appSwitchTotalSeconds: number;
+}
+
 export interface PlayerCanonicalAnswer {
-  id: string;
   questionId: string;
-  playerId: string;
   chosenIndex: 0 | 1 | 2 | 3;
   scramble: [number, number, number, number];
   lockedAt: string;
@@ -48,10 +56,18 @@ export interface HostLiveAnswer {
 }
 
 export interface ParticipationDTO {
-  id: string;
-  playerId: string;
   gameId: string;
   joinedAt: string;
+}
+
+export interface PlayerScoreDTO {
+  gameId: string | null;
+  playerKey: string;
+  displayName: string;
+  score: number;
+  correctCount: number;
+  answeredCount: number;
+  fastestCorrectMs: number | null;
 }
 
 export interface RoomQuestion {
@@ -73,9 +89,7 @@ export interface RoomQuestion {
 }
 
 interface PlayerCanonicalAnswerSource {
-  id: string;
   question_id: string;
-  player_id: string;
   chosen_index: number;
   scramble: unknown;
   locked_at: string;
@@ -105,17 +119,32 @@ export function serializeRoomPlayer(player: SafePlayerRow): RoomPlayer {
   };
 }
 
-export function serializePlayerSelf(player: SafePlayerRow): RoomPlayer {
-  return serializeRoomPlayer(player);
+export function serializePlayerRoomPlayer(
+  player: SafePlayerRow,
+  playerKey: string,
+): PlayerRoomPlayer {
+  return {
+    playerKey,
+    displayName: player.display_name,
+    joinedAt: player.joined_at,
+    lastSeenAt: player.last_seen_at,
+    removedAt: player.removed_at,
+    appSwitchTotalSeconds: player.app_switch_total_seconds,
+  };
+}
+
+export function serializePlayerSelf(
+  player: SafePlayerRow,
+  playerKey: string,
+): PlayerRoomPlayer {
+  return serializePlayerRoomPlayer(player, playerKey);
 }
 
 export function serializePlayerCanonicalAnswer(
   answer: PlayerCanonicalAnswerSource,
 ): PlayerCanonicalAnswer {
   return {
-    id: answer.id,
     questionId: answer.question_id,
-    playerId: answer.player_id,
     chosenIndex: optionIndex(answer.chosen_index),
     scramble: answerScramble(answer.scramble),
     lockedAt: answer.locked_at,
@@ -139,13 +168,35 @@ export function serializeHostLiveAnswer(
 }
 
 export function serializeParticipation(
-  participation: Pick<ParticipationRow, "id" | "player_id" | "game_id" | "joined_at">,
+  participation: Pick<ParticipationRow, "game_id" | "joined_at">,
 ): ParticipationDTO {
   return {
-    id: participation.id,
-    playerId: participation.player_id,
     gameId: participation.game_id,
     joinedAt: participation.joined_at,
+  };
+}
+
+export function serializePlayerScore(
+  score: {
+    game_id: string | null;
+    player_id: string | null;
+    display_name: string | null;
+    score: number | null;
+    correct_count: number | null;
+    answered_count: number | null;
+    fastest_correct_ms: number | null;
+  },
+  playerKey: string,
+): PlayerScoreDTO | null {
+  if (score.player_id === null || score.display_name === null) return null;
+  return {
+    gameId: score.game_id,
+    playerKey,
+    displayName: score.display_name,
+    score: Number(score.score ?? 0),
+    correctCount: Number(score.correct_count ?? 0),
+    answeredCount: Number(score.answered_count ?? 0),
+    fastestCorrectMs: score.fastest_correct_ms,
   };
 }
 

@@ -326,7 +326,6 @@ function RoomStateMachine({
   useLockInSync({
     gameId: currentGame?.id ?? "",
     active: themeKey === "june" && !!currentGame?.id,
-    acknowledged: rippledLocksRef.current,
     onMissed: (lock) => rippleForLocks([lock.playerId]),
   });
 
@@ -480,6 +479,7 @@ function RoomStateMachine({
             categories={snapshot.categories}
             onServerConfirm={handleServerConfirm}
             themeKey={themeKey}
+            serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
           />
         );
       }
@@ -501,6 +501,7 @@ function RoomStateMachine({
           summary={summaryFor(currentQuestion.id)}
           neighborhood={neighborhood}
           roomMagicEnabled={roomMagicEnabled}
+          serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
         />
       );
     }
@@ -534,6 +535,7 @@ function RoomStateMachine({
             summary={summaryFor(lastResolvedQuestion.id)}
             neighborhood={neighborhood}
             roomMagicEnabled={roomMagicEnabled}
+            serverScramble={snapshot.questionScrambles?.[lastResolvedQuestion.id]}
           />
         );
       }
@@ -748,6 +750,7 @@ function QuestionView({
   categories,
   onServerConfirm,
   themeKey,
+  serverScramble,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -760,11 +763,15 @@ function QuestionView({
    *  the bolt ceremony from the parent, which survives this unmount. */
   onServerConfirm: () => void;
   themeKey?: ThemeKey;
+  serverScramble?: [number, number, number, number];
 }) {
   // Compute the player-specific scramble. Same fn the server runs to verify
   // submissions, so the slot the player taps maps back to the canonical
   // option index identically on both sides.
-  const scramble = useMemo(() => scrambleFor(question.id, player.id), [question.id, player.id]);
+  const scramble = useMemo(
+    () => serverScramble ?? scrambleFor(question.id, player.id),
+    [question.id, player.id, serverScramble],
+  );
   const optionsInScrambleOrder = useMemo<[string, string, string, string]>(() => {
     const raw = question.options;
     return [
@@ -992,6 +999,7 @@ function RevealView({
   summary,
   neighborhood,
   roomMagicEnabled,
+  serverScramble,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -1015,10 +1023,11 @@ function RevealView({
   neighborhood: Neighborhood;
   /** Night-level Room Magic flag. Controls still mount only post-resolve. */
   roomMagicEnabled: boolean;
+  serverScramble?: [number, number, number, number];
 }) {
   // Use the player's saved scramble when we have an answer; otherwise compute
   // it deterministically so the correct slot still maps correctly.
-  const scramble = myAnswer?.scramble ?? scrambleFor(question.id, player.id);
+  const scramble = myAnswer?.scramble ?? serverScramble ?? scrambleFor(question.id, player.id);
 
   // The answer (correct_index) reaches the player post-resolve via the resolve/
   // end-early broadcast hint or the 'resolve' reveal metadata — players can't

@@ -124,7 +124,7 @@ export function roomToTVSnapshot(
         s.player_id !== null && s.display_name !== null,
     )
     .map((s) => ({
-      player_id: s.player_id,
+      player_key: s.player_id,
       display_name: s.display_name,
       score: Number(s.score ?? 0),
       correct_count: Number(s.correct_count ?? 0),
@@ -140,9 +140,8 @@ export function roomToTVSnapshot(
     ? answers
         .filter((a) => a.question_id === targetQuestionId)
         .map((a) => ({
-          id: a.id,
           question_id: a.question_id,
-          player_id: a.player_id,
+          player_key: a.player_id,
           player_name: playerNameById.get(a.player_id) ?? "—",
           ms_to_lock: Number(a.ms_to_lock ?? 0),
           is_correct: a.is_correct,

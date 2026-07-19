@@ -83,7 +83,10 @@ async function callRoute() {
 }
 
 describe("GET /api/tv/[code]/snapshot — Room Magic", () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.SESSION_SECRET = "snapshot-test-secret";
+  });
 
   it("maps the night-level Room Magic flag onto the TV night payload", async () => {
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin(true));

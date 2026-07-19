@@ -116,8 +116,7 @@ function playerPayload(label = "confirmed"): RoomSnapshotPayload {
   return {
     audience: "player",
     night: {
-      id: "night-1",
-      host_id: "host-1",
+      nightKey: "night-key-1",
       venue_name: label,
       room_code: "ABCDEF",
       scheduled_at: null,
@@ -132,7 +131,6 @@ function playerPayload(label = "confirmed"): RoomSnapshotPayload {
     games: [
       {
         id: "game-1",
-        night_id: "night-1",
         game_no: 1,
         state: "live",
         started_at: "2026-07-18T18:05:00.000Z",
@@ -156,8 +154,7 @@ function playerPayload(label = "confirmed"): RoomSnapshotPayload {
     ],
     players: [
       {
-        id: "player-1",
-        nightId: "night-1",
+        playerKey: "player-key-1",
         displayName: "Maya",
         joinedAt: "2026-07-18T18:01:00.000Z",
         lastSeenAt: "2026-07-18T18:02:00.000Z",
@@ -185,8 +182,7 @@ function playerPayload(label = "confirmed"): RoomSnapshotPayload {
     currentReveal: null,
     allQuestions: [],
     self: {
-      id: "player-1",
-      nightId: "night-1",
+      playerKey: "player-key-1",
       displayName: "Maya",
       joinedAt: "2026-07-18T18:01:00.000Z",
       lastSeenAt: "2026-07-18T18:02:00.000Z",
@@ -195,9 +191,7 @@ function playerPayload(label = "confirmed"): RoomSnapshotPayload {
     },
     myAnswers: [
       {
-        id: "answer-1",
         questionId: "old-question",
-        playerId: "player-1",
         chosenIndex: 2,
         scramble: [2, 0, 3, 1],
         lockedAt: "2026-07-18T18:04:00.000Z",
@@ -208,24 +202,23 @@ function playerPayload(label = "confirmed"): RoomSnapshotPayload {
     ],
     myParticipations: [
       {
-        id: "participation-1",
-        playerId: "player-1",
         gameId: "game-1",
         joinedAt: "2026-07-18T18:01:00.000Z",
       },
     ],
     scores: [
       {
-        game_id: "game-1",
-        player_id: "player-1",
-        display_name: "Maya",
+        gameId: "game-1",
+        playerKey: "player-key-1",
+        displayName: "Maya",
         score: 110,
-        answered_count: 1,
-        correct_count: 1,
-        fastest_correct_ms: 2200,
+        answeredCount: 1,
+        correctCount: 1,
+        fastestCorrectMs: 2200,
       },
     ],
     allScores: [],
+    questionScrambles: { "question-1": [0, 1, 2, 3] },
   };
 }
 
@@ -260,9 +253,9 @@ describe("useRoom player audience", () => {
     rerender({ sessionReady: true });
 
     await waitFor(() => expect(result.current.isLoading).toBe(false));
-    expect(result.current.self?.id).toBe("player-1");
-    expect(result.current.myAnswers?.[0]?.id).toBe("answer-1");
-    expect(result.current.myParticipations?.[0]?.id).toBe("participation-1");
+    expect(result.current.self?.id).toBe("player-key-1");
+    expect(result.current.myAnswers?.[0]?.id).toBe("answer:old-question");
+    expect(result.current.myParticipations?.[0]?.id).toBe("participation:game-1");
     expect(result.current.scores?.[0]?.score).toBe(110);
     expect(h.fromCalls).toEqual([]);
     expect(h.channelNames).toEqual(["room:ABCDEF"]);

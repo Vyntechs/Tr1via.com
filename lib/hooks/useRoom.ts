@@ -100,6 +100,9 @@ export interface RoomSnapshot {
   allScores?: GameScoreRow[];
   /** Picked questions used for player-only recap/category derivation. */
   allQuestions?: QuestionRow[];
+  /** Server-derived visible answer order for the signed player. Raw player
+   * identity stays server-side; resilient submission must remain slot-only. */
+  questionScrambles?: Record<string, [number, number, number, number]>;
   /** Ask the signed player route for a fresh canonical snapshot. */
   requestRefresh?: () => void;
   /** True while the initial snapshot fetch is in flight. */
@@ -154,6 +157,7 @@ const EMPTY: RoomSnapshot = {
   scores: [],
   allScores: [],
   allQuestions: [],
+  questionScrambles: {},
   isLoading: true,
 };
 
@@ -1297,12 +1301,13 @@ function playerPayloadToRoomSnapshot(
   const fallback = toRoomFallbackPayload(payload);
   return {
     ...room,
-    self: fallback.players.find((player) => player.id === payload.self.id) ?? null,
+    self: room.self ?? null,
     myAnswers: fallback.myAnswers,
     myParticipations: fallback.myParticipations,
     scores: fallback.scores,
     allScores: fallback.allScores,
     allQuestions: fallback.allQuestions,
+    questionScrambles: fallback.questionScrambles,
   };
 }
 

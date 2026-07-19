@@ -96,7 +96,7 @@ describe("payloadToRoomSnapshot", () => {
     }) as GameRow;
 
   const basePayload = (): RoomSnapshotPayload => ({
-    night: { id: "n1" } as RoomSnapshotPayload["night"],
+    night: { nightKey: "night-key-1" } as Extract<RoomSnapshotPayload, { audience: "player" }>["night"],
     hostDefaultThemeKey: "house",
     games: [game({ id: "g1", game_no: 1, state: "done", ended_at: "2026-01-01T00:00:00Z" }), game({ id: "g2", game_no: 2, state: "live" })],
     categories: [],
@@ -108,8 +108,7 @@ describe("payloadToRoomSnapshot", () => {
     allScores: [],
     audience: "player",
     self: {
-      id: "p1",
-      nightId: "n1",
+      playerKey: "player-key-1",
       displayName: "Player",
       joinedAt: "2026-01-01T00:00:00Z",
       lastSeenAt: "2026-01-01T00:00:00Z",
@@ -118,6 +117,7 @@ describe("payloadToRoomSnapshot", () => {
     },
     myAnswers: [],
     myParticipations: [],
+    questionScrambles: {},
     scores: [],
   });
 
@@ -131,13 +131,16 @@ describe("payloadToRoomSnapshot", () => {
     expect(snap.isLoading).toBe(false);
     expect(snap.lastBroadcast).toBeNull();
     expect(snap.lastRoomMagicReaction).toBeNull();
+    expect(snap.self?.id).toBe("player-key-1");
   });
 
   it("passes night/games/categories/players through unchanged", () => {
     const p = basePayload();
     const snap = payloadToRoomSnapshot(p);
-    expect(snap.night).toBe(p.night);
-    expect(snap.games).toBe(p.games);
+    expect(snap.night?.id).toBe("night-key-1");
+    expect(snap.games).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: "g1", night_id: "night-key-1" }),
+    ]));
     expect(snap.hostDefaultThemeKey).toBe("house");
   });
 });

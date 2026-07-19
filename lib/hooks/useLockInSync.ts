@@ -18,18 +18,27 @@ export interface LockInRecord {
 export interface UseLockInSyncOpts {
   gameId: string;
   active: boolean;
+  audience?: "player" | "tv";
   acknowledged?: Set<string>;
   onMissed?: (lock: LockInRecord) => void;
 }
 
 const POLL_MS = 3000;
 
-export function useLockInSync({ gameId, active, acknowledged, onMissed }: UseLockInSyncOpts) {
+export function useLockInSync({
+  gameId,
+  active,
+  audience = "player",
+  acknowledged,
+  onMissed,
+}: UseLockInSyncOpts) {
   // Refs keep the latest callback/set without recreating the interval.
   const onMissedRef = useRef(onMissed);
   const acknowledgedRef = useRef(acknowledged);
-  onMissedRef.current = onMissed;
-  acknowledgedRef.current = acknowledged;
+  useEffect(() => {
+    onMissedRef.current = onMissed;
+    acknowledgedRef.current = acknowledged;
+  }, [acknowledged, onMissed]);
 
   useEffect(() => {
     if (!active) return;
@@ -37,7 +46,7 @@ export function useLockInSync({ gameId, active, acknowledged, onMissed }: UseLoc
 
     async function tick() {
       try {
-        const res = await fetch(`/api/games/${gameId}/locks`);
+        const res = await fetch(`/api/games/${gameId}/locks?audience=${audience}`);
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as { locks: LockInRecord[] };
         const ack = acknowledgedRef.current ?? new Set<string>();
@@ -55,5 +64,5 @@ export function useLockInSync({ gameId, active, acknowledged, onMissed }: UseLoc
       cancelled = true;
       clearInterval(handle);
     };
-  }, [gameId, active]);
+  }, [gameId, active, audience]);
 }
