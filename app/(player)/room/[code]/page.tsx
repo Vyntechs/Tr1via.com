@@ -88,11 +88,16 @@ import type {
   CategoryRow,
   GameRow,
   GameScoreRow,
+  ParticipationRow,
   PlayerRow,
   QuestionRow,
 } from "@/lib/supabase/types";
 
 const HEARTBEAT_INTERVAL_MS = 10_000;
+const EMPTY_ANSWERS: AnswerRow[] = [];
+const EMPTY_PARTICIPATIONS: ParticipationRow[] = [];
+const EMPTY_SCORES: GameScoreRow[] = [];
+const EMPTY_QUESTIONS: QuestionRow[] = [];
 
 export default function PlayerRoomPage() {
   const params = useParams<{ code: string }>();
@@ -246,7 +251,8 @@ function RoomStateMachine({
 
   // Only server-confirmed answers from the signed snapshot may enter scoring
   // or move this state machine into PlayerLocked.
-  const myAnswers = snapshot.myAnswers ?? [];
+  const myAnswers = snapshot.myAnswers ?? EMPTY_ANSWERS;
+  const allQuestions = snapshot.allQuestions ?? EMPTY_QUESTIONS;
 
   // Map every picked question_id → its game_id for the whole night so the reveal
   // running total can be scoped to the CURRENT game. The signed payload carries
@@ -254,12 +260,12 @@ function RoomStateMachine({
   const questionGameMap = useMemo(() => {
     const categoryGame = new Map(snapshot.categories.map((c) => [c.id, c.game_id]));
     const map = new Map<string, string>();
-    for (const question of snapshot.allQuestions ?? []) {
+    for (const question of allQuestions) {
       const gameId = categoryGame.get(question.category_id);
       if (gameId) map.set(question.id, gameId);
     }
     return map;
-  }, [snapshot.categories, snapshot.allQuestions]);
+  }, [snapshot.categories, allQuestions]);
 
   // June: the water reflects the reveal the moment this phone enters it. The
   // snapshot clears currentQuestion when finished_at fires and holds the reveal
@@ -324,7 +330,8 @@ function RoomStateMachine({
     onMissed: (lock) => rippleForLocks([lock.playerId]),
   });
 
-  const scores = snapshot.scores ?? [];
+  const scores = snapshot.scores ?? EMPTY_SCORES;
+  const allScores = snapshot.allScores ?? scores;
 
   // 1-based rank, or `null` if the scores fetch hasn't landed yet OR the
   // player isn't in the view (missing participation row). `null` propagates
@@ -341,22 +348,24 @@ function RoomStateMachine({
   // and July phones get their earned reveal fireworks (Phase 3) instead of a strike;
   // a lightning bolt on the 4th would be off-theme.
   const [boltActive, setBoltActive] = useState(false);
+  const requestSnapshotRefresh = snapshot.requestRefresh;
   const handleServerConfirm = useCallback(() => {
+    requestSnapshotRefresh?.();
     if (lockInCeremonyFor(themeKey).ceremony !== "lightning") return;
     setBoltActive(true);
-  }, [themeKey]);
+  }, [requestSnapshotRefresh, themeKey]);
   // Reset if a new question arrives while the bolt is still playing.
   useEffect(() => {
     setBoltActive(false);
   }, [currentQuestion?.id]);
 
-  const myParticipations = snapshot.myParticipations ?? [];
+  const myParticipations = snapshot.myParticipations ?? EMPTY_PARTICIPATIONS;
   // Optimistic flag: postgres_changes for game_participations doesn't reach
   // device-cookie sessions (RLS evaluation differs from REST). When the
   // player taps Join Game 2, the API succeeds but the local hook never sees
   // the new row, so the screen would never advance. Flip this on success so
-  // the state machine moves forward immediately. Same pattern as the
-  // optimistic answer fix.
+  // the state machine moves forward immediately. Answers deliberately do not
+  // use this shortcut because their canonical row drives locking and scoring.
   const [optimisticInGame2, setOptimisticInGame2] = useState(false);
   const inGame2 = useMemo(() => {
     if (optimisticInGame2) return true;
@@ -387,11 +396,11 @@ function RoomStateMachine({
     ? myAnswers.find((a) => a.question_id === resolvedQuestion.id) ?? null
     : null;
   const amCorrect = playerWasCorrect(myResolvedAnswer, resolvedQuestion?.correct_index ?? null);
-  const neighborhood: Neighborhood = buildNeighborhood(scores ?? [], me.id, 4);
+  const neighborhood: Neighborhood = buildNeighborhood(scores, me.id, 4);
 
   // ── Compute the screen content. The bolt overlay is rendered once below,
   //    outside this branch, so it persists across the QuestionView→LockedView
-  //    transition that happens on optimistic lock-in.
+  //    transition after the signed snapshot confirms the answer row.
   let inner: React.ReactNode;
 
   // ── Between games: 'join' recap (not opted in) or 'waiting' (opted in, G2 not started) ──
@@ -419,8 +428,8 @@ function RoomStateMachine({
         playerName={me.display_name}
         myAnswers={myAnswers}
         categories={snapshot.categories}
-        allQuestions={snapshot.allQuestions ?? []}
-        scores={scores}
+        allQuestions={allQuestions}
+        scores={allScores}
         joined={betweenView === "waiting" || waitingForGame2FirstQuestion}
         onJoinSuccess={() => setOptimisticInGame2(true)}
         // The same "Tonight's Topics" the TV/lobby show — here it resolves to the
@@ -454,8 +463,8 @@ function RoomStateMachine({
             categories={snapshot.categories}
             game={currentGame}
             themeKey={themeKey}
-            standings={buildGame1Standings(scores ?? [], me.id)}
-            totalPlayers={scores && scores.length > 0 ? scores.length : snapshot.players.length}
+            standings={buildGame1Standings(scores, me.id)}
+            totalPlayers={scores.length > 0 ? scores.length : snapshot.players.length}
             roomMagicEnabled={roomMagicEnabled}
           />
         );
@@ -798,19 +807,18 @@ function QuestionView({
     onZero: handleZero,
   });
 
-  // Optimistic submit with exponential-backoff retry on transient failures.
-  // The UI flips to "locked" the moment the player taps; the hook keeps
-  // retrying in the background. A failed-after-retries state surfaces a
-  // small retry prompt the player can tap to re-attempt manually.
+  // Submit with exponential-backoff retry on transient failures. The tapped
+  // question disables while sending, but PlayerLocked waits for the signed
+  // snapshot to carry the canonical answer. A failed-after-retries state
+  // surfaces a small retry prompt the player can tap to re-attempt manually.
   const { submit, status: submitStatus, retry, confirmedAt } = useAnswerSubmit({
     questionId: question.id,
     scramble: Array.from(scramble),
   });
 
-  // Propagate server confirmation up to the parent (RoomStateMachine) so
-  // the bolt overlay can survive the QuestionView→LockedView unmount.
-  // confirmedAt fires ~150-300ms after the tap; by that point QuestionView
-  // may already be gone if the optimistic answer flipped the parent screen.
+  // Propagate server confirmation so the parent immediately refreshes the
+  // signed snapshot and can keep any themed bolt across the canonical
+  // QuestionView→LockedView transition.
   useEffect(() => {
     if (!confirmedAt) return;
     onServerConfirm();

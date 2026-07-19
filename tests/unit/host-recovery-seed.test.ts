@@ -49,6 +49,7 @@ const payload = {
     },
   ],
   scores: [],
+  allScores: [],
   allQuestions: [],
   myAnswers: [],
   myParticipations: [],

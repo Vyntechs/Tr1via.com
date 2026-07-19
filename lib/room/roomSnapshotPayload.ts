@@ -15,7 +15,6 @@ import type {
 import type { RoomSnapshot } from "@/lib/hooks/useRoom";
 import type { RoomMagicReactionEvent } from "@/lib/room-magic/reactions";
 import {
-  serializeRoomQuestion,
   type HostLiveAnswer,
   type ParticipationDTO,
   type PlayerCanonicalAnswer,
@@ -36,6 +35,7 @@ interface RoomSnapshotBase {
   lastResolvedQuestion: RoomQuestion | null;
   currentReveal: RevealRow | null;
   allQuestions: RoomQuestion[];
+  allScores: GameScoreRow[];
   scores: GameScoreRow[];
   roomMagicReactions?: RoomMagicReactionEvent[];
 }
@@ -74,6 +74,7 @@ export interface RoomFallbackPayload {
   allQuestions: QuestionRow[];
   myAnswers: AnswerRow[];
   myParticipations: ParticipationRow[];
+  allScores: GameScoreRow[];
   scores: GameScoreRow[];
   liveAnswers: AnswerRow[];
   roomMagicReactions: RoomMagicReactionEvent[];
@@ -115,6 +116,7 @@ export function toRoomFallbackPayload(payload: RoomSnapshotPayload): RoomFallbac
       : null,
     currentReveal: payload.currentReveal,
     allQuestions: payload.allQuestions.map(roomQuestionToRow),
+    allScores: payload.allScores,
     scores: payload.scores,
     roomMagicReactions: payload.roomMagicReactions ?? [],
   };

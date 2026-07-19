@@ -50,6 +50,7 @@ function qb(rows: Record<string, unknown>[], error: { message: string } | null =
       return b;
     },
     eq: (c: string, v: unknown) => apply(c, (r) => r[c] === v),
+    in: (c: string, values: unknown[]) => apply(c, (r) => values.includes(r[c])),
     is: (c: string, v: unknown) => apply(c, (r) => (r[c] ?? null) === v),
     not: (c: string, _op: string, v: unknown) => apply(c, (r) => (r[c] ?? null) !== v),
     gte: () => b,
@@ -63,7 +64,7 @@ function qb(rows: Record<string, unknown>[], error: { message: string } | null =
 }
 
 const Q_LIVE = {
-  id: "q-live", category_id: "C1", point_value: 400, prompt: "P2",
+  id: "q-live", category_id: "C2", point_value: 400, prompt: "P2",
   options: ["a", "b", "c", "d"], correct_index: 1, image_url: null,
   fact_blurb: null, played_at: "2026-06-07T00:00:00Z", finished_at: null,
   is_picked: true,
@@ -83,11 +84,18 @@ function makeAdmin(errorTable?: string) {
       is_locked: false, room_magic_enabled: true, hosts: { default_theme_key: "house" },
     }],
     games: [{
-      id: "G1", game_no: 1, state: "live", started_at: null, ended_at: null,
-      category_count: 1, question_count: 7, night_id: NIGHT_ID,
+      id: "G1", game_no: 1, state: "done", started_at: null,
+      ended_at: "2026-06-07T00:10:00Z", category_count: 1,
+      question_count: 7, night_id: NIGHT_ID,
+    }, {
+      id: "G2", game_no: 2, state: "live", started_at: "2026-06-07T00:11:00Z",
+      ended_at: null, category_count: 1, question_count: 7, night_id: NIGHT_ID,
     }],
     categories: [{
       id: "C1", game_id: "G1", name: "Cat", topic: "t", position: 0,
+      color: null, state: "ready",
+    }, {
+      id: "C2", game_id: "G2", name: "Cat 2", topic: "t2", position: 0,
       color: null, state: "ready",
     }],
     questions: [Q_LIVE, Q_RESOLVED],
@@ -101,7 +109,13 @@ function makeAdmin(errorTable?: string) {
       last_seen_at: null, removed_at: null, app_switch_total_seconds: 0,
     }],
     reveals: [],
-    game_scores: [],
+    game_scores: [{
+      game_id: "G1", player_id: PLAYER_ID, display_name: "Alice", score: 500,
+      answered_count: 1, correct_count: 1, fastest_correct_ms: 1200,
+    }, {
+      game_id: "G2", player_id: PLAYER_ID, display_name: "Alice", score: 0,
+      answered_count: 0, correct_count: 0, fastest_correct_ms: null,
+    }],
     answers: [{
       id: "a1", player_id: PLAYER_ID, question_id: "q-resolved",
       chosen_index: 3, scramble: SCRAMBLE, ms_to_lock: 1200,
@@ -198,6 +212,23 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(body.myAnswers[0].scramble).toEqual(SCRAMBLE);
     expect(json).not.toContain('"id":"a2"');
     expect(body).not.toHaveProperty("liveAnswers");
+  });
+
+  it("PLAYER mode: carries prior-game standings separately from current-game scores", async () => {
+    authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "x" });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.scores).toEqual([
+      expect.objectContaining({ game_id: "G2", player_id: PLAYER_ID, score: 0 }),
+    ]);
+    expect(body.allScores).toEqual(expect.arrayContaining([
+      expect.objectContaining({ game_id: "G1", player_id: PLAYER_ID, score: 500 }),
+      expect.objectContaining({ game_id: "G2", player_id: PLAYER_ID, score: 0 }),
+    ]));
   });
 
   it("HOST mode: owning host gets room state with the same gating", async () => {

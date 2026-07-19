@@ -13,7 +13,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { parseRoomCode } from "@/lib/game/room-code";
 import { useRevalidateOnFocus } from "@/lib/hooks/useRevalidateOnFocus";
@@ -96,8 +96,12 @@ export interface RoomSnapshot {
   myParticipations?: ParticipationRow[];
   /** Current game's canonical leaderboard. */
   scores?: GameScoreRow[];
+  /** Canonical leaderboards across every game in the night. */
+  allScores?: GameScoreRow[];
   /** Picked questions used for player-only recap/category derivation. */
   allQuestions?: QuestionRow[];
+  /** Ask the signed player route for a fresh canonical snapshot. */
+  requestRefresh?: () => void;
   /** True while the initial snapshot fetch is in flight. */
   isLoading: boolean;
 }
@@ -148,6 +152,7 @@ const EMPTY: RoomSnapshot = {
   myAnswers: [],
   myParticipations: [],
   scores: [],
+  allScores: [],
   allQuestions: [],
   isLoading: true,
 };
@@ -180,6 +185,10 @@ const PLAYER_QUESTION_COLUMNS =
 
 export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs): RoomSnapshot {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(EMPTY);
+  const playerRefreshRef = useRef<(() => void) | null>(null);
+  const requestPlayerRefresh = useCallback(() => {
+    playerRefreshRef.current?.();
+  }, []);
   const waitingForSession = audience === "player" && !sessionReady;
 
   // Bumps when the tab returns from background OR the network comes back.
@@ -352,13 +361,16 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           }));
           setReachability("ok");
         } catch {
-          if (cancelled || bootstrapAbort.signal.aborted) return;
+          if (cancelled || bootstrapAbort.signal.aborted || version !== requestVersion) return;
           setReachability("unreachable");
           // Only the initial empty snapshot stops loading on failure. A later
           // recovery failure leaves the last confirmed room fully visible.
           setSnapshot((prev) => ({ ...prev, isLoading: false }));
         }
       }
+
+      const requestRefresh = () => void refreshPlayerSnapshot();
+      playerRefreshRef.current = requestRefresh;
 
       function refetchForBroadcast(tag?: BroadcastTag): void {
         if (tag) {
@@ -470,6 +482,9 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       void refreshPlayerSnapshot();
       return () => {
         cancelled = true;
+        if (playerRefreshRef.current === requestRefresh) {
+          playerRefreshRef.current = null;
+        }
         bootstrapAbort.abort();
         void supa.removeChannel(roomChannel);
         setChannelHealth(undefined);
@@ -1264,7 +1279,13 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     };
   }, [roomCode, audience, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick]);
 
-  return snapshot;
+  return useMemo(
+    () =>
+      audience === "player"
+        ? { ...snapshot, requestRefresh: requestPlayerRefresh }
+        : snapshot,
+    [audience, requestPlayerRefresh, snapshot],
+  );
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────
@@ -1280,6 +1301,7 @@ function playerPayloadToRoomSnapshot(
     myAnswers: fallback.myAnswers,
     myParticipations: fallback.myParticipations,
     scores: fallback.scores,
+    allScores: fallback.allScores,
     allQuestions: fallback.allQuestions,
   };
 }

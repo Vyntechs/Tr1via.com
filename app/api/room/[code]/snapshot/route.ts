@@ -35,7 +35,6 @@ import {
   serializeRoomQuestion,
 } from "@/lib/room/roomAudience";
 import type {
-  AnswerRow,
   CategoryRow,
   GameRow,
   GameScoreRow,
@@ -185,13 +184,13 @@ export async function GET(
   const targetQuestionId = currentQuestionRaw?.id ?? lastResolvedRaw?.id ?? null;
 
   // ── Aux reads: scores + target-question answers + the player's own data ───
-  const [scoresRes, liveAnswersRes, myAnswersRes, myParticipationsRes, roomMagicReactionsRes] =
+  const [allScoresRes, liveAnswersRes, myAnswersRes, myParticipationsRes, roomMagicReactionsRes] =
     await Promise.all([
-      currentGame
+      games.length > 0
         ? admin
             .from("game_scores")
             .select("*")
-            .eq("game_id", currentGame.id)
+            .in("game_id", games.map((game) => game.id))
             .order("score", { ascending: false })
         : Promise.resolve({ data: [] as GameScoreRow[], error: null }),
       // ANTI-CHEAT: only the HOST receives the target question's answers (lock
@@ -234,8 +233,11 @@ export async function GET(
         : Promise.resolve({ data: [], error: null }),
     ]);
 
-  const scores = (scoresRes.data ?? []) as GameScoreRow[];
-  if (scoresRes.error) return serverError();
+  const allScores = (allScoresRes.data ?? []) as GameScoreRow[];
+  const scores = currentGame
+    ? allScores.filter((score) => score.game_id === currentGame.id)
+    : [];
+  if (allScoresRes.error) return serverError();
   if (liveAnswersRes.error) return serverError();
   if (myAnswersRes.error) return serverError();
   if (myParticipationsRes.error) return serverError();
@@ -265,6 +267,7 @@ export async function GET(
     lastResolvedQuestion: lastResolvedRaw ? serializeRoomQuestion(lastResolvedRaw) : null,
     currentReveal: reveals[0] ?? null,
     allQuestions: allQuestionsRaw.map(serializeRoomQuestion),
+    allScores,
     scores,
     roomMagicReactions: mode === "host" ? roomMagicReactions : [],
   };

@@ -105,6 +105,7 @@ describe("payloadToRoomSnapshot", () => {
     lastResolvedQuestion: null,
     currentReveal: null,
     allQuestions: [],
+    allScores: [],
     audience: "player",
     self: {
       id: "p1",

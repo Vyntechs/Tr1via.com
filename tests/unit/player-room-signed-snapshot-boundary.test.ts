@@ -40,10 +40,18 @@ describe("player room signed-snapshot boundary", () => {
     expect(ROOM_PAGE).toContain("snapshot.myParticipations");
     expect(ROOM_PAGE).toContain("snapshot.scores");
     expect(ROOM_PAGE).toContain("snapshot.allQuestions");
+    expect(ROOM_PAGE).toContain("snapshot.allScores");
+    expect(ROOM_PAGE).toContain("scores={allScores}");
     expect(RECAP_PAGE).toContain("snapshot.myAnswers");
     expect(RECAP_PAGE).toContain("snapshot.scores");
     expect(WON_PAGE).toContain("snapshot.myAnswers");
     expect(WON_PAGE).toContain("snapshot.scores");
+  });
+
+  it("keeps signed snapshot array fallbacks stable across renders", () => {
+    expect(ROOM_PAGE).not.toMatch(
+      /snapshot\.(?:myAnswers|myParticipations|scores|allScores|allQuestions)\s*\?\?\s*\[\]/,
+    );
   });
 
   it("does not fabricate an AnswerRow or locked state from an answer tap", () => {

@@ -107,6 +107,10 @@ vi.mock("@/lib/hooks/useRoomRoutePoll", () => ({
 }));
 
 import { useRoom } from "@/lib/hooks/useRoom";
+import {
+  __resetReachabilityForTests,
+  getReachability,
+} from "@/lib/realtime/reachability";
 
 function playerPayload(label = "confirmed"): RoomSnapshotPayload {
   return {
@@ -221,12 +225,14 @@ function playerPayload(label = "confirmed"): RoomSnapshotPayload {
         fastest_correct_ms: 2200,
       },
     ],
+    allScores: [],
   };
 }
 
 describe("useRoom player audience", () => {
   beforeEach(() => {
     h.reset();
+    __resetReachabilityForTests();
     h.fetchSnapshot.mockResolvedValue(playerPayload());
     vi.stubGlobal(
       "fetch",
@@ -319,6 +325,41 @@ describe("useRoom player audience", () => {
 
     expect(h.channelNames).toEqual(["room:ABCDEF"]);
     expect(h.fromCalls).toEqual([]);
+  });
+
+  it("ignores an older failed refresh after a newer signed snapshot succeeds", async () => {
+    let rejectOlder!: (reason?: unknown) => void;
+    h.fetchSnapshot
+      .mockResolvedValueOnce(playerPayload("initial"))
+      .mockImplementationOnce(
+        () =>
+          new Promise<RoomSnapshotPayload>((_resolve, reject) => {
+            rejectOlder = reject;
+          }),
+      )
+      .mockResolvedValueOnce(playerPayload("newer success"));
+
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "player", sessionReady: true }),
+    );
+    await waitFor(() => expect(result.current.night?.venue_name).toBe("initial"));
+
+    act(() => {
+      h.broadcastHandlers.get("reveal")?.({ payload: {} });
+      h.broadcastHandlers.get("undo")?.({ payload: {} });
+    });
+    await waitFor(() =>
+      expect(result.current.night?.venue_name).toBe("newer success"),
+    );
+    expect(getReachability()).toBe("ok");
+
+    await act(async () => {
+      rejectOlder(new Error("stale network failure"));
+      await Promise.resolve();
+    });
+
+    expect(getReachability()).toBe("ok");
+    expect(result.current.night?.venue_name).toBe("newer success");
   });
 
   it("refetches on focus/online recovery and the safety heartbeat", async () => {

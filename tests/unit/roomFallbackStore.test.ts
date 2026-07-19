@@ -27,6 +27,7 @@ const payload = (tag: string): RoomSnapshotPayload => ({
   lastResolvedQuestion: null,
   currentReveal: null,
   allQuestions: [],
+  allScores: [],
   scores: [],
   self: {
     id: "player-1",
