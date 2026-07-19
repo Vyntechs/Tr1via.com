@@ -65,7 +65,7 @@ vi.mock("@/lib/hooks/useRoomRoutePoll", () => ({
 }));
 
 vi.mock("@/lib/hooks/useDeviceSession", () => ({
-  useDeviceSession: () => ({ deviceId: "device-1", isLoading: false }),
+  useDeviceSession: () => ({ isReady: true, isLoading: false }),
 }));
 
 vi.mock("@/lib/hooks/useTimer", () => ({

@@ -1,9 +1,9 @@
 // POST /api/session/init — ensure the calling browser has a valid signed
-// `tr1via_device` cookie. The body is empty; the response is `{ deviceId }`.
+// `tr1via_device` cookie. The body is empty; the response is `{ ready: true }`.
 //
 // Behavior:
-//   * If the cookie is present AND its HMAC verifies, return the existing
-//     deviceId without rotating it. Idempotent — players can call this on
+//   * If the cookie is present AND its HMAC verifies, keep it without rotating
+//     it. Idempotent — players can call this on
 //     every mount of useDeviceSession without churning their identity.
 //   * Otherwise, mint a fresh UUID v4, sign it with SESSION_SECRET, and set
 //     the cookie. httpOnly + SameSite=lax + Secure (in production) + 365d.
@@ -38,7 +38,7 @@ export async function POST(): Promise<NextResponse> {
 
   const verified = verifyDeviceCookie(existing, secret);
   if (verified) {
-    return NextResponse.json({ deviceId: verified });
+    return NextResponse.json({ ready: true });
   }
 
   const deviceId = randomUUID();
@@ -52,5 +52,5 @@ export async function POST(): Promise<NextResponse> {
     maxAge: ONE_YEAR_SECONDS,
   });
 
-  return NextResponse.json({ deviceId });
+  return NextResponse.json({ ready: true });
 }

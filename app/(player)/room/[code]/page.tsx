@@ -116,11 +116,11 @@ export default function PlayerRoomPage() {
 }
 
 function PlayerRoomInner({ roomCode }: { roomCode: string }) {
-  const { deviceId, isLoading: deviceLoading } = useDeviceSession();
+  const { isReady: sessionReady, isLoading: deviceLoading } = useDeviceSession();
   const snapshot = useRoom({
     roomCode,
     audience: "player",
-    sessionReady: !deviceLoading && !!deviceId,
+    sessionReady: !deviceLoading && sessionReady,
   });
 
   // Seed the first paint from the /join → /room hand-off so the room shows the

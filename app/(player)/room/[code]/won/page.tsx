@@ -28,11 +28,11 @@ export default function PlayerWonPage() {
 }
 
 function PlayerWonInner({ roomCode }: { roomCode: string }) {
-  const { deviceId, isLoading: deviceLoading } = useDeviceSession();
+  const { isReady: sessionReady, isLoading: deviceLoading } = useDeviceSession();
   const snapshot = useRoom({
     roomCode,
     audience: "player",
-    sessionReady: !deviceLoading && !!deviceId,
+    sessionReady: !deviceLoading && sessionReady,
   });
 
   const themeKey: ThemeKey = resolveTheme(

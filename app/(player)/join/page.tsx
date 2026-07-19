@@ -218,7 +218,7 @@ function CodeEntryBody({ onSubmit }: { onSubmit: (code: string) => void }) {
 
 function JoinWithCode({ roomCode }: { roomCode: string }) {
   const router = useRouter();
-  const { deviceId, isLoading: deviceLoading } = useDeviceSession();
+  const { isReady: sessionReady, isLoading: deviceLoading } = useDeviceSession();
   const [lookup, setLookup] = useState<LookupState>({ kind: "loading" });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -258,7 +258,7 @@ function JoinWithCode({ roomCode }: { roomCode: string }) {
 
   async function handleSubmit(displayName: string) {
     if (lookup.kind !== "ok") return;
-    if (!deviceId) {
+    if (!sessionReady) {
       setSubmitError("Setting up your device session — try again in a moment.");
       return;
     }
