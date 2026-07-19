@@ -63,7 +63,17 @@ alter table public.live_command_receipts
 alter table public.live_command_receipts
   add constraint live_command_receipts_night_run_fk
     foreign key (night_id, run_id)
-    references public.live_night_runs(night_id, run_id);
+    references public.live_night_runs(night_id, run_id)
+    on delete cascade;
+
+-- A rejected pre-open command may legitimately have a null run_id, so the
+-- composite run FK alone cannot own its deletion. This direct night ancestry
+-- keeps both null-run and run-bound receipts on the established night cascade.
+alter table public.live_command_receipts
+  add constraint live_command_receipts_night_fk
+    foreign key (night_id)
+    references public.nights(id)
+    on delete cascade;
 
 create table public.live_command_receipt_archive (
   night_id uuid not null references public.nights(id) on delete cascade,
@@ -86,6 +96,7 @@ create table public.live_command_receipt_archive (
   constraint live_command_receipt_archive_run_fk
     foreign key (night_id, run_id)
     references public.live_night_runs(night_id, run_id)
+    on delete cascade
 );
 
 create index live_command_receipt_archive_run_idx
@@ -99,10 +110,13 @@ revoke all privileges on table
   public.live_command_receipt_archive
 from public, anon, authenticated;
 
-grant all privileges on table
+-- Application code never reads these ledgers directly. SECURITY DEFINER
+-- functions owned by the migration role perform the controlled writes and
+-- exact-retry reads, so even service_role receives no table mutation surface.
+revoke all privileges on table
   public.live_night_runs,
   public.live_command_receipt_archive
-to service_role;
+from service_role;
 
 create or replace function public._live_existing_command_result(
   p_night_id uuid,

@@ -54,6 +54,7 @@ describe("reset_live_night_to_setup", () => {
 
   describe.skipIf(!hasResetMigration)("atomic resilient reset", () => {
     let db: PGlite;
+    let hostId: string;
     let nightId: string;
     let oldRunId: string;
     let startCommandId: string;
@@ -73,6 +74,7 @@ describe("reset_live_night_to_setup", () => {
         "insert into hosts (user_id, display_name) values ($1, 'Host') returning id",
         [user.id],
       );
+      hostId = host.id;
       oldRunId = crypto.randomUUID();
       const night = await one<{ id: string }>(
         `insert into nights (
@@ -341,40 +343,191 @@ describe("reset_live_night_to_setup", () => {
       ]);
     });
 
-    test("keeps receipt history server-only", async () => {
+    test("keeps receipt history append-only behind security-definer functions", async () => {
       const grants = await db.query<{ grantee: string; privilege_type: string }>(`
         select grantee, privilege_type
           from information_schema.role_table_grants
          where table_schema = 'public'
            and table_name in ('live_night_runs', 'live_command_receipt_archive')
-           and grantee in ('PUBLIC', 'anon', 'authenticated')
+           and grantee in ('PUBLIC', 'anon', 'authenticated', 'service_role')
       `);
       expect(grants.rows).toEqual([]);
+
+      const deleteRules = await db.query<{ constraint_name: string; delete_rule: string }>(`
+        select constraint_name, delete_rule
+          from information_schema.referential_constraints
+         where constraint_schema = 'public'
+           and constraint_name in (
+             'live_night_runs_night_id_fkey',
+             'live_command_receipts_night_run_fk',
+             'live_command_receipts_night_fk',
+             'live_command_receipt_archive_night_id_fkey',
+             'live_command_receipt_archive_run_fk'
+           )
+         order by constraint_name
+      `);
+      expect(deleteRules.rows).toHaveLength(5);
+      expect(deleteRules.rows.every((row) => row.delete_rule === "CASCADE")).toBe(true);
+
+      await db.exec("set role service_role");
+      try {
+        await expect(
+          db.query(
+            `insert into live_night_runs (night_id, run_id, answer_engine)
+             values ($1, gen_random_uuid(), 'resilient_v1')`,
+            [nightId],
+          ),
+        ).rejects.toThrow(/permission denied/i);
+        await expect(
+          db.query(
+            "update live_command_receipt_archive set canonical_result = '{}' where night_id = $1",
+            [nightId],
+          ),
+        ).rejects.toThrow(/permission denied/i);
+        await expect(
+          db.query("delete from live_command_receipt_archive where night_id = $1", [nightId]),
+        ).rejects.toThrow(/permission denied/i);
+        await expect(
+          db.exec("truncate table live_command_receipt_archive"),
+        ).rejects.toThrow(/permission denied/i);
+      } finally {
+        await db.exec("reset role");
+      }
     });
 
-    test("reopens the reset night on its rotated run without abandoning reset history", async () => {
+    test("lets service-role RPCs reopen and reset while preserving exact retries", async () => {
       const commandId = crypto.randomUUID();
-      const opened = await db.query<{ result: RpcResult }>(
-        "select public.open_night_run($1, $2, $3, 0) as result",
-        [nightId, commandId, resetResult.runId],
+      await db.exec("set role service_role");
+      try {
+        const opened = await db.query<{ result: RpcResult }>(
+          "select public.open_night_run($1, $2, $3, 0) as result",
+          [nightId, commandId, resetResult.runId],
+        );
+        expect(opened.rows[0].result).toMatchObject({
+          code: "applied",
+          applied: true,
+          runId: resetResult.runId,
+          roomRevision: 1,
+          controlRevision: 1,
+        });
+        const exactOpenRetry = await db.query<{ result: RpcResult }>(
+          "select public.open_night_run($1, $2, $3, 0) as result",
+          [nightId, commandId, resetResult.runId],
+        );
+        expect(exactOpenRetry.rows[0].result).toEqual(opened.rows[0].result);
+
+        const secondResetCommandId = crypto.randomUUID();
+        const secondReset = await db.query<{ result: RpcResult }>(
+          "select public.reset_live_night_to_setup($1, $2, $3, 1) as result",
+          [nightId, resetResult.runId, secondResetCommandId],
+        );
+        expect(secondReset.rows[0].result).toMatchObject({
+          code: "applied",
+          applied: true,
+          previousRunId: resetResult.runId,
+          roomRevision: 0,
+          controlRevision: 0,
+        });
+        const exactResetRetry = await db.query<{ result: RpcResult }>(
+          "select public.reset_live_night_to_setup($1, $2, $3, 1) as result",
+          [nightId, resetResult.runId, secondResetCommandId],
+        );
+        expect(exactResetRetry.rows[0].result).toEqual(secondReset.rows[0].result);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("cascades direct night deletion and host deletion through live and archived receipt history", async () => {
+      const staleCommandId = crypto.randomUUID();
+      const stale = await db.query<{ result: RpcResult }>(
+        "select public.start_live_game($1, $2, $3, 0) as result",
+        [game1Id, oldRunId, staleCommandId],
       );
-      expect(opened.rows[0].result).toMatchObject({
-        code: "applied",
-        applied: true,
-        runId: resetResult.runId,
-        roomRevision: 1,
-        controlRevision: 1,
+      expect(stale.rows[0].result).toEqual({ code: "stale", applied: false });
+
+      const liveStatuses = await db.query<{ status: string }>(
+        "select distinct status from live_command_receipts where night_id = $1 order by status",
+        [nightId],
+      );
+      const archiveStatuses = await db.query<{ status: string }>(
+        "select distinct status from live_command_receipt_archive where night_id = $1 order by status",
+        [nightId],
+      );
+      expect(liveStatuses.rows).toEqual([{ status: "applied" }, { status: "rejected" }]);
+      expect(archiveStatuses.rows).toEqual([{ status: "applied" }, { status: "rejected" }]);
+
+      await db.query("delete from nights where id = $1", [nightId]);
+      const deletedNightChildren = await db.query<{
+        runs: number;
+        live_receipts: number;
+        archived_receipts: number;
+      }>(
+        `select
+           (select count(*) from live_night_runs where night_id = $1) as runs,
+           (select count(*) from live_command_receipts where night_id = $1) as live_receipts,
+           (select count(*) from live_command_receipt_archive where night_id = $1) as archived_receipts`,
+        [nightId],
+      );
+      expect(deletedNightChildren.rows[0]).toEqual({
+        runs: 0,
+        live_receipts: 0,
+        archived_receipts: 0,
       });
 
-      const events = await db.query<{ kind: string; room_revision: number }>(
-        `select kind, room_revision from live_room_events
-          where night_id = $1 and run_id = $2 order by room_revision`,
-        [nightId, resetResult.runId],
+      const hostRunId = crypto.randomUUID();
+      const hostNight = await db.query<{ id: string }>(
+        `insert into nights (
+           host_id, venue_name, room_code, answer_engine, answer_engine_latched_at,
+           current_run_id, room_revision, control_revision
+         ) values ($1, 'Host cascade', 'HST001', 'resilient_v1', now(), $2, 1, 1)
+         returning id`,
+        [hostId, hostRunId],
       );
-      expect(events.rows).toEqual([
-        { kind: "night_reset", room_revision: 0 },
-        { kind: "night_opened", room_revision: 1 },
-      ]);
+      const hostNightId = hostNight.rows[0].id;
+      await db.query(
+        `insert into live_command_receipts (
+           night_id, command_id, run_id, kind, request_hash, expected_control_revision,
+           status, canonical_result, completed_at
+         ) values
+           ($1, gen_random_uuid(), $2, 'fixture_applied', 'a', 0, 'applied',
+            '{"code":"applied","applied":true}', now()),
+           ($1, gen_random_uuid(), $2, 'fixture_rejected', 'r', 0, 'rejected',
+            '{"code":"stale","applied":false}', now())`,
+        [hostNightId, hostRunId],
+      );
+      await db.query(
+        `insert into live_command_receipt_archive (
+           night_id, command_id, run_id, kind, request_hash, expected_control_revision,
+           status, canonical_result, created_at, completed_at
+         ) values
+           ($1, gen_random_uuid(), $2, 'fixture_applied', 'aa', 0, 'applied',
+            '{"code":"applied","applied":true}', now(), now()),
+           ($1, gen_random_uuid(), $2, 'fixture_rejected', 'rr', 0, 'rejected',
+            '{"code":"stale","applied":false}', now(), now())`,
+        [hostNightId, hostRunId],
+      );
+
+      await db.query("delete from hosts where id = $1", [hostId]);
+      const deletedHostChildren = await db.query<{
+        nights: number;
+        runs: number;
+        live_receipts: number;
+        archived_receipts: number;
+      }>(
+        `select
+           (select count(*) from nights where id = $1) as nights,
+           (select count(*) from live_night_runs where night_id = $1) as runs,
+           (select count(*) from live_command_receipts where night_id = $1) as live_receipts,
+           (select count(*) from live_command_receipt_archive where night_id = $1) as archived_receipts`,
+        [hostNightId],
+      );
+      expect(deletedHostChildren.rows[0]).toEqual({
+        nights: 0,
+        runs: 0,
+        live_receipts: 0,
+        archived_receipts: 0,
+      });
     });
   });
 });
