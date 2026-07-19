@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { SCRAMBLE_TEST_VECTORS } from "../../lib/game/scramble";
 
 const MIGRATIONS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -245,6 +246,122 @@ async function insertProbeEligibility(
        play_id, player_id${includeNight ? ", night_id" : ""}
      ) values ($1, $2${includeNight ? ", $3" : ""})`,
     values,
+  );
+}
+
+const LIVE = {
+  hostUser: "30000000-0000-0000-0000-000000000001",
+  host: "30000000-0000-0000-0000-000000000002",
+  night: "30000000-0000-0000-0000-000000000003",
+  game: "30000000-0000-0000-0000-000000000004",
+  category: "30000000-0000-0000-0000-000000000005",
+  question: "30000000-0000-0000-0000-000000000006",
+  playerA: "30000000-0000-0000-0000-000000000007",
+  playerB: "30000000-0000-0000-0000-000000000008",
+  playerWatch: "30000000-0000-0000-0000-000000000009",
+  deviceA: "40000000-0000-0000-0000-000000000001",
+  deviceB: "40000000-0000-0000-0000-000000000002",
+  deviceWatch: "40000000-0000-0000-0000-000000000003",
+  openCommand: "50000000-0000-0000-0000-000000000001",
+  startCommand: "50000000-0000-0000-0000-000000000002",
+  revealCommand: "50000000-0000-0000-0000-000000000003",
+  finalCommand: "50000000-0000-0000-0000-000000000004",
+  undoCommand: "50000000-0000-0000-0000-000000000005",
+  endCommand: "50000000-0000-0000-0000-000000000006",
+  submissionA: "60000000-0000-0000-0000-000000000001",
+  submissionB: "60000000-0000-0000-0000-000000000002",
+} as const;
+
+type RpcResult = Record<string, unknown> & {
+  code: string;
+  applied?: boolean;
+  runId?: string;
+  playId?: string;
+  roomRevision?: number;
+  controlRevision?: number;
+};
+
+async function seedLiveFixture(db: PGlite, eligiblePlayers = 2): Promise<void> {
+  await db.query("insert into auth.users (id) values ($1)", [LIVE.hostUser]);
+  await db.query(
+    "insert into hosts (id, user_id, display_name) values ($1, $2, 'Host')",
+    [LIVE.host, LIVE.hostUser],
+  );
+  await db.query(
+    `insert into nights (id, host_id, venue_name, room_code, answer_engine)
+     values ($1, $2, 'Venue', 'ATOMIC', 'resilient_v1')`,
+    [LIVE.night, LIVE.host],
+  );
+  await db.query(
+    `insert into games (id, night_id, game_no, state)
+     values ($1, $2, 1, 'ready')`,
+    [LIVE.game, LIVE.night],
+  );
+  await db.query(
+    `insert into categories (id, game_id, name, topic, position, state)
+     values ($1, $2, 'Atomic', 'Atomic', 0, 'ready')`,
+    [LIVE.category, LIVE.game],
+  );
+  await db.query(
+    `insert into questions (
+       id, category_id, point_value, prompt, options, correct_index, is_picked
+     ) values ($1, $2, 500, 'Atomic?', '["A","B","C","D"]'::jsonb, 2, true)`,
+    [LIVE.question, LIVE.category],
+  );
+  await db.query(
+    `insert into players (id, night_id, device_id, display_name, can_answer) values
+       ($1, $4, $5, 'A', true),
+       ($2, $4, $6, 'B', true),
+       ($3, $4, $7, 'Watch', false)`,
+    [
+      LIVE.playerA,
+      LIVE.playerB,
+      LIVE.playerWatch,
+      LIVE.night,
+      LIVE.deviceA,
+      LIVE.deviceB,
+      LIVE.deviceWatch,
+    ],
+  );
+  const participating = [LIVE.playerA, LIVE.playerB].slice(0, eligiblePlayers);
+  for (const playerId of participating) {
+    await db.query(
+      "insert into game_participations (game_id, player_id) values ($1, $2)",
+      [LIVE.game, playerId],
+    );
+  }
+}
+
+async function rpc(
+  db: PGlite,
+  sql: string,
+  params: unknown[] = [],
+): Promise<RpcResult> {
+  const result = await db.query<{ result: RpcResult }>(sql, params);
+  return result.rows[0]?.result ?? { code: "missing" };
+}
+
+async function openRun(db: PGlite): Promise<RpcResult> {
+  return rpc(
+    db,
+    "select public.open_night_run($1, $2, null::uuid, 0::bigint) as result",
+    [LIVE.night, LIVE.openCommand],
+  );
+}
+
+async function startGame(db: PGlite, runId: string, control = 1): Promise<RpcResult> {
+  return rpc(
+    db,
+    "select public.start_live_game($1, $2, $3, $4::bigint) as result",
+    [LIVE.game, runId, LIVE.startCommand, control],
+  );
+}
+
+async function openPlay(db: PGlite, runId: string, control = 2): Promise<RpcResult> {
+  return rpc(
+    db,
+    "select public.open_question_play($1, $2, $3, $4, $5::bigint) as result",
+    [LIVE.game, LIVE.question, runId, LIVE.revealCommand, control],
   );
 }
 
@@ -746,6 +863,27 @@ describe("authoritative live answer engine schema", () => {
       }
     });
 
+    test("pins every authoritative RPC to SECURITY DEFINER with a fixed search path", async () => {
+      const functions = await db.query<{
+        proname: string;
+        prosecdef: boolean;
+        proconfig: string[] | null;
+      }>(`
+        select p.proname, p.prosecdef, p.proconfig
+          from pg_catalog.pg_proc p
+          join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+         where n.nspname = 'public'
+           and p.proname = any($1::text[])
+         order by p.proname
+      `, [ENGINE_RPCS]);
+
+      expect(functions.rows.map((entry) => entry.proname)).toEqual([...ENGINE_RPCS].sort());
+      for (const entry of functions.rows) {
+        expect(entry.prosecdef, entry.proname).toBe(true);
+        expect(entry.proconfig, entry.proname).toContain("search_path=pg_catalog, public");
+      }
+    });
+
     test.each(["anon", "authenticated"])("denies direct %s RPC execution", async (role) => {
       const calls = [
         "select public.open_night_run(null::uuid, null::uuid, null::uuid, 0::bigint)",
@@ -765,6 +903,494 @@ describe("authoritative live answer engine schema", () => {
         }
       } finally {
         await db.exec("reset role");
+      }
+    });
+  });
+
+  describe.skipIf(!hasSchemaMigration || !hasFunctionsMigration)("0023 atomic live engine behavior", () => {
+    test("matches every exported JavaScript scramble vector in SQL", async () => {
+      const db = await freshDb();
+      try {
+        for (const vector of SCRAMBLE_TEST_VECTORS) {
+          const result = await db.query<{ scramble: number[] }>(
+            "select public._live_scramble_for($1::uuid, $2::uuid) as scramble",
+            [vector.questionId, vector.playerId],
+          );
+          expect(result.rows[0]?.scramble).toEqual(vector.scramble);
+        }
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("stores one canonical command result, returns it for exact retries, and rejects a reused ID", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const applied = await openRun(db);
+        expect(applied).toMatchObject({ code: "applied", applied: true });
+        expect(applied.runId).toMatch(/^[0-9a-f-]{36}$/);
+
+        await db.query(
+          "update nights set room_revision = room_revision + 1 where id = $1",
+          [LIVE.night],
+        );
+        expect(await openRun(db)).toEqual(applied);
+
+        const conflict = await rpc(
+          db,
+          "select public.open_night_run($1, $2, null::uuid, 99::bigint) as result",
+          [LIVE.night, LIVE.openCommand],
+        );
+        expect(conflict).toMatchObject({ code: "stale", applied: false });
+
+        const receipt = await db.query<{ status: string; canonical_result: RpcResult }>(
+          `select status, canonical_result
+             from live_command_receipts
+            where night_id = $1 and command_id = $2`,
+          [LIVE.night, LIVE.openCommand],
+        );
+        expect(receipt.rows[0]).toMatchObject({ status: "applied", canonical_result: applied });
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("rejects stale run/control preconditions without changing game state", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        const wrongRun = await startGame(db, "ffffffff-ffff-4fff-8fff-ffffffffffff");
+        expect(wrongRun).toMatchObject({ code: "stale", applied: false });
+
+        const wrongControl = await rpc(
+          db,
+          "select public.start_live_game($1, $2, $3, 0::bigint) as result",
+          [LIVE.game, opened.runId, "50000000-0000-0000-0000-000000000099"],
+        );
+        expect(wrongControl).toMatchObject({ code: "stale", applied: false });
+        const game = await db.query<{ state: string }>("select state from games where id = $1", [LIVE.game]);
+        expect(game.rows[0]?.state).toBe("ready");
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("persists a rejected command result so an exact retry cannot become applied later", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await db.query("update games set state = 'draft' where id = $1", [LIVE.game]);
+        const rejected = await startGame(db, opened.runId as string);
+        expect(rejected).toMatchObject({ code: "invalid_state", applied: false });
+
+        await db.query("update games set state = 'ready' where id = $1", [LIVE.game]);
+        expect(await startGame(db, opened.runId as string)).toEqual(rejected);
+        const game = await db.query<{ state: string }>("select state from games where id = $1", [LIVE.game]);
+        expect(game.rows[0]?.state).toBe("ready");
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("opens a play with frozen eligibility, database deadlines, and monotonic control revisions", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        expect(await startGame(db, opened.runId as string)).toMatchObject({
+          code: "applied",
+          controlRevision: 2,
+        });
+        const play = await openPlay(db, opened.runId as string);
+        expect(play).toMatchObject({ code: "applied", controlRevision: 3 });
+
+        const row = await db.query<{
+          status: string;
+          eligible_count: number;
+          main_ms: number;
+          final_ms: number;
+          played_at: string | null;
+        }>(
+          `select qp.status, qp.eligible_count,
+                  round(extract(epoch from (qp.main_zero_at - qp.opened_at)) * 1000)::integer as main_ms,
+                  round(extract(epoch from (qp.final_window_ends_at - qp.main_zero_at)) * 1000)::integer as final_ms,
+                  q.played_at
+             from question_plays qp
+             join questions q on q.id = qp.question_id
+            where qp.id = $1`,
+          [play.playId],
+        );
+        expect(row.rows[0]).toMatchObject({
+          status: "accepting",
+          eligible_count: 2,
+          main_ms: 30_000,
+          final_ms: 2_000,
+        });
+        expect(row.rows[0]?.played_at).not.toBeNull();
+
+        const eligible = await db.query<{ player_id: string }>(
+          "select player_id from question_play_eligibility where play_id = $1 order by player_id",
+          [play.playId],
+        );
+        expect(eligible.rows.map((entry) => entry.player_id)).toEqual([LIVE.playerA, LIVE.playerB]);
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("derives canonical choice from identity, preserves the first answer, and increments only room revision", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        const started = await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+        const visibleSlot = 2;
+        const expectedCanonical = SCRAMBLE_TEST_VECTORS.find(
+          (vector) => vector.questionId === LIVE.question && vector.playerId === LIVE.playerA,
+        )?.scramble[visibleSlot - 1];
+
+        const confirmed = await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, $5::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA, visibleSlot],
+        );
+        expect(confirmed).toMatchObject({
+          code: "confirmed",
+          confirmedSlot: visibleSlot,
+          duplicate: false,
+          roomRevision: 4,
+          controlRevision: 3,
+        });
+        expect(await startGame(db, opened.runId as string)).toEqual(started);
+
+        const answer = await db.query<{
+          canonical_index: number;
+          submission_id: string;
+        }>(
+          "select canonical_index, submission_id from question_play_answers where play_id = $1 and player_id = $2",
+          [play.playId, LIVE.playerA],
+        );
+        expect(answer.rows[0]).toEqual({
+          canonical_index: expectedCanonical,
+          submission_id: LIVE.submissionA,
+        });
+
+        await db.query(
+          `update question_plays
+              set opened_at = now() - interval '40 seconds',
+                  main_zero_at = now() - interval '10 seconds',
+                  final_window_ends_at = now() - interval '8 seconds'
+            where id = $1`,
+          [play.playId],
+        );
+        const duplicate = await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 4::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, "60000000-0000-0000-0000-000000000099"],
+        );
+        expect(duplicate).toMatchObject({
+          code: "confirmed",
+          confirmedSlot: visibleSlot,
+          duplicate: true,
+          roomRevision: 4,
+          controlRevision: 3,
+        });
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("rejects invalid, ineligible, late, and rate-limited first answers with typed results", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db, 1);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+
+        expect(await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 1::smallint) as result",
+          [play.playId, opened.runId, "ffffffff-ffff-4fff-8fff-ffffffffffff", LIVE.submissionA],
+        )).toMatchObject({ code: "identity_invalid" });
+        expect(await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 1::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceB, LIVE.submissionA],
+        )).toMatchObject({ code: "not_eligible" });
+
+        await db.query(
+          `insert into question_play_attempt_windows (
+             play_id, player_id, window_started_at, attempt_count
+           ) values ($1, $2, now(), 10)`,
+          [play.playId, LIVE.playerA],
+        );
+        expect(await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 1::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        )).toMatchObject({ code: "retry_later", retryAfterMs: expect.any(Number) });
+
+        await db.query("delete from question_play_attempt_windows where play_id = $1", [play.playId]);
+        await db.query(
+          `update question_plays
+              set opened_at = now() - interval '40 seconds',
+                  main_zero_at = now() - interval '10 seconds',
+                  final_window_ends_at = now()
+            where id = $1`,
+          [play.playId],
+        );
+        expect(await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 1::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        )).toMatchObject({ code: "deadline_passed" });
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("enters all-in hold only after every eligible answer and never for zero eligible players", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+        await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 3::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 1::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceB, LIVE.submissionB],
+        );
+        const held = await db.query<{
+          status: string;
+          confirmed_count: number;
+          minimum_hold_ms: number;
+        }>(
+          `select status, confirmed_count,
+                  round(extract(epoch from (finalize_at - opened_at)) * 1000)::integer as minimum_hold_ms
+             from question_plays where id = $1`,
+          [play.playId],
+        );
+        expect(held.rows[0]).toMatchObject({
+          status: "all_in_hold",
+          confirmed_count: 2,
+        });
+        expect(held.rows[0]?.minimum_hold_ms).toBeGreaterThanOrEqual(2_000);
+      } finally {
+        await db.close();
+      }
+
+      const zeroDb = await freshDb();
+      try {
+        await seedLiveFixture(zeroDb, 0);
+        const opened = await openRun(zeroDb);
+        await startGame(zeroDb, opened.runId as string);
+        const play = await openPlay(zeroDb, opened.runId as string);
+        const row = await zeroDb.query<{ status: string; eligible_count: number }>(
+          "select status, eligible_count from question_plays where id = $1",
+          [play.playId],
+        );
+        expect(row.rows[0]).toEqual({ status: "accepting", eligible_count: 0 });
+      } finally {
+        await zeroDb.close();
+      }
+    });
+
+    test("holds an early final window steady, rejects answers at its exact end, and resolves overdue reconnect once", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+        const finalWindow = await rpc(
+          db,
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.finalCommand],
+        );
+        expect(finalWindow).toMatchObject({ code: "applied", controlRevision: 4 });
+
+        const before = await db.query<{ final_window_ends_at: string }>(
+          "select final_window_ends_at from question_plays where id = $1",
+          [play.playId],
+        );
+        await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 3::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        const after = await db.query<{ final_window_ends_at: string }>(
+          "select final_window_ends_at from question_plays where id = $1",
+          [play.playId],
+        );
+        expect(after.rows[0]?.final_window_ends_at).toEqual(before.rows[0]?.final_window_ends_at);
+
+        await db.query(
+          `update question_plays
+              set opened_at = now() - interval '40 seconds',
+                  main_zero_at = now() - interval '10 seconds',
+                  final_window_starts_at = now() - interval '2 seconds',
+                  final_window_ends_at = now(),
+                  finalize_at = now()
+            where id = $1`,
+          [play.playId],
+        );
+        expect(await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 1::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceB, LIVE.submissionB],
+        )).toMatchObject({ code: "deadline_passed" });
+
+        const resolved = await rpc(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        );
+        expect(resolved).toMatchObject({ code: "resolved", applied: true });
+        const canonical = await db.query<{
+          status: string;
+          finished_at: string | null;
+          answered: number;
+          awarded: number;
+        }>(
+          `select qp.status, q.finished_at,
+                  count(qpa.*)::int as answered,
+                  coalesce(sum(qpa.awarded_points), 0)::int as awarded
+             from question_plays qp
+             join questions q on q.id = qp.question_id
+             left join question_play_answers qpa on qpa.play_id = qp.id
+            where qp.id = $1
+            group by qp.status, q.finished_at`,
+          [play.playId],
+        );
+        expect(canonical.rows[0]).toMatchObject({
+          status: "resolved",
+          answered: 1,
+          awarded: 550,
+        });
+        expect(canonical.rows[0]?.finished_at).not.toBeNull();
+
+        const revisions = await db.query<{ room_revision: number; control_revision: number }>(
+          "select room_revision, control_revision from nights where id = $1",
+          [LIVE.night],
+        );
+        const again = await rpc(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        );
+        expect(again).toMatchObject({ code: "resolved", applied: false });
+        const revisionsAfter = await db.query<{ room_revision: number; control_revision: number }>(
+          "select room_revision, control_revision from nights where id = $1",
+          [LIVE.night],
+        );
+        expect(revisionsAfter.rows[0]).toEqual(revisions.rows[0]);
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("enters the fixed final window at main zero without resolving before its database end", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+        await db.query(
+          `update question_plays
+              set opened_at = now() - interval '31 seconds',
+                  main_zero_at = now() - interval '1 second',
+                  final_window_ends_at = now() + interval '1 second'
+            where id = $1`,
+          [play.playId],
+        );
+
+        const entered = await rpc(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        );
+        expect(entered).toMatchObject({ code: "final_window", applied: true });
+        expect(await rpc(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        )).toMatchObject({ code: "not_due", applied: false });
+
+        const row = await db.query<{
+          status: string;
+          final_window_starts_at: string | null;
+          finished_at: string | null;
+        }>(
+          `select qp.status, qp.final_window_starts_at, q.finished_at
+             from question_plays qp
+             join questions q on q.id = qp.question_id
+            where qp.id = $1`,
+          [play.playId],
+        );
+        expect(row.rows[0]).toMatchObject({ status: "final_window", finished_at: null });
+        expect(row.rows[0]?.final_window_starts_at).not.toBeNull();
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("rate-limits public due checks and supports undo then game end through atomic RPCs", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+        await db.query(
+          `insert into play_finalize_attempt_windows (
+             play_id, window_started_at, attempt_count
+           ) values ($1, now(), 120)`,
+          [play.playId],
+        );
+        expect(await rpc(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        )).toMatchObject({ code: "retry_later", retryAfterMs: expect.any(Number) });
+
+        const undone = await rpc(
+          db,
+          "select public.undo_question_play($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.undoCommand],
+        );
+        expect(undone).toMatchObject({ code: "applied", controlRevision: 4 });
+        const question = await db.query<{ played_at: string | null; finished_at: string | null }>(
+          "select played_at, finished_at from questions where id = $1",
+          [LIVE.question],
+        );
+        expect(question.rows[0]).toEqual({ played_at: null, finished_at: null });
+
+        const ended = await rpc(
+          db,
+          "select public.end_live_game($1, $2, $3, 4::bigint) as result",
+          [LIVE.game, opened.runId, LIVE.endCommand],
+        );
+        expect(ended).toMatchObject({ code: "applied", controlRevision: 5 });
+        const game = await db.query<{ state: string; ended_at: string | null }>(
+          "select state, ended_at from games where id = $1",
+          [LIVE.game],
+        );
+        expect(game.rows[0]?.state).toBe("done");
+        expect(game.rows[0]?.ended_at).not.toBeNull();
+      } finally {
+        await db.close();
       }
     });
   });
