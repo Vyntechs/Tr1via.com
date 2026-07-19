@@ -1,3 +1,8 @@
+### touch-audits-must-check-collisions
+Trigger: Mobile controls passed size and viewport bounds while overlapping adjacent actions.
+Rule: Check pairwise peer overlap across the complete surface after animations settle.
+Reason: Individually valid rectangles can still collide and make controls unusable.
+
 ### touch-audits-must-discover-controls
 Trigger: Mobile accessibility test measured only explicitly tagged controls and missed undersized actions.
 Rule: Enumerate from one outer surface wrapper, never fragment IDs; allow only narrow documented exceptions.
