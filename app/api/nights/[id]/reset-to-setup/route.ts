@@ -7,12 +7,24 @@
 // Idempotent: if no games are in live/done, the RPC returns zero counts
 // and nothing changes.
 
-import { forbidden, notFound, ok, serverError, unauthorized } from "@/lib/api/responses";
+import { z } from "zod";
+
+import { UuidSchema } from "@/lib/api/schemas";
+import { badRequest, forbidden, notFound, ok, serverError, unauthorized } from "@/lib/api/responses";
 import { requireOwnedNight } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { broadcastAppliedLiveRoomEvent } from "@/lib/api/broadcast";
+import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
+import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
+
+const LiveNightCommandSchema = z.object({
+  runId: UuidSchema,
+  commandId: UuidSchema,
+  expectedControlRevision: z.number().int().nonnegative(),
+}).strict();
 
 export async function POST(
-  _req: Request,
+  req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
@@ -24,6 +36,52 @@ export async function POST(
   }
 
   const admin = getSupabaseAdmin();
+  if (owned.night.answer_engine === "resilient_v1") {
+    let body: unknown;
+    try {
+      body = await req.json();
+    } catch {
+      return badRequest("invalid JSON");
+    }
+    const command = LiveNightCommandSchema.safeParse(body);
+    if (!command.success) return badRequest(command.error);
+    const { data, error } = await admin.rpc("reset_live_night_to_setup", {
+      p_night_id: id,
+      p_run_id: command.data.runId,
+      p_command_id: command.data.commandId,
+      p_expected_control_revision: command.data.expectedControlRevision,
+    });
+    if (error) return serverError("could not update live game");
+    const envelope = parseLiveCommandRpcEnvelope(data);
+    if (!envelope) return serverError("could not update live game");
+    if (
+      "eventKind" in envelope.result &&
+      (envelope.result.eventKind !== "night_reset" ||
+        !("previousRunId" in envelope.result) ||
+        envelope.result.previousRunId !== command.data.runId)
+    ) {
+      return serverError("could not update live game");
+    }
+    const fresh = freshLiveEventFromRpc(envelope);
+    if (fresh) {
+      const live = await projectExactLiveEvent(id, fresh);
+      if (live) {
+        try {
+          await broadcastAppliedLiveRoomEvent(owned.night.room_code, {
+            applied: true,
+            freshness: "transaction_winner",
+            kind: fresh.kind,
+            serverNow: new Date().toISOString(),
+            live,
+          });
+        } catch {
+          console.warn("broadcast night-reset failed");
+        }
+      }
+    }
+    return ok(envelope.result);
+  }
+
   const { data, error } = await admin.rpc("reset_night_to_setup", {
     p_night_id: id,
   });
