@@ -194,21 +194,41 @@ describe("authoritative live answer engine schema", () => {
           from pg_catalog.pg_indexes
          where schemaname = 'public' and tablename = 'question_plays'
       `);
-      const definitions = indexes.rows.map((row) => row.indexdef.toLowerCase());
-
-      expect(definitions.some((definition) =>
+      const definitions = indexes.rows.map((row) =>
+        row.indexdef.toLowerCase().replace(/::text/g, "").replace(/\s+/g, " "),
+      );
+      const unfinished = definitions.find((definition) =>
         definition.includes("unique")
         && definition.includes("run_id")
         && definition.includes("where")
         && ["accepting", "all_in_hold", "final_window"].every((state) => definition.includes(state)),
-      )).toBe(true);
-      expect(definitions.some((definition) =>
+      );
+      expect(unfinished).toBeDefined();
+      const unfinishedPredicate = unfinished?.slice(unfinished.indexOf("where"));
+      expect(unfinishedPredicate).toMatch(
+        /where.*status\s*(?:in\s*\(|=\s*any\s*\(\s*array\[)/,
+      );
+      expect(unfinishedPredicate).not.toMatch(/\bnot\b/);
+      expect(unfinishedPredicate).not.toMatch(/resolved|undone/);
+
+      const onePerQuestion = definitions.find((definition) =>
         definition.includes("unique")
         && definition.includes("run_id")
         && definition.includes("question_id")
-        && definition.includes("where")
-        && definition.includes("undone"),
-      )).toBe(true);
+        && definition.includes("where"),
+      );
+      expect(onePerQuestion).toBeDefined();
+      const onePerQuestionPredicate = onePerQuestion?.slice(onePerQuestion.indexOf("where"));
+      const explicitlyExcludesUndone = /status\s*(?:<>|!=)\s*['"]undone['"]/.test(
+        onePerQuestionPredicate ?? "",
+      );
+      const exactNonUndoneSet = ["accepting", "all_in_hold", "final_window", "resolved"].every(
+        (state) => onePerQuestionPredicate?.includes(state),
+      ) && !onePerQuestionPredicate?.includes("'undone'");
+      expect(explicitlyExcludesUndone || exactNonUndoneSet).toBe(true);
+      expect(onePerQuestionPredicate).not.toMatch(
+        /status\s*(?:=\s*['"]undone['"]|in\s*\(\s*['"]undone['"]\s*\))/,
+      );
     });
 
     test("prevents an answer unless the player belongs to that play's frozen eligibility set", async () => {

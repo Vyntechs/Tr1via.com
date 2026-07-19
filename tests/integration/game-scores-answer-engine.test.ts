@@ -140,6 +140,37 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         );
       }
 
+      await insertId(
+        "legacy-g1-question-2",
+        `insert into questions (
+           category_id, point_value, prompt, options, correct_index, is_picked, played_at, finished_at
+         ) values ($1, 300, 'second legacy question', '["A","B","C","D"]'::jsonb,
+                   0, true, now(), now())`,
+        [id("legacy-g1-category")],
+      );
+      await insertId(
+        "resilient-g1-question-2",
+        `insert into questions (
+           category_id, point_value, prompt, options, correct_index, is_picked, played_at, finished_at
+         ) values ($1, 300, 'second resilient question', '["A","B","C","D"]'::jsonb,
+                   0, true, now(), now())`,
+        [id("resilient-g1-category")],
+      );
+      await insertId(
+        "resilient-g1-unresolved-question",
+        `insert into questions (
+           category_id, point_value, prompt, options, correct_index, is_picked, played_at
+         ) values ($1, 400, 'unresolved resilient question', '["A","B","C","D"]'::jsonb,
+                   0, true, now())`,
+        [id("resilient-g1-category")],
+      );
+      await db.query(
+        `insert into adjustments (player_id, game_id, delta, reason)
+         values ($1, $2, 7, 'second legacy adjustment'),
+                ($3, $4, 7, 'second resilient adjustment')`,
+        [id("legacy-player"), id("legacy-g1"), id("resilient-player"), id("resilient-g1")],
+      );
+
       // Legacy facts: only answers count. Resilient-shaped rows are deliberate
       // contamination and must not be read by the legacy branch.
       await db.query(
@@ -147,8 +178,14 @@ describe("game_scores branches by the night's immutable answer engine", () => {
            question_id, player_id, chosen_index, scramble, ms_to_lock, is_correct, awarded_points
          ) values
            ($1, $2, 0, '[0,1,2,3]'::jsonb, 6000, true, 100),
-           ($3, $2, 0, '[0,1,2,3]'::jsonb, 8000, true, 700)`,
-        [id("legacy-g1-question"), id("legacy-player"), id("legacy-g2-question")],
+           ($3, $2, 0, '[0,1,2,3]'::jsonb, 3000, true, 300),
+           ($4, $2, 0, '[0,1,2,3]'::jsonb, 8000, true, 700)`,
+        [
+          id("legacy-g1-question"),
+          id("legacy-player"),
+          id("legacy-g1-question-2"),
+          id("legacy-g2-question"),
+        ],
       );
 
       const insertResolvedPlayAnswer = async (
@@ -160,6 +197,7 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         playerId: string,
         awardedPoints: number,
         msToLock: number,
+        status: "resolved" | "final_window" = "resolved",
       ) => {
         const playId = await insertId(
           `${prefix}-play`,
@@ -168,12 +206,13 @@ describe("game_scores branches by the night's immutable answer engine", () => {
              final_window_starts_at, final_window_ends_at, finalize_at, resolved_at,
              resolution_reason, eligible_count, confirmed_count
            ) values (
-             $1, $2, $3, $4, 'resolved', now() - interval '30 seconds',
+             $1, $2, $3, $4, $5, now() - interval '30 seconds',
              now() - interval '10 seconds', now() - interval '10 seconds',
-             now() - interval '8 seconds', now() - interval '8 seconds', now(),
-             'deadline', 1, 1
+             now() - interval '8 seconds', now() - interval '8 seconds',
+             case when $5 = 'resolved' then now() else null end,
+             case when $5 = 'resolved' then 'deadline' else null end, 1, 1
            )`,
-          [nightId, runId, gameId, questionId],
+          [nightId, runId, gameId, questionId, status],
         );
         await db.query(
           "insert into question_play_eligibility (play_id, player_id) values ($1, $2)",
@@ -204,6 +243,16 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         6500,
       );
       await insertResolvedPlayAnswer(
+        "resilient-g1-second",
+        run.rows[0].current_run_id,
+        resilientNight,
+        id("resilient-g1"),
+        id("resilient-g1-question-2"),
+        id("resilient-player"),
+        330,
+        3500,
+      );
+      await insertResolvedPlayAnswer(
         "resilient-g2",
         run.rows[0].current_run_id,
         resilientNight,
@@ -212,6 +261,17 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         id("resilient-player"),
         660,
         4000,
+      );
+      await insertResolvedPlayAnswer(
+        "resilient-g1-unresolved",
+        run.rows[0].current_run_id,
+        resilientNight,
+        id("resilient-g1"),
+        id("resilient-g1-unresolved-question"),
+        id("resilient-player"),
+        7777,
+        1,
+        "final_window",
       );
 
       // A legacy answer on the resilient night must never leak into its scores.
@@ -275,10 +335,10 @@ describe("game_scores branches by the night's immutable answer engine", () => {
     test("legacy games read only legacy answers and keep Game 1 and Game 2 isolated", async () => {
       const game1 = await score("legacy-g1", "legacy-player");
       const game2 = await score("legacy-g2", "legacy-player");
-      expect(Number(game1?.score)).toBe(115);
-      expect(Number(game1?.correct_count)).toBe(1);
-      expect(Number(game1?.answered_count)).toBe(1);
-      expect(game1?.fastest_correct_ms).toBe(6000);
+      expect(Number(game1?.score)).toBe(422);
+      expect(Number(game1?.correct_count)).toBe(2);
+      expect(Number(game1?.answered_count)).toBe(2);
+      expect(game1?.fastest_correct_ms).toBe(3000);
       expect(Number(game2?.score)).toBe(680);
       expect(Number(game2?.correct_count)).toBe(1);
       expect(Number(game2?.answered_count)).toBe(1);
@@ -288,10 +348,10 @@ describe("game_scores branches by the night's immutable answer engine", () => {
     test("resilient games read only resolved play answers and keep Game 1 and Game 2 isolated", async () => {
       const game1 = await score("resilient-g1", "resilient-player");
       const game2 = await score("resilient-g2", "resilient-player");
-      expect(Number(game1?.score)).toBe(205);
-      expect(Number(game1?.correct_count)).toBe(1);
-      expect(Number(game1?.answered_count)).toBe(1);
-      expect(game1?.fastest_correct_ms).toBe(6500);
+      expect(Number(game1?.score)).toBe(542);
+      expect(Number(game1?.correct_count)).toBe(2);
+      expect(Number(game1?.answered_count)).toBe(2);
+      expect(game1?.fastest_correct_ms).toBe(3500);
       expect(Number(game2?.score)).toBe(650);
       expect(Number(game2?.correct_count)).toBe(1);
       expect(Number(game2?.answered_count)).toBe(1);
