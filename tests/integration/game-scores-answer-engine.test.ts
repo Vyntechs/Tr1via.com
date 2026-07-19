@@ -156,12 +156,14 @@ describe("game_scores branches by the night's immutable answer engine", () => {
                    0, true, now(), now())`,
         [id("resilient-g1-category")],
       );
+      // Keep the question resolved-looking so only question_plays.status can
+      // exclude this answer from resilient scoring.
       await insertId(
-        "resilient-g1-unresolved-question",
+        "resilient-g1-final-window-question",
         `insert into questions (
-           category_id, point_value, prompt, options, correct_index, is_picked, played_at
-         ) values ($1, 400, 'unresolved resilient question', '["A","B","C","D"]'::jsonb,
-                   0, true, now())`,
+           category_id, point_value, prompt, options, correct_index, is_picked, played_at, finished_at
+         ) values ($1, 400, 'final-window resilient question', '["A","B","C","D"]'::jsonb,
+                   0, true, now(), now())`,
         [id("resilient-g1-category")],
       );
       await db.query(
@@ -188,7 +190,7 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         ],
       );
 
-      const insertResolvedPlayAnswer = async (
+      const insertPlayAnswer = async (
         prefix: string,
         runId: string,
         nightId: string,
@@ -197,7 +199,7 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         playerId: string,
         awardedPoints: number,
         msToLock: number,
-        status: "resolved" | "final_window" = "resolved",
+        status: "resolved" | "final_window",
       ) => {
         const playId = await insertId(
           `${prefix}-play`,
@@ -232,7 +234,7 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         "select current_run_id from nights where id = $1",
         [resilientNight],
       );
-      await insertResolvedPlayAnswer(
+      await insertPlayAnswer(
         "resilient-g1",
         run.rows[0].current_run_id,
         resilientNight,
@@ -241,8 +243,9 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         id("resilient-player"),
         200,
         6500,
+        "resolved",
       );
-      await insertResolvedPlayAnswer(
+      await insertPlayAnswer(
         "resilient-g1-second",
         run.rows[0].current_run_id,
         resilientNight,
@@ -251,8 +254,9 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         id("resilient-player"),
         330,
         3500,
+        "resolved",
       );
-      await insertResolvedPlayAnswer(
+      await insertPlayAnswer(
         "resilient-g2",
         run.rows[0].current_run_id,
         resilientNight,
@@ -261,13 +265,14 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         id("resilient-player"),
         660,
         4000,
+        "resolved",
       );
-      await insertResolvedPlayAnswer(
-        "resilient-g1-unresolved",
+      await insertPlayAnswer(
+        "resilient-g1-final-window",
         run.rows[0].current_run_id,
         resilientNight,
         id("resilient-g1"),
-        id("resilient-g1-unresolved-question"),
+        id("resilient-g1-final-window-question"),
         id("resilient-player"),
         7777,
         1,
@@ -287,7 +292,7 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         "select current_run_id from nights where id = $1",
         [legacyNight],
       );
-      await insertResolvedPlayAnswer(
+      await insertPlayAnswer(
         "legacy-contamination",
         legacyRun.rows[0].current_run_id,
         legacyNight,
@@ -296,6 +301,7 @@ describe("game_scores branches by the night's immutable answer engine", () => {
         id("legacy-player"),
         999,
         1,
+        "resolved",
       );
     });
 

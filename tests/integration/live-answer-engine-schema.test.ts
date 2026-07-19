@@ -179,13 +179,34 @@ describe("authoritative live answer engine schema", () => {
            and k.contype = 'c'
            and c.relname in ('nights', 'host_answer_engine_settings', 'question_plays')
       `);
-      const definitions = checks.rows.map((row) => `${row.table_name} ${row.definition}`).join("\n");
+      const assertExactCheckValues = (table: string, column: string, expected: string[]) => {
+        const matching = checks.rows.filter(
+          (row) => row.table_name === table && row.definition.includes(column),
+        );
+        expect(matching, `${table}.${column}`).toHaveLength(1);
+        const definition = matching[0].definition.toLowerCase().replace(/::text/g, "");
+        expect(definition, `${table}.${column}`).toMatch(
+          new RegExp(`${column}\\s*(?:in\\s*\\(|=\\s*any\\s*\\(\\s*array\\[)`),
+        );
+        expect(definition, `${table}.${column}`).not.toMatch(/\bnot\b/);
+        const values = [...definition.matchAll(/'([^']+)'/g)]
+          .map((match) => match[1])
+          .sort();
+        expect(values, `${table}.${column}`).toEqual([...expected].sort());
+      };
 
-      expect(definitions).toMatch(/nights[\s\S]*answer_engine[\s\S]*legacy[\s\S]*resilient_v1/i);
-      expect(definitions).toMatch(/host_answer_engine_settings[\s\S]*preferred_engine[\s\S]*legacy[\s\S]*resilient_v1/i);
-      for (const state of ["accepting", "all_in_hold", "final_window", "resolved", "undone"]) {
-        expect(definitions).toContain(state);
-      }
+      assertExactCheckValues("nights", "answer_engine", ["legacy", "resilient_v1"]);
+      assertExactCheckValues("host_answer_engine_settings", "preferred_engine", [
+        "legacy",
+        "resilient_v1",
+      ]);
+      assertExactCheckValues("question_plays", "status", [
+        "accepting",
+        "all_in_hold",
+        "final_window",
+        "resolved",
+        "undone",
+      ]);
     });
 
     test("allows only one unfinished play and one non-undone play per run and question", async () => {
@@ -204,6 +225,9 @@ describe("authoritative live answer engine schema", () => {
         && ["accepting", "all_in_hold", "final_window"].every((state) => definition.includes(state)),
       );
       expect(unfinished).toBeDefined();
+      const unfinishedKey = unfinished?.match(/using\s+\w+\s*\(([^)]*)\)\s+where/)?.[1]
+        .replace(/["\s]/g, "");
+      expect(unfinishedKey).toBe("run_id");
       const unfinishedPredicate = unfinished?.slice(unfinished.indexOf("where"));
       expect(unfinishedPredicate).toMatch(
         /where.*status\s*(?:in\s*\(|=\s*any\s*\(\s*array\[)/,
