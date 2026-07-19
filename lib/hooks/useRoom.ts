@@ -124,8 +124,6 @@ export interface BroadcastTag {
   revealedAt?: string;
   /** Resolve-specific: canonical correct option index. */
   correctIndex?: number;
-  /** Resolve-specific: per-player award rows. */
-  awards?: Array<{ playerId: string; awarded: number; isCorrect: boolean }>;
   /** roster-changed specific: ephemeral event identity, never a database id. */
   joinToken?: string;
   /** roster-changed specific: the joined display name. */
@@ -414,7 +412,6 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
             correctIndex: typeof p.correctIndex === "number" ? p.correctIndex : undefined,
-            awards: Array.isArray(p.awards) ? (p.awards as BroadcastTag["awards"]) : undefined,
           });
         })
         .on("broadcast", { event: "end-early" }, (msg) => {
@@ -1028,9 +1025,6 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             serverNow: String(p.serverNow),
             correctIndex:
               typeof p.correctIndex === "number" ? p.correctIndex : undefined,
-            awards: Array.isArray(p.awards)
-              ? (p.awards as BroadcastTag["awards"])
-              : undefined,
           });
           // Same fallback as reveal: pull current state over HTTP so the
           // finished_at stamp + any answer rows propagate even when

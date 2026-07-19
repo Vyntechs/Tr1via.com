@@ -21,7 +21,7 @@ const GAME_ID = "33333333-3333-3333-3333-333333333333";
 const NIGHT_ID = "44444444-4444-4444-4444-444444444444";
 const PLAYER_ID = "55555555-5555-5555-5555-555555555555";
 const DEVICE_ID = "66666666-6666-6666-6666-666666666666";
-const PLAY_ID = "77777777-7777-7777-7777-777777777777";
+const PLAY_ID = "77777777-7777-4777-8777-777777777777";
 const RUN_ID = "88888888-8888-8888-8888-888888888888";
 const SUBMISSION_ID = "99999999-9999-4999-8999-999999999999";
 const CURRENT_PLAY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -95,11 +95,30 @@ function confirmedEnvelope(freshlyApplied: boolean) {
   };
 }
 
+function claimedEnvelope(duplicate = false) {
+  return {
+    freshlyApplied: !duplicate,
+    result: {
+      code: "claimed",
+      duplicate,
+      runId: RUN_ID,
+      playId: PLAY_ID,
+    },
+  };
+}
+
 function resilientAdmin(
-  rpcData: unknown = confirmedEnvelope(true),
+  rpcData: unknown | unknown[] = [
+    claimedEnvelope(false),
+    confirmedEnvelope(true),
+  ],
   rpcError: { message: string } | null = null,
 ) {
-  const rpc = vi.fn(async () => ({ data: rpcData, error: rpcError }));
+  const results = Array.isArray(rpcData) ? [...rpcData] : [rpcData];
+  const rpc = vi.fn(async () => ({
+    data: results.shift() ?? null,
+    error: rpcError,
+  }));
   const rows: Record<string, DbResult> = {
     question_plays: { data: play, error: null },
     nights: {
@@ -220,13 +239,22 @@ describe("POST /api/answers", () => {
     }));
     const body = await response.json();
 
-    expect(admin.rpc).toHaveBeenCalledWith("submit_question_play_answer", {
+    expect(admin.rpc).toHaveBeenNthCalledWith(1, "claim_question_play_answer", {
       p_play_id: PLAY_ID,
       p_run_id: RUN_ID,
       p_submission_id: SUBMISSION_ID,
       p_verified_device_id: DEVICE_ID,
       p_visible_slot: 3,
     });
+    expect(admin.rpc).toHaveBeenNthCalledWith(
+      2,
+      "apply_claimed_question_play_answer",
+      {
+        p_play_id: PLAY_ID,
+        p_run_id: RUN_ID,
+        p_verified_device_id: DEVICE_ID,
+      },
+    );
     expect(body).toEqual({
       code: "confirmed",
       confirmedSlot: 3,
@@ -239,7 +267,10 @@ describe("POST /api/answers", () => {
   });
 
   it("returns the same confirmation after a weak-network retry without rebroadcasting", async () => {
-    const admin = resilientAdmin(confirmedEnvelope(false));
+    const admin = resilientAdmin([
+      claimedEnvelope(true),
+      confirmedEnvelope(false),
+    ]);
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
 
     const { POST } = await import("@/app/api/answers/route");
@@ -254,6 +285,7 @@ describe("POST /api/answers", () => {
     expect(await response.json()).toMatchObject({
       code: "confirmed",
       confirmedSlot: 3,
+      duplicate: true,
       live: { runId: RUN_ID, playId: PLAY_ID },
     });
     expect(projectionMock.projectExactLiveEvent).not.toHaveBeenCalled();
@@ -271,7 +303,7 @@ describe("POST /api/answers", () => {
     };
     let playRead = 0;
     const rpc = vi.fn(async () => ({
-      data: confirmedEnvelope(false),
+      data: [claimedEnvelope(true), confirmedEnvelope(false)][rpc.mock.calls.length - 1],
       error: null,
     }));
     const admin = {
@@ -318,7 +350,10 @@ describe("POST /api/answers", () => {
   });
 
   it("never broadcasts malformed, nonwinner, or stale exact projections", async () => {
-    const malformed = resilientAdmin({ freshlyApplied: true, result: { code: "confirmed" } });
+    const malformed = resilientAdmin([
+      claimedEnvelope(false),
+      { freshlyApplied: true, result: { code: "confirmed" } },
+    ]);
     adminMock.getSupabaseAdmin.mockReturnValue(malformed);
     const { POST } = await import("@/app/api/answers/route");
     const bad = await POST(post({
@@ -397,6 +432,65 @@ describe("POST /api/answers", () => {
     expect(warn).toHaveBeenCalledWith("live answer broadcast failed");
     expect(JSON.stringify(warn.mock.calls)).not.toContain("offline");
     warn.mockRestore();
+  });
+
+  it("emits only allowlisted structured health telemetry", async () => {
+    const admin = resilientAdmin();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/answers/route");
+    const response = await POST(post({
+      playId: PLAY_ID,
+      runId: RUN_ID,
+      submissionId: SUBMISSION_ID,
+      slotChosen: 3,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(info).toHaveBeenCalledOnce();
+    const logged = info.mock.calls[0][0] as Record<string, unknown>;
+    expect(logged).toMatchObject({
+      event: "live_answer_health",
+      playId: PLAY_ID,
+      resultCode: "confirmed",
+      duplicateCount: 0,
+    });
+    expect(Object.keys(logged).sort()).toEqual([
+      "duplicateCount",
+      "event",
+      "latencyBucket",
+      "playId",
+      "resultCode",
+    ]);
+    const serialized = JSON.stringify(logged);
+    expect(serialized).not.toContain("ABCDEF");
+    expect(serialized).not.toContain(PLAYER_ID);
+    expect(serialized).not.toContain(DEVICE_ID);
+    expect(serialized).not.toContain(SUBMISSION_ID);
+    expect(serialized).not.toContain("slotChosen");
+    info.mockRestore();
+  });
+
+  it("keeps a committed answer successful when the server log sink throws", async () => {
+    const admin = resilientAdmin();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const info = vi.spyOn(console, "info").mockImplementation(() => {
+      throw new Error("server logger unavailable");
+    });
+
+    const { POST } = await import("@/app/api/answers/route");
+    const response = await POST(post({
+      playId: PLAY_ID,
+      runId: RUN_ID,
+      submissionId: SUBMISSION_ID,
+      slotChosen: 3,
+    }));
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ code: "confirmed" });
+    expect(info).toHaveBeenCalledOnce();
+    info.mockRestore();
   });
 
   it("rejects a missing or invalid signed device before any database access", async () => {

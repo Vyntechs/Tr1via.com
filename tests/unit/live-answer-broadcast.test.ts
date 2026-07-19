@@ -100,6 +100,38 @@ describe("authoritative live room broadcast boundary", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("turns a resolved play into a safe refetch signal without award details", async () => {
+    const sent = await broadcastAppliedLiveRoomEvent("ABCDEF", {
+      applied: true,
+      freshness: "transaction_winner",
+      kind: "play_resolved",
+      serverNow: "2026-07-19T01:00:32.000Z",
+      live: {
+        ...live,
+        play: { ...live.play, state: "resolved" },
+      },
+      awards: [{
+        playerId: "PLAYER-ID-LEAK",
+        isCorrect: true,
+        awardedPoints: 110,
+      }],
+    } as Parameters<typeof broadcastAppliedLiveRoomEvent>[1]);
+
+    expect(sent).toBe(true);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(String(init.body));
+    expect(body.messages[0].payload).toMatchObject({
+      kind: "play_resolved",
+      refetch: true,
+      playId: "play-1",
+    });
+    const serialized = JSON.stringify(body);
+    expect(serialized).not.toContain("awards");
+    expect(serialized).not.toContain("PLAYER-ID-LEAK");
+    expect(serialized).not.toContain("isCorrect");
+    expect(serialized).not.toContain("awardedPoints");
+  });
+
   it("aborts a nonsettling Realtime transport within the live answer budget", async () => {
     vi.useFakeTimers();
     let capturedSignal: AbortSignal | undefined;

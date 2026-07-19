@@ -18,7 +18,7 @@ const QUESTION_ID = "11111111-1111-1111-1111-111111111111";
 const CATEGORY_ID = "22222222-2222-2222-2222-222222222222";
 const GAME_ID = "33333333-3333-3333-3333-333333333333";
 const NIGHT_ID = "44444444-4444-4444-4444-444444444444";
-const PLAY_ID = "77777777-7777-7777-7777-777777777777";
+const PLAY_ID = "77777777-7777-4777-8777-777777777777";
 const RUN_ID = "88888888-8888-8888-8888-888888888888";
 
 type DbResult = { data: unknown; error: { message: string } | null };
@@ -164,6 +164,25 @@ describe("resilient POST /api/questions/[id]/resolve", () => {
     expect(broadcastMock.broadcastFireworks).toHaveBeenCalledTimes(1);
     expect(body).toEqual({ result: resolvedEnvelope(true).result, live });
     expect(body).not.toHaveProperty("freshlyApplied");
+  });
+
+  it("records the resilient due-finalizer through the safe server sink", async () => {
+    const admin = makeAdmin(resolvedEnvelope(true));
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(new Request("http://test"), ctx);
+
+    expect(response.status).toBe(200);
+    expect(info).toHaveBeenCalledOnce();
+    expect(info.mock.calls[0][0]).toMatchObject({
+      event: "live_answer_health",
+      playId: PLAY_ID,
+      resultCode: "resolved",
+      resolutionReason: "timer",
+    });
+    info.mockRestore();
   });
 
   it("does not broadcast or fire fireworks for a replay, not-due result, or stale projection", async () => {

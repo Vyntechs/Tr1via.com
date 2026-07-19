@@ -46,6 +46,14 @@ export type LiveAnswerHealthSink = (
   event: LiveAnswerHealthEvent,
 ) => void | Promise<void>;
 
+/**
+ * Production sink for structured server logs. The event has already crossed
+ * the strict allowlist boundary below; the fixed name is the only added field.
+ */
+export const liveAnswerServerLogSink: LiveAnswerHealthSink = (event) => {
+  console.info(Object.freeze({ event: "live_answer_health", ...event }));
+};
+
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 

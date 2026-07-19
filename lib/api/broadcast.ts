@@ -55,7 +55,7 @@ export interface BroadcastPayload {
   // Server's idea of "now" at broadcast time. Clients compare to their
   // local clock to compute display offsets. Always ISO string.
   serverNow: string;
-  // Event-specific extras (revealedAt, correctIndex, awards…).
+  // Event-specific extras (revealedAt, correctIndex, refetch…).
   [extra: string]: unknown;
 }
 
@@ -203,6 +203,9 @@ export async function broadcastAppliedLiveRoomEvent(
     payload.eligibleCount = play.eligibleCount;
     payload.confirmedCount = play.confirmedCount;
     payload.finalizeAt = play.finalizeAt;
+  }
+  if (attempt.kind === "play_resolved") {
+    payload.refetch = true;
   }
 
   await postBroadcasts([{

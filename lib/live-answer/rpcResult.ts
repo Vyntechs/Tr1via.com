@@ -128,7 +128,7 @@ const ConfirmedAnswerResultSchema = z
       z.literal(3),
       z.literal(4),
     ]),
-    duplicate: z.literal(false),
+    duplicate: z.boolean(),
     eventKind: z.literal("answer_progress"),
     runId: Uuid,
     ...OptionalPlayAncestry,
@@ -152,6 +152,22 @@ const AnswerRejectedResultSchema = z
 
 const LiveAnswerResultSchema = z.union([
   ConfirmedAnswerResultSchema,
+  AnswerRejectedResultSchema,
+  RetryLaterResultSchema,
+  CorruptResultSchema,
+]);
+
+const ClaimedAnswerResultSchema = z
+  .object({
+    code: z.literal("claimed"),
+    duplicate: z.boolean(),
+    runId: Uuid,
+    playId: Uuid,
+  })
+  .strict();
+
+const LiveAnswerClaimResultSchema = z.union([
+  ClaimedAnswerResultSchema,
   AnswerRejectedResultSchema,
   RetryLaterResultSchema,
   CorruptResultSchema,
@@ -199,6 +215,9 @@ const LiveFinalizeResultSchema = z.union([
 
 export type LiveCommandResult = z.infer<typeof LiveCommandResultSchema>;
 export type LiveAnswerResult = z.infer<typeof LiveAnswerResultSchema>;
+export type LiveAnswerClaimResult = z.infer<
+  typeof LiveAnswerClaimResultSchema
+>;
 export type LiveFinalizeResult = z.infer<typeof LiveFinalizeResultSchema>;
 export type LiveCanonicalResult =
   | LiveCommandResult
@@ -228,6 +247,12 @@ export function parseLiveAnswerRpcEnvelope(
   value: unknown,
 ): ParsedLiveRpcEnvelope<LiveAnswerResult> | null {
   return parseEnvelope(value, LiveAnswerResultSchema);
+}
+
+export function parseLiveAnswerClaimRpcEnvelope(
+  value: unknown,
+): ParsedLiveRpcEnvelope<LiveAnswerClaimResult> | null {
+  return parseEnvelope(value, LiveAnswerClaimResultSchema, isClaimedAnswerResult);
 }
 
 export function parseLiveFinalizeRpcEnvelope(
@@ -272,6 +297,7 @@ export function freshLiveEventFromRpc(
 function parseEnvelope<T>(
   value: unknown,
   resultSchema: z.ZodType<T>,
+  isFreshResult: (value: unknown) => boolean = isAppliedEventResult,
 ): ParsedLiveRpcEnvelope<T> | null {
   if (
     typeof value !== "object" ||
@@ -288,7 +314,7 @@ function parseEnvelope<T>(
   if (typeof record.freshlyApplied !== "boolean") return null;
   const parsedResult = resultSchema.safeParse(record.result);
   if (!parsedResult.success) return null;
-  if (record.freshlyApplied && !isAppliedEventResult(parsedResult.data)) {
+  if (record.freshlyApplied && !isFreshResult(parsedResult.data)) {
     return null;
   }
 
@@ -296,11 +322,20 @@ function parseEnvelope<T>(
     freshlyApplied: record.freshlyApplied,
     freshness: record.freshlyApplied
       ? "transaction_winner"
-      : isAppliedEventResult(parsedResult.data)
+      : isFreshResult(parsedResult.data)
         ? "replay"
         : "non_winner",
     result: parsedResult.data,
   };
+}
+
+function isClaimedAnswerResult(value: unknown): boolean {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "code" in value &&
+    value.code === "claimed"
+  );
 }
 
 function isAppliedEventResult(value: unknown): value is {

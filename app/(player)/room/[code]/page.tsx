@@ -70,7 +70,7 @@ import {
   type StandingRow,
 } from "@/lib/player/betweenGames";
 import { buildNeighborhood, type Neighborhood } from "@/lib/player/standings";
-import { summarizeResolve, type ResolveSummary } from "@/lib/player/celebrationCopy";
+import type { ResolveSummary } from "@/lib/player/celebrationCopy";
 import { gateBeatForPlayer, playerWasCorrect } from "@/lib/game/revealOutcome";
 import { selectLobbyTopicsFromRoom, type LobbyTopic } from "@/lib/tv/lobbyTopics";
 import { playWelcomeChime, triggerWelcomeHaptic } from "@/lib/audio/welcomeChime";
@@ -372,18 +372,6 @@ function RoomStateMachine({
     return myParticipations.some((p) => p.game_id === game2.id);
   }, [myParticipations, game2, optimisticInGame2]);
 
-  // ── July fireworks (Phase 3) ───────────────────────────────────────────
-  // The resolve broadcast carries per-player `awards` (already on the phone — no
-  // new read). Derive the social counts straight from it for the matching
-  // question. Read from state during render (not a ref) so it stays consistent;
-  // if a later broadcast supersedes lastBroadcast, the line simply stops showing
-  // (graceful) rather than rendering a stale/wrong count.
-  const summaryFor = (qid: string | undefined): ResolveSummary | undefined => {
-    const b = snapshot.lastBroadcast;
-    if (!qid || !b || b.event !== "resolve" || b.questionId !== qid) return undefined;
-    return summarizeResolve(b.awards);
-  };
-
   // Did I get the just-resolved question right? Drives the correct-only salvo
   // gate below (a finale fires for everyone; a salvo fires only on a correct
   // phone). Mirrors RevealView's wasCorrect via the shared playerWasCorrect.
@@ -498,7 +486,7 @@ function RoomStateMachine({
           questionGameMap={questionGameMap}
           rank={myRank}
           themeKey={themeKey}
-          summary={summaryFor(currentQuestion.id)}
+          summary={undefined}
           neighborhood={neighborhood}
           roomMagicEnabled={roomMagicEnabled}
           serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
@@ -532,7 +520,7 @@ function RoomStateMachine({
             questionGameMap={questionGameMap}
             rank={myRank}
             themeKey={themeKey}
-            summary={summaryFor(lastResolvedQuestion.id)}
+            summary={undefined}
             neighborhood={neighborhood}
             roomMagicEnabled={roomMagicEnabled}
             serverScramble={snapshot.questionScrambles?.[lastResolvedQuestion.id]}

@@ -973,6 +973,7 @@ export type Database = {
         Row: {
           awarded_points: number | null
           canonical_index: number
+          canonical_result: Json | null
           is_correct: boolean | null
           locked_at: string
           ms_to_lock: number
@@ -985,6 +986,7 @@ export type Database = {
         Insert: {
           awarded_points?: number | null
           canonical_index: number
+          canonical_result?: Json | null
           is_correct?: boolean | null
           locked_at: string
           ms_to_lock: number
@@ -997,6 +999,7 @@ export type Database = {
         Update: {
           awarded_points?: number | null
           canonical_index?: number
+          canonical_result?: Json | null
           is_correct?: boolean | null
           locked_at?: string
           ms_to_lock?: number
@@ -1435,6 +1438,16 @@ export type Database = {
       }
     }
     Functions: {
+      _live_apply_pending_answer_locked: {
+        Args: {
+          p_game_id: string
+          p_night_id: string
+          p_play_id: string
+          p_player_id: string
+          p_run_id: string
+        }
+        Returns: Json
+      }
       _live_claim_command: {
         Args: {
           p_command_id: string
@@ -1455,11 +1468,34 @@ export type Database = {
         }
         Returns: Json
       }
+      _live_mutation_envelope: {
+        Args: { p_freshly_applied: boolean; p_result: Json }
+        Returns: Json
+      }
+      _live_reconcile_pending_answers_locked: {
+        Args: {
+          p_game_id: string
+          p_night_id: string
+          p_play_id: string
+          p_run_id: string
+        }
+        Returns: number
+      }
       _live_reject_command: {
         Args: { p_code: string; p_command_id: string; p_night_id: string }
         Returns: Json
       }
       _live_resolve_locked_play: {
+        Args: {
+          p_game_id: string
+          p_night_id: string
+          p_now: string
+          p_play_id: string
+          p_run_id: string
+        }
+        Returns: Json
+      }
+      _live_resolve_locked_play_after_admission: {
         Args: {
           p_game_id: string
           p_night_id: string
@@ -1477,6 +1513,14 @@ export type Database = {
         Args: { p_opened_at: string; p_received_at: string }
         Returns: boolean
       }
+      apply_claimed_question_play_answer: {
+        Args: {
+          p_play_id: string
+          p_run_id: string
+          p_verified_device_id: string
+        }
+        Returns: Json
+      }
       begin_question_play_final_window: {
         Args: {
           p_command_id: string
@@ -1484,6 +1528,16 @@ export type Database = {
           p_game_id: string
           p_play_id: string
           p_run_id: string
+        }
+        Returns: Json
+      }
+      claim_question_play_answer: {
+        Args: {
+          p_play_id: string
+          p_run_id: string
+          p_submission_id: string
+          p_verified_device_id: string
+          p_visible_slot: number
         }
         Returns: Json
       }
@@ -1543,16 +1597,6 @@ export type Database = {
           p_expected_control_revision: number
           p_game_id: string
           p_run_id: string
-        }
-        Returns: Json
-      }
-      submit_question_play_answer: {
-        Args: {
-          p_play_id: string
-          p_run_id: string
-          p_submission_id: string
-          p_verified_device_id: string
-          p_visible_slot: number
         }
         Returns: Json
       }

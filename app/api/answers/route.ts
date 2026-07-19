@@ -36,10 +36,37 @@ import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
 import {
   freshLiveEventFromRpc,
+  parseLiveAnswerClaimRpcEnvelope,
   parseLiveAnswerRpcEnvelope,
 } from "@/lib/live-answer/rpcResult";
+import {
+  latencyBucketFor,
+  liveAnswerServerLogSink,
+  recordLiveAnswerHealth,
+  type LiveAnswerResultCode,
+} from "@/lib/live-answer/telemetry";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
+
+async function recordAnswerHealth(
+  playId: string,
+  startedAt: number,
+  resultCode: LiveAnswerResultCode,
+  duplicate?: boolean,
+) {
+  const latencyBucket = latencyBucketFor(performance.now() - startedAt);
+  await recordLiveAnswerHealth(
+    {
+      playId,
+      resultCode,
+      ...(latencyBucket ? { latencyBucket } : {}),
+      ...(duplicate === undefined
+        ? {}
+        : { duplicateCount: duplicate ? 1 : 0 }),
+    },
+    liveAnswerServerLogSink,
+  );
+}
 
 async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
   // A current projection spans the night revision and latest play rows. Read
@@ -117,6 +144,7 @@ export async function POST(req: NextRequest) {
   const admin = getSupabaseAdmin();
 
   if (resilient.success) {
+    const requestStartedAt = performance.now();
     const input = resilient.data;
     const { data: play, error: playError } = await admin
       .from("question_plays")
@@ -142,8 +170,8 @@ export async function POST(req: NextRequest) {
     }
     if (!night.room_code || !night.current_run_id) return serverError();
 
-    const { data: rpcData, error: rpcError } = await admin.rpc(
-      "submit_question_play_answer",
+    const { data: claimData, error: claimError } = await admin.rpc(
+      "claim_question_play_answer",
       {
         p_play_id: input.playId,
         p_run_id: input.runId,
@@ -152,12 +180,53 @@ export async function POST(req: NextRequest) {
         p_visible_slot: input.slotChosen,
       },
     );
-    if (rpcError) return serverError();
+    if (claimError) return serverError();
 
-    const envelope = parseLiveAnswerRpcEnvelope(rpcData);
+    const claimEnvelope = parseLiveAnswerClaimRpcEnvelope(claimData);
+    if (!claimEnvelope) return serverError();
+    const claimResult = claimEnvelope.result;
+    if (claimResult.code !== "claimed") {
+      await recordAnswerHealth(
+        input.playId,
+        requestStartedAt,
+        claimResult.code,
+      );
+      if (
+        claimResult.code === "deadline_passed" ||
+        claimResult.code === "identity_invalid" ||
+        claimResult.code === "not_eligible" ||
+        claimResult.code === "retry_later"
+      ) {
+        return ok(claimResult);
+      }
+      if (claimResult.code === "stale") return conflict("stale live play");
+      if (claimResult.code === "invalid_request") {
+        return badRequest("invalid answer");
+      }
+      return serverError();
+    }
+    if (
+      claimResult.runId !== input.runId ||
+      claimResult.playId !== input.playId
+    ) {
+      return serverError();
+    }
+
+    const { data: applyData, error: applyError } = await admin.rpc(
+      "apply_claimed_question_play_answer",
+      {
+        p_play_id: input.playId,
+        p_run_id: input.runId,
+        p_verified_device_id: deviceId,
+      },
+    );
+    if (applyError) return serverError();
+
+    const envelope = parseLiveAnswerRpcEnvelope(applyData);
     if (!envelope) return serverError();
     const result = envelope.result;
     if (result.code !== "confirmed") {
+      await recordAnswerHealth(input.playId, requestStartedAt, result.code);
       if (
         result.code === "deadline_passed" ||
         result.code === "identity_invalid" ||
@@ -203,10 +272,16 @@ export async function POST(req: NextRequest) {
 
     const responseLive = exactLive ?? await loadCurrentLiveRoom(admin, night.id);
     if (!responseLive) return serverError();
+    await recordAnswerHealth(
+      input.playId,
+      requestStartedAt,
+      result.code,
+      claimResult.duplicate,
+    );
     return ok({
       code: result.code,
       confirmedSlot: result.confirmedSlot,
-      duplicate: result.duplicate,
+      duplicate: claimResult.duplicate,
       live: responseLive,
     });
   }

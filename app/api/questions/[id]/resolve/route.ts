@@ -12,13 +12,9 @@
 // before invoking the service-role RPC. The authenticated host-only end-early
 // route remains the sole production path for an early close.
 //
-// On legacy success, we:
-//   1. Run the RPC (does is_correct + awarded_points for every answer,
-//      stamps finished_at, inserts 'resolve' event).
-//   2. Read back the canonical correct_index + the per-player awards.
-//   3. Broadcast 'resolve' on room:{code} so phones flip Locked → Reveal
-//      simultaneously with the TV (without each waiting for the slower
-//      Postgres Changes notification).
+// On legacy success, we run the scoring RPC and broadcast only the canonical
+// answer plus a refetch signal. Per-player correctness and points remain in
+// protected database reads; they never cross the shared room channel.
 
 import { conflict, ok, serverError, notFound } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -36,6 +32,11 @@ import {
   freshLiveEventFromRpc,
   parseLiveFinalizeRpcEnvelope,
 } from "@/lib/live-answer/rpcResult";
+import {
+  latencyBucketFor,
+  liveAnswerServerLogSink,
+  recordLiveAnswerHealth,
+} from "@/lib/live-answer/telemetry";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
@@ -138,6 +139,7 @@ export async function POST(
   const roomCode = night.room_code;
 
   if (night.answer_engine === "resilient_v1") {
+    const requestStartedAt = performance.now();
     if (!night.current_run_id) return serverError();
     const { data: plays, error: playError } = await admin
       .from("question_plays")
@@ -175,6 +177,17 @@ export async function POST(
     ) {
       return serverError();
     }
+
+    const latencyBucket = latencyBucketFor(performance.now() - requestStartedAt);
+    await recordLiveAnswerHealth(
+      {
+        playId: play.id,
+        resultCode: result.code,
+        ...(latencyBucket ? { latencyBucket } : {}),
+        ...(result.code === "resolved" ? { resolutionReason: "timer" } : {}),
+      },
+      liveAnswerServerLogSink,
+    );
 
     let exactLive = null;
     const freshEvent = freshLiveEventFromRpc(envelope);
@@ -242,31 +255,25 @@ export async function POST(
   });
   if (rpcError) return serverError();
 
-  // Read the awards back for the broadcast payload. Done after the RPC so
-  // is_correct/awarded_points are populated.
-  const { data: awards, error: awardsError } = await admin
+  // Preserve the response's aggregate count without selecting private answer
+  // details into this shared-broadcast path.
+  const { data: answerRows, error: answersError } = await admin
     .from("answers")
-    .select("player_id, is_correct, awarded_points")
+    .select("id")
     .eq("question_id", questionId);
-  if (awardsError) return serverError();
+  if (answersError) return serverError();
 
   const payload = {
     questionId,
     correctIndex: q.correct_index,
-    awards: (awards ?? []).map((a) => ({
-      playerId: a.player_id,
-      // Coerce to a real boolean: the column is boolean|null (null = no answer),
-      // but the broadcast/awards type is `boolean`. null counts as not-correct.
-      isCorrect: a.is_correct === true,
-      awarded: a.awarded_points ?? 0,
-    })),
+    refetch: true,
     serverNow: new Date().toISOString(),
   };
 
   try {
     await broadcastToRoom(roomCode, "resolve", payload);
-  } catch (e) {
-    console.warn("broadcast resolve failed", e);
+  } catch {
+    console.warn("broadcast resolve failed");
   }
 
   // Synchronized firework salvo (July) — every July screen ignites the same
@@ -274,12 +281,12 @@ export async function POST(
   // (a dropped beat never affects scoring); no-op on non-July nights.
   try {
     await broadcastFireworks(roomCode, "salvo", questionId);
-  } catch (e) {
-    console.warn("broadcast fireworks(salvo) failed", e);
+  } catch {
+    console.warn("broadcast fireworks(salvo) failed");
   }
 
   return ok({
     resolvedAt: new Date().toISOString(),
-    awardCount: payload.awards.length,
+    awardCount: answerRows?.length ?? 0,
   });
 }

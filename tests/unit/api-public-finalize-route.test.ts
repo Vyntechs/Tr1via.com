@@ -14,7 +14,7 @@ vi.mock("@/lib/api/broadcast", () => broadcastMock);
 const NIGHT_ID = "44444444-4444-4444-4444-444444444444";
 const GAME_ID = "33333333-3333-3333-3333-333333333333";
 const QUESTION_ID = "11111111-1111-1111-1111-111111111111";
-const PLAY_ID = "77777777-7777-7777-7777-777777777777";
+const PLAY_ID = "77777777-7777-4777-8777-777777777777";
 const RUN_ID = "88888888-8888-8888-8888-888888888888";
 const CURRENT_PLAY_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
 
@@ -274,5 +274,53 @@ describe("POST /api/room/[code]/plays/[playId]/finalize", () => {
     expect(warn).toHaveBeenCalledWith("public live finalize broadcast failed");
     expect(JSON.stringify(warn.mock.calls)).not.toContain("offline");
     warn.mockRestore();
+  });
+
+  it("emits only allowlisted structured finalize telemetry", async () => {
+    const admin = makeAdmin();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/room/[code]/plays/[playId]/finalize/route");
+    const response = await POST(request({ runId: RUN_ID }), ctx);
+
+    expect(response.status).toBe(200);
+    expect(info).toHaveBeenCalledOnce();
+    const logged = info.mock.calls[0][0] as Record<string, unknown>;
+    expect(logged).toMatchObject({
+      event: "live_answer_health",
+      playId: PLAY_ID,
+      resultCode: "resolved",
+      resolutionReason: "timer",
+    });
+    expect(Object.keys(logged).sort()).toEqual([
+      "event",
+      "latencyBucket",
+      "playId",
+      "resolutionReason",
+      "resultCode",
+    ]);
+    const serialized = JSON.stringify(logged);
+    expect(serialized).not.toContain("ABCDEF");
+    expect(serialized).not.toContain("raw");
+    info.mockRestore();
+  });
+
+  it("keeps a committed finalization successful when the server log sink throws", async () => {
+    const admin = makeAdmin();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const info = vi.spyOn(console, "info").mockImplementation(() => {
+      throw new Error("server logger unavailable");
+    });
+
+    const { POST } = await import("@/app/api/room/[code]/plays/[playId]/finalize/route");
+    const response = await POST(request({ runId: RUN_ID }), ctx);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      result: { code: "resolved" },
+    });
+    expect(info).toHaveBeenCalledOnce();
+    info.mockRestore();
   });
 });

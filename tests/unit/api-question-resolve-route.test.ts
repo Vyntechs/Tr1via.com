@@ -130,6 +130,37 @@ describe("POST /api/questions/[id]/resolve", () => {
     });
   });
 
+  it("broadcasts only a safe resolve refetch signal without player awards", async () => {
+    const admin = makeAdmin({ playedAt: "2026-07-19T03:59:30.000Z" });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+
+    expect(response.status).toBe(200);
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
+    const [roomCode, event, payload] = broadcastMock.broadcastToRoom.mock.calls[0];
+    expect(roomCode).toBe("ABCDEF");
+    expect(event).toBe("resolve");
+    expect(payload).toMatchObject({
+      questionId: QUESTION_ID,
+      correctIndex: 2,
+      refetch: true,
+      serverNow: expect.any(String),
+    });
+    expect(Object.keys(payload).sort()).toEqual([
+      "correctIndex",
+      "questionId",
+      "refetch",
+      "serverNow",
+    ]);
+    const serialized = JSON.stringify(payload);
+    expect(serialized).not.toContain("awards");
+    expect(serialized).not.toContain("playerId");
+    expect(serialized).not.toContain("isCorrect");
+    expect(serialized).not.toContain("awarded");
+  });
+
   it("preserves idempotent success for an already-resolved question", async () => {
     const admin = makeAdmin({
       playedAt: "2026-07-19T03:59:30.000Z",

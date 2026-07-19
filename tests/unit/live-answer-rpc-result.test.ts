@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   freshLiveEventFromRpc,
+  parseLiveAnswerClaimRpcEnvelope,
   parseLiveAnswerRpcEnvelope,
   parseLiveCommandRpcEnvelope,
   parseLiveFinalizeRpcEnvelope,
@@ -224,6 +225,21 @@ describe("live RPC result validation", () => {
     expect(freshLiveEventFromRpc(retry)).toBeNull();
     expect(
       parseLiveAnswerRpcEnvelope({
+        freshlyApplied: false,
+        result: {
+          code: "confirmed",
+          confirmedSlot: 3,
+          duplicate: true,
+          eventKind: "answer_progress",
+          runId: RUN_ID,
+          playId: PLAY_ID,
+          roomRevision: 9,
+          controlRevision: 5,
+        },
+      })?.result,
+    ).toMatchObject({ code: "confirmed", duplicate: true });
+    expect(
+      parseLiveAnswerRpcEnvelope({
         freshlyApplied: true,
         result: {
           code: "confirmed",
@@ -234,6 +250,51 @@ describe("live RPC result validation", () => {
           playId: PLAY_ID,
           roomRevision: 9,
           controlRevision: 5,
+          playerId: "identity-leak",
+        },
+      }),
+    ).toBeNull();
+  });
+
+  it("parses only the bounded durable admission result", () => {
+    expect(
+      parseLiveAnswerClaimRpcEnvelope({
+        freshlyApplied: true,
+        result: {
+          code: "claimed",
+          duplicate: false,
+          runId: RUN_ID,
+          playId: PLAY_ID,
+        },
+      }),
+    ).toMatchObject({
+      freshlyApplied: true,
+      freshness: "transaction_winner",
+      result: { code: "claimed", duplicate: false },
+    });
+    expect(
+      parseLiveAnswerClaimRpcEnvelope({
+        freshlyApplied: false,
+        result: {
+          code: "claimed",
+          duplicate: true,
+          runId: RUN_ID,
+          playId: PLAY_ID,
+        },
+      }),
+    ).toMatchObject({
+      freshlyApplied: false,
+      freshness: "replay",
+      result: { code: "claimed", duplicate: true },
+    });
+    expect(
+      parseLiveAnswerClaimRpcEnvelope({
+        freshlyApplied: true,
+        result: {
+          code: "claimed",
+          duplicate: false,
+          runId: RUN_ID,
+          playId: PLAY_ID,
           playerId: "identity-leak",
         },
       }),

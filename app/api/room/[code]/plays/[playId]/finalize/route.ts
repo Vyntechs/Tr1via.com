@@ -13,6 +13,11 @@ import {
   freshLiveEventFromRpc,
   parseLiveFinalizeRpcEnvelope,
 } from "@/lib/live-answer/rpcResult";
+import {
+  latencyBucketFor,
+  liveAnswerServerLogSink,
+  recordLiveAnswerHealth,
+} from "@/lib/live-answer/telemetry";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 const FinalizeBodySchema = z.object({ runId: UuidSchema }).strict();
@@ -92,6 +97,7 @@ export async function POST(
   }
   const parsed = FinalizeBodySchema.safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
+  const requestStartedAt = performance.now();
 
   const admin = getSupabaseAdmin();
   const { data: night, error: nightError } = await admin
@@ -144,6 +150,17 @@ export async function POST(
   ) {
     return serverError();
   }
+
+  const latencyBucket = latencyBucketFor(performance.now() - requestStartedAt);
+  await recordLiveAnswerHealth(
+    {
+      playId: playId.data,
+      resultCode: result.code,
+      ...(latencyBucket ? { latencyBucket } : {}),
+      ...(result.code === "resolved" ? { resolutionReason: "timer" } : {}),
+    },
+    liveAnswerServerLogSink,
+  );
 
   let exactLive = null;
   const freshEvent = freshLiveEventFromRpc(envelope);
