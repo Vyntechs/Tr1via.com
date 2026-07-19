@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { broadcastAppliedLiveRoomEvent } from "@/lib/api/broadcast";
 
@@ -33,7 +33,12 @@ describe("authoritative live room broadcast boundary", () => {
     process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-test-key";
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("broadcasts a transaction-winner answer event with aggregate state only", async () => {
+    vi.useFakeTimers();
     const sent = await broadcastAppliedLiveRoomEvent("ABCDEF", {
       applied: true,
       freshness: "transaction_winner",
@@ -79,6 +84,7 @@ describe("authoritative live room broadcast boundary", () => {
     expect(json).not.toContain("REASON-LEAK");
     expect(json).not.toContain("slotChosen");
     expect(json).not.toContain("canonicalIndex");
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("does not rebroadcast an applied exact replay", async () => {
@@ -92,6 +98,44 @@ describe("authoritative live room broadcast boundary", () => {
 
     expect(sent).toBe(false);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("aborts a nonsettling Realtime transport within the live answer budget", async () => {
+    vi.useFakeTimers();
+    let capturedSignal: AbortSignal | undefined;
+    fetchMock.mockImplementation((_input, init: RequestInit | undefined) => {
+      capturedSignal = init?.signal ?? undefined;
+      return new Promise<Response>((_resolve, reject) => {
+        capturedSignal?.addEventListener(
+          "abort",
+          () => reject(new DOMException("aborted", "AbortError")),
+          { once: true },
+        );
+      });
+    });
+
+    let settled = false;
+    const result = broadcastAppliedLiveRoomEvent("ABCDEF", {
+      applied: true,
+      freshness: "transaction_winner",
+      kind: "answer_progress",
+      serverNow: "2026-07-19T01:00:04.000Z",
+      live,
+    }).then(
+      () => "resolved" as const,
+      () => "rejected" as const,
+    ).finally(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(749);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(settled).toBe(true);
+    expect(await result).toBe("rejected");
+    expect(capturedSignal?.aborted).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("fails closed when the transaction did not apply or freshness is missing", async () => {

@@ -101,6 +101,11 @@ interface BroadcastMessage {
   private?: boolean;
 }
 
+// Realtime normally accepts a REST broadcast in 50-100ms. Keep enough room
+// for a transient regional delay without letting a stuck transport consume the
+// full serverless invocation or hold a committed answer acknowledgement open.
+const LIVE_BROADCAST_TIMEOUT_MS = 750;
+
 /**
  * Low-level: post one or more broadcast messages to the Realtime REST
  * endpoint. Resolves once Supabase returns 202 Accepted (~50-100ms from
@@ -114,18 +119,28 @@ async function postBroadcasts(messages: BroadcastMessage[]): Promise<void> {
   if (!url || !key) {
     throw new Error("broadcastToRoom: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   }
-  const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({ messages }),
-  });
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    throw new Error(`broadcast HTTP ${res.status}: ${body}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    LIVE_BROADCAST_TIMEOUT_MS,
+  );
+  try {
+    const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+      },
+      body: JSON.stringify({ messages }),
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`broadcast HTTP ${res.status}: ${body}`);
+    }
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

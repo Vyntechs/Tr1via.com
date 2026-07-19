@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
@@ -134,6 +134,10 @@ describe("POST /api/answers", () => {
     authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
     projectionMock.projectExactLiveEvent.mockResolvedValue(live);
     broadcastMock.broadcastAppliedLiveRoomEvent.mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("preserves the legacy answer path and response", async () => {
@@ -362,18 +366,31 @@ describe("POST /api/answers", () => {
   });
 
   it("does not fail a committed answer when best-effort broadcast fails", async () => {
+    vi.useFakeTimers();
     const admin = resilientAdmin();
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
-    broadcastMock.broadcastAppliedLiveRoomEvent.mockRejectedValue(new Error("offline"));
+    broadcastMock.broadcastAppliedLiveRoomEvent.mockImplementation(
+      () => new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error("offline")), 750);
+      }),
+    );
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     const { POST } = await import("@/app/api/answers/route");
-    const response = await POST(post({
+    let settled = false;
+    const responsePromise = POST(post({
       playId: PLAY_ID,
       runId: RUN_ID,
       submissionId: SUBMISSION_ID,
       slotChosen: 3,
-    }));
+    })).finally(() => {
+      settled = true;
+    });
+
+    await vi.advanceTimersByTimeAsync(749);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const response = await responsePromise;
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ code: "confirmed" });
