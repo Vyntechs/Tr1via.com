@@ -37,6 +37,50 @@ const ENGINE_RPCS = [
   "undo_question_play",
 ] as const;
 
+const NON_UNDONE_PLAY_STATES = ["accepting", "all_in_hold", "final_window", "resolved"];
+
+function unwrapOuterParentheses(value: string): string {
+  let result = value.trim();
+  while (result.startsWith("(") && result.endsWith(")")) {
+    let depth = 0;
+    let wrapsWholeExpression = true;
+    for (let index = 0; index < result.length; index += 1) {
+      if (result[index] === "(") depth += 1;
+      if (result[index] === ")") depth -= 1;
+      if (depth === 0 && index < result.length - 1) {
+        wrapsWholeExpression = false;
+        break;
+      }
+    }
+    if (!wrapsWholeExpression || depth !== 0) break;
+    result = result.slice(1, -1).trim();
+  }
+  return result;
+}
+
+function isExactNonUndonePredicate(predicate: string): boolean {
+  let normalized = predicate
+    .toLowerCase()
+    .replace(/^\s*where\b/, "")
+    .replace(/::(?:pg_catalog\.)?text\b/g, "")
+    .replace(/"/g, "")
+    .trim();
+  normalized = unwrapOuterParentheses(normalized);
+  normalized = normalized
+    .replace(/\(\s*status\s*\)/g, "status")
+    .replace(/\(\s*('[^']*')\s*\)/g, "$1")
+    .replace(/\s+/g, "");
+
+  if (/^status(?:<>|!=)'undone'$/.test(normalized)) return true;
+
+  const setMatch = normalized.match(/^statusin\((.*)\)$/)
+    ?? normalized.match(/^status=any\(array\[(.*)\]\)$/);
+  if (!setMatch) return false;
+  const states = setMatch[1].split(",").map((value) => value.replace(/^'|'$/g, "")).sort();
+  return states.length === NON_UNDONE_PLAY_STATES.length
+    && states.every((state, index) => state === [...NON_UNDONE_PLAY_STATES].sort()[index]);
+}
+
 async function freshDb(): Promise<PGlite> {
   const db = new PGlite();
   await db.exec(`
@@ -69,6 +113,28 @@ async function freshDb(): Promise<PGlite> {
 }
 
 describe("authoritative live answer engine schema", () => {
+  test("accepts only the exact non-undone partial-index predicate", () => {
+    for (const predicate of [
+      "where status <> 'undone'",
+      "WHERE ((status != ('undone'::text)))",
+      "where status in ('resolved', 'accepting', 'final_window', 'all_in_hold')",
+      "where status = any (array['accepting'::text, 'all_in_hold'::text, 'final_window'::text, 'resolved'::text])",
+    ]) {
+      expect(isExactNonUndonePredicate(predicate), predicate).toBe(true);
+    }
+
+    for (const predicate of [
+      "where status <> 'undone' and status <> 'resolved'",
+      "where status <> 'undone' or status is null",
+      "where status not in ('accepting', 'all_in_hold', 'final_window', 'resolved')",
+      "where status in ('accepting', 'all_in_hold', 'final_window', 'resolved', 'paused')",
+      "where status in ('accepting', 'all_in_hold', 'final_window')",
+      "where status = 'undone'",
+    ]) {
+      expect(isExactNonUndonePredicate(predicate), predicate).toBe(false);
+    }
+  });
+
   test("requires migration 0022", () => {
     expect(hasSchemaMigration).toBe(true);
   });
@@ -247,22 +313,7 @@ describe("authoritative live answer engine schema", () => {
         .replace(/["\s]/g, "");
       expect(onePerQuestionKey).toBe("run_id,question_id");
       const onePerQuestionPredicate = onePerQuestion?.slice(onePerQuestion.indexOf("where"));
-      const explicitlyExcludesUndone = /status\s*(?:<>|!=)\s*['"]undone['"]/.test(
-        onePerQuestionPredicate ?? "",
-      );
-      const usesPositiveStateSet = /where.*status\s*(?:in\s*\(|=\s*any\s*\(\s*array\[)/.test(
-        onePerQuestionPredicate ?? "",
-      );
-      const exactNonUndoneSet = usesPositiveStateSet
-        && ["accepting", "all_in_hold", "final_window", "resolved"].every(
-          (state) => onePerQuestionPredicate?.includes(state),
-        )
-        && !onePerQuestionPredicate?.includes("'undone'");
-      expect(onePerQuestionPredicate).not.toMatch(/\bnot\b/);
-      expect(explicitlyExcludesUndone || exactNonUndoneSet).toBe(true);
-      expect(onePerQuestionPredicate).not.toMatch(
-        /status\s*(?:=\s*['"]undone['"]|in\s*\(\s*['"]undone['"]\s*\))/,
-      );
+      expect(isExactNonUndonePredicate(onePerQuestionPredicate ?? "")).toBe(true);
     });
 
     test("prevents an answer unless the player belongs to that play's frozen eligibility set", async () => {
