@@ -1318,6 +1318,65 @@ describe("authoritative live answer engine schema", () => {
       }
     });
 
+    test("bases all-in hold on the latest accepted receipt, not the transaction processed last", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+        const playRow = await db.query<{ opened_at: string }>(
+          "select opened_at from question_plays where id = $1",
+          [play.playId],
+        );
+
+        await db.query(
+          `insert into question_play_answers (
+             play_id, player_id, submission_id, visible_slot, canonical_index,
+             received_at, locked_at, ms_to_lock
+           ) values (
+             $1, $2, $3, 1, 0,
+             clock_timestamp() + interval '1 second',
+             clock_timestamp() + interval '1 second', 1000
+           )`,
+          [play.playId, LIVE.playerB, LIVE.submissionB],
+        );
+        await db.query("update question_plays set confirmed_count = 1 where id = $1", [play.playId]);
+
+        await rpc(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 1::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        const timing = await db.query<{
+          status: string;
+          latest_hold_ms: number;
+          opened_hold_ms: number;
+        }>(
+          `select qp.status,
+                  round(extract(epoch from (
+                    qp.finalize_at - max(qpa.received_at)
+                  )) * 1000)::integer as latest_hold_ms,
+                  round(extract(epoch from (
+                    qp.finalize_at - qp.opened_at
+                  )) * 1000)::integer as opened_hold_ms
+             from question_plays qp
+             join question_play_answers qpa on qpa.play_id = qp.id
+            where qp.id = $1
+            group by qp.id`,
+          [play.playId],
+        );
+        expect(timing.rows[0]).toMatchObject({
+          status: "all_in_hold",
+          latest_hold_ms: 1_200,
+        });
+        expect(timing.rows[0]?.opened_hold_ms).toBeGreaterThanOrEqual(2_000);
+        expect(playRow.rows[0]?.opened_at).toBeDefined();
+      } finally {
+        await db.close();
+      }
+    });
+
     test("holds an early final window steady, rejects answers at its exact end, and resolves overdue reconnect once", async () => {
       const db = await freshDb();
       try {
@@ -1388,7 +1447,7 @@ describe("authoritative live answer engine schema", () => {
         expect(canonical.rows[0]).toMatchObject({
           status: "resolved",
           answered: 1,
-          awarded: 550,
+          awarded: 500,
         });
         expect(canonical.rows[0]?.finished_at).not.toBeNull();
 
@@ -1407,6 +1466,171 @@ describe("authoritative live answer engine schema", () => {
           [LIVE.night],
         );
         expect(revisionsAfter.rows[0]).toEqual(revisions.rows[0]);
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("preserves or resolves the stored final deadline when Show answer arrives at or after main zero", async () => {
+      const betweenDb = await freshDb();
+      try {
+        await seedLiveFixture(betweenDb);
+        const opened = await openRun(betweenDb);
+        await startGame(betweenDb, opened.runId as string);
+        const play = await openPlay(betweenDb, opened.runId as string);
+        await betweenDb.query(
+          `update question_plays
+              set opened_at = now() - interval '31 seconds',
+                  main_zero_at = now() - interval '1 second',
+                  final_window_ends_at = now() + interval '1 second'
+            where id = $1`,
+          [play.playId],
+        );
+        const before = await betweenDb.query<{
+          main_zero_at: string;
+          final_window_ends_at: string;
+        }>(
+          "select main_zero_at, final_window_ends_at from question_plays where id = $1",
+          [play.playId],
+        );
+        expect(await rpc(
+          betweenDb,
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.finalCommand],
+        )).toMatchObject({ code: "applied", applied: true });
+        const after = await betweenDb.query<{
+          status: string;
+          final_window_starts_at: string;
+          final_window_ends_at: string;
+        }>(
+          "select status, final_window_starts_at, final_window_ends_at from question_plays where id = $1",
+          [play.playId],
+        );
+        expect(after.rows[0]).toMatchObject({ status: "final_window" });
+        expect(after.rows[0]?.final_window_starts_at).toEqual(before.rows[0]?.main_zero_at);
+        expect(after.rows[0]?.final_window_ends_at).toEqual(before.rows[0]?.final_window_ends_at);
+      } finally {
+        await betweenDb.close();
+      }
+
+      const overdueDb = await freshDb();
+      try {
+        await seedLiveFixture(overdueDb);
+        const opened = await openRun(overdueDb);
+        await startGame(overdueDb, opened.runId as string);
+        const play = await openPlay(overdueDb, opened.runId as string);
+        await overdueDb.query(
+          `update question_plays
+              set opened_at = now() - interval '40 seconds',
+                  main_zero_at = now() - interval '10 seconds',
+                  final_window_ends_at = now() - interval '8 seconds'
+            where id = $1`,
+          [play.playId],
+        );
+        expect(await rpc(
+          overdueDb,
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.finalCommand],
+        )).toMatchObject({ code: "resolved", applied: true });
+        expect(await rpc(
+          overdueDb,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 1::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        )).toMatchObject({ code: "deadline_passed" });
+        const row = await overdueDb.query<{
+          status: string;
+          final_window_ends_at: string;
+          finished_at: string | null;
+        }>(
+          `select qp.status, qp.final_window_ends_at, q.finished_at
+             from question_plays qp
+             join questions q on q.id = qp.question_id
+            where qp.id = $1`,
+          [play.playId],
+        );
+        expect(row.rows[0]).toMatchObject({ status: "resolved" });
+        expect(row.rows[0]?.finished_at).not.toBeNull();
+      } finally {
+        await overdueDb.close();
+      }
+    });
+
+    test("awards speed bonus only before the final-window boundary", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+        await rpc(
+          db,
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, play.playId, opened.runId, LIVE.finalCommand],
+        );
+        const window = await db.query<{ starts_at: string }>(
+          "select final_window_starts_at as starts_at from question_plays where id = $1",
+          [play.playId],
+        );
+        await db.query(
+          `insert into question_play_answers (
+             play_id, player_id, submission_id, visible_slot, canonical_index,
+             received_at, locked_at, ms_to_lock
+           ) values
+             ($1, $2, $4, 3, 2, $6::timestamptz - interval '1 millisecond', $6, 1000),
+             ($1, $3, $5, 3, 2, $6, $6, 1000)`,
+          [
+            play.playId,
+            LIVE.playerA,
+            LIVE.playerB,
+            LIVE.submissionA,
+            LIVE.submissionB,
+            window.rows[0]?.starts_at,
+          ],
+        );
+        await db.query(
+          `update question_plays
+              set confirmed_count = 2,
+                  opened_at = $2::timestamptz - interval '3 seconds',
+                  final_window_ends_at = $2::timestamptz + interval '1 millisecond',
+                  finalize_at = $2::timestamptz + interval '1 millisecond'
+            where id = $1`,
+          [play.playId, window.rows[0]?.starts_at],
+        );
+        await rpc(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        );
+        const awards = await db.query<{ player_id: string; awarded_points: number }>(
+          `select player_id, awarded_points
+             from question_play_answers
+            where play_id = $1 order by player_id`,
+          [play.playId],
+        );
+        expect(awards.rows).toEqual([
+          { player_id: LIVE.playerA, awarded_points: 550 },
+          { player_id: LIVE.playerB, awarded_points: 500 },
+        ]);
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("rejects undo at the exact two-second boundary but allows one millisecond before", async () => {
+      const db = await freshDb();
+      try {
+        const result = await db.query<{ before: boolean; boundary: boolean }>(`
+          select
+            public._live_undo_allowed(
+              '2026-01-01T00:00:00Z'::timestamptz,
+              '2026-01-01T00:00:01.999Z'::timestamptz
+            ) as before,
+            public._live_undo_allowed(
+              '2026-01-01T00:00:00Z'::timestamptz,
+              '2026-01-01T00:00:02Z'::timestamptz
+            ) as boundary
+        `);
+        expect(result.rows[0]).toEqual({ before: true, boundary: false });
       } finally {
         await db.close();
       }

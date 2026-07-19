@@ -151,6 +151,92 @@ begin
 end;
 $$;
 
+create or replace function public._live_undo_allowed(
+  p_opened_at timestamptz,
+  p_received_at timestamptz
+)
+returns boolean
+language sql
+immutable
+strict
+set search_path = pg_catalog, public
+as $$
+  select p_received_at < p_opened_at + interval '2 seconds'
+$$;
+
+create or replace function public._live_resolve_locked_play(
+  p_night_id uuid,
+  p_run_id uuid,
+  p_game_id uuid,
+  p_play_id uuid,
+  p_now timestamptz
+)
+returns jsonb
+language plpgsql
+security definer
+set search_path = pg_catalog, public
+as $$
+declare
+  v_night public.nights%rowtype;
+  v_play public.question_plays%rowtype;
+  v_question public.questions%rowtype;
+  v_reason text;
+begin
+  select * into v_night from public.nights where id = p_night_id;
+  select * into v_play from public.question_plays
+   where id = p_play_id and night_id = p_night_id and run_id = p_run_id
+     and game_id = p_game_id;
+  if not found then return jsonb_build_object('code', 'stale', 'applied', false); end if;
+  if v_play.status = 'resolved' then
+    return jsonb_build_object(
+      'code', 'resolved', 'applied', false, 'runId', p_run_id, 'playId', p_play_id,
+      'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
+    );
+  end if;
+
+  v_reason := case when v_play.status = 'all_in_hold' then 'all_in' else 'deadline' end;
+  select * into v_question from public.questions where id = v_play.question_id for update;
+  update public.question_play_answers
+     set is_correct = (canonical_index = v_question.correct_index),
+         awarded_points = case
+           when canonical_index = v_question.correct_index
+                and ms_to_lock < 5000
+                and (
+                  v_play.final_window_starts_at is null
+                  or received_at < v_play.final_window_starts_at
+                )
+             then floor(coalesce(v_question.point_value, 0) * 1.1)::integer
+           when canonical_index = v_question.correct_index
+             then coalesce(v_question.point_value, 0)
+           else 0
+         end
+   where play_id = p_play_id and is_correct is null;
+  update public.questions set finished_at = p_now where id = v_play.question_id;
+  update public.question_plays
+     set status = 'resolved', resolved_at = p_now, resolution_reason = v_reason,
+         finalize_at = coalesce(finalize_at, p_now)
+   where id = p_play_id returning * into v_play;
+  update public.nights
+     set room_revision = room_revision + 1, control_revision = control_revision + 1
+   where id = p_night_id returning * into v_night;
+  insert into public.live_room_events (
+    night_id, run_id, play_id, game_id, question_id, room_revision,
+    control_revision, kind, payload
+  ) values (
+    p_night_id, p_run_id, p_play_id, p_game_id, v_play.question_id,
+    v_night.room_revision, v_night.control_revision, 'play_resolved',
+    jsonb_build_object(
+      'status', 'resolved', 'eligibleCount', v_play.eligible_count,
+      'confirmedCount', v_play.confirmed_count, 'reason', v_reason
+    )
+  );
+  return jsonb_build_object(
+    'code', 'resolved', 'applied', true, 'runId', p_run_id, 'playId', p_play_id,
+    'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
+  );
+end;
+$$;
+
 create or replace function public.open_night_run(
   p_night_id uuid,
   p_command_id uuid,
@@ -428,6 +514,7 @@ declare
   v_window public.question_play_attempt_windows%rowtype;
   v_scramble smallint[];
   v_canonical smallint;
+  v_latest_receipt timestamptz;
   v_retry_ms integer;
 begin
   if p_visible_slot not between 1 and 4 then
@@ -511,9 +598,15 @@ begin
      and v_play.eligible_count > 0
      and v_play.confirmed_count = v_play.eligible_count
      and v_now < v_play.main_zero_at then
+    select max(received_at) into v_latest_receipt
+      from public.question_play_answers
+     where play_id = p_play_id;
     update public.question_plays
        set status = 'all_in_hold',
-           finalize_at = greatest(v_now + interval '1200 milliseconds', opened_at + interval '2 seconds')
+           finalize_at = greatest(
+             v_latest_receipt + interval '1200 milliseconds',
+             opened_at + interval '2 seconds'
+           )
      where id = p_play_id
      returning * into v_play;
   end if;
@@ -594,12 +687,30 @@ begin
     return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
   end if;
 
-  update public.question_plays
-     set status = 'final_window', final_window_starts_at = v_now,
-         final_window_ends_at = v_now + interval '2 seconds',
-         finalize_at = v_now + interval '2 seconds'
-   where id = p_play_id
-   returning * into v_play;
+  if v_now >= v_play.final_window_ends_at then
+    v_result := public._live_resolve_locked_play(
+      v_night_id, p_run_id, p_game_id, p_play_id, v_now
+    );
+    update public.live_command_receipts
+       set status = 'applied', canonical_result = v_result,
+           completed_at = clock_timestamp()
+     where night_id = v_night_id and command_id = p_command_id;
+    return v_result;
+  elsif v_now >= v_play.main_zero_at then
+    update public.question_plays
+       set status = 'final_window',
+           final_window_starts_at = main_zero_at,
+           finalize_at = final_window_ends_at
+     where id = p_play_id
+     returning * into v_play;
+  else
+    update public.question_plays
+       set status = 'final_window', final_window_starts_at = v_now,
+           final_window_ends_at = v_now + interval '2 seconds',
+           finalize_at = v_now + interval '2 seconds'
+     where id = p_play_id
+     returning * into v_play;
+  end if;
   update public.nights
      set room_revision = room_revision + 1, control_revision = control_revision + 1
    where id = v_night_id returning * into v_night;
@@ -637,10 +748,8 @@ declare
   v_night public.nights%rowtype;
   v_game public.games%rowtype;
   v_play public.question_plays%rowtype;
-  v_question public.questions%rowtype;
   v_window public.play_finalize_attempt_windows%rowtype;
   v_retry_ms integer;
-  v_reason text;
 begin
   select * into v_night from public.nights
    where room_code = upper(replace(p_room_code, '·', '')) for update;
@@ -716,40 +825,8 @@ begin
     );
   end if;
 
-  v_reason := case when v_play.status = 'all_in_hold' then 'all_in' else 'deadline' end;
-  select * into v_question from public.questions where id = v_play.question_id for update;
-  update public.question_play_answers
-     set is_correct = (canonical_index = v_question.correct_index),
-         awarded_points = case
-           when canonical_index = v_question.correct_index and ms_to_lock < 5000
-             then floor(coalesce(v_question.point_value, 0) * 1.1)::integer
-           when canonical_index = v_question.correct_index
-             then coalesce(v_question.point_value, 0)
-           else 0
-         end
-   where play_id = p_play_id and is_correct is null;
-  update public.questions set finished_at = v_now where id = v_play.question_id;
-  update public.question_plays
-     set status = 'resolved', resolved_at = v_now, resolution_reason = v_reason,
-         finalize_at = coalesce(finalize_at, v_now)
-   where id = p_play_id returning * into v_play;
-  update public.nights
-     set room_revision = room_revision + 1, control_revision = control_revision + 1
-   where id = v_night.id returning * into v_night;
-  insert into public.live_room_events (
-    night_id, run_id, play_id, game_id, question_id, room_revision,
-    control_revision, kind, payload
-  ) values (
-    v_night.id, p_run_id, p_play_id, v_game.id, v_play.question_id,
-    v_night.room_revision, v_night.control_revision, 'play_resolved',
-    jsonb_build_object(
-      'status', 'resolved', 'eligibleCount', v_play.eligible_count,
-      'confirmedCount', v_play.confirmed_count, 'reason', v_reason
-    )
-  );
-  return jsonb_build_object(
-    'code', 'resolved', 'applied', true, 'runId', p_run_id, 'playId', p_play_id,
-    'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
+  return public._live_resolve_locked_play(
+    v_night.id, p_run_id, v_game.id, p_play_id, v_now
   );
 end;
 $$;
@@ -803,7 +880,7 @@ begin
      set expected_play_id = p_play_id, expected_play_status = v_play.status
    where night_id = v_night_id and command_id = p_command_id;
   if v_play.status in ('resolved', 'undone')
-     or v_now > v_play.opened_at + interval '2 seconds' then
+     or not public._live_undo_allowed(v_play.opened_at, v_now) then
     return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
   end if;
   update public.question_plays
@@ -903,6 +980,8 @@ revoke all on function public._live_scramble_for(uuid, uuid) from public, anon, 
 revoke all on function public._live_existing_command_result(uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public._live_claim_command(uuid, uuid, uuid, text, text, bigint, uuid) from public, anon, authenticated;
 revoke all on function public._live_reject_command(uuid, uuid, text) from public, anon, authenticated;
+revoke all on function public._live_undo_allowed(timestamptz, timestamptz) from public, anon, authenticated;
+revoke all on function public._live_resolve_locked_play(uuid, uuid, uuid, uuid, timestamptz) from public, anon, authenticated, service_role;
 revoke all on function public.open_night_run(uuid, uuid, uuid, bigint) from public, anon, authenticated;
 revoke all on function public.start_live_game(uuid, uuid, uuid, bigint) from public, anon, authenticated;
 revoke all on function public.open_question_play(uuid, uuid, uuid, uuid, bigint) from public, anon, authenticated;
@@ -916,6 +995,7 @@ grant execute on function public._live_scramble_for(uuid, uuid) to service_role;
 grant execute on function public._live_existing_command_result(uuid, uuid, text) to service_role;
 grant execute on function public._live_claim_command(uuid, uuid, uuid, text, text, bigint, uuid) to service_role;
 grant execute on function public._live_reject_command(uuid, uuid, text) to service_role;
+grant execute on function public._live_undo_allowed(timestamptz, timestamptz) to service_role;
 grant execute on function public.open_night_run(uuid, uuid, uuid, bigint) to service_role;
 grant execute on function public.start_live_game(uuid, uuid, uuid, bigint) to service_role;
 grant execute on function public.open_question_play(uuid, uuid, uuid, uuid, bigint) to service_role;
