@@ -736,6 +736,25 @@ describe("authoritative live answer engine schema", () => {
       }
     });
 
+    test.each(["applied", "rejected"])(
+      "rejects a terminal %s command receipt without a canonical result",
+      async (status) => {
+        const probeDb = await freshDb();
+        try {
+          await seedAncestryFixture(probeDb);
+          await expect(probeDb.query(
+            `insert into live_command_receipts (
+               night_id, command_id, run_id, kind, request_hash,
+               expected_control_revision, status, canonical_result, completed_at
+             ) values ($1, gen_random_uuid(), $2, 'probe', 'probe', 0, $3, null, now())`,
+            [ANCESTRY.nightA, ANCESTRY.runA, status],
+          )).rejects.toThrow(/constraint|check/i);
+        } finally {
+          await probeDb.close();
+        }
+      },
+    );
+
     test("accepts an exact receipt retry after the play advances", async () => {
       const probeDb = await freshDb();
       try {
@@ -946,6 +965,136 @@ describe("authoritative live answer engine schema", () => {
   });
 
   describe.skipIf(!hasSchemaMigration || !hasFunctionsMigration)("0023 atomic live engine behavior", () => {
+    test("never emits a null mutation envelope or missing-command helper result", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const envelope = await db.query<{ result: RpcEnvelope }>(
+          "select public._live_mutation_envelope(true, null::jsonb) as result",
+        );
+        expect(envelope.rows[0]?.result).toEqual({
+          freshlyApplied: false,
+          result: { code: "corrupt_state", applied: false },
+        });
+
+        const missing = await db.query<{ result: RpcResult }>(
+          "select public._live_existing_command_result($1, $2, 'missing') as result",
+          [LIVE.night, crypto.randomUUID()],
+        );
+        expect(missing.rows[0]?.result).toEqual({ missing: true });
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("fails closed on an exact retry of a legacy terminal receipt with no result", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        const runId = opened.runId as string;
+        const commandId = crypto.randomUUID();
+
+        await db.exec(
+          "alter table live_command_receipts drop constraint if exists live_command_receipts_terminal_result_required",
+        );
+        await db.query(
+          `insert into live_command_receipts (
+             night_id, command_id, run_id, kind, request_hash,
+             expected_control_revision, expected_game_id, status,
+             canonical_result, completed_at
+           ) values (
+             $1, $2, $3::uuid, 'start_live_game',
+             md5(concat_ws('|', 'start_live_game', $4::uuid::text, $3::uuid::text, '1')),
+             1, $4::uuid, 'applied', null, now()
+           )`,
+          [LIVE.night, commandId, runId, LIVE.game],
+        );
+
+        const retry = await rpcEnvelope(
+          db,
+          "select public.start_live_game($1, $2, $3, 1::bigint) as result",
+          [LIVE.game, runId, commandId],
+        );
+        expect(retry).toEqual({
+          freshlyApplied: false,
+          result: { code: "corrupt_state", applied: false },
+        });
+
+        const state = await db.query<{
+          game_state: string;
+          room_revision: number;
+          control_revision: number;
+          events: number;
+        }>(
+          `select g.state as game_state, n.room_revision, n.control_revision,
+                  (select count(*)::int from live_room_events where night_id = n.id) as events
+             from nights n join games g on g.night_id = n.id
+            where n.id = $1 and g.id = $2`,
+          [LIVE.night, LIVE.game],
+        );
+        expect(state.rows[0]).toEqual({
+          game_state: "ready",
+          room_revision: 1,
+          control_revision: 1,
+          events: 1,
+        });
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("keeps a normal pending command non-fresh and mutation-free", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        const runId = opened.runId as string;
+        const commandId = crypto.randomUUID();
+        await db.query(
+          `insert into live_command_receipts (
+             night_id, command_id, run_id, kind, request_hash,
+             expected_control_revision, expected_game_id
+           ) values (
+             $1, $2, $3::uuid, 'start_live_game',
+             md5(concat_ws('|', 'start_live_game', $4::uuid::text, $3::uuid::text, '1')),
+             1, $4::uuid
+           )`,
+          [LIVE.night, commandId, runId, LIVE.game],
+        );
+
+        expect(await rpcEnvelope(
+          db,
+          "select public.start_live_game($1, $2, $3, 1::bigint) as result",
+          [LIVE.game, runId, commandId],
+        )).toEqual({
+          freshlyApplied: false,
+          result: { code: "retry_later", retryAfterMs: 100 },
+        });
+
+        const state = await db.query<{
+          game_state: string;
+          room_revision: number;
+          control_revision: number;
+          events: number;
+        }>(
+          `select g.state as game_state, n.room_revision, n.control_revision,
+                  (select count(*)::int from live_room_events where night_id = n.id) as events
+             from nights n join games g on g.night_id = n.id
+            where n.id = $1 and g.id = $2`,
+          [LIVE.night, LIVE.game],
+        );
+        expect(state.rows[0]).toEqual({
+          game_state: "ready",
+          room_revision: 1,
+          control_revision: 1,
+          events: 1,
+        });
+      } finally {
+        await db.close();
+      }
+    });
+
     test("matches every exported JavaScript scramble vector in SQL", async () => {
       const db = await freshDb();
       try {

@@ -369,6 +369,95 @@ describe("reset_live_night_to_setup", () => {
       });
     });
 
+    test("keeps archived receipts terminal and canonically replayable", async () => {
+      await expect(db.query(
+        `insert into live_command_receipt_archive (
+           night_id, command_id, run_id, kind, request_hash,
+           expected_control_revision, status, canonical_result,
+           created_at, completed_at
+         ) values ($1, gen_random_uuid(), $2, 'probe', 'null-result', 0,
+           'applied', null, now(), now())`,
+        [nightId, oldRunId],
+      )).rejects.toThrow(/not-null|null value|constraint/i);
+
+      await expect(db.query(
+        `insert into live_command_receipt_archive (
+           night_id, command_id, run_id, kind, request_hash,
+           expected_control_revision, status, canonical_result,
+           created_at, completed_at
+         ) values ($1, gen_random_uuid(), $2, 'probe', 'pending', 0,
+           'pending', '{"code":"retry_later"}'::jsonb, now(), now())`,
+        [nightId, oldRunId],
+      )).rejects.toThrow(/constraint|check/i);
+    });
+
+    test("fails closed on a legacy terminal-null receipt after reset overrides are installed", async () => {
+      const commandId = crypto.randomUUID();
+      const before = await db.query<{
+        game_state: string;
+        room_revision: number;
+        control_revision: number;
+        events: number;
+      }>(
+        `select g.state as game_state, n.room_revision, n.control_revision,
+                (select count(*)::int from live_room_events where night_id = n.id) as events
+           from nights n join games g on g.night_id = n.id
+          where n.id = $1 and g.id = $2`,
+        [nightId, game1Id],
+      );
+
+      await db.exec(
+        "alter table live_command_receipts drop constraint live_command_receipts_terminal_result_required",
+      );
+      try {
+        await db.query(
+          `insert into live_command_receipts (
+             night_id, command_id, run_id, kind, request_hash,
+             expected_control_revision, expected_game_id, status,
+             canonical_result, completed_at
+           ) values (
+             $1, $2, $3::uuid, 'start_live_game',
+             md5(concat_ws('|', 'start_live_game', $4::uuid::text, $3::uuid::text, '0')),
+             0, $4::uuid, 'applied', null, now()
+           )`,
+          [nightId, commandId, resetResult.runId, game1Id],
+        );
+
+        const retry = await db.query<{ result: RpcEnvelope }>(
+          "select public.start_live_game($1, $2, $3, 0) as result",
+          [game1Id, resetResult.runId, commandId],
+        );
+        expect(retry.rows[0]?.result).toEqual({
+          freshlyApplied: false,
+          result: { code: "corrupt_state", applied: false },
+        });
+
+        const after = await db.query<{
+          game_state: string;
+          room_revision: number;
+          control_revision: number;
+          events: number;
+        }>(
+          `select g.state as game_state, n.room_revision, n.control_revision,
+                  (select count(*)::int from live_room_events where night_id = n.id) as events
+             from nights n join games g on g.night_id = n.id
+            where n.id = $1 and g.id = $2`,
+          [nightId, game1Id],
+        );
+        expect(after.rows).toEqual(before.rows);
+      } finally {
+        await db.query(
+          "delete from live_command_receipts where night_id = $1 and command_id = $2",
+          [nightId, commandId],
+        );
+        await db.exec(
+          `alter table live_command_receipts
+             add constraint live_command_receipts_terminal_result_required
+             check (status = 'pending' or canonical_result is not null)`,
+        );
+      }
+    });
+
     test("rejects and receipts new commands that target the retired run", async () => {
       const commandId = crypto.randomUUID();
       const stale = await db.query<{ result: RpcEnvelope }>(

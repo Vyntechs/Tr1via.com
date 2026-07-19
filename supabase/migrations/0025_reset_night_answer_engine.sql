@@ -149,13 +149,16 @@ begin
   end if;
 
   if not found then
-    return null;
+    return jsonb_build_object('missing', true);
   end if;
   if v_request_hash <> p_request_hash then
     return jsonb_build_object('code', 'stale', 'applied', false);
   end if;
   if v_status = 'pending' then
     return jsonb_build_object('code', 'retry_later', 'retryAfterMs', 100);
+  end if;
+  if v_status not in ('applied', 'rejected') or v_result is null then
+    return jsonb_build_object('code', 'corrupt_state', 'applied', false);
   end if;
   return v_result;
 end;
@@ -182,7 +185,7 @@ begin
   v_existing := public._live_existing_command_result(
     p_night_id, p_command_id, p_request_hash
   );
-  if v_existing is not null then
+  if not coalesce((v_existing->>'missing')::boolean, false) then
     return v_existing;
   end if;
 
@@ -197,9 +200,13 @@ begin
   if v_rows = 1 then
     return jsonb_build_object('claimed', true);
   end if;
-  return public._live_existing_command_result(
+  v_existing := public._live_existing_command_result(
     p_night_id, p_command_id, p_request_hash
   );
+  if coalesce((v_existing->>'missing')::boolean, false) then
+    return jsonb_build_object('code', 'corrupt_state', 'applied', false);
+  end if;
+  return v_existing;
 end;
 $$;
 
@@ -360,9 +367,13 @@ begin
     night_id, command_id, run_id, kind, request_hash,
     expected_control_revision, expected_game_id, expected_play_id,
     expected_play_status,
-    case when status = 'pending' then 'rejected' else status end,
+    case when status = 'pending' or canonical_result is null
+      then 'rejected' else status
+    end,
     case when status = 'pending'
       then jsonb_build_object('code', 'stale', 'applied', false)
+      when canonical_result is null
+      then jsonb_build_object('code', 'corrupt_state', 'applied', false)
       else canonical_result
     end,
     created_at, coalesce(completed_at, clock_timestamp()), clock_timestamp()

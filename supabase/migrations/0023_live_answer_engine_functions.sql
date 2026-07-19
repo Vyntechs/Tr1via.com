@@ -72,12 +72,17 @@ create or replace function public._live_mutation_envelope(
 returns jsonb
 language sql
 immutable
-strict
 set search_path = pg_catalog, public
 as $$
   select jsonb_build_object(
-    'freshlyApplied', p_freshly_applied,
-    'result', p_result
+    'freshlyApplied', case
+      when p_result is null then false
+      else coalesce(p_freshly_applied, false)
+    end,
+    'result', coalesce(
+      p_result,
+      jsonb_build_object('code', 'corrupt_state', 'applied', false)
+    )
   )
 $$;
 
@@ -102,13 +107,17 @@ begin
    for update;
 
   if not found then
-    return null;
+    return jsonb_build_object('missing', true);
   end if;
   if v_receipt.request_hash <> p_request_hash then
     return jsonb_build_object('code', 'stale', 'applied', false);
   end if;
   if v_receipt.status = 'pending' then
     return jsonb_build_object('code', 'retry_later', 'retryAfterMs', 100);
+  end if;
+  if v_receipt.status not in ('applied', 'rejected')
+     or v_receipt.canonical_result is null then
+    return jsonb_build_object('code', 'corrupt_state', 'applied', false);
   end if;
   return v_receipt.canonical_result;
 end;
@@ -129,6 +138,7 @@ security definer
 set search_path = pg_catalog, public
 as $$
 declare
+  v_existing jsonb;
   v_rows integer;
 begin
   insert into public.live_command_receipts (
@@ -142,7 +152,13 @@ begin
   if v_rows = 1 then
     return jsonb_build_object('claimed', true);
   end if;
-  return public._live_existing_command_result(p_night_id, p_command_id, p_request_hash);
+  v_existing := public._live_existing_command_result(
+    p_night_id, p_command_id, p_request_hash
+  );
+  if coalesce((v_existing->>'missing')::boolean, false) then
+    return jsonb_build_object('code', 'corrupt_state', 'applied', false);
+  end if;
+  return v_existing;
 end;
 $$;
 

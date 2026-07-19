@@ -233,6 +233,8 @@ create table public.live_command_receipts (
   primary key (night_id, command_id),
   constraint live_command_receipts_expected_revision_nonnegative
     check (expected_control_revision >= 0),
+  constraint live_command_receipts_terminal_result_required
+    check (status = 'pending' or canonical_result is not null),
   constraint live_command_receipts_expected_play_shape check (
     (expected_play_id is null and expected_play_status is null)
     or
