@@ -128,7 +128,10 @@ function useTVWelcomeEvent(
   lastBroadcast: TVBroadcast | null,
   players: TVSnapshot["players"],
 ): TVLobbyWelcomeEvent | null {
-  const [event, setEvent] = useState<TVLobbyWelcomeEvent | null>(null);
+  const [heldEvent, setHeldEvent] = useState<{
+    sourceJoinToken: string;
+    value: TVLobbyWelcomeEvent;
+  } | null>(null);
   const reduced = usePrefersReducedMotion();
 
   useEffect(() => {
@@ -140,12 +143,15 @@ function useTVWelcomeEvent(
     // may lag the broadcast by one render tick, so worst case we
     // off-by-one (sparkle on player 6 instead of 5). Acceptable.
     const idx = Math.max(1, (players?.length ?? 0));
-    setEvent({
-      joinToken: lastBroadcast.joinToken,
-      name: lastBroadcast.displayName,
-      colorKey: lastBroadcast.colorKey,
-      joinIndex: idx,
-      prefersReducedMotion: reduced,
+    setHeldEvent({
+      sourceJoinToken: lastBroadcast.joinToken,
+      value: {
+        joinToken: lastBroadcast.joinToken,
+        name: lastBroadcast.displayName,
+        colorKey: lastBroadcast.colorKey,
+        joinIndex: idx,
+        prefersReducedMotion: reduced,
+      },
     });
     // Local chime on the TV — the host's HDMI'd laptop will play this
     // through the venue speakers. Best-effort.
@@ -154,7 +160,10 @@ function useTVWelcomeEvent(
     } catch {
       /* silent */
     }
-    const handle = window.setTimeout(() => setEvent(null), WELCOME_OVERLAY_DURATION_MS);
+    const handle = window.setTimeout(
+      () => setHeldEvent(null),
+      WELCOME_OVERLAY_DURATION_MS,
+    );
     return () => window.clearTimeout(handle);
     // Trigger off the broadcast's identity. `serverNow` changes per emit;
     // joinToken changes per join — either is sufficient to detect a new
@@ -169,7 +178,15 @@ function useTVWelcomeEvent(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
-  return event;
+  if (
+    !heldEvent ||
+    lastBroadcast?.event !== "roster-changed" ||
+    lastBroadcast.joinToken !== heldEvent.sourceJoinToken
+  ) {
+    return null;
+  }
+
+  return heldEvent.value;
 }
 
 function SectionCompleteOverlay({

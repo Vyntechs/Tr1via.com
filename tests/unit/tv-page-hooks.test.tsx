@@ -22,7 +22,7 @@
 // which way React reports it.
 
 import { Component, Suspense, type ReactNode } from "react";
-import { act, render } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { TVBroadcast, TVSnapshot } from "@/lib/hooks/useTVRoom";
 
@@ -56,8 +56,12 @@ vi.mock("@/lib/hooks/useTVRoom", () => ({
 
 // Heavy TV children — render nothing so we only exercise TVPage's own hook
 // order, not the state machine's deep tree.
+const tvStateMachineRender = vi.hoisted(() => vi.fn());
 vi.mock("@/components/tv", () => ({
-  TVStateMachine: () => null,
+  TVStateMachine: (props: unknown) => {
+    tvStateMachineRender(props);
+    return null;
+  },
   TVSectionComplete: () => null,
   TVRoomMagicOverlay: () => null,
 }));
@@ -119,6 +123,7 @@ class CatchBoundary extends Component<{ children: ReactNode }, { failed: boolean
 afterEach(() => {
   roomState = { status: "loading", snapshot: null, lastBroadcast: null };
   caughtError = null;
+  tvStateMachineRender.mockClear();
   vi.restoreAllMocks();
 });
 
@@ -173,5 +178,68 @@ describe("TVPage hook order across loading → ready", () => {
     ).toEqual([]);
     // And the page did not crash into the error boundary (prod #310 path).
     expect(caughtError).toBeNull();
+  });
+
+  it("clears a held room A welcome before room B becomes ready", async () => {
+    const roomAWelcome: TVBroadcast = {
+      event: "roster-changed",
+      questionId: "",
+      serverNow: "2026-07-19T00:00:01.000Z",
+      joinToken: "room-a-welcome",
+      displayName: "Alice",
+    };
+    roomState = {
+      status: "ready",
+      snapshot: READY_SNAPSHOT,
+      lastBroadcast: roomAWelcome,
+    };
+
+    const params = Promise.resolve({ code: "EP8G5U" });
+    const tree = () => (
+      <Suspense fallback={null}>
+        <TVPage params={params} />
+      </Suspense>
+    );
+    let rerender!: (ui: React.ReactElement) => void;
+
+    await act(async () => {
+      const result = render(tree());
+      rerender = result.rerender;
+      await params;
+    });
+    await waitFor(() =>
+      expect(tvStateMachineRender).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          welcomeEvent: expect.objectContaining({
+            joinToken: "room-a-welcome",
+          }),
+        }),
+      ),
+    );
+
+    await act(async () => {
+      roomState = { status: "loading", snapshot: null, lastBroadcast: null };
+      rerender(tree());
+    });
+    await act(async () => {
+      roomState = {
+        status: "ready",
+        snapshot: {
+          ...READY_SNAPSHOT,
+          night: {
+            ...READY_SNAPSHOT.night,
+            id: "night-2",
+            roomCode: "GHIJKL",
+            venueName: "Room B",
+          },
+        },
+        lastBroadcast: null,
+      };
+      rerender(tree());
+    });
+
+    expect(tvStateMachineRender).toHaveBeenLastCalledWith(
+      expect.objectContaining({ welcomeEvent: null }),
+    );
   });
 });

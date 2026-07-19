@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 
 const h = vi.hoisted(() => {
-  const broadcastHandlers = new Map<string, (message: { payload: unknown }) => void>();
+  type BroadcastHandler = (message: { payload: unknown }) => void;
+  const broadcastHandlers = new Map<string, Map<string, BroadcastHandler>>();
 
   const client = {
-    channel: vi.fn(() => {
+    channel: vi.fn((channelName: string) => {
+      const channelHandlers = new Map<string, BroadcastHandler>();
+      broadcastHandlers.set(channelName, channelHandlers);
       const channel = {
         on: vi.fn((
           kind: string,
@@ -15,7 +18,7 @@ const h = vi.hoisted(() => {
           handler: (message: { payload: unknown }) => void,
         ) => {
           if (kind === "broadcast" && filter.event) {
-            broadcastHandlers.set(filter.event, handler);
+            channelHandlers.set(filter.event, handler);
           }
           return channel;
         }),
@@ -27,8 +30,12 @@ const h = vi.hoisted(() => {
   };
 
   return {
-    broadcastHandlers,
     client,
+    broadcast(roomCode: string, event: string, payload: unknown) {
+      const handler = broadcastHandlers.get(`room:${roomCode}`)?.get(event);
+      if (!handler) throw new Error(`missing ${event} handler for ${roomCode}`);
+      handler({ payload });
+    },
     reset() {
       broadcastHandlers.clear();
       client.channel.mockClear();
@@ -174,6 +181,153 @@ describe("useTVRoom snapshot request lifecycle", () => {
       await Promise.resolve();
     });
     expect(result.current.snapshot?.night.venueName).toBe("Room B");
+  });
+
+  it("masks room A welcome, fireworks, and Room Magic state immediately in room B", async () => {
+    const nextRoom = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Room A")))
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Room A refreshed")))
+      .mockImplementationOnce(() => nextRoom.promise);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ code }) => useTVRoom(code),
+      { initialProps: { code: "ABCDEF" } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    act(() => {
+      h.broadcast("ABCDEF", "roster-changed", {
+        joinToken: "room-a-welcome",
+        displayName: "Alice",
+        joinedAt: "2026-07-19T00:00:01.000Z",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+      h.broadcast("ABCDEF", "fireworks", {
+        kind: "salvo",
+        fireAt: "2026-07-19T00:00:02.000Z",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+      h.broadcast("ABCDEF", "room-magic-reaction", {
+        id: "room-a-reaction",
+        kind: "wow",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(result.current.lastBroadcast?.joinToken).toBe("room-a-welcome");
+    expect(result.current.lastFireworksBeat).not.toBeNull();
+    expect(result.current.lastRoomMagicReaction?.id).toBe("room-a-reaction");
+
+    rerender({ code: "GHIJKL" });
+
+    expect(result.current.lastBroadcast).toBeNull();
+    expect(result.current.lastFireworksBeat).toBeNull();
+    expect(result.current.lastRoomMagicReaction).toBeNull();
+
+    await act(async () => {
+      nextRoom.resolve(response(snapshot("GHIJKL", "Room B")));
+      await Promise.resolve();
+    });
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    expect(result.current.lastBroadcast).toBeNull();
+    expect(result.current.lastFireworksBeat).toBeNull();
+    expect(result.current.lastRoomMagicReaction).toBeNull();
+  });
+
+  it("ignores every queued room A callback without superseding room B and accepts room B callbacks", async () => {
+    const nextRoom = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Room A")))
+      .mockImplementationOnce(() => nextRoom.promise)
+      .mockResolvedValue(response(snapshot("GHIJKL", "Room B refreshed")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result, rerender } = renderHook(
+      ({ code }) => useTVRoom(code),
+      { initialProps: { code: "ABCDEF" } },
+    );
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+
+    rerender({ code: "GHIJKL" });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const roomBRequest = fetchMock.mock.calls[1]?.[1] as RequestInit | undefined;
+
+    act(() => {
+      h.broadcast("ABCDEF", "reveal", {
+        questionId: "room-a-question",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+      h.broadcast("ABCDEF", "undo", {
+        questionId: "room-a-question",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+      h.broadcast("ABCDEF", "resolve", {
+        questionId: "room-a-question",
+        serverNow: "2026-07-19T00:00:01.000Z",
+        correctIndex: 2,
+      });
+      h.broadcast("ABCDEF", "end-early", {
+        questionId: "room-a-question",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+      h.broadcast("ABCDEF", "game-ended", {});
+      h.broadcast("ABCDEF", "roster-changed", {
+        joinToken: "stale-room-a-welcome",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+      h.broadcast("ABCDEF", "fireworks", {
+        kind: "finale",
+        fireAt: "2026-07-19T00:00:02.000Z",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+      h.broadcast("ABCDEF", "room-magic-reaction", {
+        id: "stale-room-a-reaction",
+        kind: "wow",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(roomBRequest?.signal?.aborted).toBe(false);
+    expect(result.current.lastBroadcast).toBeNull();
+    expect(result.current.lastFireworksBeat).toBeNull();
+    expect(result.current.lastRoomMagicReaction).toBeNull();
+
+    await act(async () => {
+      nextRoom.resolve(response(snapshot("GHIJKL", "Room B")));
+      await Promise.resolve();
+    });
+    await waitFor(() =>
+      expect(result.current.snapshot?.night.venueName).toBe("Room B"),
+    );
+
+    act(() => {
+      h.broadcast("GHIJKL", "roster-changed", {
+        joinToken: "room-b-welcome",
+        displayName: "Blair",
+        joinedAt: "2026-07-19T00:00:03.000Z",
+        serverNow: "2026-07-19T00:00:03.000Z",
+      });
+      h.broadcast("GHIJKL", "fireworks", {
+        kind: "salvo",
+        fireAt: "2026-07-19T00:00:04.000Z",
+        serverNow: "2026-07-19T00:00:03.000Z",
+      });
+      h.broadcast("GHIJKL", "room-magic-reaction", {
+        id: "room-b-reaction",
+        kind: "wow",
+        serverNow: "2026-07-19T00:00:03.000Z",
+      });
+    });
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(result.current.lastBroadcast?.joinToken).toBe("room-b-welcome");
+    expect(result.current.lastFireworksBeat).not.toBeNull();
+    expect(result.current.lastRoomMagicReaction?.id).toBe("room-b-reaction");
   });
 
   it("aborts an in-flight request on unmount and ignores its response body", async () => {

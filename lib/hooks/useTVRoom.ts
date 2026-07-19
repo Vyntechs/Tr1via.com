@@ -178,13 +178,20 @@ export interface TVRoomState {
   refresh: () => void;
 }
 
+interface RoomScopedState<T> {
+  roomCode: string;
+  value: T;
+}
+
 export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const [status, setStatus] = useState<TVRoomStatus>("loading");
   const [snapshot, setSnapshot] = useState<TVSnapshot | null>(null);
-  const [lastBroadcast, setLastBroadcast] = useState<TVBroadcast | null>(null);
-  const [lastFireworksBeat, setLastFireworksBeat] = useState<FireworksBeat | null>(null);
+  const [lastBroadcast, setLastBroadcast] =
+    useState<RoomScopedState<TVBroadcast> | null>(null);
+  const [lastFireworksBeat, setLastFireworksBeat] =
+    useState<RoomScopedState<FireworksBeat> | null>(null);
   const [lastRoomMagicReaction, setLastRoomMagicReaction] =
-    useState<RoomMagicReactionEvent | null>(null);
+    useState<RoomScopedState<RoomMagicReactionEvent> | null>(null);
   const [snapshotCode, setSnapshotCode] = useState<string | null>(null);
   const [statusCode, setStatusCode] = useState<string | null>(null);
   const safetyHandle = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -194,10 +201,10 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
 
   const code = roomCodeRaw ? parseRoomCode(roomCodeRaw) : null;
 
-  // Stable fetcher — `code` is captured per-effect-run via the closure.
-  const fetchSnapshot = useCallback(async () => {
-    if (!code) return;
-    const requestedCode = code;
+  // Stale channel callbacks must be rejected before they can supersede the
+  // active room's request generation or abort its controller.
+  const fetchSnapshot = useCallback(async (requestedCode: string) => {
+    if (activeCodeRef.current !== requestedCode) return;
     const requestSequence = ++snapshotRequestSequenceRef.current;
     activeSnapshotAbortRef.current?.abort();
     const controller = new AbortController();
@@ -249,7 +256,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         activeSnapshotAbortRef.current = null;
       }
     }
-  }, [code]);
+  }, []);
 
   useEffect(() => {
     snapshotRequestSequenceRef.current += 1;
@@ -265,9 +272,14 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
       setStatusCode(code);
       setSnapshotCode(null);
       setStatus("loading");
+      setLastBroadcast(null);
+      setLastFireworksBeat(null);
       setLastRoomMagicReaction(null);
-      void fetchSnapshot();
+      void fetchSnapshot(code);
     });
+
+    const isActiveRoom = () =>
+      !cancelled && activeCodeRef.current === code;
 
     // Subscribe to the broadcast channel for low-latency wake-ups. Broadcast
     // is auth-free; anonymous TVs receive these.
@@ -275,69 +287,93 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     const channel = supa
       .channel(`room:${code}`)
       .on("broadcast", { event: "reveal" }, (msg) => {
+        if (!isActiveRoom()) return;
         const p = msg.payload as Record<string, unknown>;
         setLastBroadcast({
-          event: "reveal",
-          questionId: String(p.questionId),
-          serverNow: String(p.serverNow),
-          revealedAt: typeof p.revealedAt === "string" ? p.revealedAt : undefined,
+          roomCode: code,
+          value: {
+            event: "reveal",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+            revealedAt:
+              typeof p.revealedAt === "string" ? p.revealedAt : undefined,
+          },
         });
-        void fetchSnapshot();
+        void fetchSnapshot(code);
       })
       .on("broadcast", { event: "undo" }, (msg) => {
+        if (!isActiveRoom()) return;
         const p = msg.payload as Record<string, unknown>;
         setLastBroadcast({
-          event: "undo",
-          questionId: String(p.questionId),
-          serverNow: String(p.serverNow),
+          roomCode: code,
+          value: {
+            event: "undo",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+          },
         });
-        void fetchSnapshot();
+        void fetchSnapshot(code);
       })
       .on("broadcast", { event: "resolve" }, (msg) => {
+        if (!isActiveRoom()) return;
         const p = msg.payload as Record<string, unknown>;
         setLastBroadcast({
-          event: "resolve",
-          questionId: String(p.questionId),
-          serverNow: String(p.serverNow),
-          correctIndex:
-            typeof p.correctIndex === "number" ? p.correctIndex : undefined,
+          roomCode: code,
+          value: {
+            event: "resolve",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+            correctIndex:
+              typeof p.correctIndex === "number" ? p.correctIndex : undefined,
+          },
         });
-        void fetchSnapshot();
+        void fetchSnapshot(code);
       })
       .on("broadcast", { event: "end-early" }, (msg) => {
+        if (!isActiveRoom()) return;
         const p = msg.payload as Record<string, unknown>;
         setLastBroadcast({
-          event: "end-early",
-          questionId: String(p.questionId),
-          serverNow: String(p.serverNow),
+          roomCode: code,
+          value: {
+            event: "end-early",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+          },
         });
-        void fetchSnapshot();
+        void fetchSnapshot(code);
       })
       .on("broadcast", { event: "game-ended" }, () => {
+        if (!isActiveRoom()) return;
         // No questionId — this is a game-level state flip. Refresh the
         // snapshot so the TV moves to intermission (game 1) or finale
         // (game 2) immediately instead of waiting on the 4s safety poll.
-        void fetchSnapshot();
+        void fetchSnapshot(code);
       })
       .on("broadcast", { event: "roster-changed" }, (msg) => {
+        if (!isActiveRoom()) return;
         // Magic-Welcome wake-up for the TV — fires within ~300ms of the
         // join (4s ahead of the safety poll). We refresh the snapshot
         // immediately so the JUST-JOINED roster includes the new
         // player by the time the welcome tile lands.
         const p = msg.payload as Record<string, unknown>;
         setLastBroadcast({
-          event: "roster-changed",
-          questionId: "",
-          serverNow: String(p.serverNow ?? ""),
-          joinToken: typeof p.joinToken === "string" ? p.joinToken : undefined,
-          displayName:
-            typeof p.displayName === "string" ? p.displayName : undefined,
-          colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
-          joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
+          roomCode: code,
+          value: {
+            event: "roster-changed",
+            questionId: "",
+            serverNow: String(p.serverNow ?? ""),
+            joinToken:
+              typeof p.joinToken === "string" ? p.joinToken : undefined,
+            displayName:
+              typeof p.displayName === "string" ? p.displayName : undefined,
+            colorKey: typeof p.colorKey === "number" ? p.colorKey : undefined,
+            joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
+          },
         });
-        void fetchSnapshot();
+        void fetchSnapshot(code);
       })
       .on("broadcast", { event: "fireworks" }, (msg) => {
+        if (!isActiveRoom()) return;
         // Cosmetic synchronized firework beat (July). Surface it for the
         // PyrotechnicsBeatConductor — NO fetchSnapshot (nothing changed) and
         // separate from lastBroadcast. Stamp receivedAtMs locally so the
@@ -346,13 +382,17 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         if (typeof p.fireAt !== "string" || typeof p.serverNow !== "string") return;
         const kind = p.kind === "finale" ? "finale" : "salvo";
         setLastFireworksBeat({
-          kind,
-          fireAt: p.fireAt,
-          serverNow: p.serverNow,
-          receivedAtMs: Date.now(),
+          roomCode: code,
+          value: {
+            kind,
+            fireAt: p.fireAt,
+            serverNow: p.serverNow,
+            receivedAtMs: Date.now(),
+          },
         });
       })
       .on("broadcast", { event: "room-magic-reaction" }, (msg) => {
+        if (!isActiveRoom()) return;
         // Cosmetic room reaction. Surface it separately from lastBroadcast so
         // TV wake-up/refetch behavior stays reserved for game-state events.
         const p = msg.payload as Record<string, unknown>;
@@ -367,9 +407,12 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
           return;
         }
         setLastRoomMagicReaction({
-          id,
-          kind,
-          serverNow,
+          roomCode: code,
+          value: {
+            id,
+            kind,
+            serverNow,
+          },
         });
       })
       .subscribe();
@@ -378,7 +421,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     // joining the lobby, scores updating). Cheap: the snapshot route is
     // single-region, single-trip.
     safetyHandle.current = setInterval(() => {
-      void fetchSnapshot();
+      void fetchSnapshot(code);
     }, SAFETY_REFETCH_MS);
 
     return () => {
@@ -398,11 +441,16 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   return {
     status: code && hasActiveStatus ? status : "loading",
     snapshot: hasActiveSnapshot ? snapshot : null,
-    lastBroadcast: code ? lastBroadcast : null,
-    lastFireworksBeat: code ? lastFireworksBeat : null,
-    lastRoomMagicReaction: code ? lastRoomMagicReaction : null,
+    lastBroadcast:
+      code && lastBroadcast?.roomCode === code ? lastBroadcast.value : null,
+    lastFireworksBeat:
+      code && lastFireworksBeat?.roomCode === code ? lastFireworksBeat.value : null,
+    lastRoomMagicReaction:
+      code && lastRoomMagicReaction?.roomCode === code
+        ? lastRoomMagicReaction.value
+        : null,
     refresh: () => {
-      if (code) void fetchSnapshot();
+      if (code) void fetchSnapshot(code);
     },
   };
 }
