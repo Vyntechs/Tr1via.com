@@ -18,6 +18,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { DifficultyBar, StockImage } from "./_shared";
@@ -97,6 +98,7 @@ function HostGenLoadingInner({
   onBack,
 }: Omit<HostGenLoadingProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const cc = categoryColor(topic, t.accent);
   const questionsLoaded = loaded.length;
   const photosCount =
@@ -106,8 +108,13 @@ function HostGenLoadingInner({
   const skeletonCount = Math.max(0, total - questionsLoaded);
   return (
     <LaptopShell>
-      <div style={{ padding: "24px 56px 12px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
+      <div
+        data-testid="host-gen-loading-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
+        style={{ padding: mobile ? "16px" : "24px 56px 12px", borderBottom: `1px solid ${t.line}`, display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", justifyContent: "space-between", gap: mobile ? 16 : undefined, minWidth: 0 }}
+      >
+        <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "flex-start" : "center", gap: mobile ? 10 : 18, minWidth: 0 }}>
           {onBack && (
             <button
               type="button"
@@ -139,8 +146,8 @@ function HostGenLoadingInner({
             <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>{statusLine ?? "Writing the questions, then matching a photo to each."}</div>
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
-          <div style={{ display: "flex", gap: 24 }}>
+        <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", gap: mobile ? 12 : 22 }}>
+          <div style={{ display: "flex", gap: mobile ? 12 : 24 }}>
             <ProgressMini label="QUESTIONS" done={questionsLoaded} total={total} color={cc} />
             <ProgressMini label="PHOTOS" done={photosCount} total={total} color={t.pop} />
           </div>
@@ -156,8 +163,8 @@ function HostGenLoadingInner({
         </div>
       </div>
 
-      <div style={{ flex: 1, overflow: "auto", padding: "24px 56px 40px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14 }}>
+      <div data-host-mobile-surface="true" style={{ flex: 1, overflow: mobile ? "visible" : "auto", padding: mobile ? "18px 16px max(24px, env(safe-area-inset-bottom))" : "24px 56px 40px" }}>
+        <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(3, 1fr)", gap: 14 }}>
           {loaded.map((q) =>
             q.imageUrl ? (
               <PickCardSmall key={q.id} q={q} cc={cc} />
@@ -176,9 +183,10 @@ function HostGenLoadingInner({
 
 function ProgressMini({ label, done, total, color }: { label: string; done: number; total: number; color: string }) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
   return (
-    <div style={{ width: 150 }}>
+    <div style={{ width: mobile ? "auto" : 150, flex: mobile ? 1 : undefined, minWidth: 0 }}>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
         <Eyebrow color={t.inkMid} size={9}>{label}</Eyebrow>
         <Numeric size={10} color={t.inkMid}>{done}/{total}</Numeric>

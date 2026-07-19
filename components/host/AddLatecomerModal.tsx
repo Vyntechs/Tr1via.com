@@ -44,6 +44,7 @@ export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps
       role="dialog"
       aria-modal="true"
       aria-label="Add a latecomer"
+      data-host-mobile-surface="true"
       style={{
         position: "fixed",
         inset: 0,
@@ -59,13 +60,17 @@ export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps
     >
       <div
         style={{
-          width: 420,
+          width: "calc(100% - 32px)",
+          maxWidth: 420,
           background: "var(--paper)",
           borderRadius: 14,
           padding: 24,
           color: "var(--ink)",
           fontFamily: "var(--font-sans)",
           boxShadow: "0 24px 48px -12px rgba(0,0,0,.4)",
+          boxSizing: "border-box",
+          maxHeight: "calc(100dvh - 32px)",
+          overflowY: "auto",
         }}
       >
         <Eyebrow color="var(--ink-mute)" size={11}>

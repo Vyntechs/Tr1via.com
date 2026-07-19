@@ -42,6 +42,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { computeReorderAssignments } from "@/lib/host/boardReorder";
@@ -180,6 +181,7 @@ function HostGenPickInner({
   isRegenerating = false,
 }: Omit<HostGenPickProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   void shellTitle;
   const cc = categoryColor(topic, t.accent);
   const picked = pickedIds ?? new Set(["1", "2", "3", "4", "7", "8"]);
@@ -214,8 +216,8 @@ function HostGenPickInner({
   }, [pickedQs]);
   return (
     <LaptopShell>
-      <div style={{ padding: "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+      <div data-host-mobile-surface="true" style={{ padding: mobile ? "16px" : "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", justifyContent: "space-between", gap: mobile ? 16 : undefined, minWidth: 0 }}>
+        <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "flex-start" : "center", gap: mobile ? 10 : 16, minWidth: 0 }}>
           {onBack && (
             <button
               type="button"
@@ -279,7 +281,7 @@ function HostGenPickInner({
             )}
           </div>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: mobile ? 8 : 12, flexWrap: "wrap" }}>
           <Eyebrow color={t.inkMute} size={10}>FLAVOR</Eyebrow>
           {(["easy", "normal", "hard"] as const).map((d) => {
             const active = d === difficulty;
@@ -351,10 +353,15 @@ function HostGenPickInner({
         </div>
       </div>
 
-      <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 300px", overflow: "hidden" }}>
-        <div style={{ overflow: "auto", padding: "20px 36px 32px 56px" }}>
+      <div
+        data-testid="host-gen-pick-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
+        style={{ flex: 1, display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "1fr 300px", overflow: mobile ? "visible" : "hidden", minWidth: 0 }}
+      >
+        <div style={{ overflow: mobile ? "visible" : "auto", padding: mobile ? "18px 16px max(32px, env(safe-area-inset-bottom))" : "20px 36px 32px 56px", gridRow: mobile ? 2 : undefined, minWidth: 0 }}>
           {auditSummary && <HostGenAuditSummary summary={auditSummary} />}
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(2, 1fr)", gap: 14 }}>
             {questions.map((q) => (
               <QuestionCard
                 key={q.id}
@@ -386,6 +393,7 @@ function HostGenPickInner({
           onReorder={onReorder}
           onLock={onLock}
           isLocking={isLocking}
+          mobile={mobile}
         />
       </div>
     </LaptopShell>
@@ -430,16 +438,31 @@ function QuestionCard({
           onClick={onTogglePick}
           aria-label={isPicked ? "Unpick question" : "Pick question"}
           style={{
-            position: "absolute", top: 10, left: 10,
-            width: 26, height: 26, borderRadius: 99,
-            background: isPicked ? cc : "rgba(0,0,0,.5)",
-            border: isPicked ? "none" : "1.5px solid rgba(255,255,255,.85)",
+            position: "absolute", top: 1, left: 1,
+            width: 44, height: 44, borderRadius: 99,
+            background: "transparent",
+            border: "none",
             display: "flex", alignItems: "center", justifyContent: "center",
             cursor: "pointer",
             padding: 0,
           }}
         >
-          {isPicked && <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.5 12L13 4.5" stroke="#0E0805" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+          <span
+            aria-hidden="true"
+            style={{
+              width: 26,
+              height: 26,
+              borderRadius: 99,
+              background: isPicked ? cc : "rgba(0,0,0,.5)",
+              border: isPicked ? "none" : "1.5px solid rgba(255,255,255,.85)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxSizing: "border-box",
+            }}
+          >
+            {isPicked && <svg width="13" height="13" viewBox="0 0 16 16" fill="none"><path d="M3 8.5L6.5 12L13 4.5" stroke="#0E0805" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>}
+          </span>
         </button>
       </StockImage>
 
@@ -512,6 +535,7 @@ function PickSidebar({
   onReorder,
   onLock,
   isLocking,
+  mobile,
 }: {
   cc: string;
   picked: HostGenPickQuestion[];
@@ -528,6 +552,7 @@ function PickSidebar({
   onReorder?: (assignments: Array<{ id: string; pointValue: number }>) => void;
   onLock?: () => void;
   isLocking: boolean;
+  mobile: boolean;
 }) {
   const { t } = useTheme();
   const slots = [100, 200, 300, 400, 500, 600, 700];
@@ -574,7 +599,7 @@ function PickSidebar({
   const rows = slots.map((v) => {
     const filled = byTier[v];
     if (!filled) {
-      return <EmptyBoardSlotRow key={v} slot={v} reserveGrip={dndEnabled} />;
+      return <EmptyBoardSlotRow key={v} slot={v} reserveGrip={dndEnabled} mobile={mobile} />;
     }
     const common = {
       slot: v,
@@ -582,6 +607,7 @@ function PickSidebar({
       cc,
       onEdit,
       onUnpick,
+      mobile,
     };
     return dndEnabled ? (
       <SortableBoardSlotRow key={filled.id} {...common} />
@@ -591,7 +617,7 @@ function PickSidebar({
   });
 
   return (
-    <div style={{ borderLeft: `1px solid ${t.line}`, padding: "20px 24px 24px", display: "flex", flexDirection: "column", overflow: "hidden" }}>
+    <div style={{ borderLeft: mobile ? "none" : `1px solid ${t.line}`, borderBottom: mobile ? `1px solid ${t.line}` : undefined, padding: mobile ? "18px 16px" : "20px 24px 24px", display: "flex", flexDirection: "column", overflow: mobile ? "visible" : "hidden", gridRow: mobile ? 1 : undefined, minWidth: 0 }}>
       <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between" }}>
         <Eyebrow color={t.inkMid} size={10}>YOUR BOARD</Eyebrow>
         <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
@@ -602,7 +628,7 @@ function PickSidebar({
 
       <div
         data-testid="pick-sidebar-board"
-        style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1, overflow: "auto" }}
+        style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 6, flex: 1, overflow: mobile ? "visible" : "auto" }}
       >
         {dndEnabled ? (
           <DndContext id="pick-board-reorder" sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -628,6 +654,7 @@ function PickSidebar({
             cursor: ready && !isLocking ? "pointer" : "not-allowed",
             opacity: isLocking ? 0.7 : 1,
             boxShadow: ready ? `0 10px 22px -10px ${t.accent}77` : "none",
+            minHeight: mobile ? 52 : undefined,
           }}
         >
           {isLocking ? "Locking…" : ready ? "Lock the category  →" : `Pick ${7 - picked.length} more to lock`}
@@ -661,6 +688,7 @@ function BoardSlotContent({
   grip,
   onEdit,
   onUnpick,
+  mobile,
 }: {
   slot: number;
   q: HostGenPickQuestion;
@@ -669,23 +697,28 @@ function BoardSlotContent({
   grip: React.ReactNode | null;
   onEdit?: (questionId: string) => void;
   onUnpick?: (questionId: string) => void;
+  mobile: boolean;
 }) {
   const { t } = useTheme();
-  const cols = [
-    grip !== null ? SLOT_GRIP_COL : null,
-    SLOT_VALUE_COL,
-    "1fr",
-    onEdit || onUnpick ? "auto" : null,
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const cols = mobile
+    ? grip !== null
+      ? "44px 44px minmax(0, 1fr)"
+      : "44px minmax(0, 1fr)"
+    : [
+        grip !== null ? SLOT_GRIP_COL : null,
+        SLOT_VALUE_COL,
+        "1fr",
+        onEdit || onUnpick ? "auto" : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
   return (
     <div
       style={{
         display: "grid",
         gridTemplateColumns: cols,
         alignItems: "center",
-        gap: 10,
+        gap: mobile ? 8 : 10,
         padding: "10px 12px",
         borderRadius: 10,
         background: t.dark ? `${cc}10` : `${cc}06`,
@@ -699,7 +732,7 @@ function BoardSlotContent({
         <div style={{ marginTop: 2, fontSize: 10, color: t.inkMute, fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>{q.options[q.correctIndex]}</div>
       </div>
       {(onEdit || onUnpick) && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "flex-end", gap: 6, gridColumn: mobile ? "2 / -1" : undefined }}>
           {onEdit && (
             <button
               type="button"
@@ -707,7 +740,8 @@ function BoardSlotContent({
               aria-label={`Edit the ${slot}-point question`}
               title="Edit this question"
               data-testid={`pick-sidebar-edit-${slot}`}
-              style={slotIconButtonStyle(t.line, t.inkMid)}
+              data-mobile-touch-target={mobile ? "true" : undefined}
+              style={slotIconButtonStyle(t.line, t.inkMid, mobile)}
             >
               <PencilGlyph />
             </button>
@@ -719,7 +753,8 @@ function BoardSlotContent({
               aria-label={`Remove from slot ${slot}`}
               title={`Remove (slot ${slot} opens up)`}
               data-testid={`pick-sidebar-unpick-${slot}`}
-              style={{ ...slotIconButtonStyle(t.line, t.inkMid), fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}
+              data-mobile-touch-target={mobile ? "true" : undefined}
+              style={{ ...slotIconButtonStyle(t.line, t.inkMid, mobile), fontSize: 14, fontWeight: 600, fontFamily: "var(--font-sans)" }}
             >
               ×
             </button>
@@ -736,6 +771,7 @@ function StaticBoardSlotRow(props: {
   cc: string;
   onEdit?: (questionId: string) => void;
   onUnpick?: (questionId: string) => void;
+  mobile: boolean;
 }) {
   return <BoardSlotContent {...props} grip={null} />;
 }
@@ -746,12 +782,14 @@ function SortableBoardSlotRow({
   cc,
   onEdit,
   onUnpick,
+  mobile,
 }: {
   slot: number;
   q: HostGenPickQuestion;
   cc: string;
   onEdit?: (questionId: string) => void;
   onUnpick?: (questionId: string) => void;
+  mobile: boolean;
 }) {
   const { t } = useTheme();
   const {
@@ -769,11 +807,12 @@ function SortableBoardSlotRow({
       aria-label={`Drag to reorder the ${slot}-point question`}
       title="Drag to reorder"
       data-testid={`pick-sidebar-drag-${slot}`}
+      data-mobile-touch-target={mobile ? "true" : undefined}
       {...attributes}
       {...listeners}
       style={{
-        width: 18,
-        height: 24,
+        width: mobile ? 44 : 18,
+        height: mobile ? 44 : 24,
         border: "none",
         background: "transparent",
         color: t.inkMute,
@@ -807,6 +846,7 @@ function SortableBoardSlotRow({
         grip={grip}
         onEdit={onEdit}
         onUnpick={onUnpick}
+        mobile={mobile}
       />
     </div>
   );
@@ -815,16 +855,22 @@ function SortableBoardSlotRow({
 function EmptyBoardSlotRow({
   slot,
   reserveGrip,
+  mobile,
 }: {
   slot: number;
   /** Render an empty grip-width gutter so columns line up with filled rows
    *  while dragging is enabled. */
   reserveGrip: boolean;
+  mobile: boolean;
 }) {
   const { t } = useTheme();
-  const cols = [reserveGrip ? SLOT_GRIP_COL : null, SLOT_VALUE_COL, "1fr"]
-    .filter(Boolean)
-    .join(" ");
+  const cols = mobile
+    ? reserveGrip
+      ? "44px 44px minmax(0, 1fr)"
+      : "44px minmax(0, 1fr)"
+    : [reserveGrip ? SLOT_GRIP_COL : null, SLOT_VALUE_COL, "1fr"]
+        .filter(Boolean)
+        .join(" ");
   return (
     <div
       style={{
@@ -845,10 +891,10 @@ function EmptyBoardSlotRow({
   );
 }
 
-function slotIconButtonStyle(border: string, color: string): React.CSSProperties {
+function slotIconButtonStyle(border: string, color: string, mobile = false): React.CSSProperties {
   return {
-    width: 24,
-    height: 24,
+    width: mobile ? 44 : 24,
+    height: mobile ? 44 : 24,
     borderRadius: 99,
     border: `1px solid ${border}`,
     background: "transparent",
@@ -1017,7 +1063,7 @@ function EditableTopicEyebrow({
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", minWidth: 0 }}>
         <input
           ref={inputRef}
           type="text"
@@ -1043,7 +1089,10 @@ function EditableTopicEyebrow({
             letterSpacing: "0.12em",
             textTransform: "uppercase",
             color: cc,
-            minWidth: 220,
+            minWidth: 0,
+            height: 44,
+            flex: "1 1 120px",
+            boxSizing: "border-box",
             outline: "none",
           }}
         />
@@ -1111,8 +1160,9 @@ function renameControlStyle(
     color: fg,
     border: "none",
     borderRadius: 4,
-    width: 22,
-    height: 22,
+    width: 44,
+    height: 44,
+    flex: "0 0 44px",
     fontSize: 12,
     fontWeight: 700,
     cursor: "pointer",

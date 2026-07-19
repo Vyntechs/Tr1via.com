@@ -23,6 +23,19 @@ function tonight(overrides: Partial<HostDashboardTonight> = {}): HostDashboardTo
 }
 
 describe("HostDashboard headliner truthfulness", () => {
+  it("offers the explicit private controller separately from the venue-safe live screen", () => {
+    render(
+      <HostDashboard
+        themeKey="june"
+        tonight={tonight({ status: "live" })}
+      />,
+    );
+
+    expect(
+      screen.getByRole("link", { name: /private phone controls/i }),
+    ).toHaveAttribute("href", "/host/phone/n1");
+  });
+
   it("shows the live resolved theme name, not a hardcoded one", () => {
     render(<HostDashboard themeKey="june" tonight={tonight()} />);
     expect(screen.getByText("June · Summer")).toBeDefined();

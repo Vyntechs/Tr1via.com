@@ -17,6 +17,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export type DifficultyTarget = "easy" | "normal" | "hard";
@@ -39,6 +40,8 @@ export interface HostGenTopicEntryProps {
   recent?: RecentTopic[];
   /** Initial topic value. */
   initialTopic?: string;
+  /** Session-storage key used to restore an unfinished phone draft. */
+  draftKey?: string;
   /** Initial difficulty target. */
   initialDifficulty?: DifficultyTarget;
   /** Initial flavor selections. */
@@ -75,6 +78,15 @@ const FLAVOR_OPTIONS = [
   "Fresher",
 ] as const;
 
+function restoreTopicDraft(draftKey: string | undefined, fallback: string): string {
+  if (!draftKey || typeof window === "undefined") return fallback;
+  try {
+    return window.sessionStorage.getItem(draftKey) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export function HostGenTopicEntry(props: HostGenTopicEntryProps) {
   const { themeKey, ...rest } = props;
   if (themeKey) {
@@ -88,10 +100,10 @@ export function HostGenTopicEntry(props: HostGenTopicEntryProps) {
 }
 
 function HostGenTopicEntryInner({
-  shellTitle = "set up tonight · slot 5",
   eyebrow = "GAME 1 · SLOT 5 OF 6",
   recent = DEMO_RECENT,
   initialTopic = "",
+  draftKey,
   initialDifficulty = "normal",
   initialFlavor = [],
   onSubmit,
@@ -99,9 +111,22 @@ function HostGenTopicEntryInner({
   warning = null,
 }: Omit<HostGenTopicEntryProps, "themeKey">) {
   const { t } = useTheme();
-  const [topic, setTopic] = useState(initialTopic);
+  const mobile = useMediaQuery("(max-width: 860px)");
+  const [topic, setTopic] = useState(() =>
+    restoreTopicDraft(draftKey, initialTopic),
+  );
   const [difficulty, setDifficulty] = useState<DifficultyTarget>(initialDifficulty);
   const [flavor, setFlavor] = useState<string[]>(initialFlavor);
+
+  function updateTopic(value: string) {
+    setTopic(value);
+    if (!draftKey) return;
+    try {
+      window.sessionStorage.setItem(draftKey, value);
+    } catch {
+      // Draft recovery is best-effort and must never block typing.
+    }
+  }
 
   function toggleFlavor(label: string) {
     setFlavor((prev) =>
@@ -119,31 +144,34 @@ function HostGenTopicEntryInner({
   return (
     <LaptopShell>
       <form
+        data-testid="host-gen-topic-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
         onSubmit={handleSubmit}
-        style={{ padding: "40px 56px", flex: 1, display: "grid", gridTemplateColumns: "1fr 300px", gap: 40 }}
+        style={{ padding: mobile ? "20px 16px max(24px, env(safe-area-inset-bottom))" : "40px 56px", flex: 1, display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "1fr 300px", gap: mobile ? 24 : 40, minWidth: 0 }}
       >
         <div>
           <Eyebrow color={t.accent} size={11}>{eyebrow}</Eyebrow>
-          <Display size={48} color={t.ink} style={{ marginTop: 8, display: "block" }} tracking={-0.025}>
+          <Display size={mobile ? 36 : 48} color={t.ink} style={{ marginTop: 8, display: "block" }} tracking={-0.025}>
             What&apos;s the topic?
           </Display>
           <div style={{ marginTop: 8, color: t.inkMid, fontSize: 14, lineHeight: 1.45, maxWidth: 540 }}>
             Anything. A movie franchise, a sports league, your town, a decade. The more specific, the sharper the questions.
           </div>
 
-          <div style={{ marginTop: 36, paddingBottom: 18, borderBottom: `2px solid ${t.accent}` }}>
+          <div style={{ marginTop: mobile ? 28 : 36, paddingBottom: 18, borderBottom: `2px solid ${t.accent}` }}>
             <input
               type="text"
               autoFocus
               value={topic}
-              onChange={(e) => setTopic(e.target.value)}
+              onChange={(e) => updateTopic(e.target.value)}
               placeholder="Pixar Movies"
               disabled={isSubmitting}
               style={{
                 width: "100%",
                 fontFamily: "var(--font-display)",
                 fontWeight: 700,
-                fontSize: 64,
+                fontSize: mobile ? 42 : 64,
                 color: t.ink,
                 letterSpacing: "-0.035em",
                 lineHeight: 1,
@@ -172,9 +200,9 @@ function HostGenTopicEntryInner({
                 <button
                   key={c.name}
                   type="button"
-                  onClick={() => setTopic(c.name)}
+                  onClick={() => updateTopic(c.name)}
                   style={{
-                    padding: "6px 12px", borderRadius: 99,
+                    padding: "6px 12px", borderRadius: 99, minHeight: mobile ? 44 : undefined,
                     background: c.used ? t.accent : "transparent",
                     color: c.used ? "#0E0805" : t.ink,
                     border: `1px solid ${c.used ? t.accent : t.line}`,
@@ -203,6 +231,7 @@ function HostGenTopicEntryInner({
                     <button
                       key={d}
                       type="button"
+                      data-mobile-touch-target={mobile ? "true" : undefined}
                       onClick={() => setDifficulty(d)}
                       style={{
                         flex: 1, padding: "8px 0", borderRadius: 8,
@@ -228,6 +257,7 @@ function HostGenTopicEntryInner({
                     <button
                       key={s}
                       type="button"
+                      data-mobile-touch-target={mobile ? "true" : undefined}
                       onClick={() => toggleFlavor(s)}
                       style={{
                         padding: "6px 10px", borderRadius: 99, border: `1px solid ${active ? t.ink : t.line}`,
@@ -255,6 +285,10 @@ function HostGenTopicEntryInner({
               letterSpacing: "-0.005em",
               display: "flex", alignItems: "center", justifyContent: "center", gap: 10,
               boxShadow: `0 12px 24px -10px ${t.accent}77`,
+              minHeight: mobile ? 52 : undefined,
+              position: mobile ? "sticky" : undefined,
+              bottom: mobile ? "max(12px, env(safe-area-inset-bottom))" : undefined,
+              zIndex: mobile ? 4 : undefined,
             }}
           >
             {isSubmitting ? "Saving…" : "Pull 20 questions  →"}

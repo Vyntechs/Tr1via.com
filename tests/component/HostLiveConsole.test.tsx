@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { HostLiveConsole } from "@/components/host/HostLiveConsole";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 
@@ -72,6 +72,27 @@ function snapshot(overrides: Partial<TVSnapshot> = {}): TVSnapshot {
 }
 
 describe("HostLiveConsole public control strip", () => {
+  it("offers a scan-only handoff to the explicit private phone route", () => {
+    render(
+      <HostLiveConsole
+        themeKey="house"
+        privateControlUrl="https://tr1via.test/host/phone/night-1"
+        tvSnapshot={snapshot()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /phone remote/i }));
+    expect(
+      screen.getByRole("dialog", { name: /private phone remote/i }),
+    ).toBeVisible();
+    expect(
+      screen.getByLabelText(
+        "QR code: https://tr1via.test/host/phone/night-1",
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText("CORRECT")).not.toBeInTheDocument();
+  });
+
   it("uses stage-safe labels on the mirrored lobby controls", () => {
     render(
       <HostLiveConsole

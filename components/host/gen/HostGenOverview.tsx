@@ -24,6 +24,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
@@ -146,19 +147,25 @@ function HostGenOverviewInner({
   isOpening = false,
 }: Omit<HostGenOverviewProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   return (
     <LaptopShell weather>
-      <div style={{ padding: "32px 56px", display: "grid", gridTemplateColumns: "1fr 300px", gap: 36, flex: 1, overflow: "hidden" }}>
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div
+        data-testid="host-gen-overview-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
+        style={{ padding: mobile ? "20px 16px max(24px, env(safe-area-inset-bottom))" : "32px 56px", display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "1fr 300px", gap: mobile ? 24 : 36, flex: 1, overflow: mobile ? "visible" : "hidden", minWidth: 0 }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", overflow: mobile ? "visible" : "hidden", minWidth: 0 }}>
           <Eyebrow color={t.accent} size={11}>{eyebrow}</Eyebrow>
-          <Display size={48} color={t.ink} style={{ marginTop: 8, display: "block" }} tracking={-0.025}>
+          <Display size={mobile ? 36 : 48} color={t.ink} style={{ marginTop: 8, display: "block" }} tracking={-0.025}>
             Two games. Twelve topics.
           </Display>
           <div style={{ marginTop: 8, color: t.inkMid, fontSize: 14.5, lineHeight: 1.45, maxWidth: 600 }}>
             Type a topic. We pull 20 fresh questions; you pick the seven for the board. Difficulty sorts itself.
           </div>
 
-          <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 24, overflow: "auto", paddingRight: 8 }}>
+          <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 24, overflow: mobile ? "visible" : "auto", paddingRight: mobile ? 0 : 8 }}>
             {games.map((g) => (
               <div key={g.gameId}>
                 <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10 }}>
@@ -167,7 +174,7 @@ function HostGenOverviewInner({
                     {g.rows.filter((r) => r.status === "locked").length} of 6 ready
                   </span>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(3, 1fr)", gap: 10 }}>
                   {g.rows.map((c, i) => (
                     <CategorySlot
                       key={`${g.gameId}-${c.categoryId ?? `empty-${i}`}`}
@@ -193,7 +200,7 @@ function HostGenOverviewInner({
           </div>
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 16, minWidth: 0 }}>
           <div style={{ padding: "22px 24px", borderRadius: 16, background: t.accent, color: "#0E0805" }}>
             <Eyebrow color="rgba(14,8,5,.7)" size={10}>READY IN</Eyebrow>
             <Numeric size={56} weight={700} color="#0E0805" tracking={-0.04} style={{ display: "block", marginTop: 4, lineHeight: 1 }}>{readyIn}</Numeric>
@@ -225,6 +232,7 @@ function HostGenOverviewInner({
                     <Numeric size={12} color={t.inkMid}>{s.count}</Numeric>
                     <button
                       type="button"
+                      data-mobile-touch-target={mobile ? "true" : undefined}
                       aria-label={`Use ${s.name}`}
                       onClick={() => onUseSuggestion?.(s.name)}
                       disabled={!onUseSuggestion}
@@ -266,6 +274,10 @@ function HostGenOverviewInner({
               opacity: isOpening ? 0.7 : 1,
               boxShadow: isReadyToOpen ? `0 12px 22px -10px ${t.accent}77` : "none",
               letterSpacing: "-0.005em",
+              minHeight: mobile ? 52 : undefined,
+              position: mobile ? "sticky" : undefined,
+              bottom: mobile ? "max(12px, env(safe-area-inset-bottom))" : undefined,
+              zIndex: mobile ? 4 : undefined,
             }}
           >
             {isOpening
@@ -300,6 +312,7 @@ function CategorySlot({
   onDelete?: () => Promise<void>;
 }) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const cc = c.name ? categoryColor(c.name, t.accent) : t.line;
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -311,7 +324,7 @@ function CategorySlot({
         style={{
           padding: "14px 16px", borderRadius: 12,
           border: `1px dashed ${t.line}`, background: "transparent",
-          cursor: "pointer", minHeight: 96, width: "100%",
+          cursor: "pointer", minHeight: mobile ? 104 : 96, width: "100%",
           display: "flex", flexDirection: "column", justifyContent: "space-between",
           textAlign: "left", color: t.ink, font: "inherit",
         }}
@@ -366,7 +379,6 @@ function CategorySlot({
           borderRadius: 12,
           background: isActive ? (t.dark ? `${cc}14` : `${cc}11`) : "transparent",
           border: `1.5px solid ${isActive ? cc : t.line}`,
-          minHeight: 96,
           width: "100%",
           display: "flex",
           flexDirection: "column",
@@ -376,6 +388,7 @@ function CategorySlot({
           font: "inherit",
           cursor: cardClickable ? "pointer" : "default",
           position: "relative",
+          minHeight: mobile ? 104 : 96,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
@@ -397,7 +410,7 @@ function CategorySlot({
               style={{
                 background: "transparent",
                 border: "none",
-                padding: 4,
+                padding: mobile ? 12 : 4,
                 cursor: "pointer",
                 color: t.inkMute,
                 display: "flex",
@@ -450,7 +463,7 @@ function CategorySlot({
                   style={{
                     background: "transparent",
                     border: "none",
-                    padding: 2,
+                    padding: mobile ? 12 : 2,
                     cursor: "pointer",
                     color: t.inkMid,
                     display: "flex",
@@ -630,6 +643,7 @@ function DeleteCategoryConfirm({
   onCancel: () => void;
 }) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -649,6 +663,7 @@ function DeleteCategoryConfirm({
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
+        padding: mobile ? 16 : undefined,
       }}
     >
       <div

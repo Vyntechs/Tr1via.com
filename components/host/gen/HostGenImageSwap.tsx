@@ -17,6 +17,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { StockImage } from "./_shared";
@@ -105,6 +106,7 @@ function HostGenImageSwapInner({
   onErrorRetry,
 }: Omit<HostGenImageSwapProps, "themeKey">) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
   const cc = categoryColor(topic, t.accent);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selected = candidates.find((c) => c.id === selectedId) ?? null;
@@ -112,8 +114,13 @@ function HostGenImageSwapInner({
 
   return (
     <LaptopShell>
-      <div style={{ padding: "24px 56px 0", flex: 1, overflow: "hidden", display: "grid", gridTemplateColumns: "1fr 360px", gap: 36 }}>
-        <div style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div
+        data-testid="host-gen-image-swap-layout"
+        data-layout={mobile ? "mobile" : "desktop"}
+        data-host-mobile-surface="true"
+        style={{ padding: mobile ? "18px 16px max(24px, env(safe-area-inset-bottom))" : "24px 56px 0", flex: 1, overflow: mobile ? "visible" : "hidden", display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "1fr 360px", gap: mobile ? 24 : 36, minWidth: 0 }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", overflow: mobile ? "visible" : "hidden", minWidth: 0 }}>
           <Eyebrow color={cc} size={11}>IMAGE FOR · &quot;{prompt.toUpperCase()}&quot;</Eyebrow>
           <Display size={32} color={t.ink} style={{ marginTop: 8, display: "block" }} tracking={-0.025}>
             Pick a better photo.
@@ -123,7 +130,7 @@ function HostGenImageSwapInner({
           </div>
 
           {/* Tabs */}
-          <div style={{ marginTop: 22, display: "flex", gap: 4, padding: 4, borderRadius: 99, background: t.surface, alignSelf: "flex-start" }}>
+          <div style={{ marginTop: 22, display: mobile ? "grid" : "flex", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : undefined, width: mobile ? "100%" : undefined, gap: 4, padding: 4, borderRadius: mobile ? 14 : 99, background: t.surface, alignSelf: "flex-start" }}>
             {[
               { id: "lib", label: "From the library", sub: `${candidates.length} fresh`, active: true },
               { id: "mine", label: "My photos", sub: "0 saved", active: false },
@@ -139,7 +146,7 @@ function HostGenImageSwapInner({
                   color: tab.active ? t.paper : t.ink,
                   border: "none", cursor: "pointer",
                   fontSize: 13, fontWeight: 600, fontFamily: "var(--font-sans)",
-                  display: "flex", alignItems: "center", gap: 8,
+                  display: "flex", alignItems: "center", justifyContent: mobile ? "space-between" : undefined, gap: 8,
                 }}
               >
                 {tab.label}
@@ -168,13 +175,14 @@ function HostGenImageSwapInner({
                 lineHeight: 1.5,
                 fontWeight: 500,
                 display: "flex",
+                flexDirection: mobile ? "column" : "row",
                 gap: 14,
                 alignItems: "center",
                 justifyContent: "space-between",
               }}
             >
               <span>{errorMessage}</span>
-              <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+              <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", gap: 6, flexShrink: 0, width: mobile ? "100%" : undefined }}>
                 <button
                   type="button"
                   onClick={onErrorRetry}
@@ -214,7 +222,7 @@ function HostGenImageSwapInner({
           )}
 
           {/* From the library */}
-          <div style={{ marginTop: 18, flex: 1, overflow: "auto", display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, gridAutoRows: "130px", paddingBottom: 24 }}>
+          <div style={{ marginTop: 18, flex: 1, overflow: mobile ? "visible" : "auto", display: "grid", gridTemplateColumns: mobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, 1fr)", gap: 10, gridAutoRows: mobile ? "112px" : "130px", paddingBottom: 24 }}>
             {candidates.map((c) => {
               const isCurrent = c.url === currentImageUrl;
               const isSelected = selectedId === c.id;
@@ -284,7 +292,7 @@ function HostGenImageSwapInner({
         </div>
 
         {/* Right preview rail */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 24 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, paddingBottom: 24, minWidth: 0 }}>
           <Eyebrow color={t.inkMute} size={10}>PREVIEW · TV REVEAL</Eyebrow>
           <div style={{ borderRadius: 14, overflow: "hidden", border: `1px solid ${t.line}` }}>
             <StockImage
@@ -316,7 +324,7 @@ function HostGenImageSwapInner({
               disabled={!selected || isSaving}
               style={{
                 background: t.accent, color: "#FFF",
-                border: "none", borderRadius: 12, padding: "14px 0",
+                border: "none", borderRadius: 12, padding: "14px 0", minHeight: mobile ? 52 : undefined,
                 fontSize: 14, fontWeight: 700, fontFamily: "var(--font-sans)",
                 cursor: !selected || isSaving ? "not-allowed" : "pointer",
                 opacity: !selected || isSaving ? 0.65 : 1,

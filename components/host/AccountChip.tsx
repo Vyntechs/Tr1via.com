@@ -14,6 +14,7 @@
 import { useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useTheme } from "@/components/system";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 
 // Route prefixes where the chip is suppressed (mirrored TV / in-hand phone).
 const IN_SHOW_PREFIXES = ["/host/live", "/host/phone"];
@@ -26,6 +27,7 @@ export interface AccountChipProps {
 
 export function AccountChip({ email }: AccountChipProps) {
   const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 640px)");
   const router = useRouter();
   const pathname = usePathname();
   const [signingOut, setSigningOut] = useState(false);
@@ -56,8 +58,9 @@ export function AccountChip({ email }: AccountChipProps) {
       data-testid="account-chip"
       style={{
         position: "fixed",
-        top: 12,
-        right: 18,
+        top: mobile ? "calc(4px + env(safe-area-inset-top))" : 12,
+        right: mobile ? 12 : 18,
+        left: mobile ? 12 : undefined,
         zIndex: 40,
         display: "flex",
         alignItems: "center",
@@ -68,6 +71,8 @@ export function AccountChip({ email }: AccountChipProps) {
         border: `1px solid ${t.line}`,
         backdropFilter: "blur(8px)",
         fontFamily: "var(--font-sans)",
+        minWidth: 0,
+        justifyContent: mobile ? "space-between" : undefined,
       }}
     >
       <span
@@ -75,7 +80,7 @@ export function AccountChip({ email }: AccountChipProps) {
           fontSize: 12,
           color: t.inkMid,
           fontWeight: 500,
-          maxWidth: 220,
+          maxWidth: mobile ? "calc(100vw - 126px)" : 220,
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
@@ -90,7 +95,8 @@ export function AccountChip({ email }: AccountChipProps) {
         disabled={signingOut}
         data-testid="account-chip-sign-out"
         style={{
-          padding: "4px 10px",
+          padding: mobile ? "8px 12px" : "4px 10px",
+          minHeight: mobile ? 44 : undefined,
           borderRadius: 99,
           border: "none",
           background: t.accent,

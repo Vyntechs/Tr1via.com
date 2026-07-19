@@ -29,6 +29,7 @@ export function HostSetupTopicClient({
   initialTopic = "",
 }: HostSetupTopicClientProps) {
   const router = useRouter();
+  const draftKey = `host-topic:${nightId}:${gameId}:${position}`;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -71,6 +72,12 @@ export function HostSetupTopicClient({
         throw new Error(body.error ?? "could not start generation");
       }
 
+      try {
+        window.sessionStorage.removeItem(draftKey);
+      } catch {
+        // Draft persistence is best-effort; a successful save must still navigate.
+      }
+
       // 3. Hand off to the pick screen, which subscribes to the
       // generation progress channel.
       router.push(`/host/setup/${nightId}/pick/${category.id}`);
@@ -89,6 +96,7 @@ export function HostSetupTopicClient({
         onSubmit={handleSubmit}
         isSubmitting={submitting}
         initialTopic={initialTopic}
+        draftKey={draftKey}
       />
       {error && (
         <div

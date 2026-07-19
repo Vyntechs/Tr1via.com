@@ -29,15 +29,13 @@ export default async function HostLivePage({
   // (so dashboard / setup screens can scroll), but the live console has to
   // override that and clip instead.
   //
-  // HostLayout reserves a top strip for the AccountChip (--host-chip-reserve).
-  // The chip itself is hidden on this mirrored surface (see AccountChip), and
-  // this negative margin cancels the leftover reserve padding so the console
-  // stays exactly full-viewport — no audience-visible band, no scroll.
+  // data-host-full-bleed tells HostLayout to remove its account-chip reserve;
+  // the chip itself is hidden on this venue-mirrored route.
   return (
     <div
+      data-host-full-bleed="true"
       style={{
         height: "100dvh",
-        marginTop: "calc(-1 * var(--host-chip-reserve, 0px))",
         width: "100%",
         overflow: "hidden",
         display: "flex",

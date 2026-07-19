@@ -23,6 +23,44 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Live venue and private-phone routes own the full viewport. Their explicit
+   marker removes the shared account-chip reserve at the parent layout, so
+   neither child needs a second height nor negative-margin compensation. */
+[data-host-layout="true"]:has([data-host-full-bleed="true"]) {
+  padding-top: 0 !important;
+}
+
+/* Host prep is one product across laptop and phone. Components opt into this
+   contract with data-host-mobile-surface; desktop styles remain untouched. */
+@media (max-width: 860px) {
+  [data-host-mobile-surface="true"] {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  [data-host-mobile-surface="true"] :is(
+    button,
+    a[href],
+    input:not([type="hidden"]),
+    select,
+    textarea,
+    [role="button"]
+  ) {
+    min-width: 44px;
+    min-height: 44px;
+    box-sizing: border-box;
+  }
+
+  [data-host-mobile-surface="true"] input,
+  [data-host-mobile-surface="true"] textarea,
+  [data-host-mobile-surface="true"] select {
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+}
+
 /* TR1VIA motion primitives — ported from TR1VIA.html.
    Discipline: never longer than 800ms. */
 @keyframes tr1via-rise         { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }

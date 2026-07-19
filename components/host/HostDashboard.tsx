@@ -176,6 +176,7 @@ function HostDashboardInner({
     <LaptopShell>
       <div
         data-testid="host-dashboard"
+        data-host-mobile-surface="true"
         style={{
           padding: compact ? "24px 20px" : "40px 56px",
           display: "grid",
@@ -282,6 +283,27 @@ function HostDashboardInner({
                   </span>
                 )}
               </button>
+              {tonight?.status === "live" && (
+                <Link
+                  href={`/host/phone/${tonight.nightId}`}
+                  data-testid="host-private-phone-controls"
+                  style={{
+                    color: t.ink,
+                    border: `1px solid ${t.line}`,
+                    borderRadius: 10,
+                    padding: "11px 16px",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    fontFamily: "var(--font-sans)",
+                    textDecoration: "none",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  Private phone controls →
+                </Link>
+              )}
               {/* Secondary: always-available "+ Plan a new night" so the
                   host isn't stranded behind a single Resume CTA when a
                   test or stale live night is sitting in the slot.

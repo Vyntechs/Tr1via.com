@@ -58,12 +58,13 @@ function OnboardingInner() {
 
   return (
     <div
+      data-host-mobile-surface="true"
       style={{
         flex: compact ? "none" : 1,
         display: "grid",
         gridTemplateColumns: compact ? "1fr" : "1fr 1fr",
         gap: compact ? 24 : 56,
-        padding: compact ? "32px 20px" : "40px 56px",
+        padding: compact ? "24px 20px max(24px, env(safe-area-inset-bottom))" : "40px 56px",
       }}
     >
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
