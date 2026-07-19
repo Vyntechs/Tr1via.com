@@ -249,53 +249,6 @@ create table public.live_command_receipts (
     references public.question_plays(id, night_id, run_id, game_id)
 );
 
--- A receipt must preserve the play status the command actually observed.
--- A static FK cannot include mutable play status without either blocking the
--- later transition or rewriting the historical expectation, so this narrow
--- trigger validates the point-in-time precondition while holding a share lock.
-create function public.validate_live_command_receipt_expected_status()
-returns trigger
-language plpgsql
-set search_path = pg_catalog, public
-as $$
-declare
-  actual_status text;
-begin
-  if new.expected_play_id is null then
-    return new;
-  end if;
-
-  select qp.status
-    into actual_status
-    from public.question_plays qp
-   where qp.id = new.expected_play_id
-     and qp.night_id = new.night_id
-     and qp.run_id = new.run_id
-     and qp.game_id = new.expected_game_id
-   for share;
-
-  if actual_status is null or actual_status is distinct from new.expected_play_status then
-    raise exception using
-      errcode = '23514',
-      message = 'command receipt expected play status constraint failed';
-  end if;
-
-  return new;
-end;
-$$;
-
-revoke all on function public.validate_live_command_receipt_expected_status()
-  from public, anon, authenticated;
-grant execute on function public.validate_live_command_receipt_expected_status()
-  to service_role;
-
-create trigger live_command_receipts_expected_status_guard
-before insert or update of
-  night_id, run_id, expected_game_id, expected_play_id, expected_play_status
-on public.live_command_receipts
-for each row
-execute function public.validate_live_command_receipt_expected_status();
-
 create index live_command_receipts_expected_game_idx
   on public.live_command_receipts (expected_game_id, night_id);
 

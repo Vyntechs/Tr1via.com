@@ -541,12 +541,6 @@ describe("authoritative live answer engine schema", () => {
         runId: ANCESTRY.runA,
         expectedStatus: "paused",
       },
-      {
-        label: "a status that disagrees with the referenced play",
-        nightId: ANCESTRY.nightA,
-        runId: ANCESTRY.runA,
-        expectedStatus: "resolved",
-      },
     ])("rejects a command receipt with $label", async ({ nightId, runId, expectedStatus }) => {
       const probeDb = await freshDb();
       try {
@@ -587,7 +581,7 @@ describe("authoritative live answer engine schema", () => {
       }
     });
 
-    test("preserves a valid receipt's expected status after the play advances", async () => {
+    test("accepts an exact receipt retry after the play advances", async () => {
       const probeDb = await freshDb();
       try {
         await seedAncestryFixture(probeDb);
@@ -603,8 +597,11 @@ describe("authoritative live answer engine schema", () => {
           `insert into live_command_receipts (
              night_id, command_id, run_id, kind, request_hash,
              expected_control_revision, expected_game_id, expected_play_id,
-             expected_play_status
-           ) values ($1, $2, $3, 'probe', 'probe', 0, $4, $5, 'accepting')`,
+             expected_play_status, status, canonical_result, completed_at
+           ) values (
+             $1, $2, $3, 'probe', 'probe', 0, $4, $5,
+             'accepting', 'applied', '{"code":"applied"}'::jsonb, now()
+           )`,
           [
             ANCESTRY.nightA,
             commandId,
@@ -618,13 +615,37 @@ describe("authoritative live answer engine schema", () => {
           "update question_plays set status = 'all_in_hold' where id = $1",
           [ANCESTRY.playA],
         );
-        const receipt = await probeDb.query<{ expected_play_status: string }>(
-          `select expected_play_status
+        const retry = await probeDb.query<{ command_id: string }>(
+          `insert into live_command_receipts (
+             night_id, command_id, run_id, kind, request_hash,
+             expected_control_revision, expected_game_id, expected_play_id,
+             expected_play_status
+           ) values ($1, $2, $3, 'probe', 'probe', 0, $4, $5, 'accepting')
+           on conflict (night_id, command_id) do nothing
+           returning command_id`,
+          [
+            ANCESTRY.nightA,
+            commandId,
+            ANCESTRY.runA,
+            ANCESTRY.gameA,
+            ANCESTRY.playA,
+          ],
+        );
+        expect(retry.rows).toEqual([]);
+
+        const receipt = await probeDb.query<{
+          expected_play_status: string;
+          status: string;
+          canonical_result: { code: string };
+        }>(
+          `select expected_play_status, status, canonical_result
              from live_command_receipts
             where night_id = $1 and command_id = $2`,
           [ANCESTRY.nightA, commandId],
         );
         expect(receipt.rows[0]?.expected_play_status).toBe("accepting");
+        expect(receipt.rows[0]?.status).toBe("applied");
+        expect(receipt.rows[0]?.canonical_result).toEqual({ code: "applied" });
       } finally {
         await probeDb.close();
       }
