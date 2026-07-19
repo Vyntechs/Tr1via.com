@@ -61,7 +61,10 @@ async function freshRlsDb(): Promise<PGlite> {
 
 describe("0021 live security gate", () => {
   let db: PGlite;
+  let nightId: string;
+  let gameId: string;
   let victimPlayerId: string;
+  let attackerPlayerId: string;
   let liveQuestionWithAnswerId: string;
   let liveQuestionForInsertId: string;
   let gameForParticipationId: string;
@@ -79,6 +82,15 @@ describe("0021 live security gate", () => {
     }
   }
 
+  async function runAsServiceRole(sql: string, params: unknown[] = []) {
+    await db.exec("set role service_role;");
+    try {
+      return await db.query(sql, params);
+    } finally {
+      await db.exec("reset role;");
+    }
+  }
+
   beforeAll(async () => {
     db = await freshRlsDb();
     const id = async (sql: string, params: unknown[] = []) =>
@@ -86,11 +98,11 @@ describe("0021 live security gate", () => {
 
     const hostUserId = await id("insert into auth.users default values");
     const hostId = await id("insert into hosts (user_id, display_name) values ($1, 'Host')", [hostUserId]);
-    const nightId = await id(
+    nightId = await id(
       "insert into nights (host_id, venue_name, room_code) values ($1, 'Venue', 'GATE01')",
       [hostId],
     );
-    const gameId = await id("insert into games (night_id, game_no) values ($1, 1)", [nightId]);
+    gameId = await id("insert into games (night_id, game_no) values ($1, 1)", [nightId]);
     gameForParticipationId = await id(
       "insert into games (night_id, game_no) values ($1, 2)",
       [nightId],
@@ -103,7 +115,7 @@ describe("0021 live security gate", () => {
       "insert into players (night_id, device_id, display_name) values ($1, $2, 'Victim')",
       [nightId, forgedVictimDeviceId],
     );
-    await id(
+    attackerPlayerId = await id(
       "insert into players (night_id, device_id, display_name) values ($1, '22222222-2222-2222-2222-222222222222', 'Attacker')",
       [nightId],
     );
@@ -205,5 +217,162 @@ describe("0021 live security gate", () => {
         routineGrants.filter((row) => ["PUBLIC", "anon", "authenticated"].includes(row.grantee)),
       ).toEqual([]);
     }
+  });
+
+  test("rejects direct anonymous execution of every live mutation function", async () => {
+    const calls: Array<[string, unknown[]]> = [
+      ["select public.resolve_question($1)", [liveQuestionWithAnswerId]],
+      ["select public.resolve_question_if_all_locked($1)", [liveQuestionWithAnswerId]],
+      ["select public.reset_night_to_setup($1)", [nightId]],
+      ["select public.swap_point_value($1, $2)", [liveQuestionForInsertId, 300]],
+    ];
+
+    for (const [sql, params] of calls) {
+      await expect(runAsForgedPlayer(sql, params)).rejects.toThrow(/permission denied|function/i);
+    }
+  });
+
+  test("hardens every live SECURITY DEFINER function with a trusted search_path", async () => {
+    const functions = await db.query<{
+      proname: string;
+      prosecdef: boolean;
+      proconfig: string[] | null;
+    }>(
+      `select p.proname, p.prosecdef, p.proconfig
+       from pg_catalog.pg_proc p
+       join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public'
+         and p.proname in (
+           'current_player_id',
+           'is_night_host',
+           'resolve_question',
+           'resolve_question_if_all_locked',
+           'reset_night_to_setup',
+           'swap_point_value'
+         )
+       order by p.proname`,
+    );
+
+    expect(functions.rows.map((fn) => fn.proname)).toEqual([
+      "current_player_id",
+      "is_night_host",
+      "reset_night_to_setup",
+      "resolve_question",
+      "resolve_question_if_all_locked",
+      "swap_point_value",
+    ]);
+    for (const fn of functions.rows) {
+      expect(fn.prosecdef, fn.proname).toBe(true);
+      expect(fn.proconfig ?? [], fn.proname).toContain("search_path=pg_catalog, public");
+    }
+  });
+
+  test("preserves service-role answer, participation, and live-function behavior", async () => {
+    const answer = await runAsServiceRole(
+      `insert into public.answers (question_id, player_id, chosen_index, scramble, ms_to_lock)
+       values ($1, $2, 1, '[0,1,2,3]'::jsonb, 800)
+       returning chosen_index`,
+      [liveQuestionForInsertId, attackerPlayerId],
+    );
+    expect(answer.rows).toEqual([{ chosen_index: 1 }]);
+
+    const participation = await runAsServiceRole(
+      `insert into public.game_participations (game_id, player_id)
+       values ($1, $2)
+       returning player_id`,
+      [gameForParticipationId, attackerPlayerId],
+    );
+    expect(participation.rows).toEqual([{ player_id: attackerPlayerId }]);
+
+    const guarded = await runAsServiceRole(
+      "select public.resolve_question_if_all_locked($1) as resolved",
+      [liveQuestionWithAnswerId],
+    );
+    expect(guarded.rows).toEqual([{ resolved: false }]);
+
+    await runAsServiceRole("select public.resolve_question($1)", [liveQuestionWithAnswerId]);
+    const resolved = await db.query<{ finished_at: string | null; awarded_points: number | null }>(
+      `select q.finished_at, a.awarded_points
+       from public.questions q
+       join public.answers a on a.question_id = q.id
+       where q.id = $1`,
+      [liveQuestionWithAnswerId],
+    );
+    expect(resolved.rows[0].finished_at).not.toBeNull();
+    expect(resolved.rows[0].awarded_points).toBe(110);
+
+    await runAsServiceRole("select public.swap_point_value($1, $2)", [liveQuestionForInsertId, 100]);
+    const swapped = await db.query<{ id: string; point_value: number }>(
+      `select id, point_value
+       from public.questions
+       where id in ($1, $2)
+       order by id`,
+      [liveQuestionWithAnswerId, liveQuestionForInsertId],
+    );
+    expect(new Map(swapped.rows.map((row) => [row.id, row.point_value]))).toEqual(
+      new Map([
+        [liveQuestionWithAnswerId, 200],
+        [liveQuestionForInsertId, 100],
+      ]),
+    );
+
+    await runAsServiceRole(
+      "insert into public.adjustments (player_id, game_id, delta, reason) values ($1, $2, 50, 'Test')",
+      [victimPlayerId, gameId],
+    );
+    await runAsServiceRole(
+      "update public.games set state = 'live', started_at = now() where id = $1",
+      [gameId],
+    );
+    await runAsServiceRole(
+      "update public.nights set opened_at = now() where id = $1",
+      [nightId],
+    );
+
+    const reset = await runAsServiceRole(
+      "select public.reset_night_to_setup($1) as result",
+      [nightId],
+    );
+    expect(reset.rows).toEqual([
+      {
+        result: {
+          wiped: { reveals: 1, answers: 2, finishedQuestions: 1, adjustments: 1 },
+          kept: { categories: 1, pickedQuestions: 2, players: 2 },
+        },
+      },
+    ]);
+
+    const resetState = await db.query<{
+      game_state: string;
+      started_at: string | null;
+      opened_at: string | null;
+      answers: number;
+      reveals: number;
+      adjustments: number;
+      played_questions: number;
+    }>(
+      `select g.state as game_state,
+              g.started_at,
+              n.opened_at,
+              (select count(*)::int from public.answers) as answers,
+              (select count(*)::int from public.reveals) as reveals,
+              (select count(*)::int from public.adjustments) as adjustments,
+              (select count(*)::int from public.questions where played_at is not null) as played_questions
+       from public.games g
+       join public.nights n on n.id = g.night_id
+       where g.id = $1`,
+      [gameId],
+    );
+    expect(resetState.rows).toEqual([
+      {
+        game_state: "ready",
+        started_at: null,
+        opened_at: null,
+        answers: 0,
+        reveals: 0,
+        adjustments: 0,
+        played_questions: 0,
+      },
+    ]);
   });
 });
