@@ -65,6 +65,22 @@ begin
 end;
 $$;
 
+create or replace function public._live_mutation_envelope(
+  p_freshly_applied boolean,
+  p_result jsonb
+)
+returns jsonb
+language sql
+immutable
+strict
+set search_path = pg_catalog, public
+as $$
+  select jsonb_build_object(
+    'freshlyApplied', p_freshly_applied,
+    'result', p_result
+  )
+$$;
+
 create or replace function public._live_existing_command_result(
   p_night_id uuid,
   p_command_id uuid,
@@ -180,17 +196,35 @@ declare
   v_night public.nights%rowtype;
   v_play public.question_plays%rowtype;
   v_question public.questions%rowtype;
+  v_event public.live_room_events%rowtype;
   v_reason text;
 begin
   select * into v_night from public.nights where id = p_night_id;
   select * into v_play from public.question_plays
    where id = p_play_id and night_id = p_night_id and run_id = p_run_id
      and game_id = p_game_id;
-  if not found then return jsonb_build_object('code', 'stale', 'applied', false); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'stale', 'applied', false)
+    );
+  end if;
   if v_play.status = 'resolved' then
-    return jsonb_build_object(
-      'code', 'resolved', 'applied', false, 'runId', p_run_id, 'playId', p_play_id,
-      'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
+    select * into v_event
+      from public.live_room_events
+     where night_id = p_night_id
+       and run_id = p_run_id
+       and play_id = p_play_id
+       and kind = 'play_resolved'
+     order by room_revision
+     limit 1;
+    return public._live_mutation_envelope(
+      false,
+      jsonb_build_object(
+        'code', 'resolved', 'applied', true, 'eventKind', 'play_resolved',
+        'runId', p_run_id, 'playId', p_play_id,
+        'roomRevision', coalesce(v_event.room_revision, v_night.room_revision),
+        'controlRevision', coalesce(v_event.control_revision, v_night.control_revision)
+      )
     );
   end if;
 
@@ -230,9 +264,14 @@ begin
       'confirmedCount', v_play.confirmed_count, 'reason', v_reason
     )
   );
-  return jsonb_build_object(
-    'code', 'resolved', 'applied', true, 'runId', p_run_id, 'playId', p_play_id,
-    'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
+  return public._live_mutation_envelope(
+    true,
+    jsonb_build_object(
+      'code', 'resolved', 'applied', true, 'eventKind', 'play_resolved',
+      'runId', p_run_id, 'playId', p_play_id,
+      'roomRevision', v_night.room_revision,
+      'controlRevision', v_night.control_revision
+    )
   );
 end;
 $$;
@@ -260,21 +299,27 @@ begin
   select current_run_id into v_receipt_run_id
     from public.nights where id = p_night_id;
   if not found then
-    return jsonb_build_object('code', 'not_found', 'applied', false);
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
   end if;
 
   v_claim := public._live_claim_command(
     p_night_id, p_command_id, v_receipt_run_id, 'open_night_run', v_hash,
     p_expected_control_revision, null
   );
-  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+  if not coalesce((v_claim->>'claimed')::boolean, false) then
+    return public._live_mutation_envelope(false, v_claim);
+  end if;
 
   select * into v_night from public.nights where id = p_night_id for update;
 
   if v_night.answer_engine <> 'resilient_v1'
      or v_night.current_run_id is distinct from p_expected_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return public._live_reject_command(p_night_id, p_command_id, 'stale');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(p_night_id, p_command_id, 'stale')
+    );
   end if;
 
   v_run_id := gen_random_uuid();
@@ -295,7 +340,8 @@ begin
   );
 
   v_result := jsonb_build_object(
-    'code', 'applied', 'applied', true, 'runId', v_run_id,
+    'code', 'applied', 'applied', true, 'eventKind', 'night_opened',
+    'runId', v_run_id,
     'roomRevision', v_night.room_revision,
     'controlRevision', v_night.control_revision
   );
@@ -303,7 +349,7 @@ begin
      set run_id = v_run_id, status = 'applied', canonical_result = v_result,
          completed_at = clock_timestamp()
    where night_id = p_night_id and command_id = p_command_id;
-  return v_result;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 
@@ -332,23 +378,33 @@ begin
     from public.games g
     join public.nights n on n.id = g.night_id
    where g.id = p_game_id;
-  if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
+  end if;
   v_claim := public._live_claim_command(
     v_night_id, p_command_id, v_receipt_run_id, 'start_live_game', v_hash,
     p_expected_control_revision, p_game_id
   );
-  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+  if not coalesce((v_claim->>'claimed')::boolean, false) then
+    return public._live_mutation_envelope(false, v_claim);
+  end if;
 
   select * into v_night from public.nights where id = v_night_id for update;
   if v_night.answer_engine <> 'resilient_v1'
      or v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return public._live_reject_command(v_night_id, p_command_id, 'stale');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'stale')
+    );
   end if;
 
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
   if v_game.state <> 'ready' then
-    return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'invalid_state')
+    );
   end if;
 
   update public.games
@@ -366,13 +422,14 @@ begin
     v_night.control_revision, 'game_started', jsonb_build_object('state', 'live')
   );
   v_result := jsonb_build_object(
-    'code', 'applied', 'applied', true, 'runId', p_run_id, 'gameId', p_game_id,
+    'code', 'applied', 'applied', true, 'eventKind', 'game_started',
+    'runId', p_run_id, 'gameId', p_game_id,
     'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
   );
   update public.live_command_receipts
      set status = 'applied', canonical_result = v_result, completed_at = clock_timestamp()
    where night_id = v_night_id and command_id = p_command_id;
-  return v_result;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 
@@ -407,23 +464,33 @@ begin
     from public.games g
     join public.nights n on n.id = g.night_id
    where g.id = p_game_id;
-  if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
+  end if;
   v_claim := public._live_claim_command(
     v_night_id, p_command_id, v_receipt_run_id, 'open_question_play', v_hash,
     p_expected_control_revision, p_game_id
   );
-  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+  if not coalesce((v_claim->>'claimed')::boolean, false) then
+    return public._live_mutation_envelope(false, v_claim);
+  end if;
 
   select * into v_night from public.nights where id = v_night_id for update;
   if v_night.answer_engine <> 'resilient_v1'
      or v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return public._live_reject_command(v_night_id, p_command_id, 'stale');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'stale')
+    );
   end if;
 
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
   if v_game.state <> 'live' then
-    return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'invalid_state')
+    );
   end if;
   select q.*
     into v_question
@@ -432,7 +499,9 @@ begin
    where q.id = p_question_id and c.game_id = p_game_id
    for update of q;
   if not found or v_question.played_at is not null then
-    return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'invalid_state')
+    );
   end if;
   v_category_id := v_question.category_id;
   if exists (
@@ -441,7 +510,9 @@ begin
      where qp.run_id = p_run_id
        and qp.status in ('accepting', 'all_in_hold', 'final_window')
   ) then
-    return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'invalid_state')
+    );
   end if;
 
   insert into public.question_plays (
@@ -481,14 +552,15 @@ begin
     )
   );
   v_result := jsonb_build_object(
-    'code', 'applied', 'applied', true, 'runId', p_run_id,
+    'code', 'applied', 'applied', true, 'eventKind', 'play_opened',
+    'runId', p_run_id,
     'gameId', p_game_id, 'playId', v_play_id,
     'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
   );
   update public.live_command_receipts
      set status = 'applied', canonical_result = v_result, completed_at = clock_timestamp()
    where night_id = v_night_id and command_id = p_command_id;
-  return v_result;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 
@@ -518,10 +590,16 @@ declare
   v_retry_ms integer;
 begin
   if p_visible_slot not between 1 and 4 then
-    return jsonb_build_object('code', 'invalid_request');
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'invalid_request')
+    );
   end if;
   select night_id into v_play.night_id from public.question_plays where id = p_play_id;
-  if not found then return jsonb_build_object('code', 'not_eligible'); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_eligible')
+    );
+  end if;
   select * into v_night from public.nights where id = v_play.night_id for update;
   select game_id into v_play.game_id from public.question_plays where id = p_play_id;
   select * into v_game from public.games where id = v_play.game_id and night_id = v_night.id for update;
@@ -530,26 +608,37 @@ begin
    where id = p_play_id and night_id = v_night.id and game_id = v_game.id
    for update;
   if v_night.current_run_id is distinct from p_run_id or v_play.run_id is distinct from p_run_id then
-    return jsonb_build_object('code', 'stale');
+    return public._live_mutation_envelope(false, jsonb_build_object('code', 'stale'));
   end if;
 
   select p.id into v_player_id
     from public.players p
    where p.night_id = v_night.id and p.device_id = p_verified_device_id;
-  if not found then return jsonb_build_object('code', 'identity_invalid'); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'identity_invalid')
+    );
+  end if;
   if not exists (
     select 1 from public.question_play_eligibility e
      where e.play_id = p_play_id and e.player_id = v_player_id
-  ) then return jsonb_build_object('code', 'not_eligible'); end if;
+  ) then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_eligible')
+    );
+  end if;
 
   select * into v_answer
     from public.question_play_answers
    where play_id = p_play_id and player_id = v_player_id;
   if found then
-    return jsonb_build_object(
-      'code', 'confirmed', 'confirmedSlot', v_answer.visible_slot,
-      'duplicate', true, 'roomRevision', v_night.room_revision,
-      'controlRevision', v_night.control_revision, 'playId', p_play_id
+    return public._live_mutation_envelope(
+      false,
+      jsonb_build_object(
+        'code', 'confirmed', 'confirmedSlot', v_answer.visible_slot,
+        'duplicate', true, 'roomRevision', v_night.room_revision,
+        'controlRevision', v_night.control_revision, 'playId', p_play_id
+      )
     );
   end if;
 
@@ -569,7 +658,9 @@ begin
     v_retry_ms := greatest(1, ceil(extract(epoch from (
       v_window.window_started_at + interval '10 seconds' - v_now
     )) * 1000)::integer);
-    return jsonb_build_object('code', 'retry_later', 'retryAfterMs', v_retry_ms);
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'retry_later', 'retryAfterMs', v_retry_ms)
+    );
   else
     update public.question_play_attempt_windows
        set attempt_count = attempt_count + 1
@@ -577,7 +668,9 @@ begin
   end if;
 
   if v_play.status in ('resolved', 'undone') or v_now >= v_play.final_window_ends_at then
-    return jsonb_build_object('code', 'deadline_passed');
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'deadline_passed')
+    );
   end if;
 
   v_scramble := public._live_scramble_for(v_play.question_id, v_player_id);
@@ -625,10 +718,14 @@ begin
       'confirmedCount', v_play.confirmed_count, 'finalizeAt', v_play.finalize_at
     )
   );
-  return jsonb_build_object(
-    'code', 'confirmed', 'confirmedSlot', p_visible_slot, 'duplicate', false,
-    'playId', p_play_id, 'roomRevision', v_night.room_revision,
-    'controlRevision', v_night.control_revision
+  return public._live_mutation_envelope(
+    true,
+    jsonb_build_object(
+      'code', 'confirmed', 'confirmedSlot', p_visible_slot, 'duplicate', false,
+      'eventKind', 'answer_progress', 'playId', p_play_id,
+      'roomRevision', v_night.room_revision,
+      'controlRevision', v_night.control_revision
+    )
   );
 end;
 $$;
@@ -657,45 +754,61 @@ declare
     p_expected_control_revision::text));
   v_claim jsonb;
   v_result jsonb;
+  v_resolution jsonb;
 begin
   select g.night_id, n.current_run_id into v_night_id, v_receipt_run_id
     from public.games g
     join public.nights n on n.id = g.night_id
    where g.id = p_game_id;
-  if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
+  end if;
   v_claim := public._live_claim_command(
     v_night_id, p_command_id, v_receipt_run_id,
     'begin_question_play_final_window', v_hash,
     p_expected_control_revision, p_game_id
   );
-  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+  if not coalesce((v_claim->>'claimed')::boolean, false) then
+    return public._live_mutation_envelope(false, v_claim);
+  end if;
 
   select * into v_night from public.nights where id = v_night_id for update;
   if v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return public._live_reject_command(v_night_id, p_command_id, 'stale');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'stale')
+    );
   end if;
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
   select * into v_play from public.question_plays
    where id = p_play_id and night_id = v_night_id and run_id = p_run_id and game_id = p_game_id
    for update;
-  if not found then return public._live_reject_command(v_night_id, p_command_id, 'stale'); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'stale')
+    );
+  end if;
   update public.live_command_receipts
      set expected_play_id = p_play_id, expected_play_status = v_play.status
    where night_id = v_night_id and command_id = p_command_id;
   if v_play.status <> 'accepting' then
-    return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'invalid_state')
+    );
   end if;
 
   if v_now >= v_play.final_window_ends_at then
-    v_result := public._live_resolve_locked_play(
+    v_resolution := public._live_resolve_locked_play(
       v_night_id, p_run_id, p_game_id, p_play_id, v_now
     );
+    v_result := v_resolution->'result';
     update public.live_command_receipts
        set status = 'applied', canonical_result = v_result,
            completed_at = clock_timestamp()
      where night_id = v_night_id and command_id = p_command_id;
-    return v_result;
+    return v_resolution;
   elsif v_now >= v_play.main_zero_at then
     update public.question_plays
        set status = 'final_window',
@@ -723,13 +836,14 @@ begin
     jsonb_build_object('status', 'final_window', 'finalWindowEndsAt', v_play.final_window_ends_at)
   );
   v_result := jsonb_build_object(
-    'code', 'applied', 'applied', true, 'runId', p_run_id, 'playId', p_play_id,
+    'code', 'applied', 'applied', true, 'eventKind', 'final_window_started',
+    'runId', p_run_id, 'playId', p_play_id,
     'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
   );
   update public.live_command_receipts set status = 'applied', canonical_result = v_result,
     completed_at = clock_timestamp()
    where night_id = v_night_id and command_id = p_command_id;
-  return v_result;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 
@@ -748,22 +862,60 @@ declare
   v_night public.nights%rowtype;
   v_game public.games%rowtype;
   v_play public.question_plays%rowtype;
+  v_event public.live_room_events%rowtype;
   v_window public.play_finalize_attempt_windows%rowtype;
   v_retry_ms integer;
 begin
   select * into v_night from public.nights
    where room_code = upper(replace(p_room_code, '·', '')) for update;
-  if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
+  end if;
   if v_night.current_run_id is distinct from p_run_id then
-    return jsonb_build_object('code', 'stale', 'applied', false);
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'stale', 'applied', false)
+    );
   end if;
   select game_id into v_play.game_id from public.question_plays
    where id = p_play_id and night_id = v_night.id and run_id = p_run_id;
-  if not found then return jsonb_build_object('code', 'stale', 'applied', false); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'stale', 'applied', false)
+    );
+  end if;
   select * into v_game from public.games where id = v_play.game_id and night_id = v_night.id for update;
   select * into v_play from public.question_plays
    where id = p_play_id and night_id = v_night.id and run_id = p_run_id and game_id = v_game.id
    for update;
+
+  -- Replays of an authoritative resolution must never be hidden by a
+  -- saturated attempt bucket. Return the same canonical result first.
+  if v_play.status = 'resolved' then
+    select * into v_event
+      from public.live_room_events
+     where night_id = v_night.id
+       and run_id = p_run_id
+       and play_id = p_play_id
+       and kind = 'play_resolved'
+     order by room_revision
+     limit 1;
+    return public._live_mutation_envelope(
+      false,
+      jsonb_build_object(
+        'code', 'resolved', 'applied', true, 'eventKind', 'play_resolved',
+        'runId', p_run_id, 'playId', p_play_id,
+        'roomRevision', coalesce(v_event.room_revision, v_night.room_revision),
+        'controlRevision', coalesce(v_event.control_revision, v_night.control_revision)
+      )
+    );
+  end if;
+  if v_play.status = 'undone' then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'stale', 'applied', false)
+    );
+  end if;
 
   select * into v_window from public.play_finalize_attempt_windows
    where play_id = p_play_id for update;
@@ -777,20 +929,12 @@ begin
     v_retry_ms := greatest(1, ceil(extract(epoch from (
       v_window.window_started_at + interval '10 seconds' - v_now
     )) * 1000)::integer);
-    return jsonb_build_object('code', 'retry_later', 'retryAfterMs', v_retry_ms);
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'retry_later', 'retryAfterMs', v_retry_ms)
+    );
   else
     update public.play_finalize_attempt_windows
        set attempt_count = attempt_count + 1 where play_id = p_play_id;
-  end if;
-
-  if v_play.status = 'resolved' then
-    return jsonb_build_object(
-      'code', 'resolved', 'applied', false, 'runId', p_run_id, 'playId', p_play_id,
-      'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
-    );
-  end if;
-  if v_play.status = 'undone' then
-    return jsonb_build_object('code', 'stale', 'applied', false);
   end if;
 
   if v_play.status = 'accepting' and v_now >= v_play.main_zero_at
@@ -810,18 +954,27 @@ begin
       v_night.room_revision, v_night.control_revision, 'final_window_started',
       jsonb_build_object('status', 'final_window', 'finalWindowEndsAt', v_play.final_window_ends_at)
     );
-    return jsonb_build_object(
-      'code', 'final_window', 'applied', true, 'runId', p_run_id, 'playId', p_play_id,
-      'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
+    return public._live_mutation_envelope(
+      true,
+      jsonb_build_object(
+        'code', 'final_window', 'applied', true,
+        'eventKind', 'final_window_started', 'runId', p_run_id,
+        'playId', p_play_id, 'roomRevision', v_night.room_revision,
+        'controlRevision', v_night.control_revision
+      )
     );
   end if;
 
   if (v_play.status = 'accepting' and v_now < v_play.final_window_ends_at)
      or (v_play.status = 'all_in_hold' and v_now < v_play.finalize_at)
      or (v_play.status = 'final_window' and v_now < coalesce(v_play.finalize_at, v_play.final_window_ends_at)) then
-    return jsonb_build_object(
-      'code', 'not_due', 'applied', false, 'runId', p_run_id, 'playId', p_play_id,
-      'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
+    return public._live_mutation_envelope(
+      false,
+      jsonb_build_object(
+        'code', 'not_due', 'applied', false, 'runId', p_run_id,
+        'playId', p_play_id, 'roomRevision', v_night.room_revision,
+        'controlRevision', v_night.control_revision
+      )
     );
   end if;
 
@@ -859,29 +1012,43 @@ begin
     from public.games g
     join public.nights n on n.id = g.night_id
    where g.id = p_game_id;
-  if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
+  end if;
   v_claim := public._live_claim_command(
     v_night_id, p_command_id, v_receipt_run_id, 'undo_question_play', v_hash,
     p_expected_control_revision, p_game_id
   );
-  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+  if not coalesce((v_claim->>'claimed')::boolean, false) then
+    return public._live_mutation_envelope(false, v_claim);
+  end if;
 
   select * into v_night from public.nights where id = v_night_id for update;
   if v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return public._live_reject_command(v_night_id, p_command_id, 'stale');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'stale')
+    );
   end if;
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
   select * into v_play from public.question_plays
    where id = p_play_id and night_id = v_night_id and run_id = p_run_id and game_id = p_game_id
    for update;
-  if not found then return public._live_reject_command(v_night_id, p_command_id, 'stale'); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'stale')
+    );
+  end if;
   update public.live_command_receipts
      set expected_play_id = p_play_id, expected_play_status = v_play.status
    where night_id = v_night_id and command_id = p_command_id;
   if v_play.status in ('resolved', 'undone')
      or not public._live_undo_allowed(v_play.opened_at, v_now) then
-    return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'invalid_state')
+    );
   end if;
   update public.question_plays
      set status = 'undone', finalize_at = null, final_window_starts_at = null,
@@ -900,13 +1067,14 @@ begin
     jsonb_build_object('status', 'undone')
   );
   v_result := jsonb_build_object(
-    'code', 'applied', 'applied', true, 'runId', p_run_id, 'playId', p_play_id,
+    'code', 'applied', 'applied', true, 'eventKind', 'play_undone',
+    'runId', p_run_id, 'playId', p_play_id,
     'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
   );
   update public.live_command_receipts set status = 'applied', canonical_result = v_result,
     completed_at = clock_timestamp()
    where night_id = v_night_id and command_id = p_command_id;
-  return v_result;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 
@@ -935,17 +1103,25 @@ begin
     from public.games g
     join public.nights n on n.id = g.night_id
    where g.id = p_game_id;
-  if not found then return jsonb_build_object('code', 'not_found', 'applied', false); end if;
+  if not found then
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
+  end if;
   v_claim := public._live_claim_command(
     v_night_id, p_command_id, v_receipt_run_id, 'end_live_game', v_hash,
     p_expected_control_revision, p_game_id
   );
-  if not coalesce((v_claim->>'claimed')::boolean, false) then return v_claim; end if;
+  if not coalesce((v_claim->>'claimed')::boolean, false) then
+    return public._live_mutation_envelope(false, v_claim);
+  end if;
 
   select * into v_night from public.nights where id = v_night_id for update;
   if v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return public._live_reject_command(v_night_id, p_command_id, 'stale');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'stale')
+    );
   end if;
   select * into v_game from public.games where id = p_game_id and night_id = v_night_id for update;
   if v_game.state <> 'live' or exists (
@@ -953,7 +1129,9 @@ begin
      where qp.game_id = p_game_id and qp.run_id = p_run_id
        and qp.status in ('accepting', 'all_in_hold', 'final_window')
   ) then
-    return public._live_reject_command(v_night_id, p_command_id, 'invalid_state');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(v_night_id, p_command_id, 'invalid_state')
+    );
   end if;
   update public.games set state = 'done', ended_at = clock_timestamp() where id = p_game_id;
   update public.nights
@@ -966,17 +1144,19 @@ begin
     v_night.control_revision, 'game_ended', jsonb_build_object('state', 'done')
   );
   v_result := jsonb_build_object(
-    'code', 'applied', 'applied', true, 'runId', p_run_id, 'gameId', p_game_id,
+    'code', 'applied', 'applied', true, 'eventKind', 'game_ended',
+    'runId', p_run_id, 'gameId', p_game_id,
     'roomRevision', v_night.room_revision, 'controlRevision', v_night.control_revision
   );
   update public.live_command_receipts set status = 'applied', canonical_result = v_result,
     completed_at = clock_timestamp()
    where night_id = v_night_id and command_id = p_command_id;
-  return v_result;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 
 revoke all on function public._live_scramble_for(uuid, uuid) from public, anon, authenticated;
+revoke all on function public._live_mutation_envelope(boolean, jsonb) from public, anon, authenticated;
 revoke all on function public._live_existing_command_result(uuid, uuid, text) from public, anon, authenticated;
 revoke all on function public._live_claim_command(uuid, uuid, uuid, text, text, bigint, uuid) from public, anon, authenticated;
 revoke all on function public._live_reject_command(uuid, uuid, text) from public, anon, authenticated;
@@ -992,6 +1172,7 @@ revoke all on function public.undo_question_play(uuid, uuid, uuid, uuid, bigint)
 revoke all on function public.end_live_game(uuid, uuid, uuid, bigint) from public, anon, authenticated;
 
 grant execute on function public._live_scramble_for(uuid, uuid) to service_role;
+grant execute on function public._live_mutation_envelope(boolean, jsonb) to service_role;
 grant execute on function public._live_existing_command_result(uuid, uuid, text) to service_role;
 grant execute on function public._live_claim_command(uuid, uuid, uuid, text, text, bigint, uuid) to service_role;
 grant execute on function public._live_reject_command(uuid, uuid, text) to service_role;

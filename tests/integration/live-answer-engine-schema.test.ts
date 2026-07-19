@@ -275,10 +275,16 @@ const LIVE = {
 type RpcResult = Record<string, unknown> & {
   code: string;
   applied?: boolean;
+  eventKind?: string;
   runId?: string;
   playId?: string;
   roomRevision?: number;
   controlRevision?: number;
+};
+
+type RpcEnvelope = {
+  freshlyApplied: boolean;
+  result: RpcResult;
 };
 
 async function seedLiveFixture(db: PGlite, eligiblePlayers = 2): Promise<void> {
@@ -337,8 +343,20 @@ async function rpc(
   sql: string,
   params: unknown[] = [],
 ): Promise<RpcResult> {
-  const result = await db.query<{ result: RpcResult }>(sql, params);
-  return result.rows[0]?.result ?? { code: "missing" };
+  const response = await rpcEnvelope(db, sql, params);
+  return response.result;
+}
+
+async function rpcEnvelope(
+  db: PGlite,
+  sql: string,
+  params: unknown[] = [],
+): Promise<RpcEnvelope> {
+  const result = await db.query<{ result: RpcEnvelope }>(sql, params);
+  return result.rows[0]?.result ?? {
+    freshlyApplied: false,
+    result: { code: "missing" },
+  };
 }
 
 async function openRun(db: PGlite): Promise<RpcResult> {
@@ -956,6 +974,131 @@ describe("authoritative live answer engine schema", () => {
       }
     });
 
+    test("envelopes all six host commands with one fresh winner and canonical replay results", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const call = (sql: string, params: unknown[]) => rpcEnvelope(db, sql, params);
+
+        const opened = await call(
+          "select public.open_night_run($1, $2, null::uuid, 0::bigint) as result",
+          [LIVE.night, LIVE.openCommand],
+        );
+        expect(opened).toMatchObject({
+          freshlyApplied: true,
+          result: { code: "applied", applied: true, eventKind: "night_opened" },
+        });
+        expect(await call(
+          "select public.open_night_run($1, $2, null::uuid, 0::bigint) as result",
+          [LIVE.night, LIVE.openCommand],
+        )).toEqual({ freshlyApplied: false, result: opened.result });
+        expect(await call(
+          "select public.open_night_run($1, $2, null::uuid, 99::bigint) as result",
+          [LIVE.night, LIVE.openCommand],
+        )).toMatchObject({ freshlyApplied: false, result: { code: "stale", applied: false } });
+
+        const rejectedCommand = "50000000-0000-0000-0000-000000000098";
+        const rejected = await call(
+          "select public.start_live_game($1, $2, $3, 99::bigint) as result",
+          [LIVE.game, opened.result.runId, rejectedCommand],
+        );
+        expect(rejected).toMatchObject({
+          freshlyApplied: false,
+          result: { code: "stale", applied: false },
+        });
+        expect(await call(
+          "select public.start_live_game($1, $2, $3, 99::bigint) as result",
+          [LIVE.game, opened.result.runId, rejectedCommand],
+        )).toEqual({ freshlyApplied: false, result: rejected.result });
+
+        const started = await call(
+          "select public.start_live_game($1, $2, $3, 1::bigint) as result",
+          [LIVE.game, opened.result.runId, LIVE.startCommand],
+        );
+        const playOpened = await call(
+          "select public.open_question_play($1, $2, $3, $4, 2::bigint) as result",
+          [LIVE.game, LIVE.question, opened.result.runId, LIVE.revealCommand],
+        );
+        const finalWindow = await call(
+          "select public.begin_question_play_final_window($1, $2, $3, $4, 3::bigint) as result",
+          [LIVE.game, playOpened.result.playId, opened.result.runId, LIVE.finalCommand],
+        );
+        const undone = await call(
+          "select public.undo_question_play($1, $2, $3, $4, 4::bigint) as result",
+          [LIVE.game, playOpened.result.playId, opened.result.runId, LIVE.undoCommand],
+        );
+        const ended = await call(
+          "select public.end_live_game($1, $2, $3, 5::bigint) as result",
+          [LIVE.game, opened.result.runId, LIVE.endCommand],
+        );
+
+        const winners = [started, playOpened, finalWindow, undone, ended];
+        expect(winners.map((entry) => [entry.freshlyApplied, entry.result.eventKind])).toEqual([
+          [true, "game_started"],
+          [true, "play_opened"],
+          [true, "final_window_started"],
+          [true, "play_undone"],
+          [true, "game_ended"],
+        ]);
+
+        const retryCalls: Array<[string, unknown[], RpcEnvelope]> = [
+          ["select public.start_live_game($1, $2, $3, 1::bigint) as result",
+            [LIVE.game, opened.result.runId, LIVE.startCommand], started],
+          ["select public.open_question_play($1, $2, $3, $4, 2::bigint) as result",
+            [LIVE.game, LIVE.question, opened.result.runId, LIVE.revealCommand], playOpened],
+          ["select public.begin_question_play_final_window($1, $2, $3, $4, 3::bigint) as result",
+            [LIVE.game, playOpened.result.playId, opened.result.runId, LIVE.finalCommand], finalWindow],
+          ["select public.undo_question_play($1, $2, $3, $4, 4::bigint) as result",
+            [LIVE.game, playOpened.result.playId, opened.result.runId, LIVE.undoCommand], undone],
+          ["select public.end_live_game($1, $2, $3, 5::bigint) as result",
+            [LIVE.game, opened.result.runId, LIVE.endCommand], ended],
+        ];
+        for (const [sql, params, winner] of retryCalls) {
+          expect(await call(sql, params)).toEqual({
+            freshlyApplied: false,
+            result: winner.result,
+          });
+        }
+
+        const state = await db.query<{
+          room_revision: number;
+          control_revision: number;
+          events: number;
+        }>(
+          `select n.room_revision, n.control_revision,
+                  (select count(*)::int from live_room_events where night_id = n.id) as events
+             from nights n where n.id = $1`,
+          [LIVE.night],
+        );
+        expect(state.rows[0]).toEqual({ room_revision: 6, control_revision: 6, events: 6 });
+
+        const receipts = await db.query<{
+          has_envelope: boolean;
+          event_kind: string | null;
+        }>(
+          `select canonical_result ? 'freshlyApplied'
+                    or canonical_result ? 'result' as has_envelope,
+                  canonical_result->>'eventKind' as event_kind
+             from live_command_receipts
+            where night_id = $1 and status = 'applied'
+            order by expected_control_revision`,
+          [LIVE.night],
+        );
+        expect(receipts.rows).toHaveLength(6);
+        expect(receipts.rows.every((row) => row.has_envelope === false)).toBe(true);
+        expect(receipts.rows.map((row) => row.event_kind)).toEqual([
+          "night_opened",
+          "game_started",
+          "play_opened",
+          "final_window_started",
+          "play_undone",
+          "game_ended",
+        ]);
+      } finally {
+        await db.close();
+      }
+    });
+
     test("rejects stale run/control preconditions without changing game state", async () => {
       const db = await freshDb();
       try {
@@ -1216,6 +1359,84 @@ describe("authoritative live answer engine schema", () => {
       }
     });
 
+    test("marks only the accepted answer transition fresh across rate limits and duplicates", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+
+        await db.query(
+          `insert into question_play_attempt_windows (
+             play_id, player_id, window_started_at, attempt_count
+           ) values ($1, $2, now(), 10)`,
+          [play.playId, LIVE.playerA],
+        );
+        const rateLimited = await rpcEnvelope(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 2::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        expect(rateLimited).toMatchObject({
+          freshlyApplied: false,
+          result: { code: "retry_later", retryAfterMs: expect.any(Number) },
+        });
+        await db.query("delete from question_play_attempt_windows where play_id = $1", [play.playId]);
+
+        const winner = await rpcEnvelope(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 2::smallint) as result",
+          [play.playId, opened.runId, LIVE.deviceA, LIVE.submissionA],
+        );
+        expect(winner).toMatchObject({
+          freshlyApplied: true,
+          result: {
+            code: "confirmed",
+            confirmedSlot: 2,
+            eventKind: "answer_progress",
+          },
+        });
+
+        const duplicate = await rpcEnvelope(
+          db,
+          "select public.submit_question_play_answer($1, $2, $3, $4, 4::smallint) as result",
+          [
+            play.playId,
+            opened.runId,
+            LIVE.deviceA,
+            "60000000-0000-0000-0000-000000000099",
+          ],
+        );
+        expect(duplicate).toMatchObject({
+          freshlyApplied: false,
+          result: { code: "confirmed", confirmedSlot: 2, duplicate: true },
+        });
+
+        const state = await db.query<{
+          room_revision: number;
+          control_revision: number;
+          answers: number;
+          answer_events: number;
+        }>(
+          `select n.room_revision, n.control_revision,
+                  (select count(*)::int from question_play_answers where play_id = $2) as answers,
+                  (select count(*)::int from live_room_events
+                    where play_id = $2 and kind = 'answer_progress') as answer_events
+             from nights n where n.id = $1`,
+          [LIVE.night, play.playId],
+        );
+        expect(state.rows[0]).toEqual({
+          room_revision: 4,
+          control_revision: 3,
+          answers: 1,
+          answer_events: 1,
+        });
+      } finally {
+        await db.close();
+      }
+    });
+
     test("rejects invalid, ineligible, late, and rate-limited first answers with typed results", async () => {
       const db = await freshDb();
       try {
@@ -1455,17 +1676,117 @@ describe("authoritative live answer engine schema", () => {
           "select room_revision, control_revision from nights where id = $1",
           [LIVE.night],
         );
-        const again = await rpc(
+        const again = await rpcEnvelope(
           db,
           "select public.finalize_current_play_if_due($1, $2, $3) as result",
           ["ATOMIC", opened.runId, play.playId],
         );
-        expect(again).toMatchObject({ code: "resolved", applied: false });
+        expect(again).toEqual({ freshlyApplied: false, result: resolved });
         const revisionsAfter = await db.query<{ room_revision: number; control_revision: number }>(
           "select room_revision, control_revision from nights where id = $1",
           [LIVE.night],
         );
         expect(revisionsAfter.rows[0]).toEqual(revisions.rows[0]);
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("marks only the due finalizer fresh and bypasses rate limits for resolved retries", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+        const play = await openPlay(db, opened.runId as string);
+
+        const notDue = await rpcEnvelope(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        );
+        expect(notDue).toMatchObject({
+          freshlyApplied: false,
+          result: { code: "not_due", applied: false },
+        });
+
+        await db.query(
+          "update play_finalize_attempt_windows set attempt_count = 120 where play_id = $1",
+          [play.playId],
+        );
+        const rateLimited = await rpcEnvelope(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        );
+        expect(rateLimited).toMatchObject({
+          freshlyApplied: false,
+          result: { code: "retry_later", retryAfterMs: expect.any(Number) },
+        });
+
+        await db.query("delete from play_finalize_attempt_windows where play_id = $1", [play.playId]);
+        await db.query(
+          `update question_plays
+              set opened_at = now() - interval '40 seconds',
+                  main_zero_at = now() - interval '10 seconds',
+                  final_window_ends_at = now() - interval '8 seconds'
+            where id = $1`,
+          [play.playId],
+        );
+        const winner = await rpcEnvelope(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        );
+        expect(winner).toMatchObject({
+          freshlyApplied: true,
+          result: {
+            code: "resolved",
+            applied: true,
+            eventKind: "play_resolved",
+          },
+        });
+
+        const ended = await rpcEnvelope(
+          db,
+          "select public.end_live_game($1, $2, $3, 4::bigint) as result",
+          [
+            LIVE.game,
+            opened.runId,
+            "50000000-0000-0000-0000-000000000097",
+          ],
+        );
+        expect(ended).toMatchObject({ freshlyApplied: true, result: { code: "applied" } });
+
+        await db.query(
+          `insert into play_finalize_attempt_windows (play_id, window_started_at, attempt_count)
+           values ($1, now(), 120)
+           on conflict (play_id) do update set window_started_at = now(), attempt_count = 120`,
+          [play.playId],
+        );
+        const replay = await rpcEnvelope(
+          db,
+          "select public.finalize_current_play_if_due($1, $2, $3) as result",
+          ["ATOMIC", opened.runId, play.playId],
+        );
+        expect(replay).toEqual({ freshlyApplied: false, result: winner.result });
+
+        const state = await db.query<{
+          room_revision: number;
+          control_revision: number;
+          resolved_events: number;
+        }>(
+          `select n.room_revision, n.control_revision,
+                  (select count(*)::int from live_room_events
+                    where play_id = $2 and kind = 'play_resolved') as resolved_events
+             from nights n where n.id = $1`,
+          [LIVE.night, play.playId],
+        );
+        expect(state.rows[0]).toEqual({
+          room_revision: 5,
+          control_revision: 5,
+          resolved_events: 1,
+        });
       } finally {
         await db.close();
       }
@@ -1652,17 +1973,27 @@ describe("authoritative live answer engine schema", () => {
           [play.playId],
         );
 
-        const entered = await rpc(
+        const entered = await rpcEnvelope(
           db,
           "select public.finalize_current_play_if_due($1, $2, $3) as result",
           ["ATOMIC", opened.runId, play.playId],
         );
-        expect(entered).toMatchObject({ code: "final_window", applied: true });
-        expect(await rpc(
+        expect(entered).toMatchObject({
+          freshlyApplied: true,
+          result: {
+            code: "final_window",
+            applied: true,
+            eventKind: "final_window_started",
+          },
+        });
+        expect(await rpcEnvelope(
           db,
           "select public.finalize_current_play_if_due($1, $2, $3) as result",
           ["ATOMIC", opened.runId, play.playId],
-        )).toMatchObject({ code: "not_due", applied: false });
+        )).toMatchObject({
+          freshlyApplied: false,
+          result: { code: "not_due", applied: false },
+        });
 
         const row = await db.query<{
           status: string;

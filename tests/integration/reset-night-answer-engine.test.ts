@@ -16,10 +16,16 @@ const hasResetMigration = existsSync(RESET_MIGRATION);
 interface RpcResult {
   code: string;
   applied: boolean;
+  eventKind?: string;
   runId?: string;
   previousRunId?: string;
   roomRevision?: number;
   controlRevision?: number;
+}
+
+interface RpcEnvelope {
+  freshlyApplied: boolean;
+  result: RpcResult;
 }
 
 async function freshDb(): Promise<PGlite> {
@@ -63,6 +69,7 @@ describe("reset_live_night_to_setup", () => {
     let playId: string;
     let startResult: RpcResult;
     let resetResult: RpcResult;
+    let resetEnvelope: RpcEnvelope;
 
     beforeAll(async () => {
       db = await freshDb();
@@ -129,11 +136,11 @@ describe("reset_live_night_to_setup", () => {
       );
 
       startCommandId = crypto.randomUUID();
-      const started = await db.query<{ result: RpcResult }>(
+      const started = await db.query<{ result: RpcEnvelope }>(
         "select public.start_live_game($1, $2, $3, 7) as result",
         [game1Id, oldRunId, startCommandId],
       );
-      startResult = started.rows[0].result;
+      startResult = started.rows[0].result.result;
 
       const play = await one<{ id: string }>(
         `insert into question_plays (
@@ -195,11 +202,12 @@ describe("reset_live_night_to_setup", () => {
       );
 
       resetCommandId = crypto.randomUUID();
-      const reset = await db.query<{ result: RpcResult }>(
+      const reset = await db.query<{ result: RpcEnvelope }>(
         "select public.reset_live_night_to_setup($1, $2, $3, 8) as result",
         [nightId, oldRunId, resetCommandId],
       );
-      resetResult = reset.rows[0].result;
+      resetEnvelope = reset.rows[0].result;
+      resetResult = resetEnvelope.result;
 
       // Keep the untouched question in the fixture so the reset must preserve
       // picked content while clearing timestamps from the played question.
@@ -265,6 +273,36 @@ describe("reset_live_night_to_setup", () => {
       ]);
     });
 
+    test("returns a fresh reset winner and a non-fresh active-ledger exact retry", async () => {
+      expect(resetEnvelope).toEqual({
+        freshlyApplied: true,
+        result: resetResult,
+      });
+      expect(resetResult.eventKind).toBe("night_reset");
+
+      const retry = await db.query<{ result: RpcEnvelope }>(
+        "select public.reset_live_night_to_setup($1, $2, $3, 8) as result",
+        [nightId, oldRunId, resetCommandId],
+      );
+      expect(retry.rows[0].result).toEqual({
+        freshlyApplied: false,
+        result: resetResult,
+      });
+
+      const receipt = await db.query<{
+        canonical_result: RpcResult;
+        has_envelope: boolean;
+      }>(
+        `select canonical_result,
+                canonical_result ? 'freshlyApplied'
+                  or canonical_result ? 'result' as has_envelope
+           from live_command_receipts
+          where night_id = $1 and command_id = $2`,
+        [nightId, resetCommandId],
+      );
+      expect(receipt.rows).toEqual([{ canonical_result: resetResult, has_envelope: false }]);
+    });
+
     test("clears legacy and resilient live rows, adjustments, and old-run events without deleting players", async () => {
       const counts = await db.query<{
         answers: number;
@@ -312,26 +350,35 @@ describe("reset_live_night_to_setup", () => {
       );
       expect(archived.rows).toEqual([{ request_hash: expect.any(String), canonical_result: startResult }]);
 
-      const exactStartRetry = await db.query<{ result: RpcResult }>(
+      const exactStartRetry = await db.query<{ result: RpcEnvelope }>(
         "select public.start_live_game($1, $2, $3, 7) as result",
         [game1Id, oldRunId, startCommandId],
       );
-      expect(exactStartRetry.rows[0].result).toEqual(startResult);
+      expect(exactStartRetry.rows[0].result).toEqual({
+        freshlyApplied: false,
+        result: startResult,
+      });
 
-      const exactResetRetry = await db.query<{ result: RpcResult }>(
+      const exactResetRetry = await db.query<{ result: RpcEnvelope }>(
         "select public.reset_live_night_to_setup($1, $2, $3, 8) as result",
         [nightId, oldRunId, resetCommandId],
       );
-      expect(exactResetRetry.rows[0].result).toEqual(resetResult);
+      expect(exactResetRetry.rows[0].result).toEqual({
+        freshlyApplied: false,
+        result: resetResult,
+      });
     });
 
     test("rejects and receipts new commands that target the retired run", async () => {
       const commandId = crypto.randomUUID();
-      const stale = await db.query<{ result: RpcResult }>(
+      const stale = await db.query<{ result: RpcEnvelope }>(
         "select public.start_live_game($1, $2, $3, 0) as result",
         [game1Id, oldRunId, commandId],
       );
-      expect(stale.rows[0].result).toEqual({ code: "stale", applied: false });
+      expect(stale.rows[0].result).toEqual({
+        freshlyApplied: false,
+        result: { code: "stale", applied: false },
+      });
 
       const receipt = await db.query<{ status: string; canonical_result: RpcResult }>(
         `select status, canonical_result from live_command_receipts
@@ -399,40 +446,63 @@ describe("reset_live_night_to_setup", () => {
       const commandId = crypto.randomUUID();
       await db.exec("set role service_role");
       try {
-        const opened = await db.query<{ result: RpcResult }>(
+        const opened = await db.query<{ result: RpcEnvelope }>(
           "select public.open_night_run($1, $2, $3, 0) as result",
           [nightId, commandId, resetResult.runId],
         );
         expect(opened.rows[0].result).toMatchObject({
-          code: "applied",
-          applied: true,
-          runId: resetResult.runId,
-          roomRevision: 1,
-          controlRevision: 1,
+          freshlyApplied: true,
+          result: {
+            code: "applied",
+            applied: true,
+            eventKind: "night_opened",
+            runId: resetResult.runId,
+            roomRevision: 1,
+            controlRevision: 1,
+          },
         });
-        const exactOpenRetry = await db.query<{ result: RpcResult }>(
+        const exactOpenRetry = await db.query<{ result: RpcEnvelope }>(
           "select public.open_night_run($1, $2, $3, 0) as result",
           [nightId, commandId, resetResult.runId],
         );
-        expect(exactOpenRetry.rows[0].result).toEqual(opened.rows[0].result);
+        expect(exactOpenRetry.rows[0].result).toEqual({
+          freshlyApplied: false,
+          result: opened.rows[0].result.result,
+        });
 
         const secondResetCommandId = crypto.randomUUID();
-        const secondReset = await db.query<{ result: RpcResult }>(
+        const secondReset = await db.query<{ result: RpcEnvelope }>(
           "select public.reset_live_night_to_setup($1, $2, $3, 1) as result",
           [nightId, resetResult.runId, secondResetCommandId],
         );
         expect(secondReset.rows[0].result).toMatchObject({
-          code: "applied",
-          applied: true,
-          previousRunId: resetResult.runId,
-          roomRevision: 0,
-          controlRevision: 0,
+          freshlyApplied: true,
+          result: {
+            code: "applied",
+            applied: true,
+            eventKind: "night_reset",
+            previousRunId: resetResult.runId,
+            roomRevision: 0,
+            controlRevision: 0,
+          },
         });
-        const exactResetRetry = await db.query<{ result: RpcResult }>(
+        const exactResetRetry = await db.query<{ result: RpcEnvelope }>(
           "select public.reset_live_night_to_setup($1, $2, $3, 1) as result",
           [nightId, resetResult.runId, secondResetCommandId],
         );
-        expect(exactResetRetry.rows[0].result).toEqual(secondReset.rows[0].result);
+        expect(exactResetRetry.rows[0].result).toEqual({
+          freshlyApplied: false,
+          result: secondReset.rows[0].result.result,
+        });
+
+        const archivedFirstResetRetry = await db.query<{ result: RpcEnvelope }>(
+          "select public.reset_live_night_to_setup($1, $2, $3, 8) as result",
+          [nightId, oldRunId, resetCommandId],
+        );
+        expect(archivedFirstResetRetry.rows[0].result).toEqual({
+          freshlyApplied: false,
+          result: resetResult,
+        });
       } finally {
         await db.exec("reset role");
       }
@@ -440,11 +510,14 @@ describe("reset_live_night_to_setup", () => {
 
     test("cascades direct night deletion and host deletion through live and archived receipt history", async () => {
       const staleCommandId = crypto.randomUUID();
-      const stale = await db.query<{ result: RpcResult }>(
+      const stale = await db.query<{ result: RpcEnvelope }>(
         "select public.start_live_game($1, $2, $3, 0) as result",
         [game1Id, oldRunId, staleCommandId],
       );
-      expect(stale.rows[0].result).toEqual({ code: "stale", applied: false });
+      expect(stale.rows[0].result).toEqual({
+        freshlyApplied: false,
+        result: { code: "stale", applied: false },
+      });
 
       const liveStatuses = await db.query<{ status: string }>(
         "select distinct status from live_command_receipts where night_id = $1 order by status",

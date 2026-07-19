@@ -229,7 +229,9 @@ begin
   select current_run_id into v_receipt_run_id
     from public.nights where id = p_night_id;
   if not found then
-    return jsonb_build_object('code', 'not_found', 'applied', false);
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
   end if;
 
   v_claim := public._live_claim_command(
@@ -237,7 +239,7 @@ begin
     p_expected_control_revision, null
   );
   if not coalesce((v_claim->>'claimed')::boolean, false) then
-    return v_claim;
+    return public._live_mutation_envelope(false, v_claim);
   end if;
 
   select * into v_night
@@ -248,7 +250,9 @@ begin
   if v_night.answer_engine <> 'resilient_v1'
      or v_night.current_run_id is distinct from p_expected_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return public._live_reject_command(p_night_id, p_command_id, 'stale');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(p_night_id, p_command_id, 'stale')
+    );
   end if;
 
   v_run_id := coalesce(v_night.current_run_id, gen_random_uuid());
@@ -269,7 +273,8 @@ begin
   );
 
   v_result := jsonb_build_object(
-    'code', 'applied', 'applied', true, 'runId', v_run_id,
+    'code', 'applied', 'applied', true, 'eventKind', 'night_opened',
+    'runId', v_run_id,
     'roomRevision', v_night.room_revision,
     'controlRevision', v_night.control_revision
   );
@@ -279,7 +284,7 @@ begin
          canonical_result = v_result,
          completed_at = clock_timestamp()
    where night_id = p_night_id and command_id = p_command_id;
-  return v_result;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 
@@ -306,7 +311,9 @@ begin
   select current_run_id into v_receipt_run_id
     from public.nights where id = p_night_id;
   if not found then
-    return jsonb_build_object('code', 'not_found', 'applied', false);
+    return public._live_mutation_envelope(
+      false, jsonb_build_object('code', 'not_found', 'applied', false)
+    );
   end if;
 
   v_claim := public._live_claim_command(
@@ -315,7 +322,7 @@ begin
     p_expected_control_revision, null
   );
   if not coalesce((v_claim->>'claimed')::boolean, false) then
-    return v_claim;
+    return public._live_mutation_envelope(false, v_claim);
   end if;
 
   select * into v_night
@@ -326,7 +333,9 @@ begin
   if v_night.answer_engine <> 'resilient_v1'
      or v_night.current_run_id is distinct from p_run_id
      or v_night.control_revision <> p_expected_control_revision then
-    return public._live_reject_command(p_night_id, p_command_id, 'stale');
+    return public._live_mutation_envelope(
+      false, public._live_reject_command(p_night_id, p_command_id, 'stale')
+    );
   end if;
 
   perform 1
@@ -421,6 +430,7 @@ begin
   v_result := jsonb_build_object(
     'code', 'applied',
     'applied', true,
+    'eventKind', 'night_reset',
     'previousRunId', p_run_id,
     'runId', v_new_run_id,
     'roomRevision', 0,
@@ -434,7 +444,7 @@ begin
    where night_id = p_night_id
      and command_id = p_command_id;
 
-  return v_result;
+  return public._live_mutation_envelope(true, v_result);
 end;
 $$;
 
