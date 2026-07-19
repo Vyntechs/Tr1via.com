@@ -99,6 +99,36 @@ export const SubmitAnswerSchema = z.object({
   scramble: ScrambleSchema,
 });
 
+/** Resilient reveal command. Identity, timing, and answer data stay server-side. */
+export const ResilientRevealSchema = z
+  .object({
+    questionId: UuidSchema,
+    runId: UuidSchema,
+    commandId: UuidSchema,
+    expectedControlRevision: z.number().int().nonnegative(),
+  })
+  .strict();
+
+/** Resilient answer. The server derives player identity and canonical choice. */
+export const ResilientAnswerSchema = z
+  .object({
+    playId: UuidSchema,
+    runId: UuidSchema,
+    submissionId: UuidSchema,
+    slotChosen: SlotChosenSchema,
+  })
+  .strict();
+
+/** Host command targeting the exact accepted play state. */
+export const HostPlayCommandSchema = z
+  .object({
+    playId: UuidSchema,
+    runId: UuidSchema,
+    commandId: UuidSchema,
+    expectedControlRevision: z.number().int().nonnegative(),
+  })
+  .strict();
+
 export const AdjustmentSchema = z.object({
   playerId: UuidSchema,
   gameId: UuidSchema,
@@ -337,6 +367,9 @@ export type JoinGameInput = z.infer<typeof JoinGameSchema>;
 export type RevealInput = z.infer<typeof RevealSchema>;
 export type EndEarlyInput = z.infer<typeof EndEarlySchema>;
 export type SubmitAnswerInput = z.infer<typeof SubmitAnswerSchema>;
+export type ResilientRevealInput = z.infer<typeof ResilientRevealSchema>;
+export type ResilientAnswerInput = z.infer<typeof ResilientAnswerSchema>;
+export type HostPlayCommandInput = z.infer<typeof HostPlayCommandSchema>;
 export type AdjustmentInput = z.infer<typeof AdjustmentSchema>;
 export type TopicSuggestionInput = z.infer<typeof TopicSuggestionSchema>;
 export type CreateCategoryInput = z.infer<typeof CreateCategoryBodySchema>;

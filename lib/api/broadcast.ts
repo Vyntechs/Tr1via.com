@@ -181,6 +181,10 @@ export async function broadcastAppliedLiveRoomEvent(
 
   if (play) {
     payload.state = play.state;
+    payload.openedAt = play.openedAt;
+    payload.mainZeroAt = play.mainZeroAt;
+    payload.finalWindowStartsAt = play.finalWindowStartsAt;
+    payload.finalWindowEndsAt = play.finalWindowEndsAt;
     payload.eligibleCount = play.eligibleCount;
     payload.confirmedCount = play.confirmedCount;
     payload.finalizeAt = play.finalizeAt;
