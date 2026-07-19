@@ -61,6 +61,7 @@ async function freshRlsDb(): Promise<PGlite> {
 
 describe("0021 live security gate", () => {
   let db: PGlite;
+  let hostUserId: string;
   let nightId: string;
   let gameId: string;
   let victimPlayerId: string;
@@ -91,12 +92,25 @@ describe("0021 live security gate", () => {
     }
   }
 
+  async function runAsAuthenticatedHost(sql: string, params: unknown[] = []) {
+    await db.exec(`select set_config('test.auth_uid', '${hostUserId}', false);`);
+    await db.exec(`select set_config('request.headers', '{}', false);`);
+    await db.exec("set role authenticated;");
+    try {
+      return await db.query(sql, params);
+    } finally {
+      await db.exec(
+        "reset role; select set_config('test.auth_uid', '', false); select set_config('request.headers', '{}', false);",
+      );
+    }
+  }
+
   beforeAll(async () => {
     db = await freshRlsDb();
     const id = async (sql: string, params: unknown[] = []) =>
       (await db.query<{ id: string }>(`${sql} returning id`, params)).rows[0].id;
 
-    const hostUserId = await id("insert into auth.users default values");
+    hostUserId = await id("insert into auth.users default values");
     const hostId = await id("insert into hosts (user_id, display_name) values ($1, 'Host')", [hostUserId]);
     nightId = await id(
       "insert into nights (host_id, venue_name, room_code) values ($1, 'Venue', 'GATE01')",
@@ -118,6 +132,10 @@ describe("0021 live security gate", () => {
     attackerPlayerId = await id(
       "insert into players (night_id, device_id, display_name) values ($1, '22222222-2222-2222-2222-222222222222', 'Attacker')",
       [nightId],
+    );
+    await id(
+      "insert into game_participations (game_id, player_id) values ($1, $2)",
+      [gameForParticipationId, attackerPlayerId],
     );
     liveQuestionWithAnswerId = await id(
       `insert into questions (category_id, point_value, prompt, options, correct_index, is_picked, played_at)
@@ -185,6 +203,48 @@ describe("0021 live security gate", () => {
         [gameForParticipationId, victimPlayerId],
       ),
     ).rejects.toThrow(/permission denied|game_participations/i);
+  });
+
+  test("rejects SELECT of raw players and device identity using a forged player header", async () => {
+    await expect(
+      runAsForgedPlayer(
+        "select id, device_id, display_name from public.players where id = $1",
+        [victimPlayerId],
+      ),
+    ).rejects.toThrow(/permission denied|players/i);
+  });
+
+  test("rejects SELECT of raw game participation using a forged player header", async () => {
+    await expect(
+      runAsForgedPlayer(
+        "select game_id, player_id from public.game_participations where game_id = $1",
+        [gameForParticipationId],
+      ),
+    ).rejects.toThrow(/permission denied|game_participations/i);
+  });
+
+  test("preserves authenticated host roster and participation reads", async () => {
+    const roster = await runAsAuthenticatedHost(
+      "select id, device_id, display_name from public.players where id = $1",
+      [victimPlayerId],
+    );
+    expect(roster.rows).toEqual([
+      {
+        id: victimPlayerId,
+        device_id: forgedVictimDeviceId,
+        display_name: "Victim",
+      },
+    ]);
+
+    const participation = await runAsAuthenticatedHost(
+      `select game_id, player_id
+       from public.game_participations
+       where game_id = $1 and player_id = $2`,
+      [gameForParticipationId, attackerPlayerId],
+    );
+    expect(participation.rows).toEqual([
+      { game_id: gameForParticipationId, player_id: attackerPlayerId },
+    ]);
   });
 
   test("grants live mutation functions only to service_role", async () => {
@@ -268,6 +328,22 @@ describe("0021 live security gate", () => {
   });
 
   test("preserves service-role answer, participation, and live-function behavior", async () => {
+    const serviceRoster = await runAsServiceRole(
+      "select id, device_id from public.players where id = $1",
+      [victimPlayerId],
+    );
+    expect(serviceRoster.rows).toEqual([
+      { id: victimPlayerId, device_id: forgedVictimDeviceId },
+    ]);
+
+    const serviceParticipation = await runAsServiceRole(
+      "select game_id, player_id from public.game_participations where player_id = $1",
+      [attackerPlayerId],
+    );
+    expect(serviceParticipation.rows).toEqual([
+      { game_id: gameForParticipationId, player_id: attackerPlayerId },
+    ]);
+
     const answer = await runAsServiceRole(
       `insert into public.answers (question_id, player_id, chosen_index, scramble, ms_to_lock)
        values ($1, $2, 1, '[0,1,2,3]'::jsonb, 800)
@@ -280,9 +356,9 @@ describe("0021 live security gate", () => {
       `insert into public.game_participations (game_id, player_id)
        values ($1, $2)
        returning player_id`,
-      [gameForParticipationId, attackerPlayerId],
+      [gameForParticipationId, victimPlayerId],
     );
-    expect(participation.rows).toEqual([{ player_id: attackerPlayerId }]);
+    expect(participation.rows).toEqual([{ player_id: victimPlayerId }]);
 
     const guarded = await runAsServiceRole(
       "select public.resolve_question_if_all_locked($1) as resolved",

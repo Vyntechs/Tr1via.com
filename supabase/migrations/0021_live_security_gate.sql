@@ -12,9 +12,10 @@ revoke all on table public.answers from anon;
 drop policy if exists answers_self_insert on public.answers;
 drop policy if exists answers_self_select on public.answers;
 
--- Join, heartbeat, and participation mutations now use signed server routes.
-revoke insert, update, delete on table public.players from anon;
-revoke insert, update, delete on table public.game_participations from anon;
+-- Raw roster reads plus join, heartbeat, and participation mutations now use
+-- audience-shaped signed server routes. Keep authenticated-host grants intact.
+revoke select, insert, update, delete on table public.players from anon;
+revoke select, insert, update, delete on table public.game_participations from anon;
 
 -- Returns the current player_id in a given night for the calling device.
 -- This helper remains available to legacy read-only RLS policies, but its
