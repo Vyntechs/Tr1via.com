@@ -1,260 +1,228 @@
-// HOST PHONE — UPCOMING. Linda sees the question privately before pressing
-// Reveal. The big button on the bottom is the moment that fires the whole
-// room.
-//
-// Wired form: the host-phone route passes the staged question (text +
-// options + correctIndex), the category + point value, the room-wide
-// counters, and an onReveal handler. All props are optional with demo
-// defaults so the /dev/host gallery still renders.
-
 "use client";
 
+import Image from "next/image";
 import { PhoneScreen } from "@/components/shells";
 import { Eyebrow, Numeric, ThemeProvider, useTheme } from "@/components/system";
-import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostPhoneUpcomingProps {
   themeKey?: ThemeKey;
-  /** Host display name shown in the top-left eyebrow. */
   hostName?: string;
-  /** True if the room has open players in it (mirrors the room indicator). */
-  roomLive?: boolean;
-  /** Current count of players in the room. */
-  playerCount?: number;
-  /** Category name (e.g. "Geography"). */
   categoryName?: string;
-  /** Point value of the staged question. */
   pointValue?: number;
-  /** Display index within the night (e.g. 10 of 42). */
-  questionIndex?: number;
-  /** Total questions in the night (e.g. 42). */
-  questionTotal?: number;
-  /** The question prompt itself. */
   prompt?: string;
-  /** Four options as displayed on the host's phone. */
   options?: [string, string, string, string];
-  /** Index of the correct option (host-only view). */
   correctIndex?: 0 | 1 | 2 | 3;
-  /** Called when the host taps "Reveal to the room". */
+  factBlurb?: string | null;
+  imageUrl?: string | null;
+  imageAttribution?: string | null;
   onReveal?: () => void;
-  /** Called when the host taps "Pick a different cell". */
+  onBack?: () => void;
+  /** Backward-compatible alias for gallery callers. */
   onPickDifferent?: () => void;
-  /** True while the reveal request is in flight (disables the button). */
   isRevealing?: boolean;
+  /** Retained for existing callers; private preview copy uses customer-facing game language. */
+  roomLive?: boolean;
+  playerCount?: number;
+  questionIndex?: number;
+  questionTotal?: number;
 }
 
-export function HostPhoneUpcoming(props: HostPhoneUpcomingProps) {
-  const { themeKey, ...rest } = props;
+export function HostPhoneUpcoming({ themeKey, ...props }: HostPhoneUpcomingProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <HostPhoneUpcomingInner themeKey={themeKey} {...rest} />
+        <HostPhoneUpcomingInner {...props} />
       </ThemeProvider>
     );
   }
-  return <HostPhoneUpcomingInner {...rest} />;
+  return <HostPhoneUpcomingInner {...props} />;
 }
 
 function HostPhoneUpcomingInner({
-  themeKey,
-  hostName = "Linda",
-  roomLive = true,
-  playerCount = 32,
+  hostName = "Heather",
   categoryName = "Geography",
   pointValue = 100,
-  questionIndex = 10,
-  questionTotal = 42,
   prompt = "Which U.S. state has the longest coastline?",
   options = ["Florida", "Alaska", "California", "Maine"],
   correctIndex = 1,
+  factBlurb,
+  imageUrl,
+  imageAttribution,
   onReveal,
+  onBack,
   onPickDifferent,
   isRevealing = false,
 }: HostPhoneUpcomingProps) {
   const { t } = useTheme();
-  const questionDuration = questionDurationFor(themeKey);
+  const firstName = hostName.trim().split(/\s+/)[0] || "Heather";
+  const back = onBack ?? onPickDifferent;
+
   return (
-    <PhoneScreen>
+    <PhoneScreen weatherIntensity={0.35}>
+      <div
+        style={{
+          padding: "10px 12px",
+          border: `1px solid ${t.pop}`,
+          borderRadius: 12,
+          background: t.surfaceH,
+          color: t.ink,
+        }}
+      >
+        <Eyebrow color={t.pop} size={9}>
+          Host private
+        </Eyebrow>
+        <div style={{ marginTop: 4, fontSize: 12, fontWeight: 800, lineHeight: 1.35 }}>
+          Private on {firstName}’s phone · Not on TV
+        </div>
+      </div>
+
       <div
         style={{
           display: "flex",
-          alignItems: "center",
           justifyContent: "space-between",
-          paddingTop: 6,
-          paddingBottom: 14,
+          gap: 12,
+          alignItems: "baseline",
+          padding: "16px 0 13px",
+          borderBottom: `1px solid ${t.line}`,
         }}
       >
-        <Eyebrow color={t.inkMid} size={10}>
-          HOST · {hostName.toUpperCase()}
-        </Eyebrow>
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span
+        <Eyebrow color={t.accent} size={10}>{categoryName}</Eyebrow>
+        <Numeric size={13} color={t.inkMid}>{pointValue} points</Numeric>
+      </div>
+
+      {imageUrl ? (
+        <figure style={{ margin: "14px 0 0" }}>
+          <div
             style={{
-              width: 6,
-              height: 6,
-              borderRadius: 99,
-              background: roomLive ? t.accent : t.inkMute,
+              position: "relative",
+              width: "100%",
+              aspectRatio: "16 / 9",
+              overflow: "hidden",
+              borderRadius: 12,
+              border: `1px solid ${t.line}`,
+              background: t.surface,
             }}
-          />
-          <Eyebrow color={t.inkMid} size={10}>
-            {roomLive ? `ROOM LIVE · ${playerCount}` : "ROOM CLOSED"}
-          </Eyebrow>
-        </div>
-      </div>
-
-      <div
-        style={{
-          padding: "12px 14px",
-          borderRadius: 10,
-          background: t.dark ? "rgba(255,255,255,.04)" : "rgba(20,19,15,.03)",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <div>
-          <Eyebrow color={t.inkMute} size={9}>
-            NEXT FROM THE BOARD
-          </Eyebrow>
-          <div style={{ marginTop: 4, fontSize: 14, fontWeight: 500, color: t.ink }}>
-            {categoryName} · {pointValue} pts
+          >
+            <Image
+              src={imageUrl}
+              alt="Question image preview"
+              fill
+              unoptimized
+              sizes="(max-width: 440px) 100vw, 440px"
+              style={{ objectFit: "cover" }}
+            />
           </div>
-        </div>
-        <span style={{ fontSize: 11, color: t.inkMid, fontFamily: "var(--font-mono)" }}>
-          Q {questionIndex} / {questionTotal}
-        </span>
-      </div>
+          <figcaption style={{ marginTop: 5, color: t.inkMute, fontSize: 10 }}>
+            <span style={{ color: t.correct, fontWeight: 800 }}>Image ready</span>
+            {imageAttribution ? ` · ${imageAttribution}` : ""}
+          </figcaption>
+        </figure>
+      ) : (
+        <p style={{ margin: "12px 0 0", color: t.inkMute, fontSize: 11 }}>
+          No question image attached
+        </p>
+      )}
 
-      <div style={{ marginTop: 18, padding: "20px 0", borderTop: `1px solid ${t.line}` }}>
-        <Eyebrow color={t.accent} size={10}>
-          THE QUESTION · TV ONLY
-        </Eyebrow>
-        <div
+      <section aria-labelledby="private-question-heading" style={{ padding: "17px 0" }}>
+        <Eyebrow color={t.inkMute} size={9}>Question</Eyebrow>
+        <h2
+          id="private-question-heading"
           style={{
-            marginTop: 10,
-            fontSize: 22,
-            fontWeight: 500,
+            margin: "7px 0 0",
             color: t.ink,
+            fontSize: 21,
+            fontWeight: 650,
             letterSpacing: "-0.015em",
             lineHeight: 1.25,
           }}
         >
           {prompt}
-        </div>
-      </div>
+        </h2>
+      </section>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {options.map((text, i) => {
-          const isCorrect = i === correctIndex;
+      <div style={{ display: "grid", gap: 8 }}>
+        {options.map((text, index) => {
+          const correct = index === correctIndex;
           return (
             <div
-              key={`${i}-${text}`}
+              key={`${index}-${text}`}
               style={{
+                minHeight: 48,
+                padding: "10px 12px",
+                border: `1px solid ${correct ? t.correct : t.line}`,
+                borderRadius: 10,
+                background: correct ? t.surfaceH : t.surface,
                 display: "flex",
                 alignItems: "center",
-                gap: 12,
-                padding: "12px 14px",
-                background: isCorrect
-                  ? t.dark
-                    ? "rgba(123,212,154,.10)"
-                    : "#EFF7F1"
-                  : "transparent",
-                border: `1px solid ${isCorrect ? t.correct : t.line}`,
-                borderRadius: 10,
+                gap: 10,
+                boxSizing: "border-box",
               }}
             >
-              <Numeric
-                size={14}
-                color={isCorrect ? t.correct : t.inkMid}
-                style={{ minWidth: 12 }}
-              >
-                {i + 1}
-              </Numeric>
-              <span
-                style={{
-                  fontSize: 14,
-                  color: isCorrect ? t.correct : t.ink,
-                  fontWeight: isCorrect ? 500 : 400,
-                  flex: 1,
-                }}
-              >
-                {text}
-              </span>
-              {isCorrect && (
-                <Eyebrow color={t.correct} size={9}>
-                  CORRECT
-                </Eyebrow>
+              <Numeric color={correct ? t.correct : t.inkMid} size={13}>{index + 1}</Numeric>
+              <span style={{ flex: 1, color: t.ink, fontSize: 14, lineHeight: 1.3 }}>{text}</span>
+              {correct && (
+                // CORRECT stays visible only on this private host component.
+                <Eyebrow color={t.correct} size={9}>Correct</Eyebrow>
               )}
             </div>
           );
         })}
       </div>
 
-      <div style={{ marginTop: 14, fontSize: 11, color: t.inkMute, lineHeight: 1.4 }}>
-        Players see only the four options on their phone — in a different order each.
-      </div>
-
-      <div
+      <section
+        aria-label="Host note"
         style={{
-          marginTop: "auto",
-          paddingTop: 16,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
+          marginTop: 14,
+          padding: 12,
+          borderRadius: 10,
+          background: t.surface,
+          color: t.inkMid,
+          fontSize: 12,
+          lineHeight: 1.45,
         }}
       >
+        <Eyebrow color={t.accent} size={9}>Fact / tip</Eyebrow>
+        <p style={{ margin: "6px 0 0" }}>{factBlurb || "No host note for this question."}</p>
+      </section>
+
+      <div style={{ marginTop: "auto", paddingTop: 16, display: "grid", gap: 10 }}>
         <button
           type="button"
           onClick={onReveal}
           disabled={isRevealing || !onReveal}
           style={{
+            minHeight: 54,
+            border: 0,
+            borderRadius: 13,
             background: t.accent,
-            color: t.dark ? "#0E0E0C" : "#FFF",
-            border: "none",
-            borderRadius: 14,
-            padding: "20px 0",
-            fontSize: 18,
-            fontWeight: 600,
+            color: t.paper,
             fontFamily: "var(--font-sans)",
-            letterSpacing: "-0.01em",
-            cursor: isRevealing ? "default" : "pointer",
-            opacity: isRevealing ? 0.7 : 1,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            gap: 12,
-            boxShadow: t.dark ? "none" : `0 12px 28px -10px ${t.accent}66`,
+            fontSize: 17,
+            fontWeight: 800,
+            cursor: isRevealing ? "wait" : "pointer",
+            opacity: isRevealing ? 0.72 : 1,
           }}
         >
-          {isRevealing ? "Revealing…" : "Reveal to the room"}
-          <span
-            style={{
-              fontFamily: "var(--font-mono)",
-              fontSize: 11,
-              opacity: 0.7,
-              fontWeight: 400,
-            }}
-          >
-            {questionDuration}s
-          </span>
+          {isRevealing ? "Showing…" : "Show question"}
         </button>
         <button
           type="button"
-          onClick={onPickDifferent}
+          onClick={back}
+          disabled={!back || isRevealing}
           style={{
-            background: "transparent",
-            color: t.inkMid,
+            minHeight: 48,
             border: `1px solid ${t.line}`,
-            borderRadius: 14,
-            padding: "14px 0",
-            fontSize: 14,
-            fontWeight: 500,
+            borderRadius: 13,
+            background: "transparent",
+            color: t.ink,
             fontFamily: "var(--font-sans)",
-            cursor: "pointer",
+            fontSize: 14,
+            fontWeight: 750,
+            cursor: isRevealing ? "wait" : "pointer",
           }}
         >
-          Pick a different cell
+          Back to board
         </button>
       </div>
     </PhoneScreen>

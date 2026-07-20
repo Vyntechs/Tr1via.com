@@ -250,7 +250,7 @@ describe("HostPhoneClient reveal flow", () => {
     vi.stubGlobal("fetch", h.fetch);
   });
 
-  it("stages questions and lock counts from the shared backup payload", async () => {
+  it("shows the shared backup board without privately previewing a question until selection", async () => {
     const fallbackQuestion = {
       ...pickedQuestion,
       id: "fallback-q",
@@ -270,6 +270,9 @@ describe("HostPhoneClient reveal flow", () => {
         themeKey="house"
       />,
     );
+    expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(screen.queryByText(fallbackQuestion.prompt)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Salsa for 100 points" }));
     expect(await screen.findByText(fallbackQuestion.prompt)).toBeVisible();
 
     const liveGame = game("g1", 1, "live");
@@ -349,7 +352,7 @@ describe("HostPhoneClient reveal flow", () => {
     );
   });
 
-  it("starts a draft or ready game before revealing from the private host phone", async () => {
+  it("starts a draft or ready game before revealing the exact selected question", async () => {
     render(
       <HostPhoneClient
         nightId="night-1"
@@ -359,8 +362,9 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
-    const reveal = await screen.findByText("Reveal to the room");
-    fireEvent.click(reveal);
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 200 points" }));
+    expect(screen.getByText(secondPickedQuestion.prompt)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
 
     await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(2));
     expect(h.fetch.mock.calls[0][0]).toBe("/api/games/g1/start");
@@ -368,8 +372,175 @@ describe("HostPhoneClient reveal flow", () => {
     expect(h.fetch.mock.calls[1][0]).toBe("/api/games/g1/reveal");
     expect(h.fetch.mock.calls[1][1]).toMatchObject({
       method: "POST",
-      body: JSON.stringify({ questionId: "q1" }),
+      body: JSON.stringify({ questionId: "q2" }),
     });
+  });
+
+  it("returns from private preview to the board without revealing", async () => {
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    expect(screen.getByText(pickedQuestion.prompt)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Back to board" }));
+
+    expect(screen.getByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
+    expect(h.fetch).not.toHaveBeenCalled();
+  });
+
+  it("marks the preview private and shows answer, host note, and image readiness", async () => {
+    const previewQuestion = {
+      ...pickedQuestion,
+      fact_blurb: "New York dancers developed the style in the 1970s.",
+      image_url: "https://images.example/salsa.jpg",
+      image_attribution: "Photo by Casey",
+    };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({ allQuestions: [previewQuestion] }),
+    };
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="march"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    expect(screen.getByText("Private on Heather’s phone · Not on TV")).toBeVisible();
+    expect(screen.getByText("Correct")).toBeVisible();
+    expect(screen.getByText(previewQuestion.fact_blurb)).toBeVisible();
+    expect(screen.getByRole("img", { name: "Question image preview" })).toHaveAttribute(
+      "src",
+      expect.stringContaining("salsa.jpg"),
+    );
+    expect(screen.getByText("Image ready")).toBeVisible();
+    expect(screen.queryByText(/room/i)).not.toBeInTheDocument();
+  });
+
+  it("clears a selection when that question becomes played", async () => {
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({ allQuestions: [pickedQuestion, secondPickedQuestion] }),
+    };
+    const view = render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    expect(screen.getByText(pickedQuestion.prompt)).toBeVisible();
+
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({
+        allQuestions: [
+          { ...pickedQuestion, played_at: "2026-07-19T01:00:00Z" },
+          secondPickedQuestion,
+        ],
+      }),
+    };
+    view.rerender(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
+  });
+
+  it("clears a selection when control advances to another game", async () => {
+    const game1 = game("g1", 1, "ready");
+    const game2 = game("g2", 2, "ready");
+    const game2Category: CategoryRow = {
+      ...readyCategory,
+      id: "c2",
+      game_id: "g2",
+      name: "Movies",
+      topic: "Movies",
+    };
+    const game2Question: QuestionRow = {
+      ...pickedQuestion,
+      id: "q-game-2",
+      category_id: "c2",
+      prompt: "Which movie won Best Picture?",
+    };
+    h.room = { ...room(), games: [game1, game2], currentGame: game1 };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({ games: [game1, game2], allQuestions: [pickedQuestion, game2Question] }),
+    };
+    const view = render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    expect(screen.getByText(pickedQuestion.prompt)).toBeVisible();
+
+    h.room = {
+      ...h.room,
+      games: [{ ...game1, state: "done" }, game2],
+      categories: [readyCategory, game2Category],
+      currentGame: { ...game1, state: "done" },
+    };
+    view.rerender(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Movies for 100 points" })).toBeVisible();
+    expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
+  });
+
+  it("provides honest Board, Players, Scores, and TV destinations", async () => {
+    h.room = { ...room(), players: [player("p1")] };
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    expect(await screen.findByRole("navigation", { name: "Host controls" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Players" }));
+    expect(screen.getByRole("heading", { name: "Players" })).toBeVisible();
+    expect(screen.getByText("Player p1")).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "Scores" }));
+    expect(screen.getByRole("heading", { name: "Scores" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "TV" }));
+    expect(screen.getByRole("heading", { name: "Venue TV" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open venue TV" })).toHaveAttribute("href", "/tv/ABC123");
+
+    fireEvent.click(screen.getByRole("button", { name: "Board" }));
+    expect(screen.getByRole("grid", { name: "Question board" })).toBeVisible();
   });
 
   it("exposes explicit round controls on the same private phone surface", async () => {
@@ -463,7 +634,7 @@ describe("HostPhoneClient reveal flow", () => {
     ));
   });
 
-  it("stages the next unplayed question after the live question resolves", async () => {
+  it("returns to an unselected board after the live question resolves", async () => {
     const liveGame = game("g1", 1, "live");
     const liveQuestion = {
       ...pickedQuestion,
@@ -503,10 +674,11 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
-    expect(await screen.findByText(secondPickedQuestion.prompt)).toBeVisible();
+    expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(screen.queryByText(secondPickedQuestion.prompt)).not.toBeInTheDocument();
   });
 
-  it("returns an undone reveal to the staged-question controls", async () => {
+  it("returns an undone reveal to the board and requires an explicit re-selection", async () => {
     const liveGame = game("g1", 1, "live");
     const liveQuestion = {
       ...pickedQuestion,
@@ -551,6 +723,9 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
+    expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Salsa for 100 points" }));
     expect(await screen.findByText(pickedQuestion.prompt)).toBeVisible();
   });
 });

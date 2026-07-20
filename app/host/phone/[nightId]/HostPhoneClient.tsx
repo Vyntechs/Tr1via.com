@@ -1,10 +1,8 @@
 // Client wrapper for /host/phone/[nightId].
 //
-// Subscribes to the room via useRoom() and decides which of the two phone
-// screens to render. Owns reveal/end-early/undo POSTs. The phone has a
-// simple "pick next" model: if no question is live, show the
-// next-unplayed question with the lowest point value; the host can also
-// scroll through other cells.
+// Subscribes to the room via useRoom() and renders the private host command
+// center. Owns reveal/end-early/undo POSTs. Between questions the phone uses
+// the same explicit board-picking model as the laptop.
 
 "use client";
 
@@ -16,7 +14,10 @@ import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoRevea
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { HostPhoneUpcoming, HostPhoneLive, type HostPhoneLivePlayer } from "@/components/host";
+import { HostCommandCenter, type HostSection } from "@/components/host/HostCommandCenter";
+import { HostPhoneBoard } from "@/components/host/HostPhoneBoard";
 import { Eyebrow, ThemeProvider, useTheme } from "@/components/system";
+import { deriveHostStage, type HostStage } from "@/lib/host/gameConsole";
 import type { AnswerRow, GameScoreRow, QuestionRow } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
@@ -80,7 +81,15 @@ export function HostPhoneClient({
         : directScoreSnapshot?.rows ?? [],
     [backupMode, directScoreSnapshot, fallbackPayload],
   );
-  const [preferredQuestionId, setPreferredQuestionId] = useState<string | null>(null);
+  const [selection, setSelection] = useState<{
+    questionId: string;
+    gameId: string;
+    contextKey: string;
+  } | null>(null);
+  const [navigation, setNavigation] = useState<{
+    section: HostSection;
+    contextKey: string;
+  } | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmingEnd, setConfirmingEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -222,43 +231,54 @@ export function HostPhoneClient({
       null,
     [room.games],
   );
-  const controlCategoryIds = useMemo(
+  const controlCategories = useMemo(
     () =>
-      new Set(
-        room.categories
-          .filter((category) => category.game_id === controlGame?.id)
-          .map((category) => category.id),
-      ),
+      room.categories
+        .filter((category) => category.game_id === controlGame?.id)
+        .sort((a, b) => a.position - b.position),
     [controlGame?.id, room.categories],
+  );
+  const controlCategoryIds = useMemo(
+    () => new Set(controlCategories.map((category) => category.id)),
+    [controlCategories],
+  );
+  const controlQuestions = useMemo(
+    () =>
+      allQuestions.filter(
+        (question) =>
+          controlCategoryIds.has(question.category_id) && question.is_picked,
+      ),
+    [allQuestions, controlCategoryIds],
   );
   const unplayedControlQuestions = useMemo(
     () =>
-      allQuestions
+      controlQuestions
         .filter(
           (question) =>
             controlGame?.state !== "done" &&
-            controlCategoryIds.has(question.category_id) &&
-            question.is_picked &&
             !question.played_at,
         )
         .sort((a, b) => (a.point_value ?? 0) - (b.point_value ?? 0)),
-    [allQuestions, controlCategoryIds, controlGame?.state],
+    [controlGame?.state, controlQuestions],
   );
 
-  // Stage the next question when the room idles (no live question).
-  const nextUnplayedId = unplayedControlQuestions[0]?.id ?? null;
-  const undoneQuestionId =
-    !room.currentQuestion && room.lastBroadcast?.event === "undo"
-      ? room.lastBroadcast.questionId
-      : null;
-  const stagedQuestionId =
-    undoneQuestionId ??
-    (preferredQuestionId &&
-    unplayedControlQuestions.some(
-      (question) => question.id === preferredQuestionId,
-    )
-      ? preferredQuestionId
-      : nextUnplayedId);
+  const contextKey = [
+    controlGame?.id ?? "no-game",
+    room.currentQuestion?.id ?? "idle",
+    room.lastBroadcast?.event ?? "snapshot",
+    room.lastBroadcast?.questionId ?? "no-question",
+    room.lastBroadcast?.serverNow ?? "no-revision",
+  ].join(":");
+  const stagedQuestion =
+    selection &&
+    selection.gameId === controlGame?.id &&
+    selection.contextKey === contextKey
+    ? unplayedControlQuestions.find((question) => question.id === selection.questionId) ?? null
+    : null;
+  const activeSection = navigation?.contextKey === contextKey
+    ? navigation.section
+    : "board";
+  const navigate = (section: HostSection) => setNavigation({ section, contextKey });
 
   // Live timer for the question.
   const timer = useTimer({
@@ -272,8 +292,12 @@ export function HostPhoneClient({
   });
 
   // Action handlers.
-  async function reveal() {
-    if (!controlGame || !stagedQuestionId) return;
+  async function reveal(questionId: string) {
+    if (
+      !controlGame ||
+      questionId !== stagedQuestion?.id ||
+      !unplayedControlQuestions.some((question) => question.id === questionId)
+    ) return;
     setBusy(true);
     setError(null);
     try {
@@ -289,12 +313,13 @@ export function HostPhoneClient({
       const res = await fetch(`/api/games/${controlGame.id}/reveal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId: stagedQuestionId }),
+        body: JSON.stringify({ questionId }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "reveal failed");
       }
+      setSelection(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reveal failed.");
     } finally {
@@ -339,6 +364,8 @@ export function HostPhoneClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "undo failed");
       }
+      setSelection(null);
+      setNavigation(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Undo failed.");
     } finally {
@@ -405,6 +432,26 @@ export function HostPhoneClient({
     onAutoReveal: () => endEarly(true),
   });
   const allGamesEnded = room.games.length > 0 && room.games.every((game) => game.state === "done");
+  const game1 = room.games.find((game) => game.game_no === 1) ?? null;
+  const game2 = room.games.find((game) => game.game_no === 2) ?? null;
+  const resolvedCategory = room.lastResolvedQuestion
+    ? room.categories.find((category) => category.id === room.lastResolvedQuestion?.category_id) ?? null
+    : null;
+  const resolvedGame = resolvedCategory
+    ? room.games.find((game) => game.id === resolvedCategory.game_id) ?? null
+    : null;
+  const stage = deriveHostStage({
+    game1: game1?.state ?? null,
+    game2: game2?.state ?? null,
+    currentGame: room.currentGame?.game_no ?? null,
+    livePlay: room.currentQuestion?.id ?? null,
+    lastResolve:
+      room.lastResolvedQuestion && resolvedGame
+        ? { id: room.lastResolvedQuestion.id, game: resolvedGame.game_no }
+        : null,
+    nightClosed: Boolean(room.night?.closed_at),
+    stagedQuestion: stagedQuestion?.id ?? null,
+  });
   const roundControls = (
     <PhoneRoundControls
       themeKey={themeKey}
@@ -423,116 +470,209 @@ export function HostPhoneClient({
     />
   );
 
+  let boardContent: React.ReactNode;
   if (isLive) {
-    return (
-      <PhoneCenter controls={roundControls}>
-        <HostPhoneLive
-          themeKey={themeKey}
-          secondsRemaining={Math.max(0, Math.floor(timer.secondsRemaining))}
-          lockedCount={answers.length}
-          totalPlayers={playerCount}
-          stillThinking={stillThinking}
-          onEndEarly={() => void endEarly()}
-          onUndo={() => void undo()}
-          canUndo={canUndo}
-          isEnding={busy}
-        />
-        {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
-      </PhoneCenter>
+    boardContent = (
+      <HostPhoneLive
+        themeKey={themeKey}
+        secondsRemaining={Math.max(0, Math.floor(timer.secondsRemaining))}
+        lockedCount={answers.length}
+        totalPlayers={playerCount}
+        stillThinking={stillThinking}
+        onEndEarly={() => void endEarly()}
+        onUndo={() => void undo()}
+        canUndo={canUndo}
+        isEnding={busy}
+      />
     );
-  }
-
-  // Upcoming view.
-  const staged = stagedQuestionId
-    ? unplayedControlQuestions.find((q) => q.id === stagedQuestionId) ?? null
-    : null;
-  const stagedCat = staged
-    ? room.categories.find((c) => c.id === staged.category_id) ?? null
-    : null;
-  const pickedTotal = allQuestions.filter(
-    (q) => controlCategoryIds.has(q.category_id) && q.is_picked,
-  ).length;
-  const playedSoFar = allQuestions.filter(
-    (q) =>
-      controlCategoryIds.has(q.category_id) &&
-      q.is_picked &&
-      q.played_at !== null,
-  ).length;
-
-  if (!staged) {
-    return (
-      <PhoneCenter controls={roundControls}>
-        <div
-          style={{
-            padding: 40,
-            color: "var(--ink-mid)",
-            fontFamily: "var(--font-sans)",
-            textAlign: "center",
-            fontSize: 14,
-            maxWidth: 320,
-          }}
-        >
-          Waiting for the next game to open — or the board is already finished.
-        </div>
-        {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
-      </PhoneCenter>
+  } else if (stagedQuestion) {
+    const stagedCategory = controlCategories.find(
+      (category) => category.id === stagedQuestion.category_id,
     );
-  }
-
-  return (
-    <PhoneCenter controls={roundControls}>
+    boardContent = (
       <HostPhoneUpcoming
         themeKey={themeKey}
-        hostName={hostName.split(" ")[0] ?? hostName}
-        roomLive={room.night?.opened_at !== null}
-        playerCount={playerCount}
-        categoryName={stagedCat?.name ?? "Category"}
-        pointValue={staged.point_value ?? staged.difficulty * 100}
-        questionIndex={playedSoFar + 1}
-        questionTotal={pickedTotal}
-        prompt={staged.prompt}
-        options={staged.options}
-        correctIndex={staged.correct_index}
-        onReveal={() => void reveal()}
-        onPickDifferent={() => {
-          // Rotate to the next staged question — for now, increment by id
-          // order from the pool of unplayed.
-          const game = controlGame;
-          if (!game) return;
-          const pool = unplayedControlQuestions;
-          const idx = pool.findIndex((q) => q.id === stagedQuestionId);
-          const next = pool[(idx + 1) % pool.length];
-          setPreferredQuestionId(next?.id ?? null);
-        }}
+        hostName={hostName}
+        categoryName={stagedCategory?.name ?? "Category"}
+        pointValue={stagedQuestion.point_value ?? stagedQuestion.difficulty * 100}
+        prompt={stagedQuestion.prompt}
+        options={stagedQuestion.options}
+        correctIndex={stagedQuestion.correct_index}
+        factBlurb={stagedQuestion.fact_blurb}
+        imageUrl={stagedQuestion.image_url}
+        imageAttribution={stagedQuestion.image_attribution}
+        onReveal={() => void reveal(stagedQuestion.id)}
+        onBack={() => setSelection(null)}
         isRevealing={busy}
       />
+    );
+  } else {
+    boardContent = (
+      <div style={{ padding: "2px 0 12px" }}>
+        <HostPhoneBoard
+          categories={controlCategories}
+          questions={controlQuestions}
+          selectedQuestionId={null}
+          onSelect={(questionId) => {
+            if (!controlGame) return;
+            setSelection({ questionId, gameId: controlGame.id, contextKey });
+            navigate("board");
+          }}
+        />
+        {controlCategories.length === 0 && (
+          <p style={{ margin: "18px 0", color: "var(--ink-mid)", fontSize: 13 }}>
+            Waiting for the next game board.
+          </p>
+        )}
+      </div>
+    );
+  }
+
+  const sectionContent = activeSection === "board"
+    ? boardContent
+    : (
+      <HostSectionSummary
+        section={activeSection}
+        roomCode={roomCode}
+        playerNames={room.players.map((player) => player.display_name)}
+        scores={scores.map((row) => ({
+          name: row.display_name ?? "Player",
+          score: row.score ?? 0,
+        }))}
+      />
+    );
+
+  return (
+    <PhoneCenter
+      themeKey={themeKey}
+      stage={stage.stage}
+      active={activeSection}
+      playerCount={playerCount}
+      lockedCount={answers.length}
+      backupMode={backupMode}
+      onNavigate={navigate}
+      controls={roundControls}
+    >
+      {sectionContent}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
     </PhoneCenter>
   );
 }
 
-function PhoneCenter({ children, controls }: { children: React.ReactNode; controls?: React.ReactNode }) {
-  // The host's phone view should fill the device. We don't add a faux
-  // phone chrome here — this isn't the dev gallery — and just lean on the
-  // PhoneScreen component's inner padding.
+interface PhoneCenterProps {
+  children: React.ReactNode;
+  controls?: React.ReactNode;
+  themeKey?: ThemeKey;
+  stage: HostStage;
+  active: HostSection;
+  playerCount: number;
+  lockedCount: number;
+  backupMode: boolean;
+  onNavigate: (section: HostSection) => void;
+}
+
+function PhoneCenter({ themeKey, ...props }: PhoneCenterProps) {
   return (
-    <div
-      data-host-mobile-surface="true"
-      data-host-full-bleed="true"
-      style={{
-        minHeight: "100dvh",
-        height: "100dvh",
-        display: "flex",
-        flexDirection: "column",
-        background: "var(--paper)",
-        overflow: "hidden",
-      }}
-    >
-      {controls}
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-        {children}
-      </div>
+    <ThemeProvider themeKey={themeKey ?? "house"}>
+      <PhoneCenterInner {...props} />
+    </ThemeProvider>
+  );
+}
+
+function PhoneCenterInner({
+  children,
+  controls,
+  stage,
+  active,
+  playerCount,
+  lockedCount,
+  backupMode,
+  onNavigate,
+}: Omit<PhoneCenterProps, "themeKey">) {
+  return (
+    <div data-host-mobile-surface="true" data-host-full-bleed="true">
+      <HostCommandCenter
+        stage={stage}
+        active={active}
+        playerCount={playerCount}
+        lockedCount={lockedCount}
+        delivery={{
+          tv: backupMode ? "recovering" : "current",
+          currentPhones: backupMode ? 0 : playerCount,
+          recoveringPhones: backupMode ? playerCount : 0,
+        }}
+        onNavigate={onNavigate}
+      >
+        <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
+          {controls}
+          <div style={{ flex: 1, minHeight: 0, paddingTop: 12 }}>{children}</div>
+        </div>
+      </HostCommandCenter>
     </div>
+  );
+}
+
+function HostSectionSummary({
+  section,
+  roomCode,
+  playerNames,
+  scores,
+}: {
+  section: Exclude<HostSection, "board">;
+  roomCode: string;
+  playerNames: string[];
+  scores: Array<{ name: string; score: number }>;
+}) {
+  const { t } = useTheme();
+  const panelStyle: React.CSSProperties = {
+    padding: 16,
+    border: `1px solid ${t.line}`,
+    borderRadius: 14,
+    background: t.surface,
+    color: t.ink,
+  };
+
+  if (section === "tv") {
+    return (
+      <section style={panelStyle}>
+        <h2 style={{ margin: 0, fontSize: 20 }}>Venue TV</h2>
+        <p style={{ color: t.inkMid, fontSize: 13, lineHeight: 1.45 }}>
+          Open the audience-safe venue display in a separate tab.
+        </p>
+        <a
+          href={`/tv/${roomCode}`}
+          target="_blank"
+          rel="noreferrer"
+          style={{ color: t.accent, fontWeight: 800 }}
+        >
+          Open venue TV
+        </a>
+      </section>
+    );
+  }
+
+  const isPlayers = section === "players";
+  const rows = isPlayers
+    ? playerNames.map((name) => ({ name, detail: "Joined" }))
+    : scores.map((row) => ({ name: row.name, detail: `${row.score} points` }));
+  return (
+    <section style={panelStyle}>
+      <h2 style={{ margin: 0, fontSize: 20 }}>{isPlayers ? "Players" : "Scores"}</h2>
+      {rows.length === 0 ? (
+        <p style={{ color: t.inkMid, fontSize: 13 }}>
+          {isPlayers ? "No players have joined this game yet." : "Scores appear after play begins."}
+        </p>
+      ) : (
+        <ul style={{ margin: "12px 0 0", padding: 0, listStyle: "none", display: "grid", gap: 8 }}>
+          {rows.map((row) => (
+            <li key={row.name} style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+              <span>{row.name}</span>
+              <span style={{ color: t.inkMid }}>{row.detail}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
