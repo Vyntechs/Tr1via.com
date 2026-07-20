@@ -143,7 +143,7 @@ export function HostHomeClient({
       const keptCategories = data.kept?.categories ?? 0;
       const keptPlayers = data.kept?.players ?? 0;
       setSuccessMessage(
-        `Game rolled back. Wiped ${wipedAnswers} answers, kept ${keptCategories} categories. The ${keptPlayers} people in the room will see the waiting screen.`,
+        `Game rolled back. Wiped ${wipedAnswers} answers, kept ${keptCategories} categories. The ${keptPlayers} players will see the waiting screen.`,
       );
       setResetOpen(false);
       router.refresh();

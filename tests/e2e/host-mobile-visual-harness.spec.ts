@@ -414,3 +414,64 @@ test("dashboard makes phone hosting the primary complete hit target", async ({
     await expectAccessibleHitTarget(page, primary);
   }
 });
+
+test("account-first command center keeps the complete TV preview usable without live data", async ({
+  page,
+}, testInfo) => {
+  const commandCenterViewports = [
+    { name: "small-phone", width: 320, height: 568 },
+    { name: "large-phone", width: 430, height: 932 },
+    { name: "landscape-phone", width: 844, height: 390 },
+    { name: "tablet", width: 768, height: 1024 },
+  ] as const;
+
+  for (const viewport of commandCenterViewports) {
+    await page.setViewportSize(viewport);
+    await page.goto("/dev/host/mobile?surface=command-center");
+
+    const shell = page.locator("main[data-stage]");
+    const navigation = page.getByRole("navigation", { name: "Host controls" });
+    const preview = page.getByRole("region", { name: "Venue TV preview" });
+    const primary = page.getByRole("button", { name: "Start Game 1" });
+
+    await expect(shell).toBeVisible();
+    await expect(navigation).toBeVisible();
+    await expect(primary).toBeVisible();
+    await expectNoHorizontalOverflow(page);
+
+    await page.getByRole("button", { name: "TV preview" }).click();
+    await expect(preview).toBeVisible();
+    await expect(page.getByText("What players see")).toBeVisible();
+    await expect(page.getByTestId("venue-tv-preview-canvas")).toHaveCSS("width", "1600px");
+    await expect(page.getByTestId("venue-tv-preview-canvas")).toHaveCSS("height", "900px");
+    await expect(page.locator('a[href^="/tv/"]')).toHaveCount(0);
+
+    const frame = page.getByTestId("venue-tv-preview-frame");
+    const canvas = page.getByTestId("venue-tv-preview-canvas");
+    const frameBox = await frame.boundingBox();
+    const canvasBox = await canvas.boundingBox();
+    expect(frameBox).not.toBeNull();
+    expect(canvasBox).not.toBeNull();
+    expect(canvasBox!.width / canvasBox!.height).toBeCloseTo(16 / 9, 1);
+    expect(canvasBox!.x).toBeGreaterThanOrEqual(frameBox!.x - 0.5);
+    expect(canvasBox!.y).toBeGreaterThanOrEqual(frameBox!.y - 0.5);
+    expect(canvasBox!.x + canvasBox!.width).toBeLessThanOrEqual(
+      frameBox!.x + frameBox!.width + 0.5,
+    );
+    expect(canvasBox!.y + canvasBox!.height).toBeLessThanOrEqual(
+      frameBox!.y + frameBox!.height + 0.5,
+    );
+    await expectFullyInViewport(page, frame);
+
+    for (const label of ["Board", "Players", "Scores", "TV preview"]) {
+      await expectAccessibleHitTarget(
+        page,
+        page.getByRole("button", { name: label, exact: true }),
+      );
+    }
+
+    await page.screenshot({
+      path: testInfo.outputPath(`command-center-${viewport.name}.png`),
+    });
+  }
+});

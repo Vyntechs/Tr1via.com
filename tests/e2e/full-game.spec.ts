@@ -164,7 +164,7 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     // PlayerJoinGame2 screen.
     await expect(phone1.getByTestId(TID.playerJoinGame2.root))
       .toBeVisible({ timeout: 15_000 });
-    await hostPhone.goto(`/host/phone/${seed.nightId}`);
+    await hostPhone.goto(`/host/live/${seed.nightId}`);
     await expect(hostPhone.getByText("Game 1 complete")).toBeVisible({ timeout: 15_000 });
     await expect(hostPhone.getByRole("heading", { name: "Game 2 is ready" })).toBeVisible();
 

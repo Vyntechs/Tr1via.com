@@ -16,7 +16,7 @@ test("offline mode retains the last safe host command and venue picture", async 
 
   try {
     await page.setViewportSize({ width: 430, height: 932 });
-    await page.goto(`/host/phone/${seed.nightId}`);
+    await page.goto(`/host/live/${seed.nightId}`);
     const primary = page.getByRole("button", { name: "Start Game 1" });
     await expect(primary).toBeVisible({ timeout: 30_000 });
 

@@ -188,7 +188,7 @@ function HostGenTopicEntryInner({
               <div style={{ width: 4, alignSelf: "stretch", background: t.wrong, borderRadius: 99 }} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: 14, color: t.ink, fontWeight: 600 }}>{warning}</div>
-                <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>Same topic, fresh questions. Same room may not see it again.</div>
+                <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>Same topic, fresh questions. The same game may not see it again.</div>
               </div>
             </div>
           )}

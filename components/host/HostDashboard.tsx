@@ -385,7 +385,7 @@ function HostDashboardInner({
             {!compact && <Rule color={t.ink} style={{ width: 1, height: "auto", alignSelf: "stretch" }} />}
             <div>
               <Eyebrow color={t.inkMute} size={10}>
-                ROOM
+                GAME CODE
               </Eyebrow>
               <div
                 style={{

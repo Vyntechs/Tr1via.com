@@ -71,7 +71,7 @@ export default function TVPage({
   if (status === "not-found") {
     return (
       <TVMessageStage
-        title="Room not found"
+        title="Game not found"
         subtitle={`Check tr1via.com/host — code ${formatRoomCode(code)} isn't open.`}
       />
     );

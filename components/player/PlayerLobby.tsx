@@ -15,7 +15,7 @@ export interface PlayerLobbyProps {
   themeKey?: ThemeKey;
   /** This player's display name — shown in the headline. */
   playerName?: string;
-  /** Total players currently in the room. */
+  /** Total players currently in the game. */
   inRoomCount?: number;
   /**
    * Newest joiners (display strings). First entry is rendered as "you" — the
@@ -45,7 +45,7 @@ export function PlayerLobby({
   const { t } = useTheme();
   return (
     <PhoneScreen data-testid="player-lobby">
-      <PhoneHeader eyebrow="IN THE ROOM" />
+      <PhoneHeader eyebrow="IN THE GAME" />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
         <Display size={64} color={t.ink}>
@@ -69,7 +69,7 @@ export function PlayerLobby({
             }}
           >
             <div style={{ flex: 1 }}>
-              <Eyebrow color={t.inkMid} size={10}>IN THE ROOM</Eyebrow>
+              <Eyebrow color={t.inkMid} size={10}>IN THE GAME</Eyebrow>
               <div
                 style={{
                   marginTop: 6,

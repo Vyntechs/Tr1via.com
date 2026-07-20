@@ -9,7 +9,7 @@ import {
 describe("prod smoke generation budget", () => {
   it("waits longer than the observed 90 second generation edge by default", () => {
     expect(DEFAULT_GEN_TIMEOUT_MS).toBe(240_000);
-    expect(genTimeoutFromEnv({})).toBe(DEFAULT_GEN_TIMEOUT_MS);
+    expect(genTimeoutFromEnv({ NODE_ENV: "test" })).toBe(DEFAULT_GEN_TIMEOUT_MS);
   });
 
   it("keeps the GitHub Actions timeout budget aligned with the script", () => {
@@ -35,6 +35,8 @@ describe("prod smoke generation budget", () => {
   });
 
   it("allows a one-off override for manual investigations", () => {
-    expect(genTimeoutFromEnv({ SMOKE_GEN_TIMEOUT_MS: "123456" })).toBe(123_456);
+    expect(
+      genTimeoutFromEnv({ NODE_ENV: "test", SMOKE_GEN_TIMEOUT_MS: "123456" }),
+    ).toBe(123_456);
   });
 });

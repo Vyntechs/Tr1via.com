@@ -167,7 +167,7 @@ export function PlayerJoin({
             boxShadow: `0 14px 30px -10px ${t.accent}66`,
           }}
         >
-          {submitting ? "Joining…" : "Join the room  →"}
+          {submitting ? "Joining…" : "Join the game  →"}
         </button>
         {error && (
           <div

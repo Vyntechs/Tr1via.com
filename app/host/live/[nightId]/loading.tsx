@@ -22,7 +22,7 @@ export default function HostLiveLoading() {
       >
         <Spinner size="lg" label="Loading the live console" />
         <Eyebrow color="var(--ink-mid)" size={11}>
-          TUNING IN TO THE ROOM
+          TUNING IN TO THE GAME
         </Eyebrow>
       </div>
     </LaptopShell>

@@ -104,7 +104,7 @@ test.describe("room magic — default-off Classic safety and bounded TV reaction
     const controls = phone1.getByTestId(ROOM_MAGIC_CONTROLS);
     await expect(controls).toBeVisible({ timeout: 8_000 });
     await controls.getByRole("button", { name: "Wow" }).click();
-    await expect(controls.getByText("Sent to the room")).toBeVisible();
+    await expect(controls.getByText("Sent")).toBeVisible();
     for (const button of await controls.getByRole("button").all()) {
       await expect(button).toBeDisabled();
     }

@@ -10,7 +10,6 @@ import styles from "./HostVenueMonitor.module.css";
 
 export interface HostVenueMonitorProps {
   snapshot: TVSnapshot | null;
-  roomCode: string;
   active?: boolean;
   themeKey?: ThemeKey;
   lastBroadcastRevealedAt?: string | null;
@@ -19,7 +18,6 @@ export interface HostVenueMonitorProps {
 
 export function HostVenueMonitor({
   snapshot,
-  roomCode,
   active = true,
   themeKey,
   lastBroadcastRevealedAt = null,

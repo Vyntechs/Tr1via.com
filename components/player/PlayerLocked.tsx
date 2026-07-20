@@ -262,7 +262,7 @@ export function PlayerLocked({
               fontWeight: 700,
             }}
           >
-            Sent to the room.
+            Answer saved.
           </div>
         )}
         <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>

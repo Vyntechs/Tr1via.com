@@ -74,7 +74,7 @@ export function ResetGameConfirmModal({
 
         <Section title="This will throw away — permanently:">
           <BulletLine>
-            <strong>{preview.answersToWipe} answers</strong> the {preview.playersInRoom} people in the room sent in
+            <strong>{preview.answersToWipe} answers</strong> from {preview.playersInRoom} players
           </BulletLine>
           <BulletLine>
             <strong>{preview.finishedQuestionsToWipe} played-question markers</strong> — questions you already played will count as "not played yet"
@@ -98,7 +98,7 @@ export function ResetGameConfirmModal({
             The <strong>{preview.pickedQuestionsKept} picked questions</strong>
           </BulletLine>
           <BulletLine>
-            The <strong>{preview.playersInRoom} people in the room</strong> — their phones will switch to "waiting for host to start," with points back to zero
+            The <strong>{preview.playersInRoom} players</strong> — their phones will switch to "waiting for host to start," with points back to zero
           </BulletLine>
         </Section>
 

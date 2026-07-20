@@ -63,7 +63,6 @@ describe("HostVenueMonitor", () => {
       <ThemeProvider themeKey="april">
         <HostVenueMonitor
           snapshot={snapshot}
-          roomCode="ABC123"
           themeKey="april"
         />
       </ThemeProvider>,
@@ -87,7 +86,7 @@ describe("HostVenueMonitor", () => {
   it("keeps the preview read-only without navigating the phone into the venue route", () => {
     render(
       <ThemeProvider themeKey="house">
-        <HostVenueMonitor snapshot={snapshot} roomCode="ABC123" />
+        <HostVenueMonitor snapshot={snapshot} />
       </ThemeProvider>,
     );
 

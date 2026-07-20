@@ -233,7 +233,7 @@ async function runLockInRehearsal({
     const controls = phones[0].getByTestId(ROOM_MAGIC_CONTROLS);
     await expect(controls).toBeVisible({ timeout: 10_000 });
     await controls.getByRole("button", { name: "Wow" }).click();
-    await expect(controls.getByText("Sent to the room")).toBeVisible();
+    await expect(controls.getByText("Sent")).toBeVisible();
     const overlay = tvPage.getByTestId(TV_ROOM_MAGIC_OVERLAY);
     await expect(overlay).toBeVisible({ timeout: 8_000 });
     await expect(overlay.locator(TV_ROOM_MAGIC_WOW_EFFECT)).toBeVisible();

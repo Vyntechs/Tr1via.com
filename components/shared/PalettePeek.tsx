@@ -24,7 +24,7 @@ export interface PalettePeekProps {
   activeThemeKey?: ThemeKey;
   /** Called when the user taps a palette card. Caller handles persistence. */
   onPick: (key: ThemeKey) => void;
-  /** Optional headline override. Defaults to "Pick the room's mood." */
+  /** Optional headline override. Defaults to "Pick the game's mood." */
   title?: string;
   /** Optional footer caption. Defaults to "Saved instantly — players see it next reveal." */
   footer?: string;
@@ -35,7 +35,7 @@ export function PalettePeek({
   onClose,
   activeThemeKey,
   onPick,
-  title = "Pick the room’s mood.",
+  title = "Pick the game’s mood.",
   footer = "Saved instantly — players see it on the next page load.",
 }: PalettePeekProps) {
   const { t } = useTheme();

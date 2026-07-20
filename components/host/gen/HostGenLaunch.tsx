@@ -86,7 +86,7 @@ function HostGenLaunchInner() {
             <div style={{ marginTop: 2, fontSize: 12, color: t.inkMid }}>123 W. Mifflin · Madison, WI</div>
 
             <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${t.line}` }}>
-              <Eyebrow color={t.inkMute} size={10}>ROOM CODE</Eyebrow>
+              <Eyebrow color={t.inkMute} size={10}>GAME CODE</Eyebrow>
               <div style={{ marginTop: 6, display: "flex", alignItems: "center", gap: 10 }}>
                 <span style={{ padding: "6px 12px", borderRadius: 8, background: t.accent, color: "#0E0805", fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 20, letterSpacing: "0.05em" }}>K9·PR4M</span>
                 <span style={{ fontSize: 11, color: t.inkMute }}>auto-generated</span>

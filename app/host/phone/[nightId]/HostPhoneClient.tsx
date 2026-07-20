@@ -1012,7 +1012,6 @@ export function HostPhoneClient({
       venueMonitor={(
         <HostVenueMonitor
           snapshot={venueTVSnapshot}
-          roomCode={roomCode}
           active={activeSection === "tv"}
           themeKey={themeKey}
           lastBroadcastRevealedAt={
