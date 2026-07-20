@@ -44,13 +44,14 @@ export function HostGameStatus({
     "--host-status-danger": t.wrong,
     "--host-status-accent": t.accent,
   } as CSSProperties;
-  const phonesObserved =
-    delivery.currentPhones !== null && delivery.recoveringPhones !== null;
-  const phoneLabel = !phonesObserved
-    ? "Phone delivery not confirmed"
-    : delivery.recoveringPhones > 0
+  let phoneLabel = "Phone delivery not confirmed";
+  let phoneClass: string | undefined;
+  if (delivery.currentPhones !== null && delivery.recoveringPhones !== null) {
+    phoneLabel = delivery.recoveringPhones > 0
       ? `${delivery.currentPhones} phones live · ${delivery.recoveringPhones} recovering`
       : `${delivery.currentPhones} phones live`;
+    phoneClass = delivery.recoveringPhones > 0 ? styles.recovering : styles.current;
+  }
   const tvLabel = delivery.tv === "unknown"
     ? "TV not confirmed"
     : `TV ${delivery.tv === "current" ? "live" : "recovering"}`;
@@ -59,12 +60,6 @@ export function HostGameStatus({
     : delivery.tv === "recovering"
       ? styles.recovering
       : undefined;
-  const phoneClass = !phonesObserved
-    ? undefined
-    : delivery.recoveringPhones > 0
-      ? styles.recovering
-      : styles.current;
-
   return (
     <section className={styles.status} aria-label="Game Status" style={statusStyle}>
       <div className={styles.statusHeading}>
