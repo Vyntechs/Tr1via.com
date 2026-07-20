@@ -2,6 +2,10 @@
 
 export { HostPhoneUpcoming } from "./HostPhoneUpcoming";
 export type { HostPhoneUpcomingProps } from "./HostPhoneUpcoming";
+export { HostCommandCenter } from "./HostCommandCenter";
+export type { HostCommandCenterProps, HostSection } from "./HostCommandCenter";
+export { HostGameStatus } from "./HostGameStatus";
+export type { HostDeliveryReceipt, HostGameStatusProps } from "./HostGameStatus";
 export { HostPhoneLive } from "./HostPhoneLive";
 export type { HostPhoneLiveProps, HostPhoneLivePlayer } from "./HostPhoneLive";
 export { HostDashboard } from "./HostDashboard";
