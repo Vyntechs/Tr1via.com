@@ -33,8 +33,9 @@ describe("HostCommandCenter", () => {
       "page",
     );
     expect(screen.getByText("Game Status")).toBeVisible();
-    expect(screen.getByText("TV live")).toBeVisible();
-    expect(screen.getByText("31 phones live")).toBeVisible();
+    expect(screen.getByText("TV live ✓")).toBeVisible();
+    expect(screen.getByText("31 phones live ✓")).toBeVisible();
+    expect(screen.getByText("Shown everywhere")).toBeVisible();
     expect(screen.getByText("Board body")).toBeVisible();
 
     for (const section of ["Players", "Scores", "TV"]) {
@@ -94,8 +95,7 @@ describe("HostCommandCenter", () => {
       </ThemeProvider>,
     );
 
-    expect(screen.getByText("TV not confirmed")).toBeVisible();
-    expect(screen.getByText("Phone delivery not confirmed")).toBeVisible();
+    expect(screen.getByText("Sending…")).toBeVisible();
     expect(screen.queryByText(/TV live/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/phones live/i)).not.toBeInTheDocument();
   });
@@ -113,7 +113,8 @@ describe("HostCommandCenter", () => {
     );
 
     expect(screen.getByText("TV recovering")).toBeVisible();
-    expect(screen.getByText("28 phones live · 3 recovering")).toBeVisible();
+    expect(screen.getByText("28 phones live ✓")).toBeVisible();
+    expect(screen.getByText("3 recovering — answer protected")).toBeVisible();
     expect(screen.queryByText(/not confirmed/i)).not.toBeInTheDocument();
   });
 });

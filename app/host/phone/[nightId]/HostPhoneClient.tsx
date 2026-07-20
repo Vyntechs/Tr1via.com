@@ -31,6 +31,8 @@ import { readableForeground } from "@/lib/theme/contrast";
 import { fetchJsonWithRetry } from "@/lib/realtime/fetchWithRetry";
 import { BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
 import type { HostLiveProjection } from "@/lib/live-answer/contracts";
+import { useGameDelivery } from "@/lib/hooks/useGameDelivery";
+import type { HostDeliveryReceipt } from "@/components/host/HostGameStatus";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -731,6 +733,34 @@ export function HostPhoneClient({
     stagedQuestion: stagedQuestion?.id ?? null,
     finalGameExhausted,
   });
+  const deliveryRunId = authoritativeLive?.runId ?? null;
+  const deliveryRoomRevision = authoritativeLive?.roomRevision ?? null;
+  const deliveryControlRevision = authoritativeLive?.controlRevision ?? null;
+  const deliveryPlayId = authoritativeLive?.playId ?? null;
+  const deliveryCanonical = useMemo(
+    () => deliveryRunId !== null &&
+      deliveryRoomRevision !== null &&
+      deliveryControlRevision !== null
+      ? {
+          runId: deliveryRunId,
+          roomRevision: deliveryRoomRevision,
+          controlRevision: deliveryControlRevision,
+          playId: deliveryPlayId,
+        }
+      : null,
+    [
+      deliveryControlRevision,
+      deliveryPlayId,
+      deliveryRoomRevision,
+      deliveryRunId,
+    ],
+  );
+  const delivery = useGameDelivery({
+    roomCode,
+    canonical: deliveryCanonical,
+    stageKey: stage.stage,
+    enabled: isResilient,
+  });
   const isGame1Preflight =
     stage.stage === "game-ready" &&
     game1 !== null &&
@@ -966,6 +996,7 @@ export function HostPhoneClient({
       active={activeSection}
       playerCount={playerCount}
       lockedCount={commandCenterLockedCount}
+      delivery={delivery}
       onNavigate={navigate}
       controls={roundControls}
     >
@@ -1063,6 +1094,7 @@ interface PhoneCenterProps {
   active: HostSection;
   playerCount: number;
   lockedCount: number;
+  delivery: HostDeliveryReceipt;
   onNavigate: (section: HostSection) => void;
 }
 
@@ -1081,6 +1113,7 @@ function PhoneCenterInner({
   active,
   playerCount,
   lockedCount,
+  delivery,
   onNavigate,
 }: Omit<PhoneCenterProps, "themeKey">) {
   return (
@@ -1090,11 +1123,7 @@ function PhoneCenterInner({
         active={active}
         playerCount={playerCount}
         lockedCount={lockedCount}
-        delivery={{
-          tv: "unknown",
-          currentPhones: null,
-          recoveringPhones: null,
-        }}
+        delivery={delivery}
         onNavigate={onNavigate}
       >
         <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
@@ -1421,6 +1450,16 @@ async function requireAppliedCommand(
     body.questionId !== expected.questionId
   ) {
     throw new Error("Game returned an unexpected control result. Refreshing game state.");
+  }
+  // A haptic is earned only after the server's canonical command result has
+  // passed every ancestry/revision check above. Unsupported devices and
+  // reduced-motion preferences stay text-only.
+  if (
+    typeof window !== "undefined" &&
+    !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches &&
+    typeof navigator.vibrate === "function"
+  ) {
+    navigator.vibrate(12);
   }
   return body as unknown as AppliedCommandResult;
 }

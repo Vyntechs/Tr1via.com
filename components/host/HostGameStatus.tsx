@@ -9,6 +9,8 @@ export interface HostDeliveryReceipt {
   tv: "current" | "recovering" | "unknown";
   currentPhones: number | null;
   recoveringPhones: number | null;
+  isSending?: boolean;
+  isAvailable?: boolean;
 }
 
 export interface HostGameStatusProps {
@@ -44,17 +46,23 @@ export function HostGameStatus({
     "--host-status-danger": t.wrong,
     "--host-status-accent": t.accent,
   } as CSSProperties;
-  let phoneLabel = "Phone delivery not confirmed";
+  const receiptKnown = delivery.tv !== "unknown" &&
+    delivery.currentPhones !== null &&
+    delivery.recoveringPhones !== null;
+  const receiptVisible = receiptKnown && !delivery.isSending && delivery.isAvailable !== false;
+  let phoneLabel = "";
+  let recoveringLabel: string | null = null;
   let phoneClass: string | undefined;
   if (delivery.currentPhones !== null && delivery.recoveringPhones !== null) {
-    phoneLabel = delivery.recoveringPhones > 0
-      ? `${delivery.currentPhones} phones live · ${delivery.recoveringPhones} recovering`
-      : `${delivery.currentPhones} phones live`;
+    phoneLabel = `${delivery.currentPhones} phones live ✓`;
+    recoveringLabel = delivery.recoveringPhones > 0
+      ? `${delivery.recoveringPhones} recovering — answer protected`
+      : null;
     phoneClass = delivery.recoveringPhones > 0 ? styles.recovering : styles.current;
   }
   const tvLabel = delivery.tv === "unknown"
-    ? "TV not confirmed"
-    : `TV ${delivery.tv === "current" ? "live" : "recovering"}`;
+    ? ""
+    : `TV ${delivery.tv === "current" ? "live ✓" : "recovering"}`;
   const tvClass = delivery.tv === "current"
     ? styles.current
     : delivery.tv === "recovering"
@@ -70,14 +78,25 @@ export function HostGameStatus({
         </div>
       </div>
       <div className={styles.statusFacts} aria-label="Live game details">
+        {delivery.isAvailable !== false && (!receiptKnown || delivery.isSending) && (
+          <span role="status">Sending…</span>
+        )}
         <span><span aria-hidden="true">● </span>{playerCount} players</span>
         <span><span aria-hidden="true">✓ </span>{lockedCount} locked</span>
-        <span className={tvClass}>
-          <span aria-hidden="true">▣ </span>{tvLabel}
-        </span>
-        <span className={phoneClass}>
-          <span aria-hidden="true">◉ </span>{phoneLabel}
-        </span>
+        {receiptVisible && (
+          <span className={tvClass}>
+            <span aria-hidden="true">▣ </span>{tvLabel}
+          </span>
+        )}
+        {receiptVisible && (
+          <span className={phoneClass}>
+            <span aria-hidden="true">◉ </span>{phoneLabel}
+          </span>
+        )}
+        {receiptVisible && recoveringLabel && <span className={styles.recovering}>{recoveringLabel}</span>}
+        {receiptVisible && delivery.tv === "current" && delivery.recoveringPhones === 0 && (
+          <span className={styles.current}>Shown everywhere</span>
+        )}
       </div>
     </section>
   );

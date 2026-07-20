@@ -49,7 +49,7 @@ import type {
   QuestionRow,
   RevealRow,
 } from "@/lib/supabase/types";
-import type { HostLiveProjection } from "@/lib/live-answer/contracts";
+import type { HostLiveProjection, LiveRevision } from "@/lib/live-answer/contracts";
 
 export interface RoomSnapshot {
   /** Night row (venue, theme, lock status, room code) or null while loading. */
@@ -109,6 +109,8 @@ export interface RoomSnapshot {
   tvPlayerKeys?: Record<string, string>;
   /** Authenticated-host authoritative resilient projection. */
   live?: HostLiveProjection | null;
+  /** Audience-safe canonical revision used only for delivery confirmation. */
+  deliveryRevision?: LiveRevision | null;
   /** Host-only canonical rows for the exact projected live/resolved play. */
   liveAnswers?: AnswerRow[];
   /** Game ancestry shared by scores, heading, and adjustments. */
@@ -168,6 +170,7 @@ const EMPTY: RoomSnapshot = {
   questionScrambles: {},
   tvPlayerKeys: {},
   live: null,
+  deliveryRevision: null,
   liveAnswers: [],
   scoreGameId: null,
   isLoading: true,

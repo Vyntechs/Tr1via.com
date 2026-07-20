@@ -152,6 +152,14 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
       : null,
     currentReveal: payload.currentReveal,
     live: payload.audience === "host" ? payload.live ?? null : null,
+    deliveryRevision: payload.live
+      ? {
+          runId: payload.live.runId,
+          roomRevision: payload.live.roomRevision,
+          controlRevision: payload.live.controlRevision,
+          playId: payload.live.playId,
+        }
+      : null,
     liveAnswers: playerAudience ? [] : payload.liveAnswers.map(hostLiveAnswerToRow),
     scoreGameId: payload.scoreGameId ?? null,
     scores: playerAudience

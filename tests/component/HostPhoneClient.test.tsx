@@ -919,7 +919,17 @@ describe("HostPhoneClient reveal flow", () => {
   });
 
   it("does not claim TV or phone delivery without observation receipts", async () => {
-    h.room = { ...room(), players: [player("p1")] };
+    h.room = {
+      ...room(),
+      night: resilientNight(),
+      deliveryRevision: {
+        runId: RUN_ID,
+        roomRevision: 8,
+        controlRevision: 4,
+        playId: null,
+      },
+      players: [player("p1")],
+    };
     render(
       <HostPhoneClient
         nightId="night-1"
@@ -929,8 +939,7 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
-    expect(await screen.findByText("TV not confirmed")).toBeVisible();
-    expect(screen.getByText("Phone delivery not confirmed")).toBeVisible();
+    expect(await screen.findByText("Sending…")).toBeVisible();
     expect(screen.queryByText("TV live")).not.toBeInTheDocument();
     expect(screen.queryByText(/phones live/)).not.toBeInTheDocument();
   });

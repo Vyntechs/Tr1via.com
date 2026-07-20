@@ -61,6 +61,7 @@ import { useTimer } from "@/lib/hooks/useTimer";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { useSurfaceObservation } from "@/lib/hooks/useGameDelivery";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { playerColorHex } from "@/lib/player/playerColor";
@@ -242,6 +243,12 @@ function RoomBody({
 }) {
   const router = useRouter();
   const me = snapshot.self ?? null;
+  const reachability = useReachability();
+  useSurfaceObservation({
+    endpoint: `/api/room/${roomCode}/observe`,
+    canonical: snapshot.deliveryRevision ?? null,
+    enabled: !deviceLoading && Boolean(me) && reachability !== "unreachable",
+  });
 
   // ── Side effects: heartbeat + visibility tracking ──
   useHeartbeat(me?.id ?? null, roomCode);
@@ -267,7 +274,6 @@ function RoomBody({
   //    endless "Catching up…" spinner or the misleading "isn't open" screen.
   //    Checked BEFORE loading/night-null because those would mask it. Clears on
   //    its own when useRoom's self-healing retry reconnects (no refresh). ──
-  const reachability = useReachability();
   if (reachability === "unreachable") {
     return <UnreachableScreen roomCode={roomCode} />;
   }

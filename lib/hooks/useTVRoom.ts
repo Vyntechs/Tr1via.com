@@ -28,6 +28,7 @@ import {
   isRoomMagicReactionKind,
   type RoomMagicReactionEvent,
 } from "@/lib/room-magic/reactions";
+import type { LiveRoomProjection } from "@/lib/live-answer/contracts";
 
 const SAFETY_REFETCH_MS = 4000;
 
@@ -133,6 +134,7 @@ export interface TVReveal {
 }
 
 export interface TVSnapshot {
+  live?: LiveRoomProjection | null;
   night: TVNight;
   games: TVGame[];
   currentGameId: string | null;
