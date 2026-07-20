@@ -6,6 +6,8 @@ import type { RoomSnapshotPayload } from "@/lib/room/roomSnapshotPayload";
 const h = vi.hoisted(() => {
   const broadcastHandlers = new Map<string, (message: { payload: unknown }) => void>();
   let activeNightId = "night-a";
+  let resilient = false;
+  const runId = "11111111-1111-4111-8111-111111111111";
 
   const nightRow = () => ({
     id: activeNightId,
@@ -19,6 +21,11 @@ const h = vi.hoisted(() => {
     opened_at: "2026-07-19T00:00:00.000Z",
     closed_at: null,
     created_at: "2026-07-19T00:00:00.000Z",
+    answer_engine: resilient ? "resilient_v1" : "legacy",
+    answer_engine_latched_at: resilient ? "2026-07-19T00:00:00.000Z" : null,
+    current_run_id: resilient ? runId : null,
+    control_revision: resilient ? 5 : 0,
+    room_revision: resilient ? 5 : 0,
   });
 
   const rowsFor = (table: string): Record<string, unknown>[] => {
@@ -142,8 +149,13 @@ const h = vi.hoisted(() => {
     setActiveNight(nightId: string) {
       activeNightId = nightId;
     },
+    setResilient(value: boolean) {
+      resilient = value;
+    },
+    runId,
     reset() {
       activeNightId = "night-a";
+      resilient = false;
       broadcastHandlers.clear();
       client.from.mockClear();
       client.channel.mockClear();
@@ -192,6 +204,71 @@ function hostPayload(
   } as RoomSnapshotPayload;
 }
 
+function resilientHostPayload(revision: number): RoomSnapshotPayload {
+  const gameId = "game-night-a";
+  return {
+    audience: "host",
+    night: {
+      id: "night-a",
+      host_id: "host-1",
+      venue_name: "Venue",
+      room_code: "ABCDEF",
+      theme_key: "may",
+      room_magic_enabled: true,
+      is_locked: false,
+      scheduled_at: null,
+      opened_at: "2026-07-19T00:00:00.000Z",
+      closed_at: null,
+      created_at: "2026-07-19T00:00:00.000Z",
+      answer_engine: "resilient_v1",
+      answer_engine_latched_at: "2026-07-19T00:00:00.000Z",
+      current_run_id: h.runId,
+      control_revision: revision,
+      room_revision: revision,
+    },
+    hostDefaultThemeKey: "may",
+    games: [{
+      id: gameId,
+      night_id: "night-a",
+      game_no: 1,
+      state: "live",
+      started_at: "2026-07-19T00:00:00.000Z",
+      ended_at: null,
+      category_count: 1,
+      question_count: 1,
+    }],
+    categories: [{
+      id: "category-night-a",
+      game_id: gameId,
+      name: "Music",
+      topic: "Music",
+      position: 0,
+      color: null,
+      state: "ready",
+    }],
+    players: [],
+    currentQuestion: null,
+    lastResolvedQuestion: null,
+    currentReveal: null,
+    allQuestions: [],
+    allScores: [],
+    scores: [],
+    scoreGameId: gameId,
+    tvPlayerKeys: {},
+    self: null,
+    liveAnswers: [],
+    roomMagicReactions: [],
+    live: {
+      runId: h.runId,
+      roomRevision: revision,
+      controlRevision: revision,
+      playId: null,
+      play: null,
+      operations: { eligibleCount: 0, confirmedCount: 0, awaitingCount: 0 },
+    },
+  } as RoomSnapshotPayload;
+}
+
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -202,7 +279,7 @@ function deferred<T>() {
 
 async function flushBootstrap() {
   await act(async () => {
-    for (let index = 0; index < 12; index += 1) await Promise.resolve();
+    for (let index = 0; index < 40; index += 1) await Promise.resolve();
   });
 }
 
@@ -367,5 +444,50 @@ describe("useRoom host TV-key lifecycle", () => {
       answers: [],
     });
     expect(snapshot?.players.map((player) => player.id)).toEqual(["pk_tv_a"]);
+  });
+
+  it("treats resilient broadcasts only as validated wake-ups for a newer signed host snapshot", async () => {
+    h.setResilient(true);
+    h.fetchSnapshot
+      .mockResolvedValueOnce(resilientHostPayload(5))
+      .mockResolvedValueOnce(resilientHostPayload(5))
+      .mockResolvedValueOnce(resilientHostPayload(6));
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "host" }),
+    );
+    await flushBootstrap();
+
+    expect(result.current.live?.roomRevision).toBe(5);
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      h.broadcastHandlers.get("live-room-event")?.({
+        payload: { live: { runId: h.runId, roomRevision: 5 } },
+      });
+      h.broadcastHandlers.get("live-room-event")?.({
+        payload: { live: { runId: "22222222-2222-4222-8222-222222222222", roomRevision: 99 } },
+      });
+    });
+    await flushBootstrap();
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      h.broadcastHandlers.get("live-room-event")?.({
+        payload: { live: { runId: h.runId, roomRevision: 6 } },
+      });
+    });
+    await flushBootstrap();
+
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+    expect(result.current.live?.roomRevision).toBe(5);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    await flushBootstrap();
+
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(3);
+    expect(result.current.live?.roomRevision).toBe(6);
+    expect(result.current.scoreGameId).toBe("game-night-a");
   });
 });

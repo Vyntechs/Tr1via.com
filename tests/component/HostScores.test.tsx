@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { HostScores } from "@/components/host/HostScores";
 import type { GameScoreRow } from "@/lib/supabase/types";
@@ -24,8 +24,8 @@ describe("HostScores", () => {
     expect(screen.queryByRole("button", { name: "Adjust points for Jordan" })).not.toBeInTheDocument();
   });
 
-  it("reuses the audited adjustment reason flow and keeps modal controls at least 48px", () => {
-    const onSubmitAdjustment = vi.fn();
+  it("reuses the audited adjustment reason flow with accessible labels and contained focus", async () => {
+    const onSubmitAdjustment = vi.fn().mockResolvedValue(undefined);
     render(<HostScores themeKey="april" gameNo={1} scores={scores} onSubmitAdjustment={onSubmitAdjustment} />);
 
     const playerButton = screen.getByRole("button", { name: "Adjust points for Jordan" });
@@ -37,10 +37,17 @@ describe("HostScores", () => {
     expect(screen.queryByPlaceholderText(/suspicious|sharing|cheating/i)).not.toBeInTheDocument();
     const close = screen.getByRole("button", { name: "Close point adjustment" });
     expect(close).toHaveStyle({ minHeight: "48px", minWidth: "48px" });
-    expect(screen.getByRole("combobox")).toHaveStyle({ minHeight: "48px" });
-    expect(screen.getByRole("spinbutton")).toHaveStyle({ minHeight: "48px" });
+    const player = screen.getByRole("combobox", { name: "Player" });
+    expect(player).toHaveStyle({ minHeight: "48px" });
+    const delta = screen.getByRole("spinbutton", { name: "Delta (+/- points)" });
+    expect(delta).toHaveStyle({ minHeight: "48px" });
+    expect(delta).toHaveFocus();
     const reason = screen.getByPlaceholderText(/scoring fix/i);
+    expect(reason).toHaveAccessibleName("Reason");
     expect(reason).toHaveStyle({ minHeight: "48px" });
+    expect(document.querySelector(`label[for="${player.id}"]`)).toHaveTextContent("Player");
+    expect(document.querySelector(`label[for="${delta.id}"]`)).toHaveTextContent("Delta (+/- points)");
+    expect(document.querySelector(`label[for="${reason.id}"]`)).toHaveTextContent("Reason");
     const quickDelta = screen.getByRole("button", { name: "+300" });
     expect(quickDelta).toHaveStyle({ minHeight: "48px", minWidth: "48px" });
     fireEvent.click(quickDelta);
@@ -50,6 +57,45 @@ describe("HostScores", () => {
     fireEvent.click(apply);
 
     expect(onSubmitAdjustment).toHaveBeenCalledWith("p1", 300, "Host-awarded bonus");
+    expect(apply).toBeDisabled();
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Adjust points" })).not.toBeInTheDocument());
+  });
+
+  it("traps focus, closes with Escape, and restores the invoking score row", () => {
+    render(<HostScores themeKey="house" gameNo={1} scores={scores} onSubmitAdjustment={vi.fn()} />);
+    const invoker = screen.getByRole("button", { name: "Adjust points for Jordan" });
+    invoker.focus();
+    fireEvent.click(invoker);
+    const close = screen.getByRole("button", { name: "Close point adjustment" });
+    const apply = screen.getByRole("button", { name: "Apply +100" });
+    apply.focus();
+    fireEvent.keyDown(apply, { key: "Tab" });
+    expect(close).toHaveFocus();
+    fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+    expect(apply).toHaveFocus();
+    fireEvent.keyDown(document, { key: "Escape" });
+    expect(screen.queryByRole("dialog", { name: "Adjust points" })).not.toBeInTheDocument();
+    expect(invoker).toHaveFocus();
+  });
+
+  it("retains the form with an inline error and blocks duplicate async submissions", async () => {
+    let reject!: (error: Error) => void;
+    const pending = new Promise<void>((_resolve, rejectPromise) => { reject = rejectPromise; });
+    const onSubmitAdjustment = vi.fn(() => pending);
+    render(<HostScores themeKey="house" gameNo={1} scores={scores} onSubmitAdjustment={onSubmitAdjustment} />);
+    fireEvent.click(screen.getByRole("button", { name: "Adjust points for Jordan" }));
+    const reason = screen.getByRole("textbox", { name: "Reason" });
+    fireEvent.change(reason, { target: { value: "Manual correction" } });
+    const apply = screen.getByRole("button", { name: "Apply +100" });
+    fireEvent.click(apply);
+    fireEvent.click(apply);
+    expect(onSubmitAdjustment).toHaveBeenCalledTimes(1);
+    expect(apply).toBeDisabled();
+
+    reject(new Error("Connection interrupted"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Connection interrupted");
+    expect(screen.getByRole("textbox", { name: "Reason" })).toHaveValue("Manual correction");
+    expect(screen.getByRole("button", { name: "Apply +100" })).toBeEnabled();
   });
 
   it.each(THEME_KEYS)("keeps the %s adjustment action readable", (themeKey) => {

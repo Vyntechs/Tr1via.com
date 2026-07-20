@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { ThemeProvider, useTheme } from "@/components/system";
 import type { GameScoreRow } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -11,7 +11,7 @@ export interface HostScoresProps {
   themeKey?: ThemeKey;
   gameNo: number | null;
   scores: GameScoreRow[];
-  onSubmitAdjustment: (playerId: string, delta: number, reason: string) => void;
+  onSubmitAdjustment: (playerId: string, delta: number, reason: string) => void | Promise<void>;
 }
 
 export function HostScores({ themeKey, ...props }: HostScoresProps) {
@@ -23,6 +23,7 @@ function HostScoresInner({ gameNo, scores, onSubmitAdjustment }: Omit<HostScores
   const { t } = useTheme();
   const [query, setQuery] = useState("");
   const [adjusting, setAdjusting] = useState<HostLivePlayer | null>(null);
+  const invokingButtonRef = useRef<HTMLButtonElement | null>(null);
   const ranked = useMemo(
     () => [...scores]
       .filter((row): row is GameScoreRow & { player_id: string } => Boolean(row.player_id))
@@ -42,7 +43,7 @@ function HostScoresInner({ gameNo, scores, onSubmitAdjustment }: Omit<HostScores
 
   return (
     <section aria-label="Scores" style={{ minHeight: "100%", padding: 14, color: t.ink, background: t.paper, boxSizing: "border-box" }}>
-      <p style={{ margin: 0, color: t.accent, fontSize: 10, fontWeight: 900, letterSpacing: ".14em" }}>SCORES</p>
+      <p style={{ margin: 0, color: t.ink, fontSize: 10, fontWeight: 900, letterSpacing: ".14em" }}>SCORES</p>
       <h1 style={{ margin: "5px 0 14px", fontFamily: "var(--font-display)", fontSize: "clamp(25px, 7vw, 38px)", lineHeight: 1.04 }}>{gameNo ? `Game ${gameNo} standings` : "Game standings"}</h1>
       <input
         type="search"
@@ -54,7 +55,7 @@ function HostScoresInner({ gameNo, scores, onSubmitAdjustment }: Omit<HostScores
       />
 
       {visible.length === 0 ? (
-        <p style={{ color: t.inkMid, fontSize: 13 }}>{ranked.length === 0 ? "Scores appear after play begins." : "No players match that search."}</p>
+        <p style={{ color: t.ink, fontSize: 13 }}>{ranked.length === 0 ? "Scores appear after play begins." : "No players match that search."}</p>
       ) : (
         <ol style={{ margin: "14px 0 0", padding: 0, listStyle: "none", display: "grid", gap: 9 }}>
           {visible.map((row) => {
@@ -65,13 +66,16 @@ function HostScoresInner({ gameNo, scores, onSubmitAdjustment }: Omit<HostScores
                 <button
                   type="button"
                   aria-label={`Adjust points for ${player.name}`}
-                  onClick={() => setAdjusting(player)}
+                  onClick={(event) => {
+                    invokingButtonRef.current = event.currentTarget;
+                    setAdjusting(player);
+                  }}
                   style={{ ...panel, width: "100%", minWidth: 48, minHeight: 48, padding: "9px 12px", color: t.ink, font: "inherit", cursor: "pointer", display: "grid", gridTemplateColumns: "26px minmax(0, 1fr) auto", alignItems: "center", gap: 10, textAlign: "left", boxSizing: "border-box" }}
                 >
-                  <strong style={{ color: rank === 1 ? t.correct : t.inkMid, fontFamily: "var(--font-mono)", fontSize: 13 }}>{rank}</strong>
+                  <strong style={{ color: t.ink, fontFamily: "var(--font-mono)", fontSize: 13 }}>{rank}</strong>
                   <span style={{ minWidth: 0 }}>
                     <strong style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 13 }}>{player.name}</strong>
-                    <span style={{ display: "block", marginTop: 3, color: t.inkMid, fontSize: 10 }}>
+                    <span style={{ display: "block", marginTop: 3, color: t.ink, fontSize: 10 }}>
                       {row.correct_count ?? 0} correct · {row.answered_count ?? 0} answered
                     </span>
                   </span>
@@ -87,11 +91,11 @@ function HostScoresInner({ gameNo, scores, onSubmitAdjustment }: Omit<HostScores
         <AdjustPointsModal
           initialPlayer={adjusting}
           allPlayers={players}
-          onCancel={() => setAdjusting(null)}
-          onSubmit={(playerId, delta, reason) => {
-            onSubmitAdjustment(playerId, delta, reason);
+          onCancel={() => {
             setAdjusting(null);
+            invokingButtonRef.current?.focus();
           }}
+          onSubmit={onSubmitAdjustment}
         />
       )}
     </section>

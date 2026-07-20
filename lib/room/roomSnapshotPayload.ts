@@ -62,6 +62,8 @@ interface SharedRoomSnapshotBase {
   currentReveal: RevealRow | null;
   allQuestions: RoomQuestion[];
   roomMagicReactions?: RoomMagicReactionEvent[];
+  /** Game ancestry for `scores`; labels and adjustments must use this id. */
+  scoreGameId?: string | null;
 }
 
 /** The response is audience-discriminated at the complete HTTP boundary. */
@@ -114,6 +116,8 @@ export interface RoomFallbackPayload {
   myParticipations: ParticipationRow[];
   allScores: GameScoreRow[];
   scores: GameScoreRow[];
+  scoreGameId?: string | null;
+  live?: HostLiveProjection | null;
   tvPlayerKeys: Record<string, string>;
   liveAnswers: AnswerRow[];
   roomMagicReactions: RoomMagicReactionEvent[];
@@ -147,6 +151,16 @@ export function payloadToRoomSnapshot(payload: RoomSnapshotPayload): RoomSnapsho
       ? roomQuestionToRow(payload.lastResolvedQuestion)
       : null,
     currentReveal: payload.currentReveal,
+    live: payload.audience === "host" ? payload.live ?? null : null,
+    liveAnswers: playerAudience ? [] : payload.liveAnswers.map(hostLiveAnswerToRow),
+    scoreGameId: payload.scoreGameId ?? null,
+    scores: playerAudience
+      ? payload.scores.map(playerScoreToRow)
+      : payload.scores,
+    allScores: playerAudience
+      ? payload.allScores.map(playerScoreToRow)
+      : payload.allScores,
+    allQuestions: payload.allQuestions.map(roomQuestionToRow),
     lastBroadcast: null,
     lastFireworksBeat: null,
     lastRoomMagicReaction: null,
@@ -174,6 +188,8 @@ export function toRoomFallbackPayload(payload: RoomSnapshotPayload): RoomFallbac
     currentReveal: payload.currentReveal,
     allQuestions: payload.allQuestions.map(roomQuestionToRow),
     roomMagicReactions: payload.roomMagicReactions ?? [],
+    scoreGameId: payload.scoreGameId ?? null,
+    live: payload.audience === "host" ? payload.live ?? null : null,
   };
 
   if (payload.audience === "player") {
@@ -282,10 +298,10 @@ function hostLiveAnswerToRow(answer: HostLiveAnswer): AnswerRow {
     player_id: answer.playerId,
     chosen_index: answer.chosenIndex ?? 0,
     scramble: [0, 1, 2, 3],
-    locked_at: "",
+    locked_at: answer.lockedAt,
     ms_to_lock: answer.msToLock,
     is_correct: answer.isCorrect,
-    awarded_points: null,
+    awarded_points: answer.awardedPoints,
   };
 }
 

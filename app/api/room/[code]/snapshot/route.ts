@@ -135,7 +135,6 @@ export async function GET(
       )
       .eq("night_id", nightId)
       .eq("run_id", night.current_run_id)
-      .neq("status", "undone")
       .order("opened_at", { ascending: false })
       .limit(1);
     if (playError) return serverError();
@@ -233,7 +232,9 @@ export async function GET(
   // between-games snapshot from replaying old answer state before Game 2's
   // first question opens.
   const projectionPlay =
-    liveGame && currentPlay?.game_id === liveGame.id ? currentPlay : null;
+    liveGame && currentPlay?.game_id === liveGame.id && currentPlay.status !== "undone"
+      ? currentPlay
+      : null;
   const projectionEligibility =
     projectionPlay && playerEligibility?.play_id === projectionPlay.id
       ? playerEligibility
@@ -289,10 +290,15 @@ export async function GET(
       // the question is live — so player mode resolves to []. Explicit column
       // list (matches the TV route) so a future select("*") can't auto-ship a
       // sensitive column.
-      mode === "host" && targetQuestionId
+      mode === "host" && resilient && projectionPlay
         ? admin
+            .from("question_play_answers")
+            .select("play_id, player_id, canonical_index, locked_at, ms_to_lock, is_correct, awarded_points")
+            .eq("play_id", projectionPlay.id as string)
+        : mode === "host" && !resilient && targetQuestionId
+          ? admin
             .from("answers")
-            .select("id, question_id, player_id, ms_to_lock, is_correct, chosen_index")
+            .select("id, question_id, player_id, ms_to_lock, locked_at, is_correct, awarded_points, chosen_index")
             .eq("question_id", targetQuestionId)
         : Promise.resolve({ data: [], error: null }),
       mode === "player" && playerRow
@@ -334,7 +340,35 @@ export async function GET(
   if (myParticipationsRes.error) return serverError();
   if (roomMagicReactionsRes.error) return serverError();
 
-  const liveAnswers = (liveAnswersRes.data ?? []).map(serializeHostLiveAnswer);
+  const liveAnswers = resilient && projectionPlay
+    ? ((liveAnswersRes.data ?? []) as Array<{
+        play_id: string;
+        player_id: string;
+        canonical_index: number;
+        locked_at: string;
+        ms_to_lock: number;
+        is_correct: boolean | null;
+        awarded_points: number | null;
+      }>).map((answer) => serializeHostLiveAnswer({
+        id: `${String(answer.play_id)}:${String(answer.player_id)}`,
+        question_id: String(projectionPlay.question_id),
+        player_id: String(answer.player_id),
+        chosen_index: Number(answer.canonical_index),
+        locked_at: String(answer.locked_at),
+        ms_to_lock: Number(answer.ms_to_lock),
+        is_correct: typeof answer.is_correct === "boolean" ? answer.is_correct : null,
+        awarded_points: typeof answer.awarded_points === "number" ? answer.awarded_points : null,
+      }))
+    : ((liveAnswersRes.data ?? []) as Array<{
+        id: string;
+        question_id: string;
+        player_id: string;
+        ms_to_lock: number;
+        locked_at: string;
+        chosen_index: number | null;
+        is_correct: boolean | null;
+        awarded_points: number | null;
+      }>).map(serializeHostLiveAnswer);
   const myAnswers = (myAnswersRes.data ?? []).map(serializePlayerCanonicalAnswer);
   const myParticipations = ((myParticipationsRes.data ?? []) as ParticipationRow[]).map(
     serializeParticipation,
@@ -358,6 +392,7 @@ export async function GET(
     allQuestions: allQuestionsRaw.map(serializeRoomQuestion),
     allScores,
     scores,
+    scoreGameId: currentGame?.id ?? null,
     roomMagicReactions: mode === "host" ? roomMagicReactions : [],
   };
 

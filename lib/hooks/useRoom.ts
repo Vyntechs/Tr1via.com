@@ -49,6 +49,7 @@ import type {
   QuestionRow,
   RevealRow,
 } from "@/lib/supabase/types";
+import type { HostLiveProjection } from "@/lib/live-answer/contracts";
 
 export interface RoomSnapshot {
   /** Night row (venue, theme, lock status, room code) or null while loading. */
@@ -106,8 +107,14 @@ export interface RoomSnapshot {
   /** Authenticated-host-only raw-to-TV presentation map. Values are produced
    * server-side; audience components must never derive HMAC keys in-browser. */
   tvPlayerKeys?: Record<string, string>;
-  /** Ask the signed player route for a fresh canonical snapshot. */
-  requestRefresh?: () => void;
+  /** Authenticated-host authoritative resilient projection. */
+  live?: HostLiveProjection | null;
+  /** Host-only canonical rows for the exact projected live/resolved play. */
+  liveAnswers?: AnswerRow[];
+  /** Game ancestry shared by scores, heading, and adjustments. */
+  scoreGameId?: string | null;
+  /** Ask the signed audience route for a fresh canonical snapshot. */
+  requestRefresh?: () => Promise<void>;
   /** True while the initial snapshot fetch is in flight. */
   isLoading: boolean;
 }
@@ -160,6 +167,9 @@ const EMPTY: RoomSnapshot = {
   allQuestions: [],
   questionScrambles: {},
   tvPlayerKeys: {},
+  live: null,
+  liveAnswers: [],
+  scoreGameId: null,
   isLoading: true,
 };
 
@@ -191,12 +201,21 @@ const PLAYER_QUESTION_COLUMNS =
 
 export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs): RoomSnapshot {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(EMPTY);
-  const playerRefreshRef = useRef<(() => void) | null>(null);
+  const playerRefreshRef = useRef<(() => Promise<void>) | null>(null);
+  const hostRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const hostTVKeyRefreshSequenceRef = useRef(0);
-  const requestPlayerRefresh = useCallback(() => {
-    playerRefreshRef.current?.();
+  const hostLiveRef = useRef<HostLiveProjection | null>(null);
+  const hostRequiredRevisionRef = useRef<{ runId: string; roomRevision: number } | null>(null);
+  const requestPlayerRefresh = useCallback(async () => {
+    await playerRefreshRef.current?.();
+  }, []);
+  const requestHostRefresh = useCallback(async () => {
+    await hostRefreshRef.current?.();
   }, []);
   const waitingForSession = audience === "player" && !sessionReady;
+  useEffect(() => {
+    hostLiveRef.current = snapshot.live ?? null;
+  }, [snapshot.live]);
 
   // Bumps when the tab returns from background OR the network comes back.
   // Wired into the main effect's deps below to force a full re-bootstrap
@@ -325,6 +344,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     if (!roomCode || waitingForSession) {
       if (!roomCode) {
         setSnapshot(EMPTY);
+        hostRequiredRevisionRef.current = null;
         // No room to reach → clear any stale "unreachable" / backup mode so a
         // fresh room doesn't inherit the previous one's failure state.
         setReachability(undefined);
@@ -376,7 +396,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         }
       }
 
-      const requestRefresh = () => void refreshPlayerSnapshot();
+      const requestRefresh = () => refreshPlayerSnapshot();
       playerRefreshRef.current = requestRefresh;
 
       function refetchForBroadcast(tag?: BroadcastTag): void {
@@ -424,6 +444,10 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           });
         })
         .on("broadcast", { event: "game-ended" }, () => {
+          refetchForBroadcast();
+        })
+        .on("broadcast", { event: "live-room-event" }, () => {
+          // Broadcasts are wake-ups only. The signed route remains authority.
           refetchForBroadcast();
         })
         .on("broadcast", { event: "roster-changed" }, (msg) => {
@@ -518,7 +542,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       setSnapshot((prev) => ({ ...prev, players: next }));
     }
 
-    async function refreshHostTVPlayerKeys(expectedNightId: string): Promise<void> {
+    async function refreshHostServerProjection(
+      expectedNightId: string,
+      expectedRunId?: string,
+      minimumRoomRevision?: number,
+      retryAttempt = 0,
+    ): Promise<void> {
       if (cancelled) return;
       const requestSequence = ++hostTVKeyRefreshSequenceRef.current;
       try {
@@ -533,11 +562,62 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         ) {
           return;
         }
-        setSnapshot((prev) =>
-          prev.night?.id === expectedNightId
-            ? { ...prev, tvPlayerKeys: payload.tvPlayerKeys }
-            : prev,
+        if (!expectedRunId) {
+          setSnapshot((prev) =>
+            prev.night?.id === expectedNightId
+              ? { ...prev, tvPlayerKeys: payload.tvPlayerKeys }
+              : prev,
+          );
+          return;
+        }
+        const confirmed = payloadToRoomSnapshot(payload);
+        const retainedRequirement = hostRequiredRevisionRef.current;
+        const requiredRoomRevision = Math.max(
+          minimumRoomRevision ?? -1,
+          retainedRequirement?.runId === expectedRunId
+            ? retainedRequirement.roomRevision
+            : -1,
         );
+        const confirmedRoomRevision = confirmed.live?.runId === expectedRunId
+          ? confirmed.live.roomRevision
+          : Number(payload.night?.room_revision ?? -1);
+        if (confirmedRoomRevision < requiredRoomRevision) {
+          // The public broadcast can outrun the signed snapshot read by a
+          // fraction of a second. Retain the required revision and retry a
+          // bounded number of times; later heartbeat/roster/manual refreshes
+          // also continue enforcing it until the signed route catches up.
+          if (retryAttempt < 2) {
+            setTimeout(() => {
+              if (!cancelled) {
+                void refreshHostServerProjection(
+                  expectedNightId,
+                  expectedRunId,
+                  requiredRoomRevision,
+                  retryAttempt + 1,
+                );
+              }
+            }, 200 * (retryAttempt + 1));
+          }
+          return;
+        }
+        setSnapshot((prev) => {
+          if (prev.night?.id !== expectedNightId) return prev;
+          if (expectedRunId && payload.night?.current_run_id !== expectedRunId) return prev;
+
+          const previousRevision = prev.live?.runId === expectedRunId
+            ? prev.live.roomRevision
+            : Number(prev.night?.room_revision ?? -1);
+          const confirmedRevision = confirmed.live?.runId === expectedRunId
+            ? confirmed.live.roomRevision
+            : Number(payload.night?.room_revision ?? -1);
+          if (confirmedRevision < previousRevision) return prev;
+          return {
+            ...confirmed,
+            lastBroadcast: prev.lastBroadcast,
+            lastFireworksBeat: prev.lastFireworksBeat,
+            lastRoomMagicReaction: prev.lastRoomMagicReaction,
+          };
+        });
       } catch {
         // The host's direct room state remains usable. The next roster signal
         // or heartbeat retries the server projection; raw ids never substitute.
@@ -932,6 +1012,15 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // (`nights_player_read`), avoiding the cross-table denial that was
       // returning 406 from PostgREST on iPhones.
       const cleanNight = (nightRow.data ?? null) as NightRow | null;
+      if (cleanNight?.answer_engine === "resilient_v1" && cleanNight.current_run_id) {
+        const retained = hostRequiredRevisionRef.current;
+        if (retained?.runId !== cleanNight.current_run_id) {
+          hostRequiredRevisionRef.current = {
+            runId: cleanNight.current_run_id,
+            roomRevision: Number(cleanNight.room_revision ?? -1),
+          };
+        }
+      }
       const hostDefaultThemeKey = lookupHostDefaultThemeKey;
       setSnapshot((prev) => ({
         night: cleanNight,
@@ -951,9 +1040,45 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           cleanNight && prev.night?.id === cleanNight.id
             ? prev.tvPlayerKeys ?? {}
             : {},
+        live:
+          cleanNight && prev.night?.id === cleanNight.id
+            ? prev.live ?? null
+            : null,
+        liveAnswers:
+          cleanNight && prev.night?.id === cleanNight.id
+            ? prev.liveAnswers ?? []
+            : [],
+        scoreGameId:
+          cleanNight && prev.night?.id === cleanNight.id
+            ? prev.scoreGameId ?? null
+            : null,
+        scores:
+          cleanNight && prev.night?.id === cleanNight.id
+            ? prev.scores ?? []
+            : [],
+        allScores:
+          cleanNight && prev.night?.id === cleanNight.id
+            ? prev.allScores ?? []
+            : [],
+        allQuestions:
+          cleanNight && prev.night?.id === cleanNight.id
+            ? prev.allQuestions ?? []
+            : [],
         isLoading: false,
       }));
-      void refreshHostTVPlayerKeys(nightId);
+      void refreshHostServerProjection(
+        nightId,
+        cleanNight?.answer_engine === "resilient_v1"
+          ? cleanNight.current_run_id ?? undefined
+          : undefined,
+      );
+      const refreshHostProjection = () => refreshHostServerProjection(
+        nightId,
+        cleanNight?.answer_engine === "resilient_v1"
+          ? cleanNight.current_run_id ?? undefined
+          : undefined,
+      );
+      hostRefreshRef.current = refreshHostProjection;
 
       // Subscribe to broadcast + 6 tables of postgres changes.
       const filterBy = `night_id=eq.${nightId}`;
@@ -1062,6 +1187,39 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           // game 2). Doesn't need a questionId — game-level wake-up.
           void refreshLiveState(nightId);
         })
+        .on("broadcast", { event: "live-room-event" }, (msg) => {
+          const event = msg.payload as { live?: Record<string, unknown> };
+          const attempted = event.live;
+          const expectedRunId = cleanNight?.current_run_id;
+          if (
+            cleanNight?.answer_engine !== "resilient_v1" ||
+            !expectedRunId ||
+            attempted?.runId !== expectedRunId ||
+            typeof attempted.roomRevision !== "number"
+          ) {
+            return;
+          }
+          const current = hostLiveRef.current;
+          if (
+            current?.runId === expectedRunId &&
+            attempted.roomRevision <= current.roomRevision
+          ) {
+            return;
+          }
+          const retained = hostRequiredRevisionRef.current;
+          hostRequiredRevisionRef.current = {
+            runId: expectedRunId,
+            roomRevision: retained?.runId === expectedRunId
+              ? Math.max(retained.roomRevision, attempted.roomRevision)
+              : attempted.roomRevision,
+          };
+          markFresh();
+          void refreshHostServerProjection(
+            nightId,
+            expectedRunId,
+            attempted.roomRevision,
+          );
+        })
         .on("broadcast", { event: "roster-changed" }, (msg) => {
           // Magic-Welcome wake-up. Tags the lastBroadcast so the host live
           // console can fire the slide-in tile + chime within ~300ms of
@@ -1084,7 +1242,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             joinedAt: typeof p.joinedAt === "string" ? p.joinedAt : undefined,
           });
           void refreshPlayers(nightId);
-          void refreshHostTVPlayerKeys(nightId);
+          void refreshHostServerProjection(
+            nightId,
+            cleanNight?.answer_engine === "resilient_v1"
+              ? cleanNight.current_run_id ?? undefined
+              : undefined,
+          );
         })
         .on("broadcast", { event: "fireworks" }, (msg) => {
           // Cosmetic synchronized firework beat (July). Surface it on its OWN
@@ -1308,6 +1471,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // change), and clearing it would flash the unreachable surface off→on
       // between retries. It's reset only when there's no room (effect top).
       setChannelHealth(undefined);
+      hostRefreshRef.current = null;
     };
   }, [roomCode, audience, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick]);
 
@@ -1315,8 +1479,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     () =>
       audience === "player"
         ? { ...snapshot, requestRefresh: requestPlayerRefresh }
-        : snapshot,
-    [audience, requestPlayerRefresh, snapshot],
+        : { ...snapshot, requestRefresh: requestHostRefresh },
+    [audience, requestHostRefresh, requestPlayerRefresh, snapshot],
   );
 }
 

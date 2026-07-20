@@ -11,6 +11,8 @@ export interface HostAnswerResultProps {
   themeKey?: ThemeKey;
   question: QuestionRow;
   answers: AnswerRow[];
+  /** Eligible players at reveal time. Null means the denominator is unknown. */
+  eligibleCount: number | null;
   players: PlayerRow[];
   onReturnToBoard: () => void;
 }
@@ -22,13 +24,15 @@ export function HostAnswerResult({ themeKey, ...props }: HostAnswerResultProps) 
   return <HostAnswerResultInner {...props} />;
 }
 
-function HostAnswerResultInner({ question, answers, players, onReturnToBoard }: Omit<HostAnswerResultProps, "themeKey">) {
+function HostAnswerResultInner({ question, answers, eligibleCount, players, onReturnToBoard }: Omit<HostAnswerResultProps, "themeKey">) {
   const { t } = useTheme();
   const canonical = dedupeQuestionAnswers(question.id, answers);
   const distribution = [0, 0, 0, 0];
   for (const answer of canonical) distribution[answer.chosen_index] += 1;
   const correct = canonical.filter((answer) => answer.is_correct ?? answer.chosen_index === question.correct_index);
-  const percent = canonical.length > 0 ? Math.round((correct.length / canonical.length) * 100) : 0;
+  const percent = eligibleCount !== null && eligibleCount > 0
+    ? Math.round((correct.length / eligibleCount) * 100)
+    : 0;
   const maxChoice = Math.max(1, ...distribution);
   const nameById = new Map(players.map((player) => [player.id, player.display_name]));
   const fastest = [...correct]
@@ -39,22 +43,26 @@ function HostAnswerResultInner({ question, answers, players, onReturnToBoard }: 
   return (
     <PhoneScreen weather={false} style={{ color: t.ink, gap: 16 }}>
       <header>
-        <Eyebrow color={t.inkMid} size={9}>ANSWER RESULT · DELIVERY NOT CONFIRMED</Eyebrow>
+        <Eyebrow color={t.ink} size={9}>ANSWER RESULT · DELIVERY NOT CONFIRMED</Eyebrow>
         <div style={{ ...card, marginTop: 10, background: t.correct, color: readableForeground(t.correct), borderColor: t.correct }}>
           <Eyebrow color="currentColor" size={9}>THE ANSWER WAS</Eyebrow>
           <h1 style={{ margin: "12px 0 5px", fontFamily: "var(--font-display)", fontSize: "clamp(28px, 8cqw, 44px)", lineHeight: 1.02, overflowWrap: "anywhere" }}>
             {question.correct_index + 1} {question.options[question.correct_index]}
           </h1>
-          <p style={{ margin: 0, fontSize: 13, fontWeight: 850 }}>{correct.length} of {canonical.length} correct · {percent}%</p>
+          <p style={{ margin: 0, fontSize: 13, fontWeight: 850 }}>
+            {eligibleCount === null
+              ? `${correct.length} correct · ${canonical.length} answered`
+              : `${correct.length} of ${eligibleCount} correct · ${percent}%`}
+          </p>
         </div>
       </header>
 
       <section aria-label="Answer distribution">
-        <Eyebrow color={t.accent} size={9}>HOW EVERYONE ANSWERED</Eyebrow>
+        <Eyebrow color={t.ink} size={9}>HOW EVERYONE ANSWERED</Eyebrow>
         <div style={{ display: "grid", gap: 8, marginTop: 10 }}>
           {question.options.map((option, index) => (
             <div key={option} data-testid={`answer-choice-${index + 1}`} style={{ ...card, padding: "10px 12px", display: "grid", gridTemplateColumns: "24px minmax(90px, 1fr) minmax(56px, .7fr) 28px", alignItems: "center", gap: 8, minHeight: 48, boxSizing: "border-box" }}>
-              <strong style={{ color: index === question.correct_index ? t.correct : t.accent, fontFamily: "var(--font-mono)", fontSize: 12 }}>{index + 1}</strong>
+              <strong style={{ color: t.ink, fontFamily: "var(--font-mono)", fontSize: 12 }}>{index + 1}</strong>
               <span style={{ minWidth: 0, overflowWrap: "anywhere", fontSize: 12, fontWeight: 750 }}>{option}</span>
               <span style={{ height: 8, borderRadius: 99, background: t.line, overflow: "hidden" }}>
                 <span style={{ display: "block", height: "100%", width: `${(distribution[index] / maxChoice) * 100}%`, borderRadius: 99, background: index === question.correct_index ? t.correct : t.accent }} />
@@ -66,15 +74,15 @@ function HostAnswerResultInner({ question, answers, players, onReturnToBoard }: 
       </section>
 
       <section aria-label="Fastest five correct responses" style={card}>
-        <Eyebrow color={t.accent} size={9}>FASTEST FIVE</Eyebrow>
+        <Eyebrow color={t.ink} size={9}>FASTEST FIVE</Eyebrow>
         {fastest.length === 0 ? (
-          <p style={{ margin: "10px 0 0", color: t.inkMid, fontSize: 12 }}>No confirmed correct responses</p>
+          <p style={{ margin: "10px 0 0", color: t.ink, fontSize: 12 }}>No confirmed correct responses</p>
         ) : (
           <ol style={{ margin: "10px 0 0", padding: 0, listStyle: "none", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8 }}>
             {fastest.map((answer, index) => (
               <li key={answer.player_id} style={{ display: "flex", justifyContent: "space-between", gap: 10, minWidth: 0, fontFamily: "var(--font-mono)", fontSize: 11 }}>
                 <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{index + 1} {nameById.get(answer.player_id) ?? "Player"}</span>
-                <span style={{ flexShrink: 0, color: t.inkMid }}>{formatSeconds(answer.ms_to_lock)}</span>
+                <span style={{ flexShrink: 0, color: t.ink }}>{formatSeconds(answer.ms_to_lock)}</span>
               </li>
             ))}
           </ol>
@@ -82,8 +90,8 @@ function HostAnswerResultInner({ question, answers, players, onReturnToBoard }: 
       </section>
 
       {question.fact_blurb && (
-        <aside style={{ ...card, color: t.inkMid, fontSize: 12, lineHeight: 1.5 }}>
-          <Eyebrow color={t.pop} size={9}>FACT</Eyebrow>
+        <aside style={{ ...card, color: t.ink, fontSize: 12, lineHeight: 1.5 }}>
+          <Eyebrow color={t.ink} size={9}>FACT</Eyebrow>
           <p style={{ margin: "8px 0 0" }}>{question.fact_blurb}</p>
         </aside>
       )}

@@ -2,6 +2,9 @@ import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { HostAnswerResult } from "@/components/host/HostAnswerResult";
 import type { AnswerRow, PlayerRow, QuestionRow } from "@/lib/supabase/types";
+import { contrastRatio, readableForeground } from "@/lib/theme/contrast";
+import { resolveTheme } from "@/lib/theme/resolve";
+import { THEME_KEYS } from "@/lib/theme/tokens";
 
 const question: QuestionRow = {
   id: "q1",
@@ -73,6 +76,7 @@ describe("HostAnswerResult", () => {
         themeKey="march"
         question={question}
         answers={answers}
+        eligibleCount={3}
         players={[player("p1", "SC"), player("p2", "Lauren"), player("p3", "Net Slapper")]}
         onReturnToBoard={onReturnToBoard}
       />,
@@ -100,6 +104,7 @@ describe("HostAnswerResult", () => {
         themeKey="april"
         question={question}
         answers={[]}
+        eligibleCount={0}
         players={[]}
         onReturnToBoard={vi.fn()}
       />,
@@ -109,5 +114,67 @@ describe("HostAnswerResult", () => {
     expect(screen.getByText("No confirmed correct responses")).toBeVisible();
     expect(screen.getAllByText("0")).toHaveLength(4);
     expect(screen.queryByText(/shown everywhere|TV live|phones current/i)).not.toBeInTheDocument();
+  });
+
+  it("uses eligible population for percentage while distribution remains response-only", () => {
+    const answers = [
+      answer("p1", "p1", 1, 1_200, "2026-07-20T00:00:05Z"),
+      answer("p2", "p2", 1, 1_500, "2026-07-20T00:00:06Z"),
+      answer("p3", "p3", 2, 1_800, "2026-07-20T00:00:07Z"),
+    ];
+    render(
+      <HostAnswerResult
+        themeKey="house"
+        question={question}
+        answers={answers}
+        eligibleCount={4}
+        players={[]}
+        onReturnToBoard={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("2 of 4 correct · 50%")).toBeVisible();
+    const responseCounts = [1, 2, 3, 4].map((index) =>
+      Number(within(screen.getByTestId(`answer-choice-${index}`)).getAllByText(/^\d+$/).at(-1)?.textContent));
+    expect(responseCounts.reduce((sum, count) => sum + count, 0)).toBe(3);
+  });
+
+  it("omits an invented percentage when eligibility is unknown", () => {
+    render(
+      <HostAnswerResult
+        themeKey="house"
+        question={question}
+        answers={[
+          answer("p1", "p1", 1, 1_200, "2026-07-20T00:00:05Z"),
+          answer("p2", "p2", 1, 1_500, "2026-07-20T00:00:06Z"),
+          answer("p3", "p3", 2, 1_800, "2026-07-20T00:00:07Z"),
+        ]}
+        eligibleCount={null}
+        players={[]}
+        onReturnToBoard={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("2 correct · 3 answered")).toBeVisible();
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument();
+  });
+
+  it.each(THEME_KEYS)("keeps every small %s result-text role at AA contrast", (themeKey) => {
+    const theme = resolveTheme(themeKey);
+    render(
+      <HostAnswerResult
+        themeKey={themeKey}
+        question={question}
+        answers={[]}
+        eligibleCount={0}
+        players={[]}
+        onReturnToBoard={vi.fn()}
+      />,
+    );
+    for (const text of ["ANSWER RESULT · DELIVERY NOT CONFIRMED", "HOW EVERYONE ANSWERED", "FASTEST FIVE", "FACT"]) {
+      expect(screen.getByText(text)).toHaveStyle({ color: theme.ink });
+      expect(contrastRatio(theme.ink, theme.paper)).toBeGreaterThanOrEqual(4.5);
+    }
+    expect(contrastRatio(readableForeground(theme.correct), theme.correct)).toBeGreaterThanOrEqual(4.5);
   });
 });

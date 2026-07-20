@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
@@ -14,11 +14,15 @@ import type {
   QuestionRow,
 } from "@/lib/supabase/types";
 import type { RoomFallbackPayload } from "@/lib/room/roomSnapshotPayload";
+import type { HostLiveProjection } from "@/lib/live-answer/contracts";
 
 const h = vi.hoisted(() => ({
   room: null as RoomSnapshot | null,
   questions: [] as QuestionRow[],
   fetch: vi.fn(),
+  refresh: vi.fn(),
+  scoreRows: [] as GameScoreRow[],
+  scoreChangeHandlers: [] as Array<() => void>,
   fallback: { backupMode: false, payload: null as RoomFallbackPayload | null },
   autoRevealOptions: null as {
     decision: { complete: boolean; eligibleCount: number; lockedCount: number } | null;
@@ -28,6 +32,8 @@ const h = vi.hoisted(() => ({
 
 const RUN_ID = "33333333-3333-4333-8333-333333333333";
 const COMMAND_ID = "44444444-4444-4444-8444-444444444444" as `${string}-${string}-${string}-${string}-${string}`;
+const SECOND_COMMAND_ID = "55555555-5555-4555-8555-555555555555" as `${string}-${string}-${string}-${string}-${string}`;
+const PLAY_ID = "66666666-6666-4666-8666-666666666666";
 
 vi.mock("@/lib/hooks/useRoom", () => ({
   useRoom: () => h.room,
@@ -70,7 +76,7 @@ vi.mock("@/lib/supabase/client", () => ({
         return {
           select: () => ({
             eq: () => ({
-              order: async () => ({ data: [] }),
+              order: async () => ({ data: h.scoreRows, error: null }),
             }),
           }),
         };
@@ -83,7 +89,14 @@ vi.mock("@/lib/supabase/client", () => ({
     },
     channel: () => {
       const channel = {
-        on: () => channel,
+        on: (
+          _event: string,
+          filter: { table?: string },
+          handler: () => void,
+        ) => {
+          if (filter.table === "adjustments") h.scoreChangeHandlers.push(handler);
+          return channel;
+        },
         subscribe: () => ({}),
       };
       return channel;
@@ -112,6 +125,30 @@ function resilientNight(overrides: Partial<NightRow> = {}): NightRow {
     answer_engine: "resilient_v1",
     current_run_id: RUN_ID,
     control_revision: 4,
+    ...overrides,
+  };
+}
+
+function resilientLive(overrides: Partial<HostLiveProjection> = {}): HostLiveProjection {
+  return {
+    runId: RUN_ID,
+    roomRevision: 8,
+    controlRevision: 5,
+    playId: PLAY_ID,
+    play: {
+      playId: PLAY_ID,
+      gameId: "g1",
+      questionId: "q1",
+      state: "accepting",
+      openedAt: "2026-07-08T00:01:30Z",
+      mainZeroAt: "2026-07-08T00:02:00Z",
+      finalWindowStartsAt: null,
+      finalWindowEndsAt: "2026-07-08T00:02:02Z",
+      finalizeAt: null,
+      eligibleCount: 2,
+      confirmedCount: 1,
+    },
+    operations: { eligibleCount: 2, confirmedCount: 1, awaitingCount: 1 },
     ...overrides,
   };
 }
@@ -229,6 +266,7 @@ function fallbackPayload(overrides: Partial<RoomFallbackPayload> = {}): RoomFall
     myParticipations: [],
     allScores: [],
     scores: [],
+    scoreGameId: "g1",
     tvPlayerKeys: {},
     liveAnswers: [],
     roomMagicReactions: [],
@@ -250,6 +288,7 @@ function room(): RoomSnapshot {
     lastFireworksBeat: null,
     lastRoomMagicReaction: null,
     hostDefaultThemeKey: "house",
+    requestRefresh: h.refresh,
     isLoading: false,
   };
 }
@@ -287,6 +326,9 @@ describe("HostPhoneClient reveal flow", () => {
     h.room = { ...room(), games: [liveGame], currentGame: liveGame };
     h.questions = [pickedQuestion, secondPickedQuestion];
     h.fetch.mockReset();
+    h.refresh.mockReset();
+    h.scoreRows = [];
+    h.scoreChangeHandlers = [];
     h.fallback = { backupMode: false, payload: null };
     h.autoRevealOptions = null;
     h.fetch.mockImplementation(async (input: RequestInfo | URL) =>
@@ -402,6 +444,48 @@ describe("HostPhoneClient reveal flow", () => {
     );
   });
 
+  it("uses only authoritative resilient play counts for lock display and auto-reveal", async () => {
+    const liveGame = game("g1", 1, "live");
+    const liveQuestion = { ...pickedQuestion, played_at: "2026-07-08T00:01:30Z" };
+    h.room = {
+      ...room(),
+      night: resilientNight({ control_revision: 5 }),
+      games: [liveGame],
+      currentGame: liveGame,
+      currentQuestion: liveQuestion,
+      players: [player("p1"), player("p2"), player("late")],
+      liveAnswers: [],
+      live: resilientLive({
+        play: { ...resilientLive().play!, eligibleCount: 2, confirmedCount: 2 },
+        operations: { eligibleCount: 2, confirmedCount: 2, awaitingCount: 0 },
+      }),
+    };
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
+
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+
+    expect(await screen.findByText("2 of 2 locked")).toBeVisible();
+    await waitFor(() => expect(h.autoRevealOptions?.decision).toMatchObject({
+      complete: true,
+      eligibleCount: 2,
+      lockedCount: 2,
+    }));
+    await h.autoRevealOptions?.onAutoReveal();
+    expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/end-early",
+      expect.objectContaining({
+        body: JSON.stringify({
+          playId: PLAY_ID,
+          runId: RUN_ID,
+          commandId: COMMAND_ID,
+          expectedControlRevision: 5,
+        }),
+      }),
+    );
+  });
+
   it("reveals the exact selected question after Game 1 has started", async () => {
     render(
       <HostPhoneClient
@@ -432,7 +516,32 @@ describe("HostPhoneClient reveal flow", () => {
       games: [live],
       currentGame: live,
     };
-    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
+    vi.spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(COMMAND_ID)
+      .mockReturnValueOnce(SECOND_COMMAND_ID);
+    h.fetch.mockImplementation(async (input: RequestInfo | URL) => new Response(
+      JSON.stringify(String(input).endsWith("/start")
+        ? {
+            code: "applied",
+            applied: true,
+            eventKind: "game_started",
+            runId: RUN_ID,
+            gameId: "g1",
+            roomRevision: 5,
+            controlRevision: 5,
+          }
+        : {
+            code: "applied",
+            applied: true,
+            eventKind: "play_opened",
+            runId: RUN_ID,
+            gameId: "g1",
+            playId: PLAY_ID,
+            roomRevision: 6,
+            controlRevision: 6,
+          }),
+      { status: 200 },
+    ));
 
     render(
       <HostPhoneClient
@@ -463,6 +572,163 @@ describe("HostPhoneClient reveal flow", () => {
     expect(h.fetch.mock.calls.findIndex(([url]) => url === "/api/games/g1/start")).toBeLessThan(
       h.fetch.mock.calls.findIndex(([url]) => url === "/api/games/g1/reveal"),
     );
+    expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/reveal",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          questionId: "q1",
+          runId: RUN_ID,
+          commandId: SECOND_COMMAND_ID,
+          expectedControlRevision: 5,
+        }),
+      },
+    );
+  });
+
+  it("sends exact resilient bodies with a fresh command for reveal, end early, and undo", async () => {
+    const liveGame = game("g1", 1, "live");
+    const liveQuestion = { ...pickedQuestion, played_at: "2026-07-08T00:01:30Z" };
+    h.room = {
+      ...room(),
+      night: resilientNight({ control_revision: 5 }),
+      games: [liveGame],
+      currentGame: liveGame,
+      currentQuestion: null,
+      live: resilientLive(),
+    };
+    vi.spyOn(globalThis.crypto, "randomUUID")
+      .mockReturnValueOnce(COMMAND_ID)
+      .mockReturnValueOnce(SECOND_COMMAND_ID)
+      .mockReturnValueOnce(COMMAND_ID);
+
+    const view = render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/reveal",
+      expect.objectContaining({
+        body: JSON.stringify({
+          questionId: "q1",
+          runId: RUN_ID,
+          commandId: COMMAND_ID,
+          expectedControlRevision: 5,
+        }),
+      }),
+    ));
+
+    h.room = { ...h.room, currentQuestion: liveQuestion };
+    view.rerender(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /End early/i }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/end-early",
+      expect.objectContaining({
+        body: JSON.stringify({
+          playId: PLAY_ID,
+          runId: RUN_ID,
+          commandId: SECOND_COMMAND_ID,
+          expectedControlRevision: 5,
+        }),
+      }),
+    ));
+
+    fireEvent.click(screen.getByRole("button", { name: /Undo/i }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/undo",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          playId: PLAY_ID,
+          runId: RUN_ID,
+          commandId: COMMAND_ID,
+          expectedControlRevision: 5,
+        }),
+      },
+    ));
+    expect(new Set([COMMAND_ID, SECOND_COMMAND_ID]).size).toBe(2);
+  });
+
+  it("sends the exact resilient End Game body", async () => {
+    const liveGame = game("g1", 1, "live");
+    h.room = {
+      ...room(),
+      night: resilientNight({ control_revision: 5 }),
+      games: [liveGame],
+      currentGame: liveGame,
+      live: resilientLive({
+        playId: null,
+        play: null,
+        operations: { eligibleCount: 0, confirmedCount: 0, awaitingCount: 0 },
+      }),
+    };
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "End Game 1" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm end Game 1" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/end",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: RUN_ID,
+          commandId: COMMAND_ID,
+          expectedControlRevision: 5,
+        }),
+      },
+    ));
+  });
+
+  it("fails visibly before fetch when resilient play command metadata is absent", async () => {
+    const liveGame = game("g1", 1, "live");
+    const liveQuestion = { ...pickedQuestion, played_at: "2026-07-08T00:01:30Z" };
+    h.room = {
+      ...room(),
+      night: resilientNight({ control_revision: 5 }),
+      games: [liveGame],
+      currentGame: liveGame,
+      currentQuestion: liveQuestion,
+      live: resilientLive({ playId: null, play: null }),
+    };
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /End early/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/control metadata is not ready/i);
+    expect(h.fetch.mock.calls.some(([url]) => url === "/api/games/g1/end-early")).toBe(false);
+  });
+
+  it("treats a 200 rejected resilient command as a visible failure and refreshes canonical state", async () => {
+    const liveGame = game("g1", 1, "live");
+    h.room = {
+      ...room(),
+      night: resilientNight({ control_revision: 5 }),
+      games: [liveGame],
+      currentGame: liveGame,
+      live: resilientLive(),
+    };
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
+    h.fetch.mockImplementation(async () => new Response(
+      JSON.stringify({ code: "stale", applied: false }),
+      { status: 200 },
+    ));
+
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/changed before this command could be applied/i);
+    expect(h.refresh).toHaveBeenCalledTimes(1);
   });
 
   it("returns from private preview to the board without revealing", async () => {
@@ -944,6 +1210,14 @@ describe("HostPhoneClient reveal flow", () => {
         scores: [{ ...score("p1"), display_name: "Jordan", score: 6100, answered_count: 12, correct_count: 8 }],
       }),
     };
+    h.scoreRows = [{ ...score("p1"), display_name: "Jordan", score: 6100, answered_count: 12, correct_count: 8 }];
+    h.fetch.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/adjustments") {
+        h.scoreRows = [{ ...score("p1"), display_name: "Jordan", score: 6200, answered_count: 12, correct_count: 8 }];
+        return new Response(JSON.stringify({ adjustmentId: "adj-1", delta: 100 }), { status: 201 });
+      }
+      return new Response(JSON.stringify(preflightResponse()), { status: 200 });
+    });
 
     render(
       <HostPhoneClient
@@ -972,6 +1246,117 @@ describe("HostPhoneClient reveal flow", () => {
         }),
       },
     ));
+    expect(await screen.findByText("6,200")).toBeVisible();
+    expect(h.refresh).not.toHaveBeenCalled();
+
+    h.scoreRows = [{ ...score("p1"), display_name: "Jordan", score: 6300, answered_count: 13, correct_count: 9 }];
+    await act(async () => {
+      h.scoreChangeHandlers.forEach((handler) => handler());
+    });
+    expect(await screen.findByText("6,300")).toBeVisible();
+  });
+
+  it("refreshes resilient scores from the signed exact-game projection without masking later scores", async () => {
+    const liveGame = game("g1", 1, "live");
+    h.room = {
+      ...room(),
+      night: resilientNight(),
+      games: [liveGame],
+      currentGame: liveGame,
+      players: [player("p1")],
+      scoreGameId: "g1",
+      scores: [{ ...score("p1"), display_name: "Jordan", score: 6100 }],
+    };
+    h.refresh.mockImplementation(async () => {
+      h.room = {
+        ...h.room!,
+        scoreGameId: "g1",
+        scores: [{ ...score("p1"), display_name: "Jordan", score: 6200 }],
+      };
+    });
+    h.fetch.mockImplementation(async (input: RequestInfo | URL) =>
+      String(input) === "/api/adjustments"
+        ? new Response(JSON.stringify({ adjustmentId: "adj-2", delta: 100 }), { status: 201 })
+        : new Response(JSON.stringify(preflightResponse()), { status: 200 }),
+    );
+
+    const view = render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Scores" }));
+    fireEvent.click(screen.getByRole("button", { name: "Adjust points for Jordan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply +100" }));
+    await waitFor(() => expect(h.refresh).toHaveBeenCalledTimes(1));
+    view.rerender(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    expect(await screen.findByText("6,200")).toBeVisible();
+
+    h.room = {
+      ...h.room!,
+      scoreGameId: "g1",
+      scores: [{ ...score("p1"), display_name: "Jordan", score: 6300 }],
+    };
+    view.rerender(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    expect(await screen.findByText("6,300")).toBeVisible();
+  });
+
+  it("keeps intermission Game 1 score labels and adjustments bound to Game 1", async () => {
+    const game1 = game("g1", 1, "done");
+    const game2 = game("g2", 2, "ready");
+    h.room = {
+      ...room(),
+      games: [game1, game2],
+      currentGame: game1,
+      players: [player("p1")],
+    };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({
+        games: [game1, game2],
+        players: h.room.players,
+        scoreGameId: "g1",
+        scores: [{ ...score("p1"), display_name: "Jordan", score: 6100 }],
+      }),
+    };
+    h.scoreRows = [{ ...score("p1"), display_name: "Jordan", score: 6100 }];
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Scores" }));
+    expect(screen.getByRole("heading", { name: "Game 1 standings" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Adjust points for Jordan" }));
+    fireEvent.click(screen.getByRole("button", { name: "Apply +100" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/adjustments",
+      expect.objectContaining({ body: expect.stringContaining('"gameId":"g1"') }),
+    ));
+    expect(h.refresh).not.toHaveBeenCalled();
+  });
+
+  it("clears prior score rows while Game 2's score snapshot is not ready", async () => {
+    const game1 = game("g1", 1, "done");
+    const game2 = game("g2", 2, "live");
+    h.room = { ...room(), games: [game1, game2], currentGame: game2 };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({
+        games: [game1, game2],
+        scoreGameId: "g2",
+        scores: [],
+        allScores: [{ ...score("p1"), game_id: "g1", display_name: "Old Game 1", score: 6100 }],
+      }),
+    };
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Scores" }));
+    expect(screen.getByRole("heading", { name: "Game 2 standings" })).toBeVisible();
+    expect(screen.getByText("Scores appear after play begins.")).toBeVisible();
+    expect(screen.queryByText("Old Game 1")).not.toBeInTheDocument();
   });
 
   it("returns an undone reveal to the board and requires an explicit re-selection", async () => {

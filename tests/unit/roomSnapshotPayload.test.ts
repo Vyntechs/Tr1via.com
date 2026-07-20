@@ -143,4 +143,62 @@ describe("payloadToRoomSnapshot", () => {
     ]));
     expect(snap.hostDefaultThemeKey).toBe("house");
   });
+
+  it("preserves authenticated host live projection, canonical answers, and score ancestry", () => {
+    const payload = {
+      ...basePayload(),
+      audience: "host" as const,
+      night: { id: "n1", current_run_id: "run-1" },
+      self: null,
+      tvPlayerKeys: {},
+      live: {
+        runId: "run-1",
+        roomRevision: 8,
+        controlRevision: 5,
+        playId: "play-1",
+        play: {
+          playId: "play-1",
+          gameId: "g2",
+          questionId: "q1",
+          state: "resolved" as const,
+          openedAt: "2026-01-01T00:00:00Z",
+          mainZeroAt: "2026-01-01T00:00:30Z",
+          finalWindowStartsAt: null,
+          finalWindowEndsAt: "2026-01-01T00:00:32Z",
+          finalizeAt: "2026-01-01T00:00:32Z",
+          eligibleCount: 4,
+          confirmedCount: 3,
+        },
+        operations: { eligibleCount: 4, confirmedCount: 3, awaitingCount: 1 },
+      },
+      scoreGameId: "g2",
+      liveAnswers: [{
+        id: "play-1:p1",
+        questionId: "q1",
+        playerId: "p1",
+        chosenIndex: 1 as const,
+        lockedAt: "2026-01-01T00:00:05Z",
+        msToLock: 5_000,
+        isCorrect: true,
+        awardedPoints: 200,
+      }],
+      myAnswers: undefined,
+      myParticipations: undefined,
+      questionScrambles: undefined,
+    } as unknown as RoomSnapshotPayload;
+
+    const snap = payloadToRoomSnapshot(payload);
+    expect(snap.live).toMatchObject({ runId: "run-1", playId: "play-1" });
+    expect(snap.liveAnswers).toEqual([
+      expect.objectContaining({
+        id: "play-1:p1",
+        question_id: "q1",
+        player_id: "p1",
+        chosen_index: 1,
+        locked_at: "2026-01-01T00:00:05Z",
+        awarded_points: 200,
+      }),
+    ]);
+    expect(snap.scoreGameId).toBe("g2");
+  });
 });

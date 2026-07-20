@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Eyebrow, Numeric, useTheme } from "@/components/system";
 import { readableForeground } from "@/lib/theme/contrast";
 import type { HostLivePlayer } from "./HostLiveConsole";
@@ -23,7 +23,7 @@ export interface AdjustPointsModalProps {
   /** Cancel / backdrop click / Esc. */
   onCancel: () => void;
   /** Submit. Delta is a non-zero integer; reason may be empty. */
-  onSubmit: (playerId: string, delta: number, reason: string) => void;
+  onSubmit: (playerId: string, delta: number, reason: string) => void | Promise<void>;
 }
 
 const QUICK_DELTAS = [-300, -100, 100, 300] as const;
@@ -38,24 +38,58 @@ export function AdjustPointsModal({
   const [selectedId, setSelectedId] = useState(initialPlayer.id);
   const [deltaStr, setDeltaStr] = useState("100");
   const [reason, setReason] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const deltaRef = useRef<HTMLInputElement>(null);
+  const fieldId = useId();
+  const playerFieldId = `${fieldId}-player`;
+  const deltaFieldId = `${fieldId}-delta`;
+  const reasonFieldId = `${fieldId}-reason`;
 
   const parsedDelta = useMemo(() => {
     const n = Number.parseInt(deltaStr, 10);
     return Number.isFinite(n) ? n : 0;
   }, [deltaStr]);
-  const canApply = parsedDelta !== 0 && allPlayers.some((p) => p.id === selectedId);
+  const canApply = !submitting && parsedDelta !== 0 && allPlayers.some((p) => p.id === selectedId);
+
+  useEffect(() => {
+    deltaRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onCancel();
+      if (e.key === "Escape" && !submitting) onCancel();
+      if (e.key !== "Tab") return;
+      const focusable = dialogRef.current?.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), select:not([disabled]), input:not([disabled])",
+      );
+      if (!focusable?.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
+  }, [onCancel, submitting]);
 
-  function submit() {
+  async function submit() {
     if (!canApply) return;
-    onSubmit(selectedId, parsedDelta, reason.trim());
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      await onSubmit(selectedId, parsedDelta, reason.trim());
+      onCancel();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Could not save the point adjustment.");
+      setSubmitting(false);
+    }
   }
 
   return (
@@ -63,6 +97,7 @@ export function AdjustPointsModal({
       role="dialog"
       aria-modal="true"
       aria-label="Adjust points"
+      ref={dialogRef}
       data-host-mobile-surface="true"
       style={{
         position: "fixed",
@@ -74,7 +109,7 @@ export function AdjustPointsModal({
         justifyContent: "center",
       }}
       onClick={(e) => {
-        if (e.target === e.currentTarget) onCancel();
+        if (!submitting && e.target === e.currentTarget) onCancel();
       }}
     >
       <div
@@ -125,8 +160,10 @@ export function AdjustPointsModal({
             gap: 14,
           }}
         >
-          <Field label="Player">
+          <Field id={playerFieldId} label="Player">
             <select
+              id={playerFieldId}
+              aria-label="Player"
               value={selectedId}
               onChange={(e) => setSelectedId(e.target.value)}
               style={fieldStyle}
@@ -139,12 +176,14 @@ export function AdjustPointsModal({
             </select>
           </Field>
 
-          <Field label="Delta (+/- points)">
+          <Field id={deltaFieldId} label="Delta (+/- points)">
             <input
+              id={deltaFieldId}
               type="number"
+              aria-label="Delta (+/- points)"
+              ref={deltaRef}
               value={deltaStr}
               onChange={(e) => setDeltaStr(e.target.value)}
-              autoFocus
               style={{
                 ...fieldStyle,
                 fontFamily: "var(--font-mono)",
@@ -167,9 +206,11 @@ export function AdjustPointsModal({
             </div>
           </Field>
 
-          <Field label="Reason">
+          <Field id={reasonFieldId} label="Reason">
             <input
+              id={reasonFieldId}
               type="text"
+              aria-label="Reason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               placeholder="Host-awarded bonus, scoring fix, or manual correction"
@@ -179,6 +220,12 @@ export function AdjustPointsModal({
           </Field>
         </div>
 
+        {submitError && (
+          <p role="alert" style={{ margin: "14px 0 0", color: t.wrong, fontSize: 13, fontWeight: 700 }}>
+            {submitError}
+          </p>
+        )}
+
         <div
           style={{
             marginTop: 22,
@@ -187,12 +234,12 @@ export function AdjustPointsModal({
             alignItems: "center",
           }}
         >
-          <button type="button" onClick={onCancel} style={ghostBtn}>
+          <button type="button" onClick={onCancel} disabled={submitting} style={ghostBtn}>
             Cancel
           </button>
           <button
             type="button"
-            onClick={submit}
+            onClick={() => void submit()}
             disabled={!canApply}
             style={{
               ...primaryBtn,
@@ -202,8 +249,7 @@ export function AdjustPointsModal({
               cursor: canApply ? "pointer" : "not-allowed",
             }}
           >
-            Apply {parsedDelta > 0 ? "+" : ""}
-            {parsedDelta || 0}
+            {submitting ? "Applying…" : `Apply ${parsedDelta > 0 ? "+" : ""}${parsedDelta || 0}`}
           </button>
         </div>
       </div>
@@ -212,15 +258,18 @@ export function AdjustPointsModal({
 }
 
 function Field({
+  id,
   label,
   children,
 }: {
+  id: string;
   label: string;
   children: React.ReactNode;
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <label
+        htmlFor={id}
         style={{
           fontSize: 12,
           color: "var(--ink-mid)",

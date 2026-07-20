@@ -6,20 +6,25 @@
 
 "use client";
 
-import { useState, type ReactNode } from "react";
-import { ThemeProvider, useTheme, Wordmark, Eyebrow } from "@/components/system";
+import { Suspense, useState, type ReactNode } from "react";
+import { useSearchParams } from "next/navigation";
+import { ThemeProvider, Wordmark, Eyebrow } from "@/components/system";
 import {
   HostPhoneUpcoming,
   HostPhoneLive,
   HostDashboard,
   HostSetupCategories,
   HostLiveConsole,
+  HostAnswerResult,
+  HostScores,
+  HostCommandCenter,
 } from "@/components/host";
 import {
   OnboardingFirstDashboard,
   OnboardingFirstNightDone,
 } from "@/components/onboarding";
 import { TR1VIA_THEMES, THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
+import type { AnswerRow, GameScoreRow, PlayerRow, QuestionRow } from "@/lib/supabase/types";
 
 interface ScreenEntry {
   key: string;
@@ -38,10 +43,155 @@ const LAPTOP_SCREENS: ScreenEntry[] = [
 const PHONE_SCREENS: ScreenEntry[] = [
   { key: "phone-upcoming", title: "06 · Phone · upcoming", Component: HostPhoneUpcoming },
   { key: "phone-live",     title: "07 · Phone · live",     Component: HostPhoneLive },
+  { key: "phone-result",   title: "08 · Phone · answer result", Component: AnswerResultProof },
+  { key: "phone-scores",   title: "09 · Phone · scores", Component: ScoresProof },
 ];
 
+const PROOF_QUESTION: QuestionRow = {
+  id: "proof-question",
+  category_id: "proof-category",
+  prompt: "Which antibacterial ingredient was among the substances the FDA ruled ineligible for consumer antiseptic washes?",
+  options: ["Sodium lauryl sulfate", "Triclosan", "Benzalkonium chloride", "Glycerin"],
+  correct_index: 1,
+  difficulty: 3,
+  point_value: 300,
+  fact_blurb: "The FDA required stronger evidence that these ingredients were safe and effective for long-term daily use.",
+  image_url: null,
+  image_attribution: null,
+  image_source: null,
+  is_picked: true,
+  played_at: "2026-07-20T00:00:00.000Z",
+  finished_at: "2026-07-20T00:00:30.000Z",
+  source: "ai",
+};
+
+const PROOF_PLAYERS: PlayerRow[] = ["Jordan", "Morgan", "SC", "Net Slapper"].map((name, index) => ({
+  id: `proof-player-${index + 1}`,
+  night_id: "proof-night",
+  device_id: `proof-device-${index + 1}`,
+  display_name: name,
+  joined_at: "2026-07-20T00:00:00.000Z",
+  last_seen_at: "2026-07-20T00:00:30.000Z",
+  removed_at: null,
+  app_switch_total_seconds: 0,
+  can_answer: true,
+}));
+
+const PROOF_ANSWERS: AnswerRow[] = [
+  ["proof-player-1", 1, true, 1_120],
+  ["proof-player-2", 1, true, 1_560],
+  ["proof-player-3", 2, false, 2_040],
+].map(([playerId, chosenIndex, isCorrect, ms], index) => ({
+  id: `proof-answer-${index + 1}`,
+  question_id: PROOF_QUESTION.id,
+  player_id: String(playerId),
+  chosen_index: Number(chosenIndex) as 0 | 1 | 2 | 3,
+  scramble: [0, 1, 2, 3],
+  locked_at: `2026-07-20T00:00:0${index + 1}.000Z`,
+  ms_to_lock: Number(ms),
+  is_correct: Boolean(isCorrect),
+  awarded_points: isCorrect ? 300 : 0,
+}));
+
+const PROOF_SCORES: GameScoreRow[] = PROOF_PLAYERS.map((player, index) => ({
+  game_id: "proof-game",
+  player_id: player.id,
+  display_name: player.display_name,
+  score: 6_100 - index * 650,
+  correct_count: 8 - index,
+  answered_count: 12,
+  fastest_correct_ms: 1_120 + index * 250,
+}));
+
+function ProofCommandCenter({
+  stage,
+  active,
+  children,
+}: {
+  stage: "question-live" | "answer-result" | "board";
+  active: "board" | "scores";
+  children: ReactNode;
+}) {
+  return (
+    <HostCommandCenter
+      stage={stage}
+      active={active}
+      playerCount={31}
+      lockedCount={24}
+      delivery={{ tv: "unknown", currentPhones: null, recoveringPhones: null }}
+      onNavigate={() => undefined}
+    >
+      {children}
+    </HostCommandCenter>
+  );
+}
+
+function AnswerResultProof() {
+  return (
+    <ProofCommandCenter stage="answer-result" active="board">
+      <HostAnswerResult
+        question={PROOF_QUESTION}
+        answers={PROOF_ANSWERS}
+        eligibleCount={4}
+        players={PROOF_PLAYERS}
+        onReturnToBoard={() => undefined}
+      />
+    </ProofCommandCenter>
+  );
+}
+
+function ScoresProof() {
+  return (
+    <ProofCommandCenter stage="board" active="scores">
+      <HostScores
+        gameNo={1}
+        scores={PROOF_SCORES}
+        onSubmitAdjustment={async () => undefined}
+      />
+    </ProofCommandCenter>
+  );
+}
+
+function HostPhoneProof({ state }: { state: string }) {
+  if (state === "answer-result") return <AnswerResultProof />;
+  if (state === "scores") return <ScoresProof />;
+  return (
+    <ProofCommandCenter stage="question-live" active="board">
+      <HostPhoneLive
+        secondsRemaining={21}
+        lockedCount={24}
+        totalPlayers={31}
+        categoryName="Soaps"
+        pointValue={300}
+        prompt={PROOF_QUESTION.prompt}
+        onEndEarly={() => undefined}
+        onUndo={() => undefined}
+        canUndo
+      />
+    </ProofCommandCenter>
+  );
+}
+
 export default function HostGallery() {
-  const [themeKey, setThemeKey] = useState<ThemeKey>("house");
+  return <Suspense fallback={null}><HostGalleryInner /></Suspense>;
+}
+
+function HostGalleryInner() {
+  const params = useSearchParams();
+  const requestedTheme = params.get("theme") as ThemeKey | null;
+  const initialTheme = requestedTheme && THEME_KEYS.includes(requestedTheme)
+    ? requestedTheme
+    : "house";
+  const [themeKey, setThemeKey] = useState<ThemeKey>(initialTheme);
+  const proofState = params.get("proof");
+
+  if (proofState) {
+    return (
+      <ThemeProvider themeKey={themeKey}>
+        <HostPhoneProof state={proofState} />
+      </ThemeProvider>
+    );
+  }
 
   return (
     <main
@@ -72,7 +222,7 @@ export default function HostGallery() {
           ))}
         </div>
 
-        <SectionLabel>HOST PHONE · 2 SCREENS</SectionLabel>
+        <SectionLabel>HOST PHONE · 4 CORE SCREENS</SectionLabel>
         <div
           style={{
             display: "grid",

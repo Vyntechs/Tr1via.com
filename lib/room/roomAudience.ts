@@ -51,8 +51,10 @@ export interface HostLiveAnswer {
   questionId: string;
   playerId: string;
   msToLock: number;
+  lockedAt: string;
   chosenIndex: 0 | 1 | 2 | 3 | null;
   isCorrect: boolean | null;
+  awardedPoints: number | null;
 }
 
 export interface ParticipationDTO {
@@ -103,8 +105,10 @@ interface HostLiveAnswerSource {
   question_id: string;
   player_id: string;
   ms_to_lock: number;
+  locked_at: string;
   chosen_index: number | null;
   is_correct: boolean | null;
+  awarded_points: number | null;
 }
 
 export function serializeRoomPlayer(player: SafePlayerRow): RoomPlayer {
@@ -162,8 +166,10 @@ export function serializeHostLiveAnswer(
     questionId: answer.question_id,
     playerId: answer.player_id,
     msToLock: answer.ms_to_lock,
+    lockedAt: answer.locked_at,
     chosenIndex: answer.chosen_index === null ? null : optionIndex(answer.chosen_index),
     isCorrect: answer.is_correct,
+    awardedPoints: answer.awarded_points,
   };
 }
 

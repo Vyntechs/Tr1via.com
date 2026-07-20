@@ -24,6 +24,7 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 import { readableForeground } from "@/lib/theme/contrast";
 import { fetchJsonWithRetry } from "@/lib/realtime/fetchWithRetry";
 import { BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
+import type { HostLiveProjection } from "@/lib/live-answer/contracts";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -44,10 +45,21 @@ export function HostPhoneClient({
   const [directAllQuestions, setDirectAllQuestions] = useState<QuestionRow[]>([]);
   const [directAnswers, setDirectAnswers] = useState<AnswerRow[]>([]);
   const [directScoreSnapshot, setDirectScoreSnapshot] = useState<{
+    gameId: string;
     eligibilityKey: string;
     rows: GameScoreRow[];
   } | null>(null);
+  const [preferredDirectScoreGameId, setPreferredDirectScoreGameId] = useState<string | null>(null);
   const { backupMode, payload: fallbackPayload } = useRoomFallback();
+  const isResilient = room.night?.answer_engine === "resilient_v1";
+  const authoritativeLive: HostLiveProjection | null = useMemo(
+    () =>
+      isResilient &&
+      room.live?.runId === room.night?.current_run_id
+        ? room.live ?? null
+        : null,
+    [isResilient, room.live, room.night?.current_run_id],
+  );
   const resolvedCategoryForAnswers = room.lastResolvedQuestion
     ? room.categories.find((category) => category.id === room.lastResolvedQuestion?.category_id) ?? null
     : null;
@@ -83,19 +95,17 @@ export function HostPhoneClient({
   const answers = useMemo(
     () => {
       if (!answerTargetId) return [];
+      if (isResilient) {
+        return (room.liveAnswers ?? []).filter(
+          (answer) => answer.question_id === answerTargetId,
+        );
+      }
       const source = backupMode && fallbackPayload
         ? fallbackPayload.liveAnswers
         : directAnswers;
       return source.filter((answer) => answer.question_id === answerTargetId);
     },
-    [answerTargetId, backupMode, directAnswers, fallbackPayload],
-  );
-  const scores = useMemo(
-    () =>
-      backupMode && fallbackPayload
-        ? fallbackPayload.scores
-        : directScoreSnapshot?.rows ?? [],
-    [backupMode, directScoreSnapshot, fallbackPayload],
+    [answerTargetId, backupMode, directAnswers, fallbackPayload, isResilient, room.liveAnswers],
   );
   const [selection, setSelection] = useState<{
     questionId: string;
@@ -151,7 +161,7 @@ export function HostPhoneClient({
   // needed for result math; game ownership above prevents stale Game 1 data
   // from becoming Game 2's result.
   useEffect(() => {
-    if (!answerTargetId) return;
+    if (isResilient || !answerTargetId) return;
     const targetId = answerTargetId;
     const supa = getSupabaseBrowser();
     let cancelled = false;
@@ -181,14 +191,25 @@ export function HostPhoneClient({
       cancelled = true;
       void supa.removeChannel(channel);
     };
-  }, [answerTargetId]);
+  }, [answerTargetId, isResilient]);
 
   const activePlayerIdSignature = useMemo(
     () => room.players.map((player) => player.id).sort().join(","),
     [room.players],
   );
 
+  const fetchDirectScores = useCallback(async (gameId: string) => {
+    const { data, error } = await getSupabaseBrowser()
+      .from("game_scores")
+      .select("*")
+      .eq("game_id", gameId)
+      .order("score", { ascending: false });
+    if (error) throw new Error(error.message ?? "could not refresh scores");
+    return (data as GameScoreRow[] | null) ?? [];
+  }, []);
+
   useEffect(() => {
+    if (isResilient) return;
     const gameId = room.currentGame?.id;
     if (!gameId) return;
     const activeGameId = gameId;
@@ -196,21 +217,24 @@ export function HostPhoneClient({
     const supa = getSupabaseBrowser();
     let cancelled = false;
     async function load() {
-      const { data } = await supa
-        .from("game_scores")
-        .select("*")
-        .eq("game_id", activeGameId)
-        .order("score", { ascending: false });
+      const rows = await fetchDirectScores(activeGameId).catch(() => null);
       if (cancelled) return;
+      if (!rows) return;
       setDirectScoreSnapshot({
+        gameId: activeGameId,
         eligibilityKey,
-        rows: (data as GameScoreRow[] | null) ?? [],
+        rows,
       });
     }
     void load();
     const channel = supa
       .channel(`host-phone-scores:${activeGameId}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "answers" }, () => void load())
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "adjustments", filter: `game_id=eq.${activeGameId}` },
+        () => void load(),
+      )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "game_participations", filter: `game_id=eq.${activeGameId}` },
@@ -221,7 +245,7 @@ export function HostPhoneClient({
       cancelled = true;
       void supa.removeChannel(channel);
     };
-  }, [activePlayerIdSignature, room.currentGame?.id]);
+  }, [activePlayerIdSignature, fetchDirectScores, isResilient, room.currentGame?.id]);
 
   const lastRevealAt =
     room.lastBroadcast?.event === "reveal"
@@ -251,6 +275,36 @@ export function HostPhoneClient({
         .sort((a, b) => b.game_no - a.game_no)[0] ??
       null,
     [room.games],
+  );
+  // Scores are always tied to the game the host is currently viewing. During
+  // intermission that is deliberately Game 1, even though Game 2 is the next
+  // lifecycle target. Never let a stale or future-game score snapshot bleed
+  // into the standings or point-adjustment control.
+  const scoreGameId = room.currentGame?.id ?? null;
+  const scores = useMemo<GameScoreRow[]>(() => {
+    if (!scoreGameId) return [];
+    if (room.scoreGameId === scoreGameId) {
+      return room.scores ?? [];
+    }
+    if (isResilient) return [];
+    if (
+      preferredDirectScoreGameId === scoreGameId &&
+      directScoreSnapshot?.gameId === scoreGameId
+    ) {
+      return directScoreSnapshot.rows ?? [];
+    }
+    if (backupMode && fallbackPayload) {
+      return fallbackPayload.scoreGameId === scoreGameId
+        ? fallbackPayload.scores ?? []
+        : [];
+    }
+    return directScoreSnapshot?.gameId === scoreGameId
+      ? directScoreSnapshot.rows ?? []
+      : [];
+  }, [backupMode, directScoreSnapshot, fallbackPayload, isResilient, preferredDirectScoreGameId, room.scoreGameId, room.scores, scoreGameId]);
+  const scoreGame = useMemo(
+    () => room.games.find((game) => game.id === scoreGameId) ?? null,
+    [room.games, scoreGameId],
   );
   const controlCategories = useMemo(
     () =>
@@ -322,21 +376,41 @@ export function HostPhoneClient({
     setBusy(true);
     setError(null);
     try {
+      let startedControl: ResilientControl | null = null;
       if (controlGame.state === "draft" || controlGame.state === "ready") {
-        await startGame(controlGame.id);
+        startedControl = await startGame(controlGame.id);
       }
+      const resilientControl = isResilient
+        ? startedControl ?? requireResilientControl(authoritativeLive, room.night?.current_run_id)
+        : null;
       const res = await fetch(`/api/games/${controlGame.id}/reveal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId }),
+        body: JSON.stringify(
+          resilientControl
+            ? {
+                questionId,
+                runId: resilientControl.runId,
+                commandId: freshCommandId(),
+                expectedControlRevision: resilientControl.controlRevision,
+              }
+            : { questionId },
+        ),
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "reveal failed");
+      if (resilientControl) {
+        await requireAppliedCommand(res, {
+          eventKinds: ["play_opened"],
+          runId: resilientControl.runId,
+          gameId: controlGame.id,
+          questionId,
+        });
+      } else {
+        await requireOk(res, "reveal failed");
       }
       setSelection(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reveal failed.");
+      if (isResilient) room.requestRefresh?.();
     } finally {
       setBusy(false);
     }
@@ -347,22 +421,46 @@ export function HostPhoneClient({
     setBusy(true);
     setError(null);
     try {
+      const resilientPlay = isResilient
+        ? requireResilientPlay(
+            authoritativeLive,
+            room.night?.current_run_id,
+            room.currentGame.id,
+            room.currentQuestion.id,
+          )
+        : null;
       const res = await fetch(`/api/games/${room.currentGame.id}/end-early`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          questionId: room.currentQuestion.id,
-          ...(requireAllLocked ? { requireAllLocked: true } : {}),
-        }),
+        body: JSON.stringify(
+          resilientPlay
+            ? {
+                playId: resilientPlay.playId,
+                runId: resilientPlay.runId,
+                commandId: freshCommandId(),
+                expectedControlRevision: resilientPlay.controlRevision,
+              }
+            : {
+                questionId: room.currentQuestion.id,
+                ...(requireAllLocked ? { requireAllLocked: true } : {}),
+              },
+        ),
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        if (requireAllLocked && res.status === 409) return false;
-        throw new Error(body.error ?? "end-early failed");
+      if (resilientPlay) {
+        await requireAppliedCommand(res, {
+          eventKinds: ["final_window_started", "play_resolved"],
+          runId: resilientPlay.runId,
+          playId: resilientPlay.playId,
+        });
+      } else if (!res.ok && requireAllLocked && res.status === 409) {
+        return false;
+      } else {
+        await requireOk(res, "end-early failed");
       }
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-early failed.");
+      if (isResilient) room.requestRefresh?.();
       return true;
     } finally {
       setBusy(false);
@@ -374,43 +472,87 @@ export function HostPhoneClient({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/games/${room.currentGame.id}/undo`, { method: "POST" });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "undo failed");
+      const resilientPlay = isResilient
+        ? requireResilientPlay(
+            authoritativeLive,
+            room.night?.current_run_id,
+            room.currentGame.id,
+            room.currentQuestion?.id ?? null,
+          )
+        : null;
+      const res = await fetch(`/api/games/${room.currentGame.id}/undo`, resilientPlay
+        ? {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              playId: resilientPlay.playId,
+              runId: resilientPlay.runId,
+              commandId: freshCommandId(),
+              expectedControlRevision: resilientPlay.controlRevision,
+            }),
+          }
+        : { method: "POST" });
+      if (resilientPlay) {
+        await requireAppliedCommand(res, {
+          eventKinds: ["play_undone"],
+          runId: resilientPlay.runId,
+          playId: resilientPlay.playId,
+        });
+      } else {
+        await requireOk(res, "undo failed");
       }
       setSelection(null);
       setNavigation(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Undo failed.");
+      if (isResilient) room.requestRefresh?.();
     } finally {
       setBusy(false);
     }
   }
 
-  async function runLifecycle(path: string) {
+  async function runLifecycle(path: string, gameId?: string) {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(path, { method: "POST" });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "game control failed");
+      const resilientControl = isResilient && gameId
+        ? requireResilientControl(authoritativeLive, room.night?.current_run_id)
+        : null;
+      const res = await fetch(path, resilientControl
+        ? {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              runId: resilientControl.runId,
+              commandId: freshCommandId(),
+              expectedControlRevision: resilientControl.controlRevision,
+            }),
+          }
+        : { method: "POST" });
+      if (resilientControl) {
+        await requireAppliedCommand(res, {
+          eventKinds: ["game_ended"],
+          runId: resilientControl.runId,
+          gameId,
+        });
+      } else {
+        await requireOk(res, "game control failed");
       }
       setConfirmingEnd(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Game control failed.");
+      if (isResilient) room.requestRefresh?.();
     } finally {
       setBusy(false);
     }
   }
 
-  async function startGame(gameId: string) {
+  async function startGame(gameId: string): Promise<ResilientControl | null> {
     let request: RequestInit = { method: "POST" };
-    if (room.night?.answer_engine === "resilient_v1") {
-      const runId = room.night.current_run_id;
-      const expectedControlRevision = room.night.control_revision;
+    if (isResilient) {
+      const runId = room.night?.current_run_id;
+      const expectedControlRevision = room.night?.control_revision;
       if (
         !runId ||
         !Number.isInteger(expectedControlRevision) ||
@@ -424,17 +566,23 @@ export function HostPhoneClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           runId,
-          commandId: globalThis.crypto.randomUUID(),
+          commandId: freshCommandId(),
           expectedControlRevision,
         }),
       };
     }
 
     const response = await fetch(`/api/games/${gameId}/start`, request);
-    if (!response.ok) {
-      const body = (await response.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error ?? "game control failed");
+    if (isResilient) {
+      const applied = await requireAppliedCommand(response, {
+        eventKinds: ["game_started"],
+        runId: room.night?.current_run_id ?? "",
+        gameId,
+      });
+      return { runId: applied.runId, controlRevision: applied.controlRevision };
     }
+    await requireOk(response, "game control failed");
+    return null;
   }
 
   async function runStartGame(gameId: string) {
@@ -446,13 +594,14 @@ export function HostPhoneClient({
       setConfirmingEnd(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Game control failed.");
+      if (isResilient) room.requestRefresh?.();
     } finally {
       setBusy(false);
     }
   }
 
   async function adjustPoints(playerId: string, delta: number, reason: string) {
-    if (!controlGame || busy) return;
+    if (!scoreGameId || busy) throw new Error("Scores are still loading. Try again.");
     setBusy(true);
     setError(null);
     try {
@@ -461,7 +610,7 @@ export function HostPhoneClient({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           playerId,
-          gameId: controlGame.id,
+          gameId: scoreGameId,
           delta,
           reason: reason || undefined,
         }),
@@ -470,8 +619,23 @@ export function HostPhoneClient({
         const body = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "adjust failed");
       }
+      // A successful write is not enough: keep the modal pending until this
+      // exact game's canonical score projection has been refreshed. This
+      // prevents an adjustment in Game 1 from borrowing Game 2's standings.
+      if (isResilient) {
+        await room.requestRefresh?.();
+      } else {
+        const rows = await fetchDirectScores(scoreGameId);
+        setDirectScoreSnapshot({
+          gameId: scoreGameId,
+          eligibilityKey: `${scoreGameId}:${activePlayerIdSignature}`,
+          rows,
+        });
+        setPreferredDirectScoreGameId(scoreGameId);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Point adjustment failed.");
+      throw err;
     } finally {
       setBusy(false);
     }
@@ -489,20 +653,43 @@ export function HostPhoneClient({
     backupMode && fallbackPayload
       ? directEligibilityKey
       : directScoreSnapshot?.eligibilityKey ?? null;
-  const allLockedDecision = useMemo(
-    () =>
-      deriveAllLockedAutoRevealDecision({
-        currentGameId: room.currentGame?.id ?? null,
-        liveQuestionId: room.currentQuestion?.id ?? null,
-        activePlayerIds: room.players.map((player) => player.id),
-        scoreRows:
-          directEligibilityKey && eligibilityReadyKey === directEligibilityKey
-            ? scores
-            : null,
-        answers,
-      }),
-    [answers, directEligibilityKey, eligibilityReadyKey, room.currentGame?.id, room.currentQuestion?.id, room.players, scores],
-  );
+  const legacyEligibleCount = useMemo(() => {
+    if (!directEligibilityKey || eligibilityReadyKey !== directEligibilityKey) return null;
+    const active = new Set(room.players.map((player) => player.id));
+    return new Set(
+      scores
+        .map((row) => row.player_id)
+        .filter((playerId): playerId is string => Boolean(playerId && active.has(playerId))),
+    ).size;
+  }, [directEligibilityKey, eligibilityReadyKey, room.players, scores]);
+  const allLockedDecision = useMemo(() => {
+    if (isResilient) {
+      const play = authoritativeLive?.play;
+      const coherent = Boolean(
+        play &&
+        play.gameId === room.currentGame?.id &&
+        play.questionId === room.currentQuestion?.id &&
+        (play.state === "accepting" || play.state === "all_in_hold"),
+      );
+      const eligibleCount = coherent ? authoritativeLive?.operations.eligibleCount ?? 0 : 0;
+      const lockedCount = coherent ? authoritativeLive?.operations.confirmedCount ?? 0 : 0;
+      return {
+        eligibleCount,
+        lockedCount,
+        complete: coherent && eligibleCount > 0 && lockedCount === eligibleCount,
+      };
+    }
+    return deriveAllLockedAutoRevealDecision({
+      currentGameId: room.currentGame?.id ?? null,
+      liveQuestionId: room.currentQuestion?.id ?? null,
+      activePlayerIds: room.players.map((player) => player.id),
+      scoreRows:
+        directEligibilityKey && eligibilityReadyKey === directEligibilityKey
+          ? scores
+          : null,
+      answers,
+    });
+  }, [answers, authoritativeLive, directEligibilityKey, eligibilityReadyKey, isResilient, room.currentGame?.id, room.currentQuestion?.id, room.players, scores]);
   useAllLockedAutoReveal({
     questionId: room.currentQuestion?.id ?? null,
     decision: allLockedDecision,
@@ -582,7 +769,7 @@ export function HostPhoneClient({
       onStart={() => currentGame && void runStartGame(currentGame.id)}
       onRequestEnd={() => setConfirmingEnd(true)}
       onCancelEnd={() => setConfirmingEnd(false)}
-      onConfirmEnd={() => currentGame && void runLifecycle(`/api/games/${currentGame.id}/end`)}
+      onConfirmEnd={() => currentGame && void runLifecycle(`/api/games/${currentGame.id}/end`, currentGame.id)}
       onCloseNight={() => void runLifecycle(`/api/nights/${nightId}/close`)}
     />
   );
@@ -590,12 +777,18 @@ export function HostPhoneClient({
   let boardContent: React.ReactNode;
   if (isLive) {
     const liveCategory = room.categories.find((category) => category.id === room.currentQuestion?.category_id) ?? null;
+    const livePlay = authoritativeLive?.play ?? null;
+    const resilientOperations = isResilient &&
+      livePlay?.gameId === room.currentGame?.id &&
+      livePlay?.questionId === room.currentQuestion?.id
+      ? authoritativeLive?.operations ?? null
+      : null;
     boardContent = (
       <HostPhoneLive
         themeKey={themeKey}
         secondsRemaining={Math.max(0, Math.floor(timer.secondsRemaining))}
-        lockedCount={lockedIds.size}
-        totalPlayers={playerCount}
+        lockedCount={resilientOperations?.confirmedCount ?? lockedIds.size}
+        totalPlayers={resilientOperations?.eligibleCount ?? playerCount}
         categoryName={liveCategory?.name ?? "Question"}
         pointValue={room.currentQuestion?.point_value ?? (room.currentQuestion?.difficulty ?? 0) * 100}
         prompt={room.currentQuestion?.prompt ?? "Question in progress"}
@@ -612,6 +805,12 @@ export function HostPhoneClient({
         question={room.lastResolvedQuestion}
         answers={answers}
         players={room.players}
+        eligibleCount={
+          isResilient &&
+          authoritativeLive?.play?.questionId === room.lastResolvedQuestion.id
+            ? authoritativeLive.play.eligibleCount
+            : legacyEligibleCount
+        }
         onReturnToBoard={() => {
           setDismissedResultKey(resultKey);
           setSelection(null);
@@ -665,9 +864,9 @@ export function HostPhoneClient({
   const sectionContent = activeSection === "scores"
     ? (
       <HostScores
-        gameNo={currentGame?.game_no ?? null}
+        gameNo={scoreGame?.game_no ?? null}
         scores={scores}
-        onSubmitAdjustment={(playerId, delta, reason) => void adjustPoints(playerId, delta, reason)}
+        onSubmitAdjustment={adjustPoints}
       />
     )
     : activeSection === "board"
@@ -703,6 +902,12 @@ export function HostPhoneClient({
         scores={[]}
       />
     );
+  const commandCenterPlay = authoritativeLive?.play ?? null;
+  const commandCenterLockedCount = isResilient &&
+    commandCenterPlay?.gameId === room.currentGame?.id &&
+    commandCenterPlay?.questionId === room.currentQuestion?.id
+    ? authoritativeLive?.operations.confirmedCount ?? 0
+    : lockedIds.size;
 
   return (
     <PhoneCenter
@@ -710,7 +915,7 @@ export function HostPhoneClient({
       stage={stage.stage}
       active={activeSection}
       playerCount={playerCount}
-      lockedCount={lockedIds.size}
+      lockedCount={commandCenterLockedCount}
       onNavigate={navigate}
       controls={roundControls}
     >
@@ -1053,6 +1258,113 @@ function roundButton(t: ReturnType<typeof useTheme>["t"], primary: boolean): Rea
     cursor: "pointer",
     flex: 1,
   };
+}
+
+interface ResilientControl {
+  runId: string;
+  controlRevision: number;
+}
+
+interface ResilientPlayControl extends ResilientControl {
+  playId: string;
+}
+
+interface AppliedCommandResult extends ResilientControl {
+  applied: true;
+  eventKind: string;
+  gameId?: string;
+  playId?: string;
+  questionId?: string;
+}
+
+function freshCommandId(): string {
+  if (typeof globalThis.crypto?.randomUUID !== "function") {
+    throw new Error("Game control metadata is not ready. Refresh the game and try again.");
+  }
+  return globalThis.crypto.randomUUID();
+}
+
+function requireResilientControl(
+  live: HostLiveProjection | null,
+  currentRunId: string | null | undefined,
+): ResilientControl {
+  if (
+    !live ||
+    !currentRunId ||
+    live.runId !== currentRunId ||
+    !Number.isInteger(live.controlRevision) ||
+    live.controlRevision < 0
+  ) {
+    throw new Error("Game control metadata is not ready. Refreshing the game before sending this command.");
+  }
+  return { runId: live.runId, controlRevision: live.controlRevision };
+}
+
+function requireResilientPlay(
+  live: HostLiveProjection | null,
+  currentRunId: string | null | undefined,
+  gameId: string,
+  questionId: string | null,
+): ResilientPlayControl {
+  const control = requireResilientControl(live, currentRunId);
+  if (
+    !live?.play ||
+    !questionId ||
+    live.play.gameId !== gameId ||
+    live.play.questionId !== questionId ||
+    live.play.state === "undone"
+  ) {
+    throw new Error("Game control metadata is not ready. Refreshing the game before sending this command.");
+  }
+  return { ...control, playId: live.play.playId };
+}
+
+async function requireOk(response: Response, fallback: string): Promise<void> {
+  if (response.ok) return;
+  const body = (await response.json().catch(() => ({}))) as { error?: string };
+  throw new Error(body.error ?? fallback);
+}
+
+async function requireAppliedCommand(
+  response: Response,
+  expected: {
+    eventKinds: string[];
+    runId: string;
+    gameId?: string;
+    playId?: string;
+    questionId?: string;
+  },
+): Promise<AppliedCommandResult> {
+  const body = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new Error(typeof body.error === "string" ? body.error : "Game command failed.");
+  }
+  if (body.applied !== true) {
+    const reason = typeof body.code === "string" ? body.code.replaceAll("_", " ") : "not applied";
+    throw new Error(`Game changed before this command could be applied (${reason}). Refreshing game state.`);
+  }
+  if (
+    typeof body.eventKind !== "string" ||
+    !expected.eventKinds.includes(body.eventKind) ||
+    body.runId !== expected.runId ||
+    !Number.isInteger(body.controlRevision)
+  ) {
+    throw new Error("Game returned an unexpected control result. Refreshing game state.");
+  }
+  if (expected.gameId && body.gameId !== expected.gameId) {
+    throw new Error("Game returned an unexpected control result. Refreshing game state.");
+  }
+  if (expected.playId && body.playId !== expected.playId) {
+    throw new Error("Game returned an unexpected control result. Refreshing game state.");
+  }
+  if (
+    expected.questionId &&
+    body.questionId !== undefined &&
+    body.questionId !== expected.questionId
+  ) {
+    throw new Error("Game returned an unexpected control result. Refreshing game state.");
+  }
+  return body as unknown as AppliedCommandResult;
 }
 
 function ErrorToast({ message, onDismiss }: { message: string; onDismiss: () => void }) {

@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { HostPhoneLive } from "@/components/host/HostPhoneLive";
 import { resolveTheme } from "@/lib/theme/resolve";
-import { readableForeground } from "@/lib/theme/contrast";
+import { contrastRatio, readableForeground } from "@/lib/theme/contrast";
 import { THEME_KEYS } from "@/lib/theme/tokens";
 
 describe("HostPhoneLive", () => {
@@ -60,5 +60,14 @@ describe("HostPhoneLive", () => {
     expect(screen.getByRole("button", { name: /End early/ })).toHaveStyle({
       color: readableForeground(resolveTheme(themeKey).accent),
     });
+  });
+
+  it.each(THEME_KEYS)("keeps every small %s live-status text role at AA contrast", (themeKey) => {
+    const theme = resolveTheme(themeKey);
+    render(<HostPhoneLive themeKey={themeKey} lockedCount={1} totalPlayers={2} />);
+    for (const text of ["QUESTION LIVE", "1 waiting", "EXPECTED VENUE TV", "Venue TV not confirmed"]) {
+      expect(screen.getByText(text)).toHaveStyle({ color: theme.ink });
+      expect(contrastRatio(theme.ink, theme.paper)).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
