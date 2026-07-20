@@ -81,4 +81,39 @@ describe("HostCommandCenter", () => {
     expect(container.firstElementChild).toHaveClass(styles.status);
     expect(styles.root).not.toBe("host-command-center");
   });
+
+  it("does not claim screen delivery before observations exist", () => {
+    render(
+      <ThemeProvider themeKey="house">
+        <HostGameStatus
+          stage="game-ready"
+          playerCount={31}
+          lockedCount={0}
+          delivery={{ tv: "unknown", currentPhones: null, recoveringPhones: null }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByText("TV not confirmed")).toBeVisible();
+    expect(screen.getByText("Phone delivery not confirmed")).toBeVisible();
+    expect(screen.queryByText(/TV live/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/phones live/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps observed recovering delivery distinct from unknown delivery", () => {
+    render(
+      <ThemeProvider themeKey="house">
+        <HostGameStatus
+          stage="question-live"
+          playerCount={31}
+          lockedCount={18}
+          delivery={{ tv: "recovering", currentPhones: 28, recoveringPhones: 3 }}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByText("TV recovering")).toBeVisible();
+    expect(screen.getByText("28 phones live · 3 recovering")).toBeVisible();
+    expect(screen.queryByText(/not confirmed/i)).not.toBeInTheDocument();
+  });
 });
