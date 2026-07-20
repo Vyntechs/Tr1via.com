@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Turn Heather's Classic host phone into a complete, familiar live-show command center while keeping the laptop complete, every audience surface synchronized, and delivery status truthful.
+**Goal:** Turn Heather's Classic host phone into a complete, familiar live-game command center while keeping the laptop complete, every audience surface synchronized, and delivery status truthful.
 
-**Architecture:** Derive one pure host stage from the existing canonical game snapshot, render device-specific controls from that stage, and keep game authority in the existing resilient answer engine. Add a write-only, audience-safe observation channel solely for Show Pulse delivery receipts; observations never advance, score, resolve, or identify players in a public payload. Existing internal route, type, and database names containing `room` remain unchanged; no host or player sees those names.
+**Architecture:** Derive one pure host stage from the existing canonical game snapshot, render device-specific controls from that stage, and keep game authority in the existing resilient answer engine. Add a write-only, audience-safe observation channel solely for Game Sync delivery receipts; observations never advance, score, resolve, or identify players in a public payload. Existing internal route, type, and database names containing `room` remain unchanged; no host or player sees those names.
 
 **Tech Stack:** Next.js 16 App Router, React 19, TypeScript strict, Tailwind v4/theme tokens, Supabase Postgres/Auth/Realtime, Vitest, Testing Library, Playwright.
 
@@ -27,15 +27,15 @@
 
 **New pure contracts**
 
-- `lib/host/showConsole.ts` — maps canonical game/TV state into the host's stage and primary action.
-- `lib/host/showDelivery.ts` — classifies current/recovering TV and aggregate phone observations.
-- `lib/hooks/useShowDelivery.ts` — reports the current surface revision and polls the host-only aggregate receipt.
+- `lib/host/gameConsole.ts` — maps canonical game/TV state into the host's stage and primary action.
+- `lib/host/gameDelivery.ts` — classifies current/recovering TV and aggregate phone observations.
+- `lib/hooks/useGameDelivery.ts` — reports the current surface revision and polls the host-only aggregate receipt.
 
 **New host presentation**
 
 - `components/host/HostCommandCenter.tsx` — responsive shell and persistent Board/Players/Scores/TV navigation.
-- `components/host/HostShowStatus.tsx` — compact always-visible show status and Show Pulse receipt.
-- `components/host/HostShowReady.tsx` — five-check preflight and TV/phone connection test.
+- `components/host/HostGameStatus.tsx` — compact always-visible game status and Game Sync receipt.
+- `components/host/HostGameReady.tsx` — five-check preflight and TV/phone connection test.
 - `components/host/HostPhoneBoard.tsx` — familiar 3×7 board and private preview.
 - `components/host/HostAnswerResult.tsx` — result, distribution, fastest five, and return-to-board action.
 - `components/host/HostBetweenGames.tsx` — explicit intermission and finale controls.
@@ -65,8 +65,8 @@
 ### Task 1: Canonical Host Stage Contract
 
 **Files:**
-- Create: `lib/host/showConsole.ts`
-- Test: `tests/unit/show-console.test.ts`
+- Create: `lib/host/gameConsole.ts`
+- Test: `tests/unit/game-console.test.ts`
 
 **Interfaces:**
 - Consumes: `RoomSnapshot`, `TVSnapshot`, and existing `deriveHostMode()` semantics.
@@ -76,11 +76,11 @@
 
 ```ts
 import { describe, expect, it } from "vitest";
-import { deriveHostStage } from "@/lib/host/showConsole";
+import { deriveHostStage } from "@/lib/host/gameConsole";
 
 describe("deriveHostStage", () => {
-  it("uses show-ready before game 1 starts", () => {
-    expect(deriveHostStage({ game1: "ready", game2: "ready", livePlay: null, lastResolve: null, nightClosed: false })).toEqual({ stage: "show-ready", primary: "start-game-1" });
+  it("uses game-ready before game 1 starts", () => {
+    expect(deriveHostStage({ game1: "ready", game2: "ready", livePlay: null, lastResolve: null, nightClosed: false })).toEqual({ stage: "game-ready", primary: "start-game-1" });
   });
 
   it("never reuses the prior reveal between games", () => {
@@ -95,14 +95,14 @@ describe("deriveHostStage", () => {
 
 - [ ] **Step 2: Run the test and confirm the contract is missing**
 
-Run: `npx vitest run tests/unit/show-console.test.ts`
+Run: `npx vitest run tests/unit/game-console.test.ts`
 
-Expected: FAIL because `@/lib/host/showConsole` does not exist.
+Expected: FAIL because `@/lib/host/gameConsole` does not exist.
 
 - [ ] **Step 3: Implement the pure stage model**
 
 ```ts
-export type HostStage = "show-ready" | "board" | "private-preview" | "question-live" | "answer-result" | "intermission" | "finale";
+export type HostStage = "game-ready" | "board" | "private-preview" | "question-live" | "answer-result" | "intermission" | "finale";
 export type HostPrimaryAction = "start-game-1" | "show-question" | "end-early" | "return-to-board" | "start-game-2" | "present-winners" | "end-game" | null;
 
 export interface HostStageInput {
@@ -118,7 +118,7 @@ export interface HostStageInput {
 export function deriveHostStage(input: HostStageInput): { stage: HostStage; primary: HostPrimaryAction } {
   if (input.nightClosed || input.game2 === "done") return { stage: "finale", primary: input.winnersPresented ? "end-game" : "present-winners" };
   if (input.game1 === "done" && input.game2 !== "live" && input.game2 !== "done") return { stage: "intermission", primary: "start-game-2" };
-  if (input.game1 !== "live" && input.game2 !== "live") return { stage: "show-ready", primary: "start-game-1" };
+  if (input.game1 !== "live" && input.game2 !== "live") return { stage: "game-ready", primary: "start-game-1" };
   if (input.livePlay) return { stage: "question-live", primary: "end-early" };
   if (input.lastResolve) return { stage: "answer-result", primary: "return-to-board" };
   if (input.stagedQuestion) return { stage: "private-preview", primary: "show-question" };
@@ -128,15 +128,15 @@ export function deriveHostStage(input: HostStageInput): { stage: HostStage; prim
 
 - [ ] **Step 4: Run the focused tests**
 
-Run: `npx vitest run tests/unit/show-console.test.ts tests/unit/deriveHostMode.test.ts`
+Run: `npx vitest run tests/unit/game-console.test.ts tests/unit/deriveHostMode.test.ts`
 
 Expected: PASS with laptop and phone modes agreeing on intermission/finale boundaries.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add lib/host/showConsole.ts tests/unit/show-console.test.ts
-git commit -m "feat: define canonical host show stages"
+git add lib/host/gameConsole.ts tests/unit/game-console.test.ts
+git commit -m "feat: define canonical host game stages"
 ```
 
 ---
@@ -145,7 +145,7 @@ git commit -m "feat: define canonical host show stages"
 
 **Files:**
 - Create: `components/host/HostCommandCenter.tsx`
-- Create: `components/host/HostShowStatus.tsx`
+- Create: `components/host/HostGameStatus.tsx`
 - Modify: `components/host/index.ts`
 - Test: `tests/component/HostCommandCenter.test.tsx`
 
@@ -177,7 +177,7 @@ export type HostSection = "board" | "players" | "scores" | "tv";
 export function HostCommandCenter({ active = "board", onNavigate, truth, children }: Props) {
   return (
     <main className="host-command-center" data-stage={truth.stage}>
-      <HostShowStatus {...truth} />
+      <HostGameStatus {...truth} />
       <section className="host-command-center__body">{children}</section>
       <nav aria-label="Host controls" className="host-command-center__nav">
         {(["board", "players", "scores", "tv"] as const).map((section) => (
@@ -200,7 +200,7 @@ Expected: PASS; navigation is present without a `More` menu and the truth region
 - [ ] **Step 5: Commit**
 
 ```bash
-git add components/host/HostCommandCenter.tsx components/host/HostShowStatus.tsx components/host/index.ts tests/component/HostCommandCenter.test.tsx
+git add components/host/HostCommandCenter.tsx components/host/HostGameStatus.tsx components/host/index.ts tests/component/HostCommandCenter.test.tsx
 git commit -m "feat: add responsive host command center"
 ```
 
@@ -264,14 +264,14 @@ git commit -m "feat: make phone question picking match the board"
 
 ---
 
-### Task 4: Show Ready Preflight
+### Task 4: Game Ready Preflight
 
 **Files:**
-- Create: `components/host/HostShowReady.tsx`
+- Create: `components/host/HostGameReady.tsx`
 - Create: `app/api/nights/[id]/preflight/route.ts`
 - Modify: `app/host/phone/[nightId]/HostPhoneClient.tsx`
 - Test: `tests/unit/api-night-preflight.test.ts`
-- Test: `tests/component/HostShowReady.test.tsx`
+- Test: `tests/component/HostGameReady.test.tsx`
 
 **Interfaces:**
 - Produces: `{ content, tv, players, network, controls, canStart, checkedAt }`.
@@ -294,7 +294,7 @@ expect(screen.getByRole("img", { name: "Venue TV preview" })).toBeVisible();
 
 - [ ] **Step 2: Run and observe the missing preflight**
 
-Run: `npx vitest run tests/unit/api-night-preflight.test.ts tests/component/HostShowReady.test.tsx`
+Run: `npx vitest run tests/unit/api-night-preflight.test.ts tests/component/HostGameReady.test.tsx`
 
 Expected: FAIL because route and screen do not exist.
 
@@ -304,15 +304,15 @@ Expected: FAIL because route and screen do not exist.
 
 - [ ] **Step 4: Verify start behavior and ownership**
 
-Run: `npx vitest run tests/unit/api-night-preflight.test.ts tests/component/HostShowReady.test.tsx tests/component/HostPhoneClient.test.tsx`
+Run: `npx vitest run tests/unit/api-night-preflight.test.ts tests/component/HostGameReady.test.tsx tests/component/HostPhoneClient.test.tsx`
 
 Expected: PASS; non-owner receives 403, missing TV disables start with a reason, and player count zero does not block a valid rehearsal.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add components/host/HostShowReady.tsx app/api/nights/'[id]'/preflight/route.ts app/host/phone/'[nightId]'/HostPhoneClient.tsx tests/unit/api-night-preflight.test.ts tests/component/HostShowReady.test.tsx
-git commit -m "feat: add host show-ready preflight"
+git add components/host/HostGameReady.tsx app/api/nights/'[id]'/preflight/route.ts app/host/phone/'[nightId]'/HostPhoneClient.tsx tests/unit/api-night-preflight.test.ts tests/component/HostGameReady.test.tsx
+git commit -m "feat: add host game-ready preflight"
 ```
 
 ---
@@ -405,7 +405,7 @@ Clear resolved-question presentation whenever Game 1 is done and Game 2 is not l
 
 Run: `npx vitest run tests/component/HostBetweenGames.test.tsx tests/unit/deriveHostMode.test.ts && npx playwright test tests/e2e/full-game.spec.ts`
 
-Expected: PASS from show-ready through finale, including refresh during intermission.
+Expected: PASS from game-ready through finale, including refresh during intermission.
 
 - [ ] **Step 5: Commit**
 
@@ -420,9 +420,9 @@ git commit -m "feat: align intermission and finale on every surface"
 
 **Files:**
 - Create: `supabase/migrations/0028_surface_observations.sql`
-- Create: `lib/host/showDelivery.ts`
+- Create: `lib/host/gameDelivery.ts`
 - Test: `tests/integration/surface-observations-schema.test.ts`
-- Test: `tests/unit/show-delivery.test.ts`
+- Test: `tests/unit/game-delivery.test.ts`
 
 **Interfaces:**
 - Produces: `SurfaceObservation` storage and `deriveDeliveryReceipt(observations, canonical, activePlayers, now)`.
@@ -437,7 +437,7 @@ expect(deriveDeliveryReceipt(observations, { runId: "r1", roomRevision: 9, contr
 
 - [ ] **Step 2: Run the tests**
 
-Run: `npx vitest run tests/integration/surface-observations-schema.test.ts tests/unit/show-delivery.test.ts`
+Run: `npx vitest run tests/integration/surface-observations-schema.test.ts tests/unit/game-delivery.test.ts`
 
 Expected: FAIL because the table and classifier are absent.
 
@@ -464,7 +464,7 @@ Classify `current` only when the internal run, `roomRevision`, control revision,
 
 - [ ] **Step 4: Run schema and classifier tests**
 
-Run: `npx vitest run tests/integration/surface-observations-schema.test.ts tests/unit/show-delivery.test.ts`
+Run: `npx vitest run tests/integration/surface-observations-schema.test.ts tests/unit/game-delivery.test.ts`
 
 Expected: PASS; direct reads/writes are denied and observations have no foreign key to answers.
 
@@ -475,26 +475,26 @@ Review proof must show no public per-device feed, no answer fields, no raw devic
 - [ ] **Step 6: Commit**
 
 ```bash
-git add supabase/migrations/0028_surface_observations.sql lib/host/showDelivery.ts tests/integration/surface-observations-schema.test.ts tests/unit/show-delivery.test.ts
-git commit -m "feat: add private show delivery observations"
+git add supabase/migrations/0028_surface_observations.sql lib/host/gameDelivery.ts tests/integration/surface-observations-schema.test.ts tests/unit/game-delivery.test.ts
+git commit -m "feat: add private game delivery observations"
 ```
 
 ---
 
-### Task 8: Show Pulse Reporting and Host Receipt
+### Task 8: Game Sync Reporting and Host Receipt
 
 **Files:**
 - Create: `app/api/room/[code]/observe/route.ts`
 - Create: `app/api/tv/[code]/observe/route.ts`
 - Create: `app/api/host/rooms/[code]/delivery/route.ts`
-- Create: `lib/hooks/useShowDelivery.ts`
+- Create: `lib/hooks/useGameDelivery.ts`
 - Modify: `app/(player)/room/[code]/page.tsx`
 - Modify: `app/tv/[code]/page.tsx`
 - Modify: `app/host/phone/[nightId]/HostPhoneClient.tsx`
-- Modify: `components/host/HostShowStatus.tsx`
+- Modify: `components/host/HostGameStatus.tsx`
 - Test: `tests/unit/api-surface-observe.test.ts`
 - Test: `tests/unit/api-host-delivery.test.ts`
-- Test: `tests/component/HostShowStatus.test.tsx`
+- Test: `tests/component/HostGameStatus.test.tsx`
 
 **Interfaces:**
 - Surface POST body: `{ runId, roomRevision, controlRevision, playId }`.
@@ -521,23 +521,23 @@ The player route derives the player from the signed device cookie plus participa
 
 - [ ] **Step 4: Report only after a surface paints canonical state**
 
-`useShowDelivery` POSTs in an effect keyed by `runId:roomRevision:controlRevision:playId` after the surface renderer commits. The host polls the aggregate receipt while any surface is recovering, backs off after 10 seconds, and stops when the stage changes. It keeps the last confirmed receipt visible while requests travel.
+`useGameDelivery` POSTs in an effect keyed by `runId:roomRevision:controlRevision:playId` after the surface renderer commits. The host polls the aggregate receipt while any surface is recovering, backs off after 10 seconds, and stops when the stage changes. It keeps the last confirmed receipt visible while requests travel.
 
-- [ ] **Step 5: Render restrained Show Pulse feedback**
+- [ ] **Step 5: Render restrained Game Sync feedback**
 
 Use exact labels `Sending…`, `TV live ✓`, `{n} phones live ✓`, `{n} recovering — answer protected`, and `Shown everywhere`. Trigger one supported haptic only after the host command receives its canonical applied result. Under reduced motion, switch labels without animation.
 
 - [ ] **Step 6: Run route, component, and live-answer authority tests**
 
-Run: `npx vitest run tests/unit/api-surface-observe.test.ts tests/unit/api-host-delivery.test.ts tests/component/HostShowStatus.test.tsx tests/integration/live-answer-engine-schema.test.ts`
+Run: `npx vitest run tests/unit/api-surface-observe.test.ts tests/unit/api-host-delivery.test.ts tests/component/HostGameStatus.test.tsx tests/integration/live-answer-engine-schema.test.ts`
 
 Expected: PASS; forged/stale observations cannot alter canonical state and host receipts contain aggregates only.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add app/api/room/'[code]'/observe/route.ts app/api/tv/'[code]'/observe/route.ts app/api/host/rooms/'[code]'/delivery/route.ts lib/hooks/useShowDelivery.ts app/'(player)'/room/'[code]'/page.tsx app/tv/'[code]'/page.tsx app/host/phone/'[nightId]'/HostPhoneClient.tsx components/host/HostShowStatus.tsx tests/unit/api-surface-observe.test.ts tests/unit/api-host-delivery.test.ts tests/component/HostShowStatus.test.tsx
-git commit -m "feat: add truthful show pulse receipts"
+git add app/api/room/'[code]'/observe/route.ts app/api/tv/'[code]'/observe/route.ts app/api/host/rooms/'[code]'/delivery/route.ts lib/hooks/useGameDelivery.ts app/'(player)'/room/'[code]'/page.tsx app/tv/'[code]'/page.tsx app/host/phone/'[nightId]'/HostPhoneClient.tsx components/host/HostGameStatus.tsx tests/unit/api-surface-observe.test.ts tests/unit/api-host-delivery.test.ts tests/component/HostGameStatus.test.tsx
+git commit -m "feat: add truthful game sync receipts"
 ```
 
 ---
@@ -549,7 +549,7 @@ git commit -m "feat: add truthful show pulse receipts"
 - Modify: `components/host/HostCommandCenter.tsx`
 - Modify: `app/host/phone/[nightId]/HostPhoneClient.tsx`
 - Create: `tests/e2e/host-command-center-responsive.spec.ts`
-- Create: `tests/e2e/show-pulse-recovery.spec.ts`
+- Create: `tests/e2e/game-sync-recovery.spec.ts`
 - Modify: `tests/e2e/helpers/player-phone.ts`
 
 **Interfaces:**
@@ -568,7 +568,7 @@ for (const viewport of [{ width: 320, height: 568 }, { width: 430, height: 932 }
 
 - [ ] **Step 2: Run the new E2E tests**
 
-Run: `npx playwright test tests/e2e/host-command-center-responsive.spec.ts tests/e2e/show-pulse-recovery.spec.ts`
+Run: `npx playwright test tests/e2e/host-command-center-responsive.spec.ts tests/e2e/game-sync-recovery.spec.ts`
 
 Expected: FAIL until the monitor and responsive layout are wired.
 
@@ -594,14 +594,14 @@ Run: `npm run build`
 
 Expected: PASS.
 
-Run: `npx playwright test tests/e2e/host-command-center-responsive.spec.ts tests/e2e/show-pulse-recovery.spec.ts tests/e2e/full-game.spec.ts`
+Run: `npx playwright test tests/e2e/host-command-center-responsive.spec.ts tests/e2e/game-sync-recovery.spec.ts tests/e2e/full-game.spec.ts`
 
 Expected: PASS at every named viewport and lifecycle state.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add components/host/HostVenueMonitor.tsx components/host/HostCommandCenter.tsx app/host/phone/'[nightId]'/HostPhoneClient.tsx tests/e2e/host-command-center-responsive.spec.ts tests/e2e/show-pulse-recovery.spec.ts tests/e2e/helpers/player-phone.ts
+git add components/host/HostVenueMonitor.tsx components/host/HostCommandCenter.tsx app/host/phone/'[nightId]'/HostPhoneClient.tsx tests/e2e/host-command-center-responsive.spec.ts tests/e2e/game-sync-recovery.spec.ts tests/e2e/helpers/player-phone.ts
 git commit -m "test: prove command center across devices and recovery"
 ```
 
@@ -621,7 +621,7 @@ After release, run the approved four-week pilot with Heather and two additional 
 
 ## Self-Review Record
 
-- **Spec coverage:** Tasks 1–6 cover the complete Classic host lifecycle; Tasks 7–8 cover truthful Show Pulse; Task 9 covers device, recovery, reduced-motion, and cross-surface proof.
+- **Spec coverage:** Tasks 1–6 cover the complete Classic host lifecycle; Tasks 7–8 cover truthful Game Sync; Task 9 covers device, recovery, reduced-motion, and cross-surface proof.
 - **Deliberate gap:** Fair-play review remains behind the privacy/false-positive gate required by the approved spec.
 - **Authority check:** Observations are write-only inputs to an aggregate receipt and have no path into scoring or game mutation.
 - **Type consistency:** `HostStage`, `HostPrimaryAction`, `LiveRevision`, and delivery receipt names remain identical across producers and consumers.

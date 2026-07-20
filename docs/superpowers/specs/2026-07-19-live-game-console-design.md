@@ -33,9 +33,9 @@ The product must make four outcomes visible:
 
 This spec supersedes only the earlier `host phone remains unchanged` non-goal in the Original Mode Refinements design. It does not weaken that design's laptop parity, trusted-question, TV readability, or network-safety requirements.
 
-## Category Signature: Show Pulse
+## Category Signature: Game Sync
 
-Show Pulse is a coordinated cross-surface state transition, not a success toast.
+Game Sync is a coordinated cross-surface state transition, not a success toast.
 
 When Heather shows a question or answer:
 
@@ -49,7 +49,7 @@ When Heather shows a question or answer:
    - `1 recovering — answer protected`
 6. The host surface settles on `Shown everywhere` when all reachable surfaces are current. A recovering device remains visible as an aggregate until it catches up.
 
-Show Pulse does not promise impossible device certainty. `Live` means the surface has acknowledged or demonstrably fetched the current canonical revision. `Recovering` means TR1VIA has not yet observed that revision on that surface, not that the player lost an answer.
+Game Sync does not promise impossible device certainty. `Live` means the surface has acknowledged or demonstrably fetched the current canonical revision. `Recovering` means TR1VIA has not yet observed that revision on that surface, not that the player lost an answer.
 
 The product must never claim a disconnected or sleeping browser is current.
 
@@ -60,9 +60,9 @@ The product must never claim a disconnected or sleeping browser is current.
 Portrait phone navigation remains one tap deep:
 
 - **Board** — familiar 3-column by 7-row board and private cell preview.
-- **Players** — roster, connection health, late-player entry, player removal, and show lifecycle controls.
+- **Players** — roster, connection health, late-player entry, player removal, and game lifecycle controls.
 - **Scores** — standings, point adjustments, audit reason, and temporary undo where the action is genuinely reversible.
-- **TV** — the exact venue-TV state plus the controls relevant to the current show moment.
+- **TV** — the exact venue-TV state plus the controls relevant to the current game moment.
 
 There is no generic `More` drawer for live-critical controls.
 
@@ -79,7 +79,7 @@ Heather may navigate away, but she should rarely need to.
 
 ### Always-visible truth
 
-Every live host surface includes a compact **Show Status** region showing the applicable subset of:
+Every live host surface includes a compact **Game Status** region showing the applicable subset of:
 
 - active game and question state;
 - player count;
@@ -91,9 +91,9 @@ Every live host surface includes a compact **Show Status** region showing the ap
 
 The venue monitor is represented by a live thumbnail or clear current-state preview, not an abstract icon alone.
 
-## Complete Show Lifecycle
+## Complete Game Lifecycle
 
-### 1. Show Ready
+### 1. Game Ready
 
 Before Game 1, Heather sees one preflight screen with five independent checks:
 
@@ -119,7 +119,7 @@ While Heather previews:
 
 ### 3. Question Launch
 
-Show Pulse advances host, TV, and player surfaces to the same immutable play and game revision. The existing internal code symbol remains `roomRevision`; players and hosts never see that term.
+Game Sync advances host, TV, and player surfaces to the same immutable play and game revision. The existing internal code symbol remains `roomRevision`; players and hosts never see that term.
 
 - The TV prioritizes readable question text, four choices, timer, and aggregate locked count.
 - Player phones replace prior-game or prior-question history immediately.
@@ -236,7 +236,7 @@ The review presents the evidence timeline and other-player baseline. It never us
 
 ### Motion and haptics
 
-- Show Pulse is one orchestrated transition, not scattered animation.
+- Game Sync is one orchestrated transition, not scattered animation.
 - Respect `prefers-reduced-motion` and platform haptic settings.
 - Color never carries state alone; labels and icons remain present.
 - Motion must not delay the canonical state or the host's next safe action.
@@ -252,7 +252,7 @@ The UI consumes the existing authoritative identifiers and revisions from the li
 - current game and play state;
 - audience-safe aggregate counts.
 
-Show Pulse adds delivery-observation state without granting authority:
+Game Sync adds delivery-observation state without granting authority:
 
 - surface type: host, TV, or player;
 - canonical run/revision/play last observed;
@@ -309,7 +309,7 @@ The thesis is not yet proven if hosts retreat to the laptop, players ignore the 
 - Component tests cover every host state and contextual primary action.
 - Integration tests prove delivery receipts cannot advance or score the game.
 - Security tests prove audience-shaped delivery data does not expose device IDs, player answers, or private host fields.
-- End-to-end tests exercise Show Ready → question → lock-in → answer result → board → intermission → Game 2 → finale across host, TV, and multiple player contexts.
+- End-to-end tests exercise Game Ready → question → lock-in → answer result → board → intermission → Game 2 → finale across host, TV, and multiple player contexts.
 - Recovery tests delay broadcasts, lose acknowledgements, refresh players, reconnect TV, and deliver stale revisions out of order.
 - Screenshot tests cover host phone at 320×568 and 430×932, phone landscape, iPad landscape, and TV at 720p/1080p.
 - Reduced-motion and no-haptics paths preserve all information.
@@ -317,9 +317,9 @@ The thesis is not yet proven if hosts retreat to the laptop, players ignore the 
 
 ## Implementation Order
 
-1. Lock the show-state contract and audience-safe delivery-observation model.
-2. Build Show Ready and the always-visible Show Status region.
-3. Build Show Pulse receipts on top of canonical revisions without changing scoring authority.
+1. Lock the game-state contract and audience-safe delivery-observation model.
+2. Build Game Ready and the always-visible Game Status region.
+3. Build Game Sync receipts on top of canonical revisions without changing scoring authority.
 4. Complete answer-result and automatic board-return choreography.
 5. Complete explicit intermission and finale states across all surfaces.
 6. Add aggregate weak-network recovery presentation.
