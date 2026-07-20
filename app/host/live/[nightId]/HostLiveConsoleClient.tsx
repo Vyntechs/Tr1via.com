@@ -491,7 +491,11 @@ function DesktopHostLiveConsoleClient({
     }
   }
   async function handleAdjust(playerId: string, delta: number, reason: string) {
-    if (!currentGame) return;
+    if (!currentGame) {
+      const failure = new Error("No active game.");
+      setError(failure.message);
+      throw failure;
+    }
     setError(null);
     try {
       const res = await fetch("/api/adjustments", {
@@ -508,9 +512,10 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "adjust failed");
       }
-      setAdjusting(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Adjust failed.");
+      const failure = err instanceof Error ? err : new Error("Adjust failed.");
+      setError(failure.message);
+      throw failure;
     }
   }
   async function handleRemovePlayer(playerId: string) {
@@ -616,9 +621,7 @@ function DesktopHostLiveConsoleClient({
           initialPlayer={adjusting}
           allPlayers={players}
           onCancel={() => setAdjusting(null)}
-          onSubmit={(playerId, delta, reason) =>
-            void handleAdjust(playerId, delta, reason)
-          }
+          onSubmit={handleAdjust}
         />
       )}
       {addingLatecomer && (
