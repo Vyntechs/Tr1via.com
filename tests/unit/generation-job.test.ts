@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  beginGenerationJob,
-  claimGenerationResume,
   generationProgressFromRow,
   readGenerationJob,
   updateGenerationJob,
@@ -118,17 +116,14 @@ describe("generationProgressFromRow", () => {
 
 function jobClient(resultRow: QuestionGenerationJobRow | null = row()) {
   const maybeSingle = vi.fn(async () => ({ data: resultRow, error: null }));
-  const single = vi.fn(async () => ({ data: resultRow, error: null }));
   const eqAfterSelect = vi.fn(() => ({ maybeSingle }));
-  const selectAfterUpsert = vi.fn(() => ({ single }));
   const eqAfterUpdate = vi.fn(async () => ({ data: null, error: null }));
   const select = vi.fn(() => ({ eq: eqAfterSelect }));
-  const upsert = vi.fn(() => ({ select: selectAfterUpsert }));
   const update = vi.fn(() => ({ eq: eqAfterUpdate }));
-  const from = vi.fn(() => ({ select, upsert, update }));
+  const from = vi.fn(() => ({ select, update }));
   return {
     client: { from },
-    spies: { from, select, upsert, update, eqAfterUpdate },
+    spies: { from, select, update, eqAfterUpdate },
   };
 }
 
@@ -139,99 +134,6 @@ describe("generation job persistence", () => {
       id: "job-1",
     });
     expect(spies.from).toHaveBeenCalledWith("question_generation_jobs");
-  });
-
-  it("starts a fresh build by resetting counts and the recovery boundary", async () => {
-    const { client, spies } = jobClient();
-    await beginGenerationJob(client, {
-      categoryId: "category-1",
-      gameId: "game-1",
-      nightId: "night-1",
-      hostId: "host-1",
-      targetCount: 20,
-      resume: false,
-      existing: null,
-      nowIso: "2026-07-18T12:00:00.000Z",
-    });
-
-    expect(spies.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        phase: "queued",
-        written_count: 0,
-        certified_count: 0,
-        image_count: 0,
-        attempt: 1,
-        created_at: "2026-07-18T12:00:00.000Z",
-      }),
-      { onConflict: "category_id" },
-    );
-  });
-
-  it("resumes without resetting certified counts and increments the attempt", async () => {
-    const { client, spies } = jobClient(row({ attempt: 2, certified_count: 14 }));
-    await beginGenerationJob(client, {
-      categoryId: "category-1",
-      gameId: "game-1",
-      nightId: "night-1",
-      hostId: "host-1",
-      targetCount: 20,
-      resume: true,
-      existing: row({ attempt: 2, certified_count: 14 }),
-      nowIso: "2026-07-18T12:00:00.000Z",
-    });
-
-    const payload = (
-      spies.upsert.mock.calls as unknown as Array<[Record<string, unknown>]>
-    )[0]![0];
-    expect(payload.attempt).toBe(3);
-    expect(payload).not.toHaveProperty("certified_count");
-    expect(payload).not.toHaveProperty("created_at");
-  });
-
-  it("allows exactly one concurrent claim for the observed stale attempt", async () => {
-    let stored = row({ phase: "repairing", attempt: 2, certified_count: 19 });
-    const client = fencingClient(() => stored, (next) => {
-      stored = next;
-    });
-
-    const [winner, loser] = await Promise.all([
-      claimGenerationResume(client as never, {
-        categoryId: "category-1",
-        observedAttempt: 2,
-        observedPhase: "repairing",
-        observedHeartbeatAt: stored.heartbeat_at,
-        nowIso: "2026-07-20T12:00:00.000Z",
-      }),
-      claimGenerationResume(client as never, {
-        categoryId: "category-1",
-        observedAttempt: 2,
-        observedPhase: "repairing",
-        observedHeartbeatAt: stored.heartbeat_at,
-        nowIso: "2026-07-20T12:00:00.000Z",
-      }),
-    ]);
-
-    expect(winner).toMatchObject({ phase: "queued", attempt: 3, certified_count: 19 });
-    expect(loser).toBeNull();
-  });
-
-  it("rejects a recovery claim when the observed heartbeat changed", async () => {
-    let stored = row({ phase: "repairing", attempt: 2 });
-    const client = fencingClient(() => stored, (next) => {
-      stored = next;
-    });
-    stored = { ...stored, heartbeat_at: "2026-07-20T12:01:00.000Z" };
-
-    await expect(
-      claimGenerationResume(client as never, {
-        categoryId: "category-1",
-        observedAttempt: 2,
-        observedPhase: "repairing",
-        observedHeartbeatAt: "2026-07-18T11:59:55.000Z",
-        nowIso: "2026-07-20T12:02:00.000Z",
-      }),
-    ).resolves.toBeNull();
-    expect(stored).toMatchObject({ phase: "repairing", attempt: 2 });
   });
 
   it("rejects an old worker progress write after a replacement claim", async () => {

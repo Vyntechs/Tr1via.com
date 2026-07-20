@@ -302,5 +302,5 @@ Reason: Answer correctness alone cannot prove that a question belongs in the req
 
 ### generation-attempts-need-fencing-tokens
 Trigger: A stale generation worker can revive after a replacement attempt starts.
-Rule: Fence claims, progress, side effects, and terminal writes to the worker's durable attempt.
-Reason: Atomic retry admission cannot stop the superseded worker from corrupting its replacement.
+Rule: Validate the attempt inside the same locked database transaction as every durable side effect; separate preflight checks are only leases.
+Reason: A preflight can pass, block beyond lease expiry, then commit after a replacement claim.

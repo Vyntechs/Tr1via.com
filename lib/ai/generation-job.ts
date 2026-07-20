@@ -53,14 +53,6 @@ export interface GenerationJobClient {
         maybeSingle(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
       };
     };
-    upsert(
-      values: Record<string, unknown>,
-      options: { onConflict: string },
-    ): {
-      select(columns: string): {
-        single(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
-      };
-    };
     update(values: Record<string, unknown>): {
       eq(column: string, value: string): Promise<GenerationJobResult<unknown>>;
     };
@@ -77,72 +69,6 @@ export async function readGenerationJob(
     .eq("category_id", categoryId)
     .maybeSingle();
   if (error) throw new Error(`failed to read generation progress: ${error.message}`);
-  return data;
-}
-
-export interface BeginGenerationJobInput {
-  categoryId: string;
-  gameId: string;
-  nightId: string;
-  hostId: string;
-  targetCount: number;
-  resume: boolean;
-  existing: QuestionGenerationJobRow | null;
-  nowIso?: string;
-}
-
-export interface ClaimGenerationResumeInput {
-  categoryId: string;
-  observedAttempt: number;
-  /** The stored phase, not its derived stale needs_attention presentation. */
-  observedPhase: GenerationJobPhase;
-  /** The exact row version observed before claiming a stale worker. */
-  observedHeartbeatAt: string;
-  nowIso?: string;
-}
-
-/**
- * Atomically claims a stopped job for exactly one resuming worker. The
- * observed attempt and raw phase make an already-claimed/stale read a clean
- * loser instead of launching a duplicate background job.
- */
-export async function claimGenerationResume(
-  client: GenerationJobClient,
-  input: ClaimGenerationResumeInput,
-): Promise<QuestionGenerationJobRow | null> {
-  const nowIso = input.nowIso ?? new Date().toISOString();
-  const table = client.from("question_generation_jobs") as unknown as {
-    update(values: Record<string, unknown>): {
-      eq(column: string, value: string | number): {
-        eq(column: string, value: string | number): {
-          eq(column: string, value: string | number): {
-            eq(column: string, value: string | number): {
-              select(columns: string): {
-                maybeSingle(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
-              };
-            };
-          };
-        };
-      };
-    };
-  };
-  const { data, error } = await table
-    .update({
-      phase: "queued",
-      attempt: input.observedAttempt + 1,
-      last_error: null,
-      heartbeat_at: nowIso,
-      updated_at: nowIso,
-    })
-    .eq("category_id", input.categoryId)
-    .eq("attempt", input.observedAttempt)
-    .eq("phase", input.observedPhase)
-    .eq("heartbeat_at", input.observedHeartbeatAt)
-    .select("*")
-    .maybeSingle();
-  if (error) {
-    throw new Error(`failed to claim generation recovery: ${error.message}`);
-  }
   return data;
 }
 
@@ -175,46 +101,6 @@ export async function updateGenerationJobForAttempt(
     throw new Error(`failed to update generation progress: ${error.message}`);
   }
   return data !== null;
-}
-
-export async function beginGenerationJob(
-  client: GenerationJobClient,
-  input: BeginGenerationJobInput,
-): Promise<QuestionGenerationJobRow> {
-  const nowIso = input.nowIso ?? new Date().toISOString();
-  const resume = input.resume && input.existing !== null;
-  const values: Record<string, unknown> = {
-    category_id: input.categoryId,
-    game_id: input.gameId,
-    night_id: input.nightId,
-    host_id: input.hostId,
-    phase: "queued",
-    target_count: input.targetCount,
-    attempt: resume ? input.existing!.attempt + 1 : 1,
-    last_error: null,
-    heartbeat_at: nowIso,
-    updated_at: nowIso,
-  };
-  if (!resume) {
-    Object.assign(values, {
-      written_count: 0,
-      certified_count: 0,
-      image_count: 0,
-      created_at: nowIso,
-    });
-  }
-
-  const { data, error } = await client
-    .from("question_generation_jobs")
-    .upsert(values, { onConflict: "category_id" })
-    .select("*")
-    .single();
-  if (error || !data) {
-    throw new Error(
-      `failed to start generation progress: ${error?.message ?? "no job row returned"}`,
-    );
-  }
-  return data;
 }
 
 type GenerationJobPatch = Partial<

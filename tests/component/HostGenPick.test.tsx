@@ -290,6 +290,7 @@ describe("HostSetupPickClient audit summary recovery", () => {
 
     await act(async () => {
       supa.broadcast("done", {
+        attempt: 1,
         count: 7,
         serverNow: "2026-06-29T12:00:00.000Z",
         auditSummary: {
@@ -309,6 +310,37 @@ describe("HostSetupPickClient audit summary recovery", () => {
     });
     expect(screen.getByText("7 accepted from 10 candidates")).toBeInTheDocument();
     expect(screen.getByText("Estimated AI cost: $0.13")).toBeInTheDocument();
+  });
+
+  it("ignores a late completion broadcast from a superseded generation attempt", async () => {
+    supa = createSupabaseMock({
+      questions: [],
+      report: null,
+      categoryState: "generating",
+      job: { attempt: 2, phase: "writing" },
+    });
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Snakes"
+        categoryTopic="non-venomous snakes"
+        initialState="generating"
+        initialQuestions={[]}
+        themeKey="house"
+      />,
+    );
+
+    await act(async () => {
+      await supa.broadcast("done", {
+        attempt: 1,
+        count: 20,
+        serverNow: "2026-07-20T11:59:59.000Z",
+      });
+    });
+
+    expect(screen.getByTestId("host-gen-loading-layout")).toBeInTheDocument();
+    expect(screen.queryByTestId("host-gen-audit-summary")).not.toBeInTheDocument();
   });
 });
 
@@ -338,8 +370,12 @@ function createSupabaseMock(input: {
   questions: QuestionRow[];
   report: Record<string, unknown> | null;
   categoryState?: "draft" | "generating" | "review" | "ready";
+  job?: { attempt: number; phase: string };
 }) {
-  const handlers = new Map<string, (msg: { payload: unknown }) => void>();
+  const handlers = new Map<
+    string,
+    (msg: { payload: unknown }) => void | Promise<void>
+  >();
 
   return {
     channel: vi.fn(() => {
@@ -347,7 +383,7 @@ function createSupabaseMock(input: {
         on: vi.fn((
           _kind: string,
           filter: { event: string },
-          handler: (msg: { payload: unknown }) => void,
+          handler: (msg: { payload: unknown }) => void | Promise<void>,
         ) => {
           handlers.set(filter.event, handler);
           return channel;
@@ -357,16 +393,29 @@ function createSupabaseMock(input: {
       return channel;
     }),
     removeChannel: vi.fn(),
-    broadcast(event: string, payload: unknown) {
-      handlers.get(event)?.({ payload });
+    async broadcast(event: string, payload: unknown) {
+      await handlers.get(event)?.({ payload });
     },
     from: vi.fn((table: string) => {
       if (table === "questions") return createQuestionsQuery(input.questions);
       if (table === "question_generation_reports") {
         return createReportQuery(input.report);
       }
+      if (table === "question_generation_jobs") {
+        return createGenerationJobQuery(input.job ?? { attempt: 1, phase: "ready" });
+      }
       return createCategoriesQuery(input.categoryState ?? "review");
     }),
+  };
+}
+
+function createGenerationJobQuery(job: { attempt: number; phase: string }) {
+  return {
+    select: vi.fn(() => ({
+      eq: vi.fn(() => ({
+        maybeSingle: vi.fn(async () => ({ data: job, error: null })),
+      })),
+    })),
   };
 }
 

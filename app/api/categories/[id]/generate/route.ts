@@ -9,8 +9,8 @@
 //      exist; then each row gets a Pexels photo. A `progress` heartbeat is
 //      broadcast on `category:{id}` every ~12s while writing/checking, then
 //      `question_added` / `photo_attached` as rows land — for HostGenLoading.
-//   4. On completion: category.state = 'review'. On failure: rolled back
-//      to 'draft' and an `error` broadcast is sent.
+//   4. On completion: category.state = 'review'. On a first-run failure the
+//      certified checkpoint stays resumable; rerolls restore the prior review.
 //
 // Host-only. Body shape per lib/api/schemas.ts → GenerateCategoryBodySchema.
 
@@ -45,13 +45,19 @@ import {
   questionGenerationReportInsertFromSnapshot,
   type QuestionGenerationReportContext,
 } from "@/lib/ai/question-generation-report";
-import { persistQuestionGenerationReport } from "@/lib/ai/question-generation-report-store";
+import {
+  beginQuestionGeneration,
+  claimQuestionGenerationResume,
+  commitGenerationPhoto,
+  commitGenerationQuestions,
+  completeQuestionGeneration,
+  failQuestionGeneration,
+  type GenerationRpcClient,
+} from "@/lib/ai/generation-effects";
 import { costUsd, type TokenUsage } from "@/lib/ai/usage-cost";
 import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import {
-  beginGenerationJob,
-  claimGenerationResume,
   generationProgressFromRow,
   readGenerationJob,
   updateGenerationJob,
@@ -62,7 +68,7 @@ import {
 import { createGenerationHeartbeat } from "@/lib/ai/generation-heartbeat";
 import { rerollPlan } from "@/lib/host/rerollPlan";
 import {
-  pickQuestionsForCategory,
+  prepareQuestionAssignmentsForCategory,
   selectSpreadQuestionIds,
 } from "@/lib/host/pickQuestions";
 import { PexelsRateLimitError } from "@/lib/pexels/search";
@@ -113,6 +119,7 @@ export async function POST(
 
   const admin = getSupabaseAdmin();
   const jobClient = admin as unknown as GenerationJobClient;
+  const rpcClient = admin as unknown as GenerationRpcClient;
   let existingJob = null;
   if (category.state === "generating") {
     try {
@@ -146,36 +153,6 @@ export async function POST(
   }
 
   let job: QuestionGenerationJobRow;
-  try {
-    if (resume) {
-      const claimed = await claimGenerationResume(jobClient, {
-        categoryId,
-        observedAttempt: existingJob!.attempt,
-        observedPhase: existingJob!.phase,
-        observedHeartbeatAt: existingJob!.heartbeat_at,
-      });
-      if (!claimed) return conflict("generation recovery already starting");
-      job = claimed;
-    } else {
-      job = await beginGenerationJob(jobClient, {
-        categoryId,
-        gameId: category.game_id,
-        nightId: owned.night.id,
-        hostId: owned.host.id,
-        targetCount: 20,
-        resume: false,
-        existing: null,
-      });
-    }
-  } catch (error) {
-    return badRequest(
-      error instanceof Error ? error.message : "could not start generation progress",
-    );
-  }
-
-  // Mark generating + remember the flavor so we can regenerate identically.
-  // The schema's strict shape -> Json roundtrip is safe (only strings + a
-  // string-enum in the schema).
   // Only flavor + difficulty are persisted for "regenerate identically".
   // keptIds is per-reroll and must not pollute the stored flavor.
   const flavorJson: Json = JSON.parse(
@@ -184,15 +161,30 @@ export async function POST(
       difficulty: parsed.data.difficulty,
     }),
   );
-  const { error: updateError } = await admin
-    .from("categories")
-    .update({
-      state: "generating",
-      flavor: flavorJson,
-    })
-    .eq("id", categoryId);
-  if (updateError) {
-    return badRequest(`failed to start generation: ${updateError.message}`);
+  try {
+    if (resume) {
+      const claimed = await claimQuestionGenerationResume(rpcClient, {
+        categoryId,
+        observedAttempt: existingJob!.attempt,
+        observedPhase: existingJob!.phase,
+        observedHeartbeatAt: existingJob!.heartbeat_at,
+        flavor: flavorJson,
+      });
+      if (!claimed) return conflict("generation recovery already starting");
+      job = claimed;
+    } else {
+      const begun = await beginQuestionGeneration(rpcClient, {
+        categoryId,
+        targetCount: 20,
+        flavor: flavorJson,
+      });
+      if (!begun) return conflict("generation already starting");
+      job = begun;
+    }
+  } catch (error) {
+    return badRequest(
+      error instanceof Error ? error.message : "could not start generation progress",
+    );
   }
 
   // Fire-and-forget the background job. `after` runs once the response has
@@ -237,47 +229,22 @@ export async function POST(
       // are durable and the next click fills only the shortfall. Rerolls keep
       // their older atomic behavior because the host already has a complete,
       // usable pool and should stay on it.
-      const fenceWon = await updateGenerationJobForAttempt(
-        jobClient,
-        categoryId,
-        job.attempt,
-        {},
-      ).catch(() => false);
-      if (!fenceWon) return;
-      if (parsed.data.keptIds) {
-        try {
-          if (!(await updateGenerationJobForAttempt(jobClient, categoryId, job.attempt, {}))) {
-            return;
-          }
-          await admin
-            .from("categories")
-            .update({ state: "review" })
-            .eq("id", categoryId);
-        } catch {
-          /* best-effort */
-        }
-      }
       try {
-        const terminalWriteWon = await updateGenerationJobForAttempt(
-          jobClient,
+        const applied = await failQuestionGeneration(rpcClient, {
           categoryId,
-          job.attempt,
-          {
-            phase: "needs_attention",
-            last_error: hostMessage,
-          },
-        );
-        if (!terminalWriteWon) return;
+          attempt: job.attempt,
+          restoreState: parsed.data.keptIds ? "review" : null,
+          error: hostMessage,
+        });
+        if (!applied) return;
       } catch {
         /* best-effort */
         return;
       }
       try {
-        if (!(await updateGenerationJobForAttempt(jobClient, categoryId, job.attempt, {}))) {
-          return;
-        }
         await broadcastToCategory(categoryId, "error", {
           serverNow: new Date().toISOString(),
+          attempt: job.attempt,
           error: hostMessage,
         });
       } catch {
@@ -286,7 +253,7 @@ export async function POST(
     });
   });
 
-  return ok({ status: "generating", categoryId }, 202);
+  return ok({ status: "generating", categoryId, attempt: job.attempt }, 202);
 }
 
 async function safeJson(req: NextRequest): Promise<unknown> {
@@ -327,6 +294,7 @@ async function runGenerationJob(opts: {
 }): Promise<void> {
   const admin = getSupabaseAdmin();
   const jobClient = admin as unknown as GenerationJobClient;
+  const rpcClient = admin as unknown as GenerationRpcClient;
   const qualityReport = createQuestionGenerationReportAccumulator({
     requestedCount: 20,
     verifyPasses: 2,
@@ -432,6 +400,7 @@ async function runGenerationJob(opts: {
     const payload: CategoryProgressPayload = {
       serverNow: new Date().toISOString(),
       phase,
+      attempt: opts.attempt,
     };
     return broadcastToCategory(opts.categoryId, "progress", payload).catch(
       () => undefined,
@@ -460,35 +429,22 @@ async function runGenerationJob(opts: {
 
   const insertedQuestions = [...storedQuestions];
   const persistCertifiedBatch = async (batch: GeneratedQuestion[]) => {
-    const insertRows = batch.map((q) => ({
-      category_id: opts.categoryId,
-      prompt: q.prompt,
-      options: q.options as unknown as [string, string, string, string],
-      correct_index: q.correctIndex,
-      difficulty: q.difficulty,
-      fact_blurb: q.factBlurb,
-      source: "ai" as const,
-      is_picked: false,
-    }));
-    await fenceSideEffect();
-    const { data, error } = await admin
-      .from("questions")
-      .insert(insertRows)
-      .select("id, prompt");
-    if (error) throw new Error(`failed to save certified questions: ${error.message}`);
-    if (!data || data.length !== batch.length) {
-      throw new Error("certified question checkpoint returned an incomplete result");
-    }
-    for (let index = 0; index < data.length; index += 1) {
-      insertedQuestions.push({
-        id: data[index]!.id,
-        q: batch[index]!,
-        hasImage: false,
-      });
+    const persisted = await commitGenerationQuestions(rpcClient, {
+      categoryId: opts.categoryId,
+      attempt: opts.attempt,
+      questions: batch,
+      // Reroll replacement is one atomic effect: the complete fresh batch is
+      // inserted before the old unpicked candidates disappear.
+      deleteIds: opts.keptIds ? reroll?.deleteIds : undefined,
+    });
+    if (!persisted) throw new GenerationAttemptSupersededError();
+    insertedQuestions.push(...persisted);
+    for (const row of persisted) {
       await fenceSideEffect();
       await broadcastToCategory(opts.categoryId, "question_added", {
         serverNow: new Date().toISOString(),
-        questionId: data[index]!.id,
+        attempt: opts.attempt,
+        questionId: row.id,
       }).catch(() => undefined);
     }
     certifiedCount += batch.length;
@@ -602,22 +558,6 @@ async function runGenerationJob(opts: {
     hasImage,
   }));
 
-  // Reroll cleanup: the fresh batch is safely inserted, so now remove the
-  // previously-shown unpicked candidates. Picked rows were spared by the plan.
-  // Generate-first ordering guarantees a generation/insert failure never
-  // empties the pool. Non-fatal if it fails — worst case the old pile lingers.
-  if (reroll && reroll.deleteIds.length > 0) {
-    await fenceSideEffect();
-    const { error: cleanupError } = await admin
-      .from("questions")
-      .delete()
-      .eq("category_id", opts.categoryId)
-      .in("id", reroll.deleteIds);
-    if (cleanupError) {
-      console.warn("[generate] reroll cleanup failed:", cleanupError.message);
-    }
-  }
-
   // Pick BEFORE photos on the auto-build path. The founder "build a full game"
   // tool keeps only 7 of the 20 generated questions, so photographing all 20
   // then discarding 13 does ~3x the Pexels work for nothing — and 12 categories
@@ -633,6 +573,7 @@ async function runGenerationJob(opts: {
   let photoTargets = inserted
     .filter((row) => !row.hasImage)
     .map((row) => ({ id: row.id, q: row.q }));
+  let autoPickAssignments: Array<{ id: string; pointValue: number }> | null = null;
   if (opts.autoPick) {
     const ids = selectSpreadQuestionIds(
       inserted.map((row) => ({
@@ -641,11 +582,11 @@ async function runGenerationJob(opts: {
       })),
       7,
     );
-    await fenceSideEffect();
-    const result = await pickQuestionsForCategory(opts.categoryId, ids);
+    const result = await prepareQuestionAssignmentsForCategory(opts.categoryId, ids);
     if (!result.ok) {
       throw new Error(`auto-pick failed: ${result.error}`);
     }
+    autoPickAssignments = result.picked;
     const keep = new Set(ids);
     photoTargets = photoTargets.filter((t) => keep.has(t.id));
   }
@@ -659,32 +600,26 @@ async function runGenerationJob(opts: {
     try {
       const photo = await autoAttachPhoto(q, { topic: opts.topic });
       if (photo.imageUrl) {
-        await fenceSideEffect();
-        const { error: photoUpdateError } = await admin
-          .from("questions")
-          .update({
-            image_url: photo.imageUrl,
-            image_attribution: photo.attribution,
-            image_source: "pexels",
-          })
-          .eq("id", id);
-        if (photoUpdateError) {
-          console.warn(
-            "[generate] photo update failed for question:",
-            photoUpdateError.message,
-          );
-        } else {
-          qualityReport.recordImageAttached();
-          imageCount += 1;
-          await writeWorkerProgress({
-            phase: "images",
-            image_count: imageCount,
-          });
-        }
+        const applied = await commitGenerationPhoto(rpcClient, {
+          categoryId: opts.categoryId,
+          attempt: opts.attempt,
+          questionId: id,
+          imageUrl: photo.imageUrl,
+          attribution: photo.attribution,
+          source: "pexels",
+        });
+        if (!applied) throw new GenerationAttemptSupersededError();
+        qualityReport.recordImageAttached();
+        imageCount += 1;
+        await writeWorkerProgress({
+          phase: "images",
+          image_count: imageCount,
+        });
       }
       await fenceSideEffect();
       await broadcastToCategory(opts.categoryId, "photo_attached", {
         serverNow: new Date().toISOString(),
+        attempt: opts.attempt,
         questionId: id,
         imageUrl: photo.imageUrl,
         attribution: photo.attribution,
@@ -708,31 +643,23 @@ async function runGenerationJob(opts: {
     generated.length >= 20 ? "completed" : "partial",
   );
   const auditSummary = hostAuditSummaryFromSnapshot(reportSnapshot);
-  await fenceSideEffect();
-  await persistQuestionGenerationReport(
-    admin,
-    questionGenerationReportInsertFromSnapshot(opts.reportContext, reportSnapshot),
-  );
-
-  // Step 4: finalize state. The auto-build is already 'ready' (picked above);
-  // manual review stops at 'review' for the host to curate. Persist the report
-  // first so DB-poll fallback can't observe review before the summary exists.
-  if (!opts.autoPick) {
-    await fenceSideEffect();
-    await admin
-      .from("categories")
-      .update({ state: "review" })
-      .eq("id", opts.categoryId);
-  }
-  await writeWorkerProgress({
-    phase: "ready",
-    written_count: 20,
-    certified_count: 20,
-    image_count: imageCount,
-    last_error: null,
+  const completed = await completeQuestionGeneration(rpcClient, {
+    categoryId: opts.categoryId,
+    attempt: opts.attempt,
+    report: questionGenerationReportInsertFromSnapshot(
+      opts.reportContext,
+      reportSnapshot,
+    ),
+    assignments: autoPickAssignments,
+    categoryState: opts.autoPick ? "ready" : "review",
+    writtenCount: 20,
+    certifiedCount: 20,
+    imageCount,
   });
+  if (!completed) throw new GenerationAttemptSupersededError();
   const donePayload: CategoryDonePayload = {
     serverNow: new Date().toISOString(),
+    attempt: opts.attempt,
     count: inserted.length,
     auditSummary,
   };
