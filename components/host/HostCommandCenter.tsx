@@ -1,6 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
+import { useTheme } from "@/components/system";
 import type { HostStage } from "@/lib/host/gameConsole";
 import { HostGameStatus, type HostDeliveryReceipt } from "./HostGameStatus";
 
@@ -32,8 +33,22 @@ export function HostCommandCenter({
   onNavigate,
   children,
 }: HostCommandCenterProps) {
+  const { t } = useTheme();
+  const themeStyle = {
+    "--host-paper": t.paper,
+    "--host-ink": t.ink,
+    "--host-muted": t.inkMid,
+    "--host-line": t.line,
+    "--host-surface": t.surface,
+    "--host-active": `${t.accent}22`,
+    "--host-focus": t.pop,
+    "--host-success": t.correct,
+    "--host-danger": t.wrong,
+    "--host-accent": t.accent,
+  } as CSSProperties;
+
   return (
-    <main className="host-command-center" data-stage={stage}>
+    <main className="host-command-center" data-stage={stage} style={themeStyle}>
       <HostGameStatus
         stage={stage}
         playerCount={playerCount}
@@ -57,9 +72,6 @@ export function HostCommandCenter({
       </nav>
       <style>{`
         .host-command-center {
-          --host-ink: #fff7e9;
-          --host-muted: #b7c4d8;
-          --host-line: rgba(255, 247, 233, 0.14);
           box-sizing: border-box;
           display: grid;
           grid-template-rows: auto minmax(0, 1fr) auto;
@@ -70,7 +82,7 @@ export function HostCommandCenter({
           min-width: 0;
           overflow-x: clip;
           padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
-          background: #071125;
+          background: var(--host-paper);
           color: var(--host-ink);
           font-family: var(--font-sans, sans-serif);
         }
@@ -79,24 +91,23 @@ export function HostCommandCenter({
           border: 1px solid var(--host-line);
           border-radius: 16px;
           padding: 14px;
-          background: linear-gradient(135deg, rgba(19, 39, 72, 0.96), rgba(7, 17, 37, 0.96));
-          box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+          background: var(--host-surface);
         }
         .host-game-status__heading { display: flex; align-items: center; gap: 10px; }
-        .host-game-status__icon { color: #c8f36c; font-size: 20px; line-height: 1; }
-        .host-game-status__eyebrow { margin: 0; color: #a8e9dc; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+        .host-game-status__icon { color: var(--host-success); font-size: 20px; line-height: 1; }
+        .host-game-status__eyebrow { margin: 0; color: var(--host-accent); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
         .host-game-status__stage { margin: 3px 0 0; color: var(--host-ink); font-size: 16px; font-weight: 700; }
         .host-game-status__facts { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 13px; color: var(--host-muted); font-size: 13px; line-height: 1.35; }
         .host-game-status__facts span { min-width: 0; overflow-wrap: anywhere; }
-        .host-game-status__facts .is-current { color: #a8e9dc; }
-        .host-game-status__facts .is-recovering { color: #ffaaa0; }
+        .host-game-status__facts .is-current { color: var(--host-success); }
+        .host-game-status__facts .is-recovering { color: var(--host-danger); }
         .host-command-center__body { min-width: 0; min-height: 0; overflow: auto; }
-        .host-command-center__nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; min-width: 0; border: 1px solid var(--host-line); border-radius: 16px; padding: 6px; background: rgba(11, 27, 56, 0.98); }
+        .host-command-center__nav { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; min-width: 0; border: 1px solid var(--host-line); border-radius: 16px; padding: 6px; background: var(--host-surface); }
         .host-command-center__nav-action { display: grid; place-items: center; align-content: center; gap: 3px; min-width: 0; min-height: 52px; border: 0; border-radius: 11px; padding: 6px 4px; background: transparent; color: var(--host-muted); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
-        .host-command-center__nav-action[aria-current="page"] { background: #17375f; color: var(--host-ink); box-shadow: inset 0 -2px 0 #c8f36c; }
-        .host-command-center__nav-action:focus-visible { outline: 3px solid #a8e9dc; outline-offset: 2px; }
-        .host-command-center__nav-icon { color: #e98d86; font-size: 16px; line-height: 1; }
-        .host-command-center__nav-action[aria-current="page"] .host-command-center__nav-icon { color: #c8f36c; }
+        .host-command-center__nav-action[aria-current="page"] { background: var(--host-active); color: var(--host-ink); box-shadow: inset 0 -2px 0 var(--host-success); }
+        .host-command-center__nav-action:focus-visible { outline: 3px solid var(--host-focus); outline-offset: 2px; }
+        .host-command-center__nav-icon { color: var(--host-accent); font-size: 16px; line-height: 1; }
+        .host-command-center__nav-action[aria-current="page"] .host-command-center__nav-icon { color: var(--host-success); }
         @media (min-width: 768px) {
           .host-command-center { grid-template-columns: minmax(0, 1fr) 92px; grid-template-rows: auto minmax(0, 1fr); }
           .host-game-status, .host-command-center__body { grid-column: 1; }
