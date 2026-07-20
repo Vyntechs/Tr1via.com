@@ -96,6 +96,8 @@ export interface ClaimGenerationResumeInput {
   observedAttempt: number;
   /** The stored phase, not its derived stale needs_attention presentation. */
   observedPhase: GenerationJobPhase;
+  /** The exact row version observed before claiming a stale worker. */
+  observedHeartbeatAt: string;
   nowIso?: string;
 }
 
@@ -114,8 +116,10 @@ export async function claimGenerationResume(
       eq(column: string, value: string | number): {
         eq(column: string, value: string | number): {
           eq(column: string, value: string | number): {
-            select(columns: string): {
-              maybeSingle(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
+            eq(column: string, value: string | number): {
+              select(columns: string): {
+                maybeSingle(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
+              };
             };
           };
         };
@@ -133,12 +137,44 @@ export async function claimGenerationResume(
     .eq("category_id", input.categoryId)
     .eq("attempt", input.observedAttempt)
     .eq("phase", input.observedPhase)
+    .eq("heartbeat_at", input.observedHeartbeatAt)
     .select("*")
     .maybeSingle();
   if (error) {
     throw new Error(`failed to claim generation recovery: ${error.message}`);
   }
   return data;
+}
+
+/** Returns false when a replacement attempt has fenced this worker out. */
+export async function updateGenerationJobForAttempt(
+  client: GenerationJobClient,
+  categoryId: string,
+  attempt: number,
+  patch: GenerationJobPatch,
+  nowIso = new Date().toISOString(),
+): Promise<boolean> {
+  const table = client.from("question_generation_jobs") as unknown as {
+    update(values: Record<string, unknown>): {
+      eq(column: string, value: string | number): {
+        eq(column: string, value: string | number): {
+          select(columns: string): {
+            maybeSingle(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
+          };
+        };
+      };
+    };
+  };
+  const { data, error } = await table
+    .update({ ...patch, heartbeat_at: nowIso, updated_at: nowIso })
+    .eq("category_id", categoryId)
+    .eq("attempt", attempt)
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    throw new Error(`failed to update generation progress: ${error.message}`);
+  }
+  return data !== null;
 }
 
 export async function beginGenerationJob(

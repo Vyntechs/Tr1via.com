@@ -6,15 +6,13 @@
 export function createGenerationHeartbeat(write: () => Promise<void>) {
   let inFlight: Promise<void> | null = null;
 
-  function beat(): void {
-    if (inFlight) return;
+  function beat(): Promise<void> {
+    if (inFlight) return inFlight;
     inFlight = write()
-      // A heartbeat is observational. The job's real work and terminal state
-      // remain authoritative even when a best-effort tick cannot be written.
-      .catch(() => undefined)
       .finally(() => {
         inFlight = null;
       });
+    return inFlight;
   }
 
   async function drain(): Promise<void> {

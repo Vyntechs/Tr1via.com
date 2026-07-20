@@ -55,7 +55,9 @@ import {
   generationProgressFromRow,
   readGenerationJob,
   updateGenerationJob,
+  updateGenerationJobForAttempt,
   type GenerationJobClient,
+  type QuestionGenerationJobRow,
 } from "@/lib/ai/generation-job";
 import { createGenerationHeartbeat } from "@/lib/ai/generation-heartbeat";
 import { rerollPlan } from "@/lib/host/rerollPlan";
@@ -143,16 +145,19 @@ export async function POST(
     return conflict("already generating");
   }
 
+  let job: QuestionGenerationJobRow;
   try {
     if (resume) {
       const claimed = await claimGenerationResume(jobClient, {
         categoryId,
         observedAttempt: existingJob!.attempt,
         observedPhase: existingJob!.phase,
+        observedHeartbeatAt: existingJob!.heartbeat_at,
       });
       if (!claimed) return conflict("generation recovery already starting");
+      job = claimed;
     } else {
-      await beginGenerationJob(jobClient, {
+      job = await beginGenerationJob(jobClient, {
         categoryId,
         gameId: category.game_id,
         nightId: owned.night.id,
@@ -217,8 +222,10 @@ export async function POST(
       keptIds: parsed.data.keptIds,
       autoPick: parsed.data.autoPick,
       resume,
+      attempt: job.attempt,
       reportContext,
     }).catch(async (err) => {
+      if (err instanceof GenerationAttemptSupersededError) return;
       const internalMessage =
         err instanceof Error ? err.message : "unknown generation error";
       console.error("[generate] job failed:", internalMessage);
@@ -230,8 +237,18 @@ export async function POST(
       // are durable and the next click fills only the shortfall. Rerolls keep
       // their older atomic behavior because the host already has a complete,
       // usable pool and should stay on it.
+      const fenceWon = await updateGenerationJobForAttempt(
+        jobClient,
+        categoryId,
+        job.attempt,
+        {},
+      ).catch(() => false);
+      if (!fenceWon) return;
       if (parsed.data.keptIds) {
         try {
+          if (!(await updateGenerationJobForAttempt(jobClient, categoryId, job.attempt, {}))) {
+            return;
+          }
           await admin
             .from("categories")
             .update({ state: "review" })
@@ -241,14 +258,24 @@ export async function POST(
         }
       }
       try {
-        await updateGenerationJob(jobClient, categoryId, {
-          phase: "needs_attention",
-          last_error: hostMessage,
-        });
+        const terminalWriteWon = await updateGenerationJobForAttempt(
+          jobClient,
+          categoryId,
+          job.attempt,
+          {
+            phase: "needs_attention",
+            last_error: hostMessage,
+          },
+        );
+        if (!terminalWriteWon) return;
       } catch {
         /* best-effort */
+        return;
       }
       try {
+        if (!(await updateGenerationJobForAttempt(jobClient, categoryId, job.attempt, {}))) {
+          return;
+        }
         await broadcastToCategory(categoryId, "error", {
           serverNow: new Date().toISOString(),
           error: hostMessage,
@@ -271,6 +298,8 @@ async function safeJson(req: NextRequest): Promise<unknown> {
   }
 }
 
+class GenerationAttemptSupersededError extends Error {}
+
 /**
  * The actual generation pipeline. Runs after the HTTP response has flushed.
  * Order chosen so the host UI starts seeing question text as fast as
@@ -292,6 +321,8 @@ async function runGenerationJob(opts: {
   autoPick?: boolean;
   /** Resume a stopped first run from its already-certified question rows. */
   resume?: boolean;
+  /** Durable fencing token returned by begin or the atomic resume claim. */
+  attempt: number;
   reportContext: QuestionGenerationReportContext;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
@@ -300,6 +331,18 @@ async function runGenerationJob(opts: {
     requestedCount: 20,
     verifyPasses: 2,
   });
+  const writeWorkerProgress = async (
+    patch: Parameters<typeof updateGenerationJob>[2],
+  ) => {
+    const writeWon = await updateGenerationJobForAttempt(
+      jobClient,
+      opts.categoryId,
+      opts.attempt,
+      patch,
+    );
+    if (!writeWon) throw new GenerationAttemptSupersededError();
+  };
+  const fenceSideEffect = async () => writeWorkerProgress({});
 
   // Reroll: gather what the host has already seen so we avoid repeats, and
   // remember which unpicked rows to remove once the fresh batch is inserted.
@@ -381,7 +424,11 @@ async function runGenerationJob(opts: {
   let phase: GenerationPhase = "writing";
   let writtenCount = storedQuestions.length;
   let certifiedCount = storedQuestions.length;
-  const emitProgress = () => {
+  const durableHeartbeat = createGenerationHeartbeat(() =>
+    writeWorkerProgress({ phase }),
+  );
+  const emitProgress = async () => {
+    await durableHeartbeat.beat();
     const payload: CategoryProgressPayload = {
       serverNow: new Date().toISOString(),
       phase,
@@ -390,13 +437,9 @@ async function runGenerationJob(opts: {
       () => undefined,
     );
   };
-  void emitProgress();
-  const durableHeartbeat = createGenerationHeartbeat(() =>
-    updateGenerationJob(jobClient, opts.categoryId, { phase }),
-  );
+  void emitProgress().catch(() => undefined);
   const heartbeat = setInterval(() => {
-    void emitProgress();
-    durableHeartbeat.beat();
+    void emitProgress().catch(() => undefined);
   }, GENERATION_HEARTBEAT_MS);
 
   // Accumulate real token spend across every generate + verify call this job
@@ -427,6 +470,7 @@ async function runGenerationJob(opts: {
       source: "ai" as const,
       is_picked: false,
     }));
+    await fenceSideEffect();
     const { data, error } = await admin
       .from("questions")
       .insert(insertRows)
@@ -441,13 +485,14 @@ async function runGenerationJob(opts: {
         q: batch[index]!,
         hasImage: false,
       });
+      await fenceSideEffect();
       await broadcastToCategory(opts.categoryId, "question_added", {
         serverNow: new Date().toISOString(),
         questionId: data[index]!.id,
       }).catch(() => undefined);
     }
     certifiedCount += batch.length;
-    await updateGenerationJob(jobClient, opts.categoryId, {
+    await writeWorkerProgress({
       phase: certifiedCount >= 20 ? "images" : "repairing",
       certified_count: certifiedCount,
       written_count: Math.max(writtenCount, certifiedCount),
@@ -456,7 +501,7 @@ async function runGenerationJob(opts: {
 
   let generated: GeneratedQuestion[];
   try {
-    await updateGenerationJob(jobClient, opts.categoryId, {
+    await writeWorkerProgress({
       phase: "writing",
       written_count: writtenCount,
       certified_count: certifiedCount,
@@ -471,8 +516,8 @@ async function runGenerationJob(opts: {
       verifyPasses: 2,
       generate: async (avoid, need) => {
         phase = "writing";
-        void emitProgress();
-        await updateGenerationJob(jobClient, opts.categoryId, { phase: "writing" });
+        await writeWorkerProgress({ phase: "writing" });
+        void emitProgress().catch(() => undefined);
         const batch = await generateQuestions({
           topic: opts.topic,
           flavor: opts.flavor,
@@ -492,16 +537,17 @@ async function runGenerationJob(opts: {
         });
         writtenCount = Math.min(20, certifiedCount + batch.length);
         phase = "checking";
-        await updateGenerationJob(jobClient, opts.categoryId, {
+        await writeWorkerProgress({
           phase: "checking",
           written_count: writtenCount,
         });
-        void emitProgress();
+        void emitProgress().catch(() => undefined);
         return batch;
       },
-      verify: (qs) => {
+      verify: async (qs) => {
         phase = "checking";
-        void emitProgress();
+        await writeWorkerProgress({ phase: "checking" });
+        void emitProgress().catch(() => undefined);
         return verifyAnswers(qs, { topic: opts.topic, onUsage: trackUsage });
       },
       onRoundComplete: async (event) => {
@@ -517,7 +563,7 @@ async function runGenerationJob(opts: {
         });
         if (certifiedCount < 20) {
           phase = "repairing";
-          await updateGenerationJob(jobClient, opts.categoryId, {
+          await writeWorkerProgress({
             phase: "repairing",
             written_count: writtenCount,
             certified_count: certifiedCount,
@@ -561,6 +607,7 @@ async function runGenerationJob(opts: {
   // Generate-first ordering guarantees a generation/insert failure never
   // empties the pool. Non-fatal if it fails — worst case the old pile lingers.
   if (reroll && reroll.deleteIds.length > 0) {
+    await fenceSideEffect();
     const { error: cleanupError } = await admin
       .from("questions")
       .delete()
@@ -579,7 +626,7 @@ async function runGenerationJob(opts: {
   // the limit, and FASTER (less work, no added wait). Manual review still
   // photographs all 20 so the host's swap UI has the full pool.
   phase = "images";
-  await updateGenerationJob(jobClient, opts.categoryId, {
+  await writeWorkerProgress({
     phase: "images",
     certified_count: generated.length,
   });
@@ -594,6 +641,7 @@ async function runGenerationJob(opts: {
       })),
       7,
     );
+    await fenceSideEffect();
     const result = await pickQuestionsForCategory(opts.categoryId, ids);
     if (!result.ok) {
       throw new Error(`auto-pick failed: ${result.error}`);
@@ -611,6 +659,7 @@ async function runGenerationJob(opts: {
     try {
       const photo = await autoAttachPhoto(q, { topic: opts.topic });
       if (photo.imageUrl) {
+        await fenceSideEffect();
         const { error: photoUpdateError } = await admin
           .from("questions")
           .update({
@@ -627,12 +676,13 @@ async function runGenerationJob(opts: {
         } else {
           qualityReport.recordImageAttached();
           imageCount += 1;
-          await updateGenerationJob(jobClient, opts.categoryId, {
+          await writeWorkerProgress({
             phase: "images",
             image_count: imageCount,
           });
         }
       }
+      await fenceSideEffect();
       await broadcastToCategory(opts.categoryId, "photo_attached", {
         serverNow: new Date().toISOString(),
         questionId: id,
@@ -640,6 +690,7 @@ async function runGenerationJob(opts: {
         attribution: photo.attribution,
       }).catch(() => undefined);
     } catch (err) {
+      if (err instanceof GenerationAttemptSupersededError) throw err;
       if (err instanceof PexelsRateLimitError) {
         // Don't blow up the whole batch — questions without images are
         // still usable. Stop attaching to avoid hammering Pexels further.
@@ -657,6 +708,7 @@ async function runGenerationJob(opts: {
     generated.length >= 20 ? "completed" : "partial",
   );
   const auditSummary = hostAuditSummaryFromSnapshot(reportSnapshot);
+  await fenceSideEffect();
   await persistQuestionGenerationReport(
     admin,
     questionGenerationReportInsertFromSnapshot(opts.reportContext, reportSnapshot),
@@ -666,12 +718,13 @@ async function runGenerationJob(opts: {
   // manual review stops at 'review' for the host to curate. Persist the report
   // first so DB-poll fallback can't observe review before the summary exists.
   if (!opts.autoPick) {
+    await fenceSideEffect();
     await admin
       .from("categories")
       .update({ state: "review" })
       .eq("id", opts.categoryId);
   }
-  await updateGenerationJob(jobClient, opts.categoryId, {
+  await writeWorkerProgress({
     phase: "ready",
     written_count: 20,
     certified_count: 20,
@@ -683,6 +736,7 @@ async function runGenerationJob(opts: {
     count: inserted.length,
     auditSummary,
   };
+  await fenceSideEffect();
   await broadcastToCategory(opts.categoryId, "done", donePayload).catch(
     () => undefined,
   );

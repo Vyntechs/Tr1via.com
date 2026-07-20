@@ -5,6 +5,7 @@ import {
   generationProgressFromRow,
   readGenerationJob,
   updateGenerationJob,
+  updateGenerationJobForAttempt,
   type QuestionGenerationJobRow,
 } from "@/lib/ai/generation-job";
 import { vi } from "vitest";
@@ -189,51 +190,84 @@ describe("generation job persistence", () => {
 
   it("allows exactly one concurrent claim for the observed stale attempt", async () => {
     let stored = row({ phase: "repairing", attempt: 2, certified_count: 19 });
-    const client = {
-      from: () => ({
-        update: (values: Record<string, unknown>) => {
-          const filters: Record<string, unknown> = {};
-          const query = {
-            eq(column: string, value: string | number) {
-              filters[column] = value;
-              return query;
-            },
-            select() {
-              return {
-                maybeSingle: async () => {
-                  const matches =
-                    filters.category_id === stored.category_id &&
-                    filters.attempt === stored.attempt &&
-                    filters.phase === stored.phase;
-                  if (!matches) return { data: null, error: null };
-                  stored = { ...stored, ...values } as QuestionGenerationJobRow;
-                  return { data: stored, error: null };
-                },
-              };
-            },
-          };
-          return query;
-        },
-      }),
-    };
+    const client = fencingClient(() => stored, (next) => {
+      stored = next;
+    });
 
     const [winner, loser] = await Promise.all([
       claimGenerationResume(client as never, {
         categoryId: "category-1",
         observedAttempt: 2,
         observedPhase: "repairing",
+        observedHeartbeatAt: stored.heartbeat_at,
         nowIso: "2026-07-20T12:00:00.000Z",
       }),
       claimGenerationResume(client as never, {
         categoryId: "category-1",
         observedAttempt: 2,
         observedPhase: "repairing",
+        observedHeartbeatAt: stored.heartbeat_at,
         nowIso: "2026-07-20T12:00:00.000Z",
       }),
     ]);
 
     expect(winner).toMatchObject({ phase: "queued", attempt: 3, certified_count: 19 });
     expect(loser).toBeNull();
+  });
+
+  it("rejects a recovery claim when the observed heartbeat changed", async () => {
+    let stored = row({ phase: "repairing", attempt: 2 });
+    const client = fencingClient(() => stored, (next) => {
+      stored = next;
+    });
+    stored = { ...stored, heartbeat_at: "2026-07-20T12:01:00.000Z" };
+
+    await expect(
+      claimGenerationResume(client as never, {
+        categoryId: "category-1",
+        observedAttempt: 2,
+        observedPhase: "repairing",
+        observedHeartbeatAt: "2026-07-18T11:59:55.000Z",
+        nowIso: "2026-07-20T12:02:00.000Z",
+      }),
+    ).resolves.toBeNull();
+    expect(stored).toMatchObject({ phase: "repairing", attempt: 2 });
+  });
+
+  it("rejects an old worker progress write after a replacement claim", async () => {
+    let stored = row({ phase: "queued", attempt: 3 });
+    const client = fencingClient(() => stored, (next) => {
+      stored = next;
+    });
+
+    await expect(
+      updateGenerationJobForAttempt(
+        client as never,
+        "category-1",
+        2,
+        { phase: "checking", certified_count: 12 },
+        "2026-07-20T12:02:00.000Z",
+      ),
+    ).resolves.toBe(false);
+    expect(stored).toMatchObject({ phase: "queued", attempt: 3, certified_count: 0 });
+  });
+
+  it("allows the current fenced worker to record its progress", async () => {
+    let stored = row({ phase: "queued", attempt: 3 });
+    const client = fencingClient(() => stored, (next) => {
+      stored = next;
+    });
+
+    await expect(
+      updateGenerationJobForAttempt(
+        client as never,
+        "category-1",
+        3,
+        { phase: "checking", certified_count: 12 },
+        "2026-07-20T12:02:00.000Z",
+      ),
+    ).resolves.toBe(true);
+    expect(stored).toMatchObject({ phase: "checking", attempt: 3, certified_count: 12 });
   });
 
   it("updates heartbeat and the requested real progress fields", async () => {
@@ -252,3 +286,40 @@ describe("generation job persistence", () => {
     });
   });
 });
+
+function fencingClient(
+  read: () => QuestionGenerationJobRow,
+  write: (next: QuestionGenerationJobRow) => void,
+) {
+  return {
+    from: () => ({
+      update: (values: Record<string, unknown>) => {
+        const filters: Record<string, unknown> = {};
+        const query = {
+          eq(column: string, value: string | number) {
+            filters[column] = value;
+            return query;
+          },
+          select() {
+            return {
+              maybeSingle: async () => {
+                const stored = read();
+                const matches =
+                  filters.category_id === stored.category_id &&
+                  (filters.attempt === undefined || filters.attempt === stored.attempt) &&
+                  (filters.phase === undefined || filters.phase === stored.phase) &&
+                  (filters.heartbeat_at === undefined ||
+                    filters.heartbeat_at === stored.heartbeat_at);
+                if (!matches) return { data: null, error: null };
+                const next = { ...stored, ...values } as QuestionGenerationJobRow;
+                write(next);
+                return { data: next, error: null };
+              },
+            };
+          },
+        };
+        return query;
+      },
+    }),
+  };
+}

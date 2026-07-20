@@ -31,4 +31,15 @@ describe("createGenerationHeartbeat", () => {
     await drained;
     expect(finished).toBe(true);
   });
+
+  it("lets a broadcast wait for its fenced durable write", async () => {
+    const pending = deferred<void>();
+    const heartbeat = createGenerationHeartbeat(() => pending.promise);
+
+    const write = heartbeat.beat();
+    expect(write).toBeInstanceOf(Promise);
+
+    pending.resolve();
+    await write;
+  });
 });

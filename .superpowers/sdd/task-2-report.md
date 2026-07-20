@@ -80,3 +80,39 @@ Result: 7 files passed, 39 tests passed.
 
 `npx tsc --noEmit` remains blocked only by the same four unrelated fixture and
 environment typing errors listed above; the atomic-claim changes add none.
+
+## Architecture repair — stale-worker fencing (Task 2A)
+
+Each begin/claim now passes its returned durable attempt into the worker. A
+resume claim also matches the exact observed `heartbeat_at` version. Every
+worker progress write conditionally updates by `category_id` plus attempt; a
+failed conditional write raises a private superseded signal that exits without
+terminal error state or broadcasts.
+
+Immediately before each question insert, photo update, reroll cleanup,
+auto-pick, report insert, category finalization, and broadcast, the worker
+performs a conditional heartbeat refresh using the same attempt fence. This
+replaces the rejected read-only current-attempt check. Broadcasts await a
+successful fenced heartbeat first, so an old worker cannot revive a stale
+phase, error, photo, or done event after replacement.
+
+TDD RED:
+
+```sh
+npx vitest run tests/unit/generation-job.test.ts tests/unit/api-generate-resume-claim-contract.test.ts
+npx vitest run tests/unit/generation-heartbeat.test.ts
+```
+
+Result: missing heartbeat claim predicate and fenced worker write, then a
+heartbeat gate that could not be awaited before broadcast.
+
+Focused GREEN:
+
+```sh
+npx vitest run tests/unit/generation-job.test.ts tests/unit/api-generate-resume-claim-contract.test.ts tests/unit/generation-auto-resume.test.ts tests/unit/generation-heartbeat.test.ts tests/unit/useGenerationStatus.test.tsx tests/component/HostGenError.test.tsx tests/component/HostSetupPickClient-auto-resume.test.tsx tests/unit/verify-answers.test.ts tests/unit/collect-verified-questions.test.ts tests/unit/ai-prompts.test.ts
+```
+
+Result: 10 files passed, 85 tests passed.
+
+`npx tsc --noEmit` still reports only the same four unrelated fixture and
+environment typing errors; no Task 2A typing errors.
