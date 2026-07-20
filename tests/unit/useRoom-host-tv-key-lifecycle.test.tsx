@@ -48,6 +48,8 @@ const h = vi.hoisted(() => {
       position: 0,
       color: null,
       state: "ready",
+      created_at: "2026-07-19T00:00:00.000Z",
+      flavor: null,
     }];
     if (table === "players") return [{
       id: `player-${activeNightId}`,
@@ -245,6 +247,8 @@ function resilientHostPayload(revision: number): RoomSnapshotPayload {
       position: 0,
       color: null,
       state: "ready",
+      created_at: "2026-07-19T00:00:00.000Z",
+      flavor: null,
     }],
     players: [],
     currentQuestion: null,
@@ -266,7 +270,7 @@ function resilientHostPayload(revision: number): RoomSnapshotPayload {
       play: null,
       operations: { eligibleCount: 0, confirmedCount: 0, awaitingCount: 0 },
     },
-  } as RoomSnapshotPayload;
+  };
 }
 
 function deferred<T>() {
