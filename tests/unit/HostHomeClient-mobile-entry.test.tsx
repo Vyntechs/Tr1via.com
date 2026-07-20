@@ -49,7 +49,7 @@ function setPhoneViewport(matches: boolean) {
 beforeEach(() => {
   push.mockReset();
   window.localStorage.setItem(
-    "tr1via-host-whats-new-original-v1",
+    "tr1via-host-whats-new-original-v2",
     "dismissed",
   );
 });
@@ -60,7 +60,7 @@ afterEach(() => {
 });
 
 describe("HostHomeClient live-night entry", () => {
-  it("opens the usable host controller when resumed from a phone", () => {
+  it("opens the canonical live controller when resumed from a phone", () => {
     setPhoneViewport(true);
     render(
       <ThemeProvider themeKey="house">
@@ -68,8 +68,8 @@ describe("HostHomeClient live-night entry", () => {
       </ThemeProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /host from this phone/i }));
-    expect(push).toHaveBeenCalledWith("/host/phone/night-live");
+    fireEvent.click(screen.getByRole("button", { name: /control live game/i }));
+    expect(push).toHaveBeenCalledWith("/host/live/night-live");
   });
 
   it("uses the same phone-aware destination after opening a prepared room", () => {
@@ -81,7 +81,7 @@ describe("HostHomeClient live-night entry", () => {
     expect(setupClient).toContain("hostRunPath(nightId)");
   });
 
-  it("keeps the combined laptop and venue console on wider screens", () => {
+  it("opens the same live route with laptop-specific language on wider screens", () => {
     setPhoneViewport(false);
     render(
       <ThemeProvider themeKey="house">
@@ -89,7 +89,7 @@ describe("HostHomeClient live-night entry", () => {
       </ThemeProvider>,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /resume the live game/i }));
+    fireEvent.click(screen.getByRole("button", { name: /show game on this laptop\/tv/i }));
     expect(push).toHaveBeenCalledWith("/host/live/night-live");
   });
 });

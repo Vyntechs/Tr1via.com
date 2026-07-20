@@ -592,7 +592,6 @@ function DesktopHostLiveConsoleClient({
         }
         canUndo={canUndo}
         roomCode={roomCode}
-        privateControlUrl={`${typeof window === "undefined" ? "https://tr1via.com" : window.location.origin}/host/phone/${nightId}`}
         onRevealCell={(qid) => void handleReveal(qid)}
         onEndEarly={() => void handleEndEarly()}
         onUndo={() => void handleUndo()}

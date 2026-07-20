@@ -77,6 +77,7 @@ describe("HostGameReady", () => {
     expect(preview).toBeVisible();
     expect(preview).toHaveTextContent("ABC123");
     expect(screen.getByText("Expected venue TV · not observed")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "Open venue screen" })).not.toBeInTheDocument();
   });
 
   it("explains content, control-path, reachability, player, and TV truth", () => {

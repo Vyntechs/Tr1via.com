@@ -4,7 +4,7 @@
 // Auth: POST /api/auth/founder-login looks the email up against the hosts
 // table and mints that host's session on the response — no magic link, no
 // OTP, no email round-trip. Sign-in completes in one request. On 200 the
-// client does router.replace("/host"); the first-time-vs-returning split is
+// client returns to a safe intended /host path; the first-time-vs-returning split is
 // decided server-side (app/host/page.tsx redirects to /host/onboarding when
 // there's no hosts row, and HostHomeClient picks onboarding vs dashboard by
 // isFirstNightComplete).
@@ -17,6 +17,7 @@ import { LaptopShell } from "@/components/shells";
 import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
 import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
+import { hostReturnPath } from "@/lib/host/hostReturnPath";
 
 type FormState =
   | { kind: "idle" }
@@ -44,6 +45,10 @@ function HostLoginInner() {
   // for email" problem where a stale cookie silently inherited a session.
   const [signedInAs, setSignedInAs] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
+
+  function intendedHostPath() {
+    return hostReturnPath(new URLSearchParams(window.location.search).get("next"));
+  }
 
   useEffect(() => {
     const supabase = getSupabaseBrowser();
@@ -85,7 +90,7 @@ function HostLoginInner() {
         body: JSON.stringify({ email: trimmed }),
       });
       if (res.ok) {
-        router.replace("/host");
+        router.replace(intendedHostPath());
         return;
       }
       const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -154,7 +159,7 @@ function HostLoginInner() {
         {signedInAs ? (
           <SignedInPanel
             email={signedInAs}
-            onGoToDashboard={() => router.replace("/host")}
+            onGoToDashboard={() => router.replace(intendedHostPath())}
             onSignOut={handleSignOut}
             signingOut={signingOut}
           />

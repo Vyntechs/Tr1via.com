@@ -83,7 +83,7 @@ function Placeholder({ roomCode }: { roomCode: string }) {
   const { t } = useTheme();
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow={`ROOM · ${formatRoomCode(roomCode)}`} />
+      <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <Display size={48} color={t.ink}>
           Wrapping

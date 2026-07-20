@@ -11,6 +11,11 @@ export interface HostWhatsNewProps {
 
 const BENEFITS = [
   {
+    stamp: "CONTROL",
+    title: "Sign in on any device. Control the same live game.",
+    body: "Your phone and laptop stay together automatically. TV preview shows what players see, and players scan the only QR.",
+  },
+  {
     stamp: "CHECKED",
     title: "AI-generated questions are checked before you can use them.",
     body: "TR1VIA now checks the answer, the other choices, and the fact before an AI-generated question reaches your game.",
@@ -177,8 +182,8 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
               lineHeight: 1.5,
             }}
           >
-            You still build and host the same way. TR1VIA now does more of the checking,
-            saving, and recovery before it asks anything from you.
+            You still build and host the same way. Now your controls follow your account,
+            while TR1VIA does more checking, saving, and recovery behind the scenes.
           </p>
 
           <div style={{ marginTop: 30, display: "grid", gap: 0 }}>

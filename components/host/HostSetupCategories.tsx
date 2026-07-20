@@ -215,7 +215,7 @@ function HostSetupCategoriesInner() {
 
           <div style={{ marginTop: 18 }}>
             <Eyebrow color={t.inkMute} size={10}>
-              OPTIONAL · LET THE ROOM VOTE
+              OPTIONAL · LET PLAYERS VOTE
             </Eyebrow>
             <div
               style={{
@@ -288,7 +288,7 @@ function HostSetupCategoriesInner() {
               opacity: 0.55,
             }}
           >
-            Open Game 1 to the room{" "}
+            Open Game 1 for players{" "}
             <span style={{ opacity: 0.7, fontFamily: "var(--font-mono)", fontSize: 11 }}>
               · finish picks first
             </span>

@@ -19,6 +19,8 @@ const baseProps = {
   defaultVenue: "Soul Fire Pizza",
   isFirstNightComplete: true,
   weeks: [],
+  previousGames: [],
+  inSetup: [],
   lifetime: { nights: 0, questions: 0 },
   tonight: null,
 };

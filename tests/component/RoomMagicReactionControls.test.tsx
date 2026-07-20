@@ -52,7 +52,7 @@ describe("RoomMagicReactionControls", () => {
         body: JSON.stringify({ questionId: QUESTION_ID, kind: "wow" }),
       }),
     );
-    expect(await screen.findByText("Sent to the room")).toBeInTheDocument();
+    expect(await screen.findByText("Sent")).toBeInTheDocument();
     for (const button of screen.getAllByRole("button")) {
       expect(button).toBeDisabled();
     }
@@ -70,7 +70,7 @@ describe("RoomMagicReactionControls", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Applause" }));
 
-    expect(await screen.findByText("Sent to the room")).toBeInTheDocument();
+    expect(await screen.findByText("Sent")).toBeInTheDocument();
   });
 
   it("settles quietly when the post fails", async () => {

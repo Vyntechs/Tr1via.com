@@ -829,7 +829,6 @@ export function HostPhoneClient({
       busy={busy}
       confirmingEnd={confirmingEnd}
       allGamesEnded={allGamesEnded}
-      roomCode={roomCode}
       onStart={() => currentGame && void runStartGame(currentGame.id)}
       onRequestEnd={() => setConfirmingEnd(true)}
       onCancelEnd={() => setConfirmingEnd(false)}
@@ -1013,7 +1012,6 @@ export function HostPhoneClient({
       venueMonitor={(
         <HostVenueMonitor
           snapshot={venueTVSnapshot}
-          roomCode={roomCode}
           active={activeSection === "tv"}
           themeKey={themeKey}
           lastBroadcastRevealedAt={
@@ -1214,7 +1212,6 @@ interface PhoneRoundControlsProps {
   busy: boolean;
   confirmingEnd: boolean;
   allGamesEnded: boolean;
-  roomCode: string;
   onStart: () => void;
   onRequestEnd: () => void;
   onCancelEnd: () => void;
@@ -1237,7 +1234,6 @@ function PhoneRoundControlsInner({
   busy,
   confirmingEnd,
   allGamesEnded,
-  roomCode,
   onStart,
   onRequestEnd,
   onCancelEnd,
@@ -1273,31 +1269,6 @@ function PhoneRoundControlsInner({
           {questionLive ? "Question live" : gameState === "done" ? "Round complete" : gameState ?? "Waiting"}
         </div>
       </div>
-
-      <a
-        href={`/tv/${roomCode}`}
-        target="_blank"
-        rel="noreferrer"
-        aria-label="Open venue screen"
-        style={{
-          minWidth: 58,
-          minHeight: 48,
-          padding: "0 10px",
-          borderRadius: 10,
-          border: `1px solid ${t.line}`,
-          color: t.ink,
-          textDecoration: "none",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          boxSizing: "border-box",
-          fontSize: 11,
-          fontWeight: 700,
-          whiteSpace: "nowrap",
-        }}
-      >
-        TV view ↗
-      </a>
 
       {confirmingEnd ? (
         <>

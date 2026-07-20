@@ -25,7 +25,7 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
-import { TVRoomMagicOverlay, TVSectionComplete, TVStateMachine } from "@/components/tv";
+import { ScaledTVCanvas, TVRoomMagicOverlay, TVSectionComplete, TVStateMachine } from "@/components/tv";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import { ThemeProvider, WELCOME_OVERLAY_DURATION_MS, PyrotechnicsBeatConductor } from "@/components/system";
 import { fireLightningBeat } from "@/components/system/Lightning";
@@ -71,7 +71,7 @@ export default function TVPage({
   if (status === "not-found") {
     return (
       <TVMessageStage
-        title="Room not found"
+        title="Game not found"
         subtitle={`Check tr1via.com/host — code ${formatRoomCode(code)} isn't open.`}
       />
     );
@@ -227,40 +227,27 @@ function SectionCompleteOverlay({
 
 function TVStageFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div
+    <ScaledTVCanvas
+      ariaLabel="Venue TV display"
+      frameTestId="venue-tv-display-frame"
+      canvasTestId="venue-tv-display-canvas"
       style={{
         width: "100vw",
         height: "100vh",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        background: "#000",
-        overflow: "hidden",
       }}
     >
-      <div
-        style={{
-          // CSS clamp: take the largest 16:9 box that fits the viewport.
-          // Computed from 100vw and 100vh: the limiting dimension wins.
-          width: "min(100vw, calc(100vh * 16 / 9))",
-          height: "min(100vh, calc(100vw * 9 / 16))",
-          aspectRatio: "16 / 9",
-          position: "relative",
-          overflow: "hidden",
-        }}
-      >
-        {children}
-      </div>
-    </div>
+      {children}
+    </ScaledTVCanvas>
   );
 }
 
 function TVMessageStage({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div
-      style={{
-        width: "100vw",
-        height: "100vh",
+    <TVStageFrame>
+      <div
+        style={{
+          width: "100%",
+          height: "100%",
         background: "#0E0805",
         color: "#F4E6C4",
         fontFamily: "var(--font-sans)",
@@ -270,14 +257,15 @@ function TVMessageStage({ title, subtitle }: { title: string; subtitle: string }
         justifyContent: "center",
         textAlign: "center",
         padding: "0 56px",
-      }}
-    >
-      <div style={{ fontSize: 64, fontWeight: 700, letterSpacing: "-0.025em" }}>{title}</div>
-      {subtitle && (
-        <div style={{ marginTop: 18, fontSize: 22, color: "rgba(244,230,196,.62)" }}>
-          {subtitle}
-        </div>
-      )}
-    </div>
+        }}
+      >
+        <div style={{ fontSize: 64, fontWeight: 700, letterSpacing: "-0.025em" }}>{title}</div>
+        {subtitle && (
+          <div style={{ marginTop: 18, fontSize: 22, color: "rgba(244,230,196,.62)" }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
+    </TVStageFrame>
   );
 }

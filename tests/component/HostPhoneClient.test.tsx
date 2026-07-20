@@ -884,7 +884,7 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
   });
 
-  it("provides honest Board, Players, Scores, and TV destinations", async () => {
+  it("provides honest Board, Players, Scores, and TV preview destinations", async () => {
     const liveGame = game("g1", 1, "live");
     h.room = { ...room(), games: [liveGame], currentGame: liveGame, players: [player("p1")] };
     render(
@@ -904,19 +904,14 @@ describe("HostPhoneClient reveal flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Scores" }));
     expect(screen.getByRole("heading", { name: "Game 1 standings" })).toBeVisible();
 
-    fireEvent.click(screen.getByRole("button", { name: "TV" }));
-    expect(screen.getByRole("heading", { name: "Venue TV" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "TV preview" }));
+    expect(screen.getByRole("heading", { name: "TV preview" })).toBeVisible();
     expect(screen.getByRole("region", { name: "Venue TV preview" })).toHaveAttribute(
       "data-audience-safe",
       "true",
     );
-    const venueTVLink = screen.getByRole("link", { name: "Open full venue display" });
-    expect(venueTVLink).toHaveAttribute("href", "/tv/ABC123");
-    expect(venueTVLink).toHaveStyle({
-      display: "inline-flex",
-      minHeight: "48px",
-      minWidth: "48px",
-    });
+    expect(screen.queryByRole("link", { name: "Open full venue display" })).not.toBeInTheDocument();
+    expect(document.querySelector('a[href^="/tv/"]')).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Board" }));
     expect(screen.getByRole("grid", { name: "Question board" })).toBeVisible();
@@ -948,7 +943,7 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.queryByText(/phones live/)).not.toBeInTheDocument();
   });
 
-  it("keeps every lifecycle and TV command at least 48px tall", async () => {
+  it("keeps every lifecycle command at least 48px tall", async () => {
     h.room = room();
     const view = render(
       <HostPhoneClient
@@ -960,7 +955,7 @@ describe("HostPhoneClient reveal flow", () => {
     );
 
     expect(await screen.findByRole("button", { name: "Start Game 1" })).toHaveStyle({ minHeight: "48px" });
-    expect(screen.getByRole("link", { name: "Open venue screen" })).toHaveStyle({ minHeight: "48px" });
+    expect(screen.queryByRole("link", { name: "Open venue screen" })).not.toBeInTheDocument();
 
     const liveGame = game("g1", 1, "live");
     h.room = { ...room(), games: [liveGame], currentGame: liveGame };
@@ -1187,7 +1182,7 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "TV" }));
+    fireEvent.click(await screen.findByRole("button", { name: "TV preview" }));
 
     expect(await screen.findByTestId("tv-intermission")).toBeInTheDocument();
     expect(screen.getByText("Jordan")).toBeVisible();

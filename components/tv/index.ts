@@ -34,3 +34,5 @@ export type {
 } from "./TVFinaleWinner";
 export { TVStateMachine } from "./TVStateMachine";
 export type { TVStateMachineProps } from "./TVStateMachine";
+export { ScaledTVCanvas } from "./ScaledTVCanvas";
+export type { ScaledTVCanvasProps } from "./ScaledTVCanvas";

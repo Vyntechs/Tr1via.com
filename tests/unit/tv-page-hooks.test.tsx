@@ -58,6 +58,7 @@ vi.mock("@/lib/hooks/useTVRoom", () => ({
 // order, not the state machine's deep tree.
 const tvStateMachineRender = vi.hoisted(() => vi.fn());
 vi.mock("@/components/tv", () => ({
+  ScaledTVCanvas: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   TVStateMachine: (props: unknown) => {
     tvStateMachineRender(props);
     return null;

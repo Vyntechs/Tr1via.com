@@ -161,8 +161,8 @@ function HostDashboardInner({
     ? "Set up tonight's games"
     : tonight.status === "live"
       ? compact
-        ? "Host from this phone"
-        : "Resume the live game"
+        ? "Control live game"
+        : "Show game on this laptop/TV"
       : tonight.status === "done"
         ? "See tonight's recap"
         : "Continue setup";
@@ -285,27 +285,6 @@ function HostDashboardInner({
                   </span>
                 )}
               </button>
-              {tonight?.status === "live" && !compact && (
-                <Link
-                  href={`/host/phone/${tonight.nightId}`}
-                  data-testid="host-private-phone-controls"
-                  style={{
-                    color: t.ink,
-                    border: `1px solid ${t.line}`,
-                    borderRadius: 10,
-                    padding: "11px 16px",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    fontFamily: "var(--font-sans)",
-                    textDecoration: "none",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                  }}
-                >
-                  Private phone controls →
-                </Link>
-              )}
               {/* Secondary: always-available "+ Plan a new night" so the
                   host isn't stranded behind a single Resume CTA when a
                   test or stale live night is sitting in the slot.
@@ -406,7 +385,7 @@ function HostDashboardInner({
             {!compact && <Rule color={t.ink} style={{ width: 1, height: "auto", alignSelf: "stretch" }} />}
             <div>
               <Eyebrow color={t.inkMute} size={10}>
-                ROOM
+                GAME CODE
               </Eyebrow>
               <div
                 style={{

@@ -42,7 +42,7 @@ describe("HostCommandCenter", () => {
     expect(screen.getByRole("region", { name: "Live host workspace" })).toBeVisible();
     expect(screen.getByText("Exact venue picture")).toBeVisible();
 
-    for (const section of ["Players", "Scores", "TV"]) {
+    for (const section of ["Players", "Scores", "TV preview"]) {
       fireEvent.click(screen.getByRole("button", { name: section }));
     }
 

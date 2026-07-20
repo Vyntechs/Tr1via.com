@@ -21,29 +21,35 @@ describe("host live device routing", () => {
     },
   );
 
-  it("keeps the correct-answer preview behind the explicit private phone route", () => {
+  it("keeps old phone links safe by redirecting them to the owned canonical game", () => {
     const phonePage = readFileSync(
       join(process.cwd(), "app/host/phone/[nightId]/page.tsx"),
       "utf8",
     );
-    const privatePreview = readFileSync(
-      join(process.cwd(), "components/host/HostPhoneUpcoming.tsx"),
+    expect(phonePage).toContain("requireOwnedNight(nightId)");
+    expect(phonePage).toContain("redirect(`/host/live/${owned.night.id}`)");
+    expect(phonePage).not.toContain("<HostPhoneClient");
+  });
+
+  it("does not pass a host pairing URL into the desktop console", () => {
+    const client = readFileSync(
+      join(process.cwd(), "app/host/live/[nightId]/HostLiveConsoleClient.tsx"),
       "utf8",
     );
 
-    expect(phonePage).toContain("<HostPhoneClient");
-    expect(privatePreview).toContain("CORRECT");
+    expect(client).not.toContain("privateControlUrl");
+    expect(client).not.toContain("/host/phone/${nightId}");
   });
 
-  it("lets the phone host open the public venue screen without losing the controller tab", () => {
+  it("keeps the public venue route out of the compact host controller", () => {
     const phoneClient = readFileSync(
       join(process.cwd(), "app/host/phone/[nightId]/HostPhoneClient.tsx"),
       "utf8",
     );
 
-    expect(phoneClient).toContain('href={`/tv/${roomCode}`}');
-    expect(phoneClient).toContain('target="_blank"');
-    expect(phoneClient).toContain("Open venue screen");
+    expect(phoneClient).not.toContain('href={`/tv/${roomCode}`}');
+    expect(phoneClient).not.toContain("TV view ↗");
+    expect(phoneClient).not.toContain("Open venue screen");
   });
 
   it("removes the chip reserve at the layout boundary without negative-margin cancellation", () => {

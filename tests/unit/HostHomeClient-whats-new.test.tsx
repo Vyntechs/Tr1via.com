@@ -9,7 +9,7 @@ vi.mock("next/navigation", () => ({
 import { HostHomeClient } from "@/app/host/HostHomeClient";
 import { ThemeProvider } from "@/components/system/ThemeProvider";
 
-const NOTICE_KEY = "tr1via-host-whats-new-original-v1";
+const NOTICE_KEY = "tr1via-host-whats-new-original-v2";
 
 const baseProps = {
   hostName: "Heather",
@@ -47,6 +47,9 @@ describe("HostHomeClient host-only What's New", () => {
     expect(
       screen.getByText(/AI-generated questions are checked before you can use them/i),
     ).toBeVisible();
+    expect(screen.getByText(/Sign in on any device\. Control the same live game\./i)).toBeVisible();
+    expect(screen.getByText(/TV preview shows what players see/i)).toBeVisible();
+    expect(screen.getByText(/Players scan the only QR/i)).toBeVisible();
     expect(screen.getByText(/no fact-check is perfect/i)).toBeVisible();
     expect(screen.getByText(/contact Brandon/i)).toBeVisible();
   });

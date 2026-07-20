@@ -56,7 +56,9 @@ it("reports verifier rejection reasons for a completed round", async () => {
       ambig(2),
       { ...ok(4), markedAnswerIsCorrect: false, ambiguous: true },
     ],
-    onRoundComplete: (event) => events.push(event),
+    onRoundComplete: (event) => {
+      events.push(event);
+    },
   });
 
   expect(out.map((x) => x.prompt)).toEqual(["clean"]);
@@ -111,7 +113,9 @@ it("rejects obviously visual-dependent wording before it can enter Original mode
     verifyPasses: 1,
     generate: async () => [q("What does this sign mean?")],
     verify: async () => [ok(0)],
-    onRoundComplete: (event) => events.push(event),
+    onRoundComplete: (event) => {
+      events.push(event);
+    },
   });
 
   expect(out).toEqual([]);
@@ -136,7 +140,9 @@ it("reports empty generation rounds before stopping", async () => {
       verifyCalls++;
       return [];
     },
-    onRoundComplete: (event) => events.push(event),
+    onRoundComplete: (event) => {
+      events.push(event);
+    },
   });
 
   expect(out).toEqual([]);

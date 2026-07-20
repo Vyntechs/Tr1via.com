@@ -160,11 +160,11 @@ export function HostSetupOverviewClient({
       const res = await fetch(`/api/nights/${nightId}/open`, { method: "POST" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "could not open the room");
+        throw new Error(body.error ?? "could not open the game");
       }
       router.push(hostRunPath(nightId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not open the room.");
+      setError(err instanceof Error ? err.message : "Could not open the game.");
       setOpening(false);
     }
   }
@@ -357,7 +357,7 @@ export function HostSetupOverviewClient({
           aria-label={
             liveGameExists
               ? "Theme locked while a game is live"
-              : "Pick the room's theme"
+              : "Pick the game's theme"
           }
           disabled={liveGameExists}
           style={{
@@ -388,8 +388,8 @@ export function HostSetupOverviewClient({
         onClose={() => setThemePickerOpen(false)}
         activeThemeKey={themeKey}
         onPick={(k) => void handlePickTheme(k)}
-        title="Pick the room's theme."
-        footer={savingTheme ? "Saving…" : "Applies to the TV and every player phone in this room."}
+        title="Pick the game's theme."
+        footer={savingTheme ? "Saving…" : "Applies to the TV and every player phone in this game."}
       />
       {error && (
         <div

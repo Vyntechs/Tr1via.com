@@ -80,7 +80,7 @@ export function RoomMagicReactionControls({
             fontWeight: 700,
           }}
         >
-          {state === "sent" ? "Sent to the room" : state === "failed" ? "Not sent" : ""}
+          {state === "sent" ? "Sent" : state === "failed" ? "Not sent" : ""}
         </div>
       </div>
 

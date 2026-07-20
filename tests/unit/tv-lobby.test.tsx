@@ -44,4 +44,20 @@ describe("TVLobby — scannable join QR", () => {
       (screen.getByTestId("tv-lobby").querySelector("div[style*='grid-template-columns']") as HTMLElement) ?? grid;
     expect(gridContainer.style.gridTemplateColumns).toBe("1fr 1fr");
   });
+
+  it("labels the join QR and uses game language", () => {
+    render(
+      <TVLobby
+        themeKey="house"
+        joinUrl="https://tr1via.com/join?code=K9PR4M"
+        roomCode="K9P·R4M"
+        topics={TOPICS}
+      />,
+    );
+
+    expect(screen.getByText("Players — scan to join this game")).toBeInTheDocument();
+    expect(screen.getByText("GAME CODE")).toBeInTheDocument();
+    expect(screen.queryByText("ROOM CODE")).not.toBeInTheDocument();
+    expect(screen.queryByText("in the room")).not.toBeInTheDocument();
+  });
 });

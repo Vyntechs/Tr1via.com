@@ -135,7 +135,7 @@ test.describe("Game 2 lifecycle — intermission to recap", () => {
       await expect(phone.getByText("general trivia", { exact: true })).toHaveCount(0);
     }
 
-    await hostPhone.goto(`/host/phone/${seed.nightId}`);
+    await hostPhone.goto(`/host/live/${seed.nightId}`);
     await expect(hostPhone.getByText("Game 1 complete")).toBeVisible({ timeout: 15_000 });
     await expect(hostPhone.getByRole("heading", { name: "Game 2 is ready" })).toBeVisible();
 

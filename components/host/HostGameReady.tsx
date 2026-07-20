@@ -156,30 +156,6 @@ export function HostGameReady({
               <p style={{ margin: 0, color: t.inkMid, fontSize: 11 }}>Join code {roomCode}</p>
             </div>
           </div>
-          <a
-            href={`/tv/${roomCode}`}
-            target="_blank"
-            rel="noreferrer"
-            aria-label="Open venue screen"
-            style={{
-              minWidth: 48,
-              minHeight: 48,
-              marginTop: 8,
-              padding: "0 12px",
-              border: `1px solid ${t.line}`,
-              borderRadius: 10,
-              color: t.accent,
-              textDecoration: "none",
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              boxSizing: "border-box",
-              fontSize: 12,
-              fontWeight: 800,
-            }}
-          >
-            Open venue screen ↗
-          </a>
         </section>
 
         <section aria-label="Readiness checks" style={{ ...panelStyle, overflow: "hidden" }}>

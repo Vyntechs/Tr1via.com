@@ -206,7 +206,7 @@ function OnboardingFirstDashboardInner({
                 v: "2",
               },
               {
-                l: "OPEN THE ROOM",
+                l: "OPEN THE GAME",
                 body: "A QR code goes on the TV. Players scan and play.",
                 v: "3",
               },

@@ -49,14 +49,14 @@ describe("PlayerLocked — live lock-in count", () => {
     render(wrap(<PlayerLocked lockedCount={12} totalPlayers={18} roomMagicEnabled />));
 
     expect(screen.getByTestId("lockin-progress").textContent).toMatch(/12 of 18 locked in/i);
-    expect(screen.getByText("Sent to the room.")).toBeInTheDocument();
+    expect(screen.getByText("Answer saved.")).toBeInTheDocument();
   });
 
   it("marks the Room Magic confirmation with a stable test id", () => {
     render(wrap(<PlayerLocked lockedCount={12} totalPlayers={18} roomMagicEnabled />));
 
     expect(screen.getByTestId("player-house-lights-confirmation")).toHaveTextContent(
-      "Sent to the room.",
+      "Answer saved.",
     );
   });
 

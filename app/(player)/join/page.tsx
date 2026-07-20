@@ -89,7 +89,7 @@ function CodeEntryScreen({ onSubmit }: { onSubmit: (code: string) => void }) {
   // URL until the code is typed/scanned.
   return (
     <PhoneScreen data-testid="player-code-entry">
-      <PhoneHeader eyebrow="JOIN A ROOM" />
+      <PhoneHeader eyebrow="JOIN A GAME" />
       <CodeEntryBody onSubmit={onSubmit} />
     </PhoneScreen>
   );
@@ -138,7 +138,7 @@ function CodeEntryBody({ onSubmit }: { onSubmit: (code: string) => void }) {
         </p>
 
         <div style={{ marginTop: 36 }}>
-          <Eyebrow color={t.inkMid} size={10}>ROOM CODE</Eyebrow>
+          <Eyebrow color={t.inkMid} size={10}>GAME CODE</Eyebrow>
           <input
             value={raw}
             onChange={(e) => setRaw(e.target.value.slice(0, 10))}
@@ -148,7 +148,7 @@ function CodeEntryBody({ onSubmit }: { onSubmit: (code: string) => void }) {
             autoCorrect="off"
             spellCheck={false}
             inputMode="text"
-            aria-label="Room code"
+            aria-label="Game code"
             data-testid="player-code-input"
             style={{
               marginTop: 10,
@@ -244,7 +244,7 @@ function JoinWithCode({
         const res = await fetch(`/api/nights/by-code/${roomCode}`);
         if (cancelled) return;
         if (res.status === 404) {
-          setLookup({ kind: "error", message: "Room not found." });
+          setLookup({ kind: "error", message: "Game not found." });
           return;
         }
         if (!res.ok) {
@@ -324,7 +324,7 @@ function JoinWithCode({
       <ThemeProvider themeKey={themeKey}>
         <NotFoundScreen
           roomCode={roomCode}
-          message="This room is locked — ask the host to open it."
+          message="This game is locked — ask the host to open it."
         />
       </ThemeProvider>
     );
@@ -362,7 +362,7 @@ function NeutralLoading({ roomCode }: { roomCode: string }) {
         <Display size={48} color={t.ink}>
           Finding
           <br />
-          <span style={{ color: t.accent }}>your room…</span>
+          <span style={{ color: t.accent }}>your game…</span>
         </Display>
       </div>
     </PhoneScreen>
@@ -380,7 +380,7 @@ function NotFoundScreen({
   const { t } = useTheme();
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow={`ROOM · ${formatRoomCode(roomCode)}`} />
+      <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 24 }}>
         <Wordmark size={28} />
         <Display
@@ -445,8 +445,8 @@ function extractMessage(body: unknown, status: number): string {
   ) {
     return (body as { error: string }).error;
   }
-  if (status === 403) return "This room isn't accepting players right now.";
+  if (status === 403) return "This game isn't accepting players right now.";
   if (status === 401) return "Couldn't verify your device — refresh and try again.";
-  if (status === 404) return "Room not found.";
+  if (status === 404) return "Game not found.";
   return `Couldn't join (status ${status}).`;
 }

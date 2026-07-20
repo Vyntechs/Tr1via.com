@@ -72,25 +72,16 @@ function snapshot(overrides: Partial<TVSnapshot> = {}): TVSnapshot {
 }
 
 describe("HostLiveConsole public control strip", () => {
-  it("offers a scan-only handoff to the explicit private phone route", () => {
+  it("does not expose a host-pairing QR or separate phone route", () => {
     render(
       <HostLiveConsole
         themeKey="house"
-        privateControlUrl="https://tr1via.test/host/phone/night-1"
         tvSnapshot={snapshot()}
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /phone remote/i }));
-    expect(
-      screen.getByRole("dialog", { name: /private phone remote/i }),
-    ).toBeVisible();
-    expect(
-      screen.getByLabelText(
-        "QR code: https://tr1via.test/host/phone/night-1",
-      ),
-    ).toBeVisible();
-    expect(screen.queryByText("CORRECT")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /phone remote/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: /private phone remote/i })).not.toBeInTheDocument();
   });
 
   it("uses stage-safe labels on the mirrored lobby controls", () => {
@@ -109,7 +100,7 @@ describe("HostLiveConsole public control strip", () => {
 
     expect(screen.getByTestId("host-start-game-1-btn")).toHaveTextContent("Start round 1");
     expect(screen.queryByText("Start Game 1")).not.toBeInTheDocument();
-    expect(screen.getByTestId("host-players-btn")).toHaveTextContent("Room (0)");
+    expect(screen.getByTestId("host-players-btn")).toHaveTextContent("Players (0)");
   });
 
   it("uses plain audience-safe action labels while a question is live", () => {

@@ -23,7 +23,7 @@ const SECTIONS: ReadonlyArray<{ id: HostSection; icon: string; label: string }> 
   { id: "board", icon: "▦", label: "Board" },
   { id: "players", icon: "◉", label: "Players" },
   { id: "scores", icon: "★", label: "Scores" },
-  { id: "tv", icon: "▣", label: "TV" },
+  { id: "tv", icon: "▣", label: "TV preview" },
 ];
 
 export function HostCommandCenter({
