@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
 import type { RoomSnapshot } from "@/lib/hooks/useRoom";
 import type {
@@ -541,6 +543,95 @@ describe("HostPhoneClient reveal flow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Board" }));
     expect(screen.getByRole("grid", { name: "Question board" })).toBeVisible();
+  });
+
+  it("does not claim TV or phone delivery without observation receipts", async () => {
+    h.room = { ...room(), players: [player("p1")] };
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    expect(await screen.findByText("TV not confirmed")).toBeVisible();
+    expect(screen.getByText("Phone delivery not confirmed")).toBeVisible();
+    expect(screen.queryByText("TV live")).not.toBeInTheDocument();
+    expect(screen.queryByText(/phones live/)).not.toBeInTheDocument();
+  });
+
+  it("keeps every lifecycle and TV command at least 48px tall", async () => {
+    const view = render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    expect(await screen.findByRole("button", { name: "Start Game 1" })).toHaveStyle({ minHeight: "48px" });
+    expect(screen.getByRole("link", { name: "Open venue screen" })).toHaveStyle({ minHeight: "48px" });
+
+    const liveGame = game("g1", 1, "live");
+    h.room = { ...room(), games: [liveGame], currentGame: liveGame };
+    view.rerender(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "End Game 1" }));
+    expect(screen.getByRole("button", { name: "Keep playing" })).toHaveStyle({ minHeight: "48px" });
+    expect(screen.getByRole("button", { name: "Confirm end Game 1" })).toHaveStyle({ minHeight: "48px" });
+  });
+
+  it("uses game-control fallback copy when no game is available and when a lifecycle request fails", async () => {
+    h.room = { ...room(), games: [], categories: [], currentGame: null };
+    const view = render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+    expect(await screen.findByText("GAME CONTROL")).toBeVisible();
+    expect(screen.queryByText(/show control/i)).not.toBeInTheDocument();
+
+    h.room = room();
+    h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 500 }));
+    view.rerender(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Start Game 1" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("game control failed");
+    expect(screen.queryByText(/show control/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the private-preview API limited to live call-site data", () => {
+    const source = readFileSync(
+      join(process.cwd(), "components/host/HostPhoneUpcoming.tsx"),
+      "utf8",
+    );
+    for (const deadProp of [
+      "onPickDifferent",
+      "roomLive",
+      "playerCount",
+      "questionIndex",
+      "questionTotal",
+    ]) {
+      expect(source).not.toContain(deadProp);
+    }
   });
 
   it("exposes explicit round controls on the same private phone surface", async () => {

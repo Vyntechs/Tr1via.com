@@ -20,6 +20,7 @@ import { Eyebrow, ThemeProvider, useTheme } from "@/components/system";
 import { deriveHostStage, type HostStage } from "@/lib/host/gameConsole";
 import type { AnswerRow, GameScoreRow, QuestionRow } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { readableForeground } from "@/lib/theme/contrast";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -381,11 +382,11 @@ export function HostPhoneClient({
       const res = await fetch(path, { method: "POST" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "show control failed");
+        throw new Error(body.error ?? "game control failed");
       }
       setConfirmingEnd(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Show control failed.");
+      setError(err instanceof Error ? err.message : "Game control failed.");
     } finally {
       setBusy(false);
     }
@@ -549,7 +550,6 @@ export function HostPhoneClient({
       active={activeSection}
       playerCount={playerCount}
       lockedCount={answers.length}
-      backupMode={backupMode}
       onNavigate={navigate}
       controls={roundControls}
     >
@@ -567,7 +567,6 @@ interface PhoneCenterProps {
   active: HostSection;
   playerCount: number;
   lockedCount: number;
-  backupMode: boolean;
   onNavigate: (section: HostSection) => void;
 }
 
@@ -586,7 +585,6 @@ function PhoneCenterInner({
   active,
   playerCount,
   lockedCount,
-  backupMode,
   onNavigate,
 }: Omit<PhoneCenterProps, "themeKey">) {
   return (
@@ -597,9 +595,9 @@ function PhoneCenterInner({
         playerCount={playerCount}
         lockedCount={lockedCount}
         delivery={{
-          tv: backupMode ? "recovering" : "current",
-          currentPhones: backupMode ? 0 : playerCount,
-          recoveringPhones: backupMode ? playerCount : 0,
+          tv: "unknown",
+          currentPhones: null,
+          recoveringPhones: null,
         }}
         onNavigate={onNavigate}
       >
@@ -737,7 +735,7 @@ function PhoneRoundControlsInner({
     >
       <div style={{ flex: 1, flexBasis: confirmingEnd ? "100%" : undefined, minWidth: 0 }}>
         <Eyebrow color={t.accent} size={9}>
-          {gameNo ? `GAME ${gameNo}` : "SHOW CONTROL"}
+          {gameNo ? `GAME ${gameNo}` : "GAME CONTROL"}
         </Eyebrow>
         <div style={{ marginTop: 2, fontSize: 12, color: t.inkMid, fontWeight: 600 }}>
           {questionLive ? "Question live" : gameState === "done" ? "Round complete" : gameState ?? "Waiting"}
@@ -751,7 +749,7 @@ function PhoneRoundControlsInner({
         aria-label="Open venue screen"
         style={{
           minWidth: 58,
-          minHeight: 44,
+          minHeight: 48,
           padding: "0 10px",
           borderRadius: 10,
           border: `1px solid ${t.line}`,
@@ -797,12 +795,12 @@ function PhoneRoundControlsInner({
 
 function roundButton(t: ReturnType<typeof useTheme>["t"], primary: boolean): React.CSSProperties {
   return {
-    minHeight: 44,
+    minHeight: 48,
     padding: "8px 12px",
     borderRadius: 10,
     border: primary ? "none" : `1px solid ${t.line}`,
     background: primary ? t.accent : "transparent",
-    color: primary ? (t.dark ? "#0E0E0C" : "#FFF") : t.ink,
+    color: primary ? readableForeground(t.accent) : t.ink,
     fontFamily: "var(--font-sans)",
     fontSize: 12,
     fontWeight: 700,

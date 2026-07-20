@@ -3,6 +3,7 @@
 import { useMemo } from "react";
 import { Eyebrow, useTheme } from "@/components/system";
 import type { CategoryRow, QuestionRow } from "@/lib/supabase/types";
+import { readableForeground } from "@/lib/theme/contrast";
 
 const CLASSIC_VALUES = [100, 200, 300, 400, 500, 600, 700] as const;
 
@@ -101,6 +102,7 @@ export function HostPhoneBoard({
             const missing = !question;
             const disabled = missing || played;
             const selected = question?.id === selectedQuestionId;
+            const actionBackground = selected ? t.pop : t.accent;
             const stateLabel = played ? " · Played" : missing ? " · Not available" : "";
 
             return (
@@ -124,8 +126,8 @@ export function HostPhoneBoard({
                     padding: "8px 3px",
                     borderRadius: 10,
                     border: `1px solid ${selected ? t.pop : t.line}`,
-                    background: disabled ? t.surface : selected ? t.pop : t.accent,
-                    color: disabled ? t.inkMute : t.paper,
+                    background: disabled ? t.surface : actionBackground,
+                    color: disabled ? t.inkMute : readableForeground(actionBackground),
                     fontFamily: "var(--font-mono)",
                     fontSize: 14,
                     fontWeight: 800,

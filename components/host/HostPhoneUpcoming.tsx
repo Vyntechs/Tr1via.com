@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { PhoneScreen } from "@/components/shells";
 import { Eyebrow, Numeric, ThemeProvider, useTheme } from "@/components/system";
+import { readableForeground } from "@/lib/theme/contrast";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 export interface HostPhoneUpcomingProps {
@@ -18,14 +19,7 @@ export interface HostPhoneUpcomingProps {
   imageAttribution?: string | null;
   onReveal?: () => void;
   onBack?: () => void;
-  /** Backward-compatible alias for gallery callers. */
-  onPickDifferent?: () => void;
   isRevealing?: boolean;
-  /** Retained for existing callers; private preview copy uses customer-facing game language. */
-  roomLive?: boolean;
-  playerCount?: number;
-  questionIndex?: number;
-  questionTotal?: number;
 }
 
 export function HostPhoneUpcoming({ themeKey, ...props }: HostPhoneUpcomingProps) {
@@ -51,12 +45,10 @@ function HostPhoneUpcomingInner({
   imageAttribution,
   onReveal,
   onBack,
-  onPickDifferent,
   isRevealing = false,
 }: HostPhoneUpcomingProps) {
   const { t } = useTheme();
   const firstName = hostName.trim().split(/\s+/)[0] || "Heather";
-  const back = onBack ?? onPickDifferent;
 
   return (
     <PhoneScreen weatherIntensity={0.35}>
@@ -196,7 +188,7 @@ function HostPhoneUpcomingInner({
             border: 0,
             borderRadius: 13,
             background: t.accent,
-            color: t.paper,
+            color: readableForeground(t.accent),
             fontFamily: "var(--font-sans)",
             fontSize: 17,
             fontWeight: 800,
@@ -206,24 +198,26 @@ function HostPhoneUpcomingInner({
         >
           {isRevealing ? "Showing…" : "Show question"}
         </button>
-        <button
-          type="button"
-          onClick={back}
-          disabled={!back || isRevealing}
-          style={{
-            minHeight: 48,
-            border: `1px solid ${t.line}`,
-            borderRadius: 13,
-            background: "transparent",
-            color: t.ink,
-            fontFamily: "var(--font-sans)",
-            fontSize: 14,
-            fontWeight: 750,
-            cursor: isRevealing ? "wait" : "pointer",
-          }}
-        >
-          Back to board
-        </button>
+        {onBack && (
+          <button
+            type="button"
+            onClick={onBack}
+            disabled={isRevealing}
+            style={{
+              minHeight: 48,
+              border: `1px solid ${t.line}`,
+              borderRadius: 13,
+              background: "transparent",
+              color: t.ink,
+              fontFamily: "var(--font-sans)",
+              fontSize: 14,
+              fontWeight: 750,
+              cursor: isRevealing ? "wait" : "pointer",
+            }}
+          >
+            Back to board
+          </button>
+        )}
       </div>
     </PhoneScreen>
   );
