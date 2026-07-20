@@ -18,6 +18,7 @@ export type QuestionRejectionReason =
   | "missing_verdict"
   | "fact_blurb_wrong"
   | "image_required"
+  | "category_mismatch"
   | "deterministic_risk"
   | "duplicate_prompt"
   | "generation_empty"

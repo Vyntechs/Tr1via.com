@@ -37,9 +37,12 @@ export interface AnswerVerdict {
   ambiguous: boolean;
   factBlurbIsCorrect: boolean;
   answerableWithoutImage: boolean;
+  fitsRequestedTopic: boolean;
 }
 
 export interface VerifyAnswersOptions {
+  /** Category topic the question must fit, including all qualifiers and exclusions. */
+  topic: string;
   client?: Pick<Anthropic, "messages">;
   model?: string;
   /** Optional: receive token usage per chunk call for cost logging. No-op if omitted. */
@@ -64,6 +67,7 @@ const verdictsTool = {
             ambiguous: { type: "boolean" },
             factBlurbIsCorrect: { type: "boolean" },
             answerableWithoutImage: { type: "boolean" },
+            fitsRequestedTopic: { type: "boolean" },
           },
           required: [
             "index",
@@ -71,6 +75,7 @@ const verdictsTool = {
             "ambiguous",
             "factBlurbIsCorrect",
             "answerableWithoutImage",
+            "fitsRequestedTopic",
           ],
           additionalProperties: false,
         },
@@ -91,6 +96,9 @@ const VERIFIER_SYSTEM =
   "only when every factual claim in it is accurate and supports the marked answer. " +
   "Set answerableWithoutImage=true only when a player can answer from the prompt " +
   "and options alone, without seeing a photo, sign, map, chart, logo, or other image. " +
+  "Set fitsRequestedTopic=true only when the question belongs in requestedTopic exactly as " +
+  "written; enforce qualifiers and exclusions, so a question about venomous snakes does not " +
+  "fit a category named Non-venomous snakes. " +
   "Treat missing date, metric, geography, edition, or other necessary context as " +
   "ambiguity. Return exactly one verdict for every question index. " +
   "Output only the verdicts — no explanations.";
@@ -107,6 +115,7 @@ interface RawVerdict {
   ambiguous: boolean;
   factBlurbIsCorrect: boolean;
   answerableWithoutImage: boolean;
+  fitsRequestedTopic: boolean;
 }
 // Opus 4.8 occasionally double-encodes the tool output — the verdicts array
 // arrives as a JSON string inside block.input instead of a native array.
@@ -134,6 +143,7 @@ async function verifyChunk(
   client: Pick<Anthropic, "messages">,
   model: string,
   chunk: GeneratedQuestion[],
+  topic: string,
   onUsage?: (model: string, usage: TokenUsage) => void,
 ): Promise<Map<number, AnswerVerdict>> {
   const payload = chunk.map((q, i) => ({
@@ -143,6 +153,7 @@ async function verifyChunk(
     markedAnswer: q.options[q.correctIndex],
     factBlurb: q.factBlurb,
     mustBeAnswerableWithoutImage: true,
+    requestedTopic: topic,
   }));
   const byIndex = new Map<number, AnswerVerdict>();
 
@@ -185,6 +196,7 @@ async function verifyChunk(
             ambiguous: v.ambiguous !== false,
             factBlurbIsCorrect: v.factBlurbIsCorrect === true,
             answerableWithoutImage: v.answerableWithoutImage === true,
+            fitsRequestedTopic: v.fitsRequestedTopic === true,
           });
         }
       }
@@ -203,7 +215,7 @@ async function verifyChunk(
 
 export async function verifyAnswers(
   questions: GeneratedQuestion[],
-  opts: VerifyAnswersOptions = {},
+  opts: VerifyAnswersOptions,
 ): Promise<AnswerVerdict[]> {
   if (questions.length === 0) return [];
 
@@ -229,7 +241,7 @@ export async function verifyAnswers(
   // preserves chunk order, so the merged global indices are identical to the
   // old sequential walk.
   const chunkResults = await Promise.all(
-    chunks.map((chunk) => verifyChunk(client, model, chunk.items, opts.onUsage)),
+    chunks.map((chunk) => verifyChunk(client, model, chunk.items, opts.topic, opts.onUsage)),
   );
 
   const out: AnswerVerdict[] = [];

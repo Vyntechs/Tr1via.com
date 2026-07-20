@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from "vitest";
 import { verifyAnswers, VERIFIER_MODEL } from "@/lib/ai/verify-answers";
 import type { GeneratedQuestion } from "@/lib/ai/generate-questions";
 
+const DEFAULT_TOPIC = "General trivia";
+
 function q(over: Partial<GeneratedQuestion> = {}): GeneratedQuestion {
   return {
     prompt: "Demi Moore was married to which actor?",
@@ -46,22 +48,35 @@ describe("verifyAnswers", () => {
   it("returns a verdict per question and forces the verdicts tool", async () => {
     const capture: Call[] = [];
     const client = cleanClient(capture);
-    // @ts-expect-error — narrowing to Pick<Anthropic,"messages"> in tests
-    const out = await verifyAnswers([q()], { client });
-    expect(out).toHaveLength(1);
+    const out = await verifyAnswers(
+      Array.from({ length: 7 }, (_, index) => q({ prompt: `Question ${index}` })),
+      {
+        client: client as never,
+        topic: "Non-venomous snakes",
+      },
+    );
+    expect(out).toHaveLength(7);
     expect(out[0]?.markedAnswerIsCorrect).toBe(true);
     expect(out[0]?.factBlurbIsCorrect).toBe(true);
     expect(out[0]?.answerableWithoutImage).toBe(true);
+    expect(out[0]?.fitsRequestedTopic).toBe(false);
     expect(capture[0]!.params.tool_choice).toEqual({ type: "tool", name: "verdicts" });
     expect(JSON.stringify(capture[0]!.params.tools)).toContain("factBlurbIsCorrect");
     expect(JSON.stringify(capture[0]!.params.tools)).toContain("answerableWithoutImage");
+    expect(JSON.stringify(capture[0]!.params.tools)).toContain("fitsRequestedTopic");
+    for (const call of capture) {
+      const content = (call.params.messages as Array<{ content: string }>)[0]!.content;
+      expect(content).toContain('"requestedTopic":"Non-venomous snakes"');
+    }
   });
 
   it("sends the MARKED answer (options[correctIndex]) for each question", async () => {
     const capture: Call[] = [];
     const client = cleanClient(capture);
-    // @ts-expect-error — narrowing
-    await verifyAnswers([q({ correctIndex: 3 })], { client });
+    await verifyAnswers([q({ correctIndex: 3 })], {
+      client: client as never,
+      topic: DEFAULT_TOPIC,
+    });
     const content = (capture[0]!.params.messages as Array<{ content: string }>)[0]!.content;
     expect(content).toContain('"markedAnswer":"Arnold"');
     expect(content).toContain('"factBlurb":"They married in 1987."');
@@ -70,16 +85,18 @@ describe("verifyAnswers", () => {
   it("omits temperature for Opus 4.8 (the param is deprecated there)", async () => {
     const capture: Call[] = [];
     const client = cleanClient(capture);
-    // @ts-expect-error — narrowing
-    await verifyAnswers([q()], { client, model: VERIFIER_MODEL });
+    await verifyAnswers([q()], {
+      client: client as never,
+      model: VERIFIER_MODEL,
+      topic: DEFAULT_TOPIC,
+    });
     expect(capture[0]!.params).not.toHaveProperty("temperature");
   });
 
   it("returns [] for an empty batch without calling the API", async () => {
     const capture: Call[] = [];
     const client = cleanClient(capture);
-    // @ts-expect-error — narrowing
-    const out = await verifyAnswers([], { client });
+    const out = await verifyAnswers([], { client: client as never, topic: DEFAULT_TOPIC });
     expect(out).toEqual([]);
     expect(capture).toHaveLength(0);
   });
@@ -88,8 +105,7 @@ describe("verifyAnswers", () => {
     const capture: Call[] = [];
     const client = cleanClient(capture);
     const ten = Array.from({ length: 10 }, (_, i) => q({ prompt: `Q${i}` }));
-    // @ts-expect-error — narrowing
-    const out = await verifyAnswers(ten, { client });
+    const out = await verifyAnswers(ten, { client: client as never, topic: DEFAULT_TOPIC });
     expect(capture).toHaveLength(2); // 6 + 4
     expect(out).toHaveLength(10);
     expect(out.map((v) => v.index)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
@@ -109,8 +125,10 @@ describe("verifyAnswers", () => {
         }),
       },
     };
-    // @ts-expect-error — narrowing
-    const out = await verifyAnswers([q(), q({ prompt: "Q2" }), q({ prompt: "Q3" })], { client: flaky });
+    const out = await verifyAnswers([q(), q({ prompt: "Q2" }), q({ prompt: "Q3" })], {
+      client: flaky as never,
+      topic: DEFAULT_TOPIC,
+    });
     expect(out).toHaveLength(3);
     expect(capture).toHaveLength(2); // stopped once the gap was filled
   });
@@ -126,8 +144,10 @@ describe("verifyAnswers", () => {
         }),
       },
     };
-    // @ts-expect-error — narrowing
-    const out = await verifyAnswers([q(), q({ prompt: "Q2" }), q({ prompt: "Q3" })], { client: broken });
+    const out = await verifyAnswers([q(), q({ prompt: "Q2" }), q({ prompt: "Q3" })], {
+      client: broken as never,
+      topic: DEFAULT_TOPIC,
+    });
     expect(out).toHaveLength(2); // one question never got a verdict — dropped, not thrown
     expect(capture).toHaveLength(3); // exhausted the retry attempts
   });
@@ -140,8 +160,10 @@ describe("verifyAnswers", () => {
         })),
       },
     };
-    // @ts-expect-error — narrowing
-    const out = await verifyAnswers([q()], { client: doubleEncoded });
+    const out = await verifyAnswers([q()], {
+      client: doubleEncoded as never,
+      topic: DEFAULT_TOPIC,
+    });
     expect(out).toHaveLength(1);
     expect(out[0]?.markedAnswerIsCorrect).toBe(true);
   });
@@ -174,8 +196,7 @@ describe("verifyAnswers", () => {
 
     const twenty = Array.from({ length: 20 }, (_, i) => q({ prompt: `Q${i}` }));
     const t0 = performance.now();
-    // @ts-expect-error — narrowing
-    const out = await verifyAnswers(twenty, { client });
+    const out = await verifyAnswers(twenty, { client: client as never, topic: DEFAULT_TOPIC });
     const elapsed = performance.now() - t0;
 
     // 20 / VERIFY_CHUNK_SIZE(6) = 4 chunks — all in flight simultaneously.
@@ -200,8 +221,10 @@ describe("verifyAnswers", () => {
         })),
       },
     };
-    // @ts-expect-error — narrowing
-    const out = await verifyAnswers([q()], { client: doubleEncoded });
+    const out = await verifyAnswers([q()], {
+      client: doubleEncoded as never,
+      topic: DEFAULT_TOPIC,
+    });
     expect(out).toHaveLength(1);
     expect(out[0]?.markedAnswerIsCorrect).toBe(true);
   });

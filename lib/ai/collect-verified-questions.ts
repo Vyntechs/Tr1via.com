@@ -24,6 +24,7 @@ export type CollectVerifiedRejectionReason =
   | "missing_verdict"
   | "fact_blurb_wrong"
   | "image_required"
+  | "category_mismatch"
   | "deterministic_risk";
 
 export interface CollectVerifiedRejectedCandidate {
@@ -134,6 +135,7 @@ function rejectionReasonsForIndex(
   let missingVerdict = false;
   let factBlurbWrong = false;
   let imageRequired = false;
+  let categoryMismatch = false;
 
   for (const byIndex of verdictsByPass) {
     const verdict = byIndex.get(index);
@@ -145,6 +147,7 @@ function rejectionReasonsForIndex(
     if (verdict.ambiguous) verifierAmbiguous = true;
     if (!verdict.factBlurbIsCorrect) factBlurbWrong = true;
     if (!verdict.answerableWithoutImage) imageRequired = true;
+    if (!verdict.fitsRequestedTopic) categoryMismatch = true;
   }
 
   const reasons: CollectVerifiedRejectionReason[] = [];
@@ -153,5 +156,6 @@ function rejectionReasonsForIndex(
   if (missingVerdict) reasons.push("missing_verdict");
   if (factBlurbWrong) reasons.push("fact_blurb_wrong");
   if (imageRequired) reasons.push("image_required");
+  if (categoryMismatch) reasons.push("category_mismatch");
   return reasons;
 }

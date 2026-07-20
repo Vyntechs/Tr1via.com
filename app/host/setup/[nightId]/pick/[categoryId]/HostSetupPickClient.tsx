@@ -43,6 +43,7 @@ import {
   explainGenerationFailure,
 } from "@/lib/host/generationFailureMessages";
 import { mergePickedAfterRefetch } from "@/lib/host/mergePickedAfterRefetch";
+import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
   explainLockFailure,
   explainPhotoSaveFailure,
@@ -188,6 +189,10 @@ export function HostSetupPickClient({
     }),
   );
   const [retrying, setRetrying] = useState(false);
+  // Durable attempts, not component renders, bound automatic recovery. A
+  // stale poll can repeat many times while the resume POST is in flight.
+  const autoResumedAttemptsRef = useRef(new Set<number>());
+  const currentGenerationAttemptRef = useRef(0);
 
   const refetchQuestions = useCallback(async () => {
     // Query Supabase directly via the browser client (RLS allows the host
@@ -230,6 +235,22 @@ export function HostSetupPickClient({
     setAuditSummary(data ? auditSummaryFromReportRow(data as AuditReportRow) : null);
   }, [categoryId]);
 
+  const isCurrentTerminalAttempt = useCallback(
+    async (attempt: unknown, phase: "ready" | "needs_attention") => {
+      if (typeof attempt !== "number") return false;
+      const supa = getSupabaseBrowser();
+      const { data, error } = await supa
+        .from("question_generation_jobs")
+        .select("attempt, phase")
+        .eq("category_id", categoryId)
+        .maybeSingle();
+      if (error || !data) return false;
+      const job = data as { attempt?: number; phase?: string };
+      return job.attempt === attempt && job.phase === phase;
+    },
+    [categoryId],
+  );
+
   // ── live subscription ────────────────────────────────────────────────
   useEffect(() => {
     const supa = getSupabaseBrowser();
@@ -241,20 +262,46 @@ export function HostSetupPickClient({
         // Heartbeat while writing / fact-checking, before any row exists.
         // Records activity (keeps the safety timer armed) and drives the live
         // status line so the longer run never looks frozen or "timed out".
-        const payload = msg.payload as { phase?: GenerationPhase };
+        const payload = msg.payload as { phase?: GenerationPhase; attempt?: number };
+        if (
+          typeof payload.attempt === "number" &&
+          payload.attempt < currentGenerationAttemptRef.current
+        ) return;
+        if (typeof payload.attempt === "number") {
+          currentGenerationAttemptRef.current = payload.attempt;
+        }
         setLastActivityAt(Date.now());
         if (payload.phase) setGenPhase(payload.phase);
       })
-      .on("broadcast", { event: "question_added" }, () => {
+      .on("broadcast", { event: "question_added" }, (msg) => {
         if (cancelled) return;
+        const payload = msg.payload as { attempt?: number };
+        if (
+          typeof payload.attempt === "number" &&
+          payload.attempt < currentGenerationAttemptRef.current
+        ) return;
+        if (typeof payload.attempt === "number") {
+          currentGenerationAttemptRef.current = payload.attempt;
+        }
         setLastActivityAt(Date.now());
         // Refetch the question list to absorb the new row.
         void refetchQuestions();
       })
       .on("broadcast", { event: "photo_attached" }, (msg) => {
         if (cancelled) return;
+        const payload = msg.payload as {
+          attempt?: number;
+          questionId?: string;
+          imageUrl?: string;
+        };
+        if (
+          typeof payload.attempt === "number" &&
+          payload.attempt < currentGenerationAttemptRef.current
+        ) return;
+        if (typeof payload.attempt === "number") {
+          currentGenerationAttemptRef.current = payload.attempt;
+        }
         setLastActivityAt(Date.now());
-        const payload = msg.payload as { questionId?: string; imageUrl?: string };
         if (!payload.questionId) return;
         setQuestions((prev) =>
           prev.map((q) =>
@@ -264,9 +311,15 @@ export function HostSetupPickClient({
           ),
         );
       })
-      .on("broadcast", { event: "done" }, (msg) => {
+      .on("broadcast", { event: "done" }, async (msg) => {
         if (cancelled) return;
         const payload = msg.payload as CategoryDonePayload;
+        if (payload.attempt < currentGenerationAttemptRef.current) return;
+        if (!(await isCurrentTerminalAttempt(payload.attempt, "ready"))) return;
+        if (cancelled) return;
+        if (typeof payload.attempt === "number") {
+          currentGenerationAttemptRef.current = payload.attempt;
+        }
         const nextAuditSummary = isHostQuestionAuditSummary(payload.auditSummary)
           ? payload.auditSummary
           : null;
@@ -280,9 +333,18 @@ export function HostSetupPickClient({
         setRegenerating(false);
         void refetchQuestions();
       })
-      .on("broadcast", { event: "error" }, (msg) => {
+      .on("broadcast", { event: "error" }, async (msg) => {
         if (cancelled) return;
-        const payload = msg.payload as { error?: string };
+        const payload = msg.payload as { attempt?: number; error?: string };
+        if (
+          typeof payload.attempt === "number" &&
+          payload.attempt < currentGenerationAttemptRef.current
+        ) return;
+        if (!(await isCurrentTerminalAttempt(payload.attempt, "needs_attention"))) return;
+        if (cancelled) return;
+        if (typeof payload.attempt === "number") {
+          currentGenerationAttemptRef.current = payload.attempt;
+        }
         const wasInPlaceRegenerate = regeneratingRef.current;
         if (wasInPlaceRegenerate) {
           // Regenerate failed but we already have 20 candidates from the
@@ -318,8 +380,8 @@ export function HostSetupPickClient({
       cancelled = true;
       void supa.removeChannel(channel);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categoryId]);
+    // Subscription lifetime is category-scoped; callbacks are stable.
+  }, [categoryId, isCurrentTerminalAttempt, refetchAuditSummary, refetchQuestions]);
 
   // Re-fetch on mount when we're already in review (covers reload during pick).
   useEffect(() => {
@@ -375,16 +437,34 @@ export function HostSetupPickClient({
   });
 
   useEffect(() => {
+    if (
+      (watchStatus.kind === "progress" || watchStatus.kind === "needs-attention") &&
+      watchStatus.progress.attempt > currentGenerationAttemptRef.current
+    ) {
+      currentGenerationAttemptRef.current = watchStatus.progress.attempt;
+    }
     if (watchStatus.kind === "completed") {
-      setGenerationFailureMessage(null);
-      setGenPhase(null);
-      setState(watchStatus.state);
-      setRegenerating(false);
-      void refetchQuestions();
-      void refetchAuditSummary();
-      return;
+      const id = window.setTimeout(() => {
+        setGenerationFailureMessage(null);
+        setGenPhase(null);
+        setState(watchStatus.state);
+        setRegenerating(false);
+        void refetchQuestions();
+        void refetchAuditSummary();
+      }, 0);
+      return () => window.clearTimeout(id);
     }
     if (watchStatus.kind === "needs-attention") {
+      if (
+        shouldAutoResumeGeneration(watchStatus.progress) &&
+        !autoResumedAttemptsRef.current.has(watchStatus.progress.attempt)
+      ) {
+        autoResumedAttemptsRef.current.add(watchStatus.progress.attempt);
+        const id = window.setTimeout(() => {
+          void handleRetryGeneration();
+        }, 0);
+        return () => window.clearTimeout(id);
+      }
       const id = window.setTimeout(() => {
         setGenerationFailureMessage(watchStatus.progress.statusLine);
         setGenPhase("needs_attention");
@@ -411,8 +491,10 @@ export function HostSetupPickClient({
       setState("draft");
     }, 0);
     return () => window.clearTimeout(id);
+    // `watchStatus` is the state-machine input. Retry/refetch callbacks are
+    // intentionally invoked from the queued transition without rearming it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchStatus.kind]);
+  }, [watchStatus]);
 
   // ── pick toggling ────────────────────────────────────────────────────
   function togglePick(questionId: string) {
@@ -548,6 +630,15 @@ export function HostSetupPickClient({
       if (!res.ok && res.status !== 202 && res.status !== 409) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "could not regenerate");
+      }
+      if (res.status === 202) {
+        const body = (await res.json().catch(() => ({}))) as { attempt?: number };
+        if (typeof body.attempt === "number") {
+          currentGenerationAttemptRef.current = Math.max(
+            currentGenerationAttemptRef.current,
+            body.attempt,
+          );
+        }
       }
       if (res.status === 202 && !isInPlaceRegenerate) {
         // First-time generation (category was in 'draft') — show the
@@ -796,7 +887,14 @@ export function HostSetupPickClient({
           flavor: flavor.length > 0 ? flavor : undefined,
         }),
       });
-      if (!res.ok && res.status !== 202 && res.status !== 409) {
+      if (res.status === 409) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setGenerationFailureMessage(
+          body.error ?? "Generation is still paused. Continue when you are ready.",
+        );
+        return;
+      }
+      if (!res.ok && res.status !== 202) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setGenerationFailureMessage(
           explainGenerationFailure({
@@ -807,7 +905,14 @@ export function HostSetupPickClient({
         );
         return;
       }
-      if (res.status === 202 || res.status === 409) {
+      if (res.status === 202) {
+        const body = (await res.json().catch(() => ({}))) as { attempt?: number };
+        if (typeof body.attempt === "number") {
+          currentGenerationAttemptRef.current = Math.max(
+            currentGenerationAttemptRef.current,
+            body.attempt,
+          );
+        }
         setState("generating");
       }
     } catch (err) {
@@ -871,6 +976,18 @@ export function HostSetupPickClient({
     watchStatus.kind === "progress" || watchStatus.kind === "needs-attention"
       ? watchStatus.progress
       : null;
+  const autoResumeLoading =
+    durableProgress !== null &&
+    shouldAutoResumeGeneration(durableProgress) &&
+    autoResumedAttemptsRef.current.has(durableProgress.attempt) &&
+    generationFailureMessage === null;
+  const autoResumeStatusLine = autoResumeLoading
+    ? `Continuing with ${durableProgress!.certifiedCount} certified ${
+        durableProgress!.certifiedCount === 1 ? "choice" : "choices"
+      }; ${durableProgress!.remainingCount} ${
+        durableProgress!.remainingCount === 1 ? "choice" : "choices"
+      } still needed.`
+    : null;
 
   // ── mapped data for the components ───────────────────────────────────
   const loadingList = useMemo<HostGenLoadingQuestion[]>(
@@ -911,7 +1028,7 @@ export function HostSetupPickClient({
 
   return (
     <>
-      {showGenerationFailure ? (
+      {showGenerationFailure && !autoResumeLoading ? (
         <HostGenError
           themeKey={themeKey as ThemeKey}
           shellTitle={`generation paused · ${categoryName.toLowerCase()}`}
@@ -930,6 +1047,7 @@ export function HostSetupPickClient({
           loaded={loadingList}
           total={20}
           statusLine={
+            autoResumeStatusLine ??
             durableProgress?.statusLine ??
             (genPhase === "checking"
               ? "Fact-checking every answer for accuracy — this part takes a moment."

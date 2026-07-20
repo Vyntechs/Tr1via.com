@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  beginGenerationJob,
   generationProgressFromRow,
   readGenerationJob,
   updateGenerationJob,
+  updateGenerationJobForAttempt,
   type QuestionGenerationJobRow,
 } from "@/lib/ai/generation-job";
 import { vi } from "vitest";
@@ -45,6 +45,7 @@ describe("generationProgressFromRow", () => {
       targetCount: 20,
       writtenCount: 8,
       certifiedCount: 3,
+      attempt: 1,
       statusLine: "8 of 20 question choices written",
     });
 
@@ -115,17 +116,14 @@ describe("generationProgressFromRow", () => {
 
 function jobClient(resultRow: QuestionGenerationJobRow | null = row()) {
   const maybeSingle = vi.fn(async () => ({ data: resultRow, error: null }));
-  const single = vi.fn(async () => ({ data: resultRow, error: null }));
   const eqAfterSelect = vi.fn(() => ({ maybeSingle }));
-  const selectAfterUpsert = vi.fn(() => ({ single }));
   const eqAfterUpdate = vi.fn(async () => ({ data: null, error: null }));
   const select = vi.fn(() => ({ eq: eqAfterSelect }));
-  const upsert = vi.fn(() => ({ select: selectAfterUpsert }));
   const update = vi.fn(() => ({ eq: eqAfterUpdate }));
-  const from = vi.fn(() => ({ select, upsert, update }));
+  const from = vi.fn(() => ({ select, update }));
   return {
     client: { from },
-    spies: { from, select, upsert, update, eqAfterUpdate },
+    spies: { from, select, update, eqAfterUpdate },
   };
 }
 
@@ -138,51 +136,40 @@ describe("generation job persistence", () => {
     expect(spies.from).toHaveBeenCalledWith("question_generation_jobs");
   });
 
-  it("starts a fresh build by resetting counts and the recovery boundary", async () => {
-    const { client, spies } = jobClient();
-    await beginGenerationJob(client, {
-      categoryId: "category-1",
-      gameId: "game-1",
-      nightId: "night-1",
-      hostId: "host-1",
-      targetCount: 20,
-      resume: false,
-      existing: null,
-      nowIso: "2026-07-18T12:00:00.000Z",
+  it("rejects an old worker progress write after a replacement claim", async () => {
+    let stored = row({ phase: "queued", attempt: 3 });
+    const client = fencingClient(() => stored, (next) => {
+      stored = next;
     });
 
-    expect(spies.upsert).toHaveBeenCalledWith(
-      expect.objectContaining({
-        phase: "queued",
-        written_count: 0,
-        certified_count: 0,
-        image_count: 0,
-        attempt: 1,
-        created_at: "2026-07-18T12:00:00.000Z",
-      }),
-      { onConflict: "category_id" },
-    );
+    await expect(
+      updateGenerationJobForAttempt(
+        client as never,
+        "category-1",
+        2,
+        { phase: "checking", certified_count: 12 },
+        "2026-07-20T12:02:00.000Z",
+      ),
+    ).resolves.toBe(false);
+    expect(stored).toMatchObject({ phase: "queued", attempt: 3, certified_count: 0 });
   });
 
-  it("resumes without resetting certified counts and increments the attempt", async () => {
-    const { client, spies } = jobClient(row({ attempt: 2, certified_count: 14 }));
-    await beginGenerationJob(client, {
-      categoryId: "category-1",
-      gameId: "game-1",
-      nightId: "night-1",
-      hostId: "host-1",
-      targetCount: 20,
-      resume: true,
-      existing: row({ attempt: 2, certified_count: 14 }),
-      nowIso: "2026-07-18T12:00:00.000Z",
+  it("allows the current fenced worker to record its progress", async () => {
+    let stored = row({ phase: "queued", attempt: 3 });
+    const client = fencingClient(() => stored, (next) => {
+      stored = next;
     });
 
-    const payload = (
-      spies.upsert.mock.calls as unknown as Array<[Record<string, unknown>]>
-    )[0]![0];
-    expect(payload.attempt).toBe(3);
-    expect(payload).not.toHaveProperty("certified_count");
-    expect(payload).not.toHaveProperty("created_at");
+    await expect(
+      updateGenerationJobForAttempt(
+        client as never,
+        "category-1",
+        3,
+        { phase: "checking", certified_count: 12 },
+        "2026-07-20T12:02:00.000Z",
+      ),
+    ).resolves.toBe(true);
+    expect(stored).toMatchObject({ phase: "checking", attempt: 3, certified_count: 12 });
   });
 
   it("updates heartbeat and the requested real progress fields", async () => {
@@ -201,3 +188,40 @@ describe("generation job persistence", () => {
     });
   });
 });
+
+function fencingClient(
+  read: () => QuestionGenerationJobRow,
+  write: (next: QuestionGenerationJobRow) => void,
+) {
+  return {
+    from: () => ({
+      update: (values: Record<string, unknown>) => {
+        const filters: Record<string, unknown> = {};
+        const query = {
+          eq(column: string, value: string | number) {
+            filters[column] = value;
+            return query;
+          },
+          select() {
+            return {
+              maybeSingle: async () => {
+                const stored = read();
+                const matches =
+                  filters.category_id === stored.category_id &&
+                  (filters.attempt === undefined || filters.attempt === stored.attempt) &&
+                  (filters.phase === undefined || filters.phase === stored.phase) &&
+                  (filters.heartbeat_at === undefined ||
+                    filters.heartbeat_at === stored.heartbeat_at);
+                if (!matches) return { data: null, error: null };
+                const next = { ...stored, ...values } as QuestionGenerationJobRow;
+                write(next);
+                return { data: next, error: null };
+              },
+            };
+          },
+        };
+        return query;
+      },
+    }),
+  };
+}

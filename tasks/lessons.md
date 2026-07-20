@@ -294,3 +294,13 @@ Reason: Three valid URLs become one confusing setup when roles are implicit.
 Trigger: Agent asks Brandon to compare a written specification with an already-approved conversational design.
 Rule: Build a requirements checklist, verify the specification, resolve differences, and escalate only material product decisions.
 Reason: Documentation fidelity is agent work; Brandon approves product choices rather than auditing transcription.
+
+### category-qualifiers-belong-in-certification
+Trigger: A factually correct answer violates an exclusion such as non-venomous because the verifier never receives the category topic.
+Rule: Certify topic fit and every qualifier independently; reject mismatches before host review.
+Reason: Answer correctness alone cannot prove that a question belongs in the requested category.
+
+### generation-attempts-need-fencing-tokens
+Trigger: A stale generation worker can revive after a replacement attempt starts.
+Rule: Validate the attempt inside the same locked database transaction as every durable side effect; separate preflight checks are only leases.
+Reason: A preflight can pass, block beyond lease expiry, then commit after a replacement claim.

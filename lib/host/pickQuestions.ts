@@ -46,7 +46,7 @@ export function selectSpreadQuestionIds(
  * per-row set, then mark ready) to stay safe against the
  * (category_id, point_value) unique index.
  */
-export async function pickQuestionsForCategory(
+export async function prepareQuestionAssignmentsForCategory(
   categoryId: string,
   questionIds: string[],
 ): Promise<PickResult> {
@@ -74,6 +74,20 @@ export async function pickQuestionsForCategory(
       pointValue: row.point_value,
     })),
   );
+  return { ok: true, picked: assignments };
+}
+
+export async function pickQuestionsForCategory(
+  categoryId: string,
+  questionIds: string[],
+): Promise<PickResult> {
+  const admin = getSupabaseAdmin();
+  const prepared = await prepareQuestionAssignmentsForCategory(
+    categoryId,
+    questionIds,
+  );
+  if (!prepared.ok) return prepared;
+  const assignments = prepared.picked;
 
   const { error: clearError } = await admin
     .from("questions")

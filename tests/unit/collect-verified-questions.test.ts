@@ -12,6 +12,7 @@ const ok = (i: number): AnswerVerdict => ({
   ambiguous: false,
   factBlurbIsCorrect: true,
   answerableWithoutImage: true,
+  fitsRequestedTopic: true,
 });
 const wrong = (i: number): AnswerVerdict => ({ ...ok(i), markedAnswerIsCorrect: false });
 const ambig = (i: number): AnswerVerdict => ({ ...ok(i), ambiguous: true });
@@ -103,6 +104,23 @@ it("rejects a question the verifier says needs an image", async () => {
   });
 
   expect(out).toEqual([]);
+});
+
+it("rejects a venomous species question from the Non-venomous snakes category even when its answer is correct", async () => {
+  const events: Array<{ rejected: Array<{ reasons: string[] }> }> = [];
+  const out = await collectVerifiedQuestions({
+    target: 1,
+    maxRounds: 1,
+    verifyPasses: 1,
+    generate: async () => [q("Which venomous snake is native to the American Southwest?")],
+    verify: async () => [{ ...ok(0), fitsRequestedTopic: false }],
+    onRoundComplete: (event) => {
+      events.push(event);
+    },
+  });
+
+  expect(out).toEqual([]);
+  expect(events[0]?.rejected[0]?.reasons).toContain("category_mismatch");
 });
 
 it("rejects obviously visual-dependent wording before it can enter Original mode", async () => {

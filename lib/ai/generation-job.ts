@@ -27,6 +27,7 @@ export interface QuestionGenerationJobRow {
 
 export interface GenerationJobProgress {
   phase: GenerationJobPhase;
+  attempt: number;
   targetCount: number;
   writtenCount: number;
   certifiedCount: number;
@@ -52,14 +53,6 @@ export interface GenerationJobClient {
         maybeSingle(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
       };
     };
-    upsert(
-      values: Record<string, unknown>,
-      options: { onConflict: string },
-    ): {
-      select(columns: string): {
-        single(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
-      };
-    };
     update(values: Record<string, unknown>): {
       eq(column: string, value: string): Promise<GenerationJobResult<unknown>>;
     };
@@ -79,55 +72,35 @@ export async function readGenerationJob(
   return data;
 }
 
-export interface BeginGenerationJobInput {
-  categoryId: string;
-  gameId: string;
-  nightId: string;
-  hostId: string;
-  targetCount: number;
-  resume: boolean;
-  existing: QuestionGenerationJobRow | null;
-  nowIso?: string;
-}
-
-export async function beginGenerationJob(
+/** Returns false when a replacement attempt has fenced this worker out. */
+export async function updateGenerationJobForAttempt(
   client: GenerationJobClient,
-  input: BeginGenerationJobInput,
-): Promise<QuestionGenerationJobRow> {
-  const nowIso = input.nowIso ?? new Date().toISOString();
-  const resume = input.resume && input.existing !== null;
-  const values: Record<string, unknown> = {
-    category_id: input.categoryId,
-    game_id: input.gameId,
-    night_id: input.nightId,
-    host_id: input.hostId,
-    phase: "queued",
-    target_count: input.targetCount,
-    attempt: resume ? input.existing!.attempt + 1 : 1,
-    last_error: null,
-    heartbeat_at: nowIso,
-    updated_at: nowIso,
+  categoryId: string,
+  attempt: number,
+  patch: GenerationJobPatch,
+  nowIso = new Date().toISOString(),
+): Promise<boolean> {
+  const table = client.from("question_generation_jobs") as unknown as {
+    update(values: Record<string, unknown>): {
+      eq(column: string, value: string | number): {
+        eq(column: string, value: string | number): {
+          select(columns: string): {
+            maybeSingle(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
+          };
+        };
+      };
+    };
   };
-  if (!resume) {
-    Object.assign(values, {
-      written_count: 0,
-      certified_count: 0,
-      image_count: 0,
-      created_at: nowIso,
-    });
-  }
-
-  const { data, error } = await client
-    .from("question_generation_jobs")
-    .upsert(values, { onConflict: "category_id" })
+  const { data, error } = await table
+    .update({ ...patch, heartbeat_at: nowIso, updated_at: nowIso })
+    .eq("category_id", categoryId)
+    .eq("attempt", attempt)
     .select("*")
-    .single();
-  if (error || !data) {
-    throw new Error(
-      `failed to start generation progress: ${error?.message ?? "no job row returned"}`,
-    );
+    .maybeSingle();
+  if (error) {
+    throw new Error(`failed to update generation progress: ${error.message}`);
   }
-  return data;
+  return data !== null;
 }
 
 type GenerationJobPatch = Partial<
@@ -214,6 +187,7 @@ export function generationProgressFromRow(
 
   return {
     phase,
+    attempt: row.attempt,
     targetCount,
     writtenCount,
     certifiedCount,

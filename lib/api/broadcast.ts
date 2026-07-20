@@ -87,10 +87,12 @@ export type GenerationPhase =
 /** Payload for the `progress` heartbeat event. */
 export interface CategoryProgressPayload extends CategoryBroadcastPayload {
   phase: GenerationPhase;
+  attempt: number;
 }
 
 /** Payload for the category generation completion event. */
 export interface CategoryDonePayload extends CategoryBroadcastPayload {
+  attempt: number;
   count: number;
   auditSummary?: HostQuestionAuditSummary;
 }
