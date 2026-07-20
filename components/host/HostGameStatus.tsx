@@ -1,6 +1,9 @@
 "use client";
 
 import type { HostStage } from "@/lib/host/gameConsole";
+import type { CSSProperties } from "react";
+import { useTheme } from "@/components/system";
+import styles from "./HostCommandCenter.module.css";
 
 export interface HostDeliveryReceipt {
   tv: "current" | "recovering";
@@ -31,26 +34,36 @@ export function HostGameStatus({
   lockedCount,
   delivery,
 }: HostGameStatusProps) {
+  const { t } = useTheme();
+  const statusStyle = {
+    "--host-status-line": t.line,
+    "--host-status-surface": t.surface,
+    "--host-status-ink": t.ink,
+    "--host-status-muted": t.inkMid,
+    "--host-status-success": t.correct,
+    "--host-status-danger": t.wrong,
+    "--host-status-accent": t.accent,
+  } as CSSProperties;
   const phoneLabel = delivery.recoveringPhones > 0
     ? `${delivery.currentPhones} phones live · ${delivery.recoveringPhones} recovering`
     : `${delivery.currentPhones} phones live`;
 
   return (
-    <section className="host-game-status" aria-label="Game Status">
-      <div className="host-game-status__heading">
-        <span className="host-game-status__icon" aria-hidden="true">✦</span>
+    <section className={styles.status} aria-label="Game Status" style={statusStyle}>
+      <div className={styles.statusHeading}>
+        <span className={styles.statusIcon} aria-hidden="true">✦</span>
         <div>
-          <p className="host-game-status__eyebrow">Game Status</p>
-          <p className="host-game-status__stage">{STAGE_LABELS[stage]}</p>
+          <p className={styles.statusEyebrow}>Game Status</p>
+          <p className={styles.statusStage}>{STAGE_LABELS[stage]}</p>
         </div>
       </div>
-      <div className="host-game-status__facts" aria-label="Live game details">
+      <div className={styles.statusFacts} aria-label="Live game details">
         <span><span aria-hidden="true">● </span>{playerCount} players</span>
         <span><span aria-hidden="true">✓ </span>{lockedCount} locked</span>
-        <span className={delivery.tv === "current" ? "is-current" : "is-recovering"}>
+        <span className={delivery.tv === "current" ? styles.current : styles.recovering}>
           <span aria-hidden="true">▣ </span>TV {delivery.tv === "current" ? "live" : "recovering"}
         </span>
-        <span className={delivery.recoveringPhones > 0 ? "is-recovering" : "is-current"}>
+        <span className={delivery.recoveringPhones > 0 ? styles.recovering : styles.current}>
           <span aria-hidden="true">◉ </span>{phoneLabel}
         </span>
       </div>
