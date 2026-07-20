@@ -483,7 +483,7 @@ async function runGenerationJob(opts: {
       verify: (qs) => {
         phase = "checking";
         void emitProgress();
-        return verifyAnswers(qs, { onUsage: trackUsage });
+        return verifyAnswers(qs, { topic: opts.topic, onUsage: trackUsage });
       },
       onRoundComplete: async (event) => {
         qualityReport.recordRound({

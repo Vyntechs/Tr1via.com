@@ -46,15 +46,26 @@ describe("verifyAnswers", () => {
   it("returns a verdict per question and forces the verdicts tool", async () => {
     const capture: Call[] = [];
     const client = cleanClient(capture);
-    // @ts-expect-error — narrowing to Pick<Anthropic,"messages"> in tests
-    const out = await verifyAnswers([q()], { client });
-    expect(out).toHaveLength(1);
+    const out = await verifyAnswers(
+      Array.from({ length: 7 }, (_, index) => q({ prompt: `Question ${index}` })),
+      {
+        client: client as never,
+        topic: "Non-venomous snakes",
+      },
+    );
+    expect(out).toHaveLength(7);
     expect(out[0]?.markedAnswerIsCorrect).toBe(true);
     expect(out[0]?.factBlurbIsCorrect).toBe(true);
     expect(out[0]?.answerableWithoutImage).toBe(true);
+    expect(out[0]?.fitsRequestedTopic).toBe(false);
     expect(capture[0]!.params.tool_choice).toEqual({ type: "tool", name: "verdicts" });
     expect(JSON.stringify(capture[0]!.params.tools)).toContain("factBlurbIsCorrect");
     expect(JSON.stringify(capture[0]!.params.tools)).toContain("answerableWithoutImage");
+    expect(JSON.stringify(capture[0]!.params.tools)).toContain("fitsRequestedTopic");
+    for (const call of capture) {
+      const content = (call.params.messages as Array<{ content: string }>)[0]!.content;
+      expect(content).toContain('"requestedTopic":"Non-venomous snakes"');
+    }
   });
 
   it("sends the MARKED answer (options[correctIndex]) for each question", async () => {
