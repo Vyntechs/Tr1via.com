@@ -177,8 +177,86 @@ Reason: A mutable header plus leaked identifier lets one player impersonate anot
 Trigger: Player controls froze before the server stopped accepting first-time answers.
 Rule: Make the official input deadline match server acceptance unless authoritative pre-deadline proof exists.
 Reason: A hidden grace period rewards modified clients and breaks fairness.
-
 ### phone-host-entry-is-the-product
 Trigger: A phone host resumed a live game and received the clipped venue canvas while the usable controller stayed behind a secondary link.
 Rule: Device-appropriate hosting must be the primary path; expose venue display as an explicit companion view from the controller.
 Reason: Responsive setup means nothing if live-game entry strands the host without controls.
+
+### keep-internal-ledgers-internal
+Trigger: Brandon asks why routine progress markdown keeps surfacing during execution.
+Rule: Update scratch ledgers only at completed checkpoints; never present them as user deliverables.
+Reason: Internal continuity should reduce Brandon's attention cost, not become another stream he must interpret.
+
+### enforce-authoritative-record-ancestry
+Trigger: Authoritative tables repeat night, run, game, question, play, or player identifiers.
+Rule: Prove shared ancestry with negative database tests and constraints while preserving exact idempotent retries.
+Reason: Independently valid foreign keys can still create contradictory state; current-state triggers can break safe retries.
+
+### receipt-before-command-preconditions
+Trigger: A retryable command can return stale, invalid, or rejected before recording its command ID.
+Rule: Claim and lock the receipt first; persist canonical rejection before returning; calculate deadlines from authoritative receipt timestamps.
+Reason: Unrecorded rejection can later apply, and processing order can shorten promised player timing.
+
+### audit-ledgers-are-function-write-only
+Trigger: Reset archives canonical receipts or creates immutable run history.
+Rule: Deny direct service-role mutation; write through fixed-path functions; test exact retries and full parent-deletion cascades.
+Reason: Broad service grants weaken audit truth, while replacement foreign keys can silently break account cleanup.
+
+### test-the-entire-audience-boundary
+Trigger: A safe projection is embedded inside a larger player, TV, or public realtime payload.
+Rule: Scan the complete wire body and event state for raw identifiers; compose server projections through actual consumers.
+Reason: A safe sub-object does not prevent sibling fields, adapters, or broadcasts from leaking identity.
+
+### bind-live-state-to-room-and-request
+Trigger: Polls, broadcasts, heartbeats, or overlays can overlap a room change.
+Rule: Tag state by room; abort superseded work; reject stale callbacks before sequence changes; never flash previous-room state.
+Reason: Async cleanup alone cannot prevent stale events or responses from overwriting the current venue screen.
+
+### database-authors-broadcast-freshness
+Trigger: Routes broadcast after retryable database mutations.
+Rule: Return freshness outside canonical results; only the transaction winner is fresh; malformed or replayed envelopes fail closed.
+Reason: Applied results, revisions, request IDs, and process memory cannot distinguish exact retries safely.
+
+### terminal-receipts-require-results
+Trigger: A command receipt changes from pending to applied or rejected.
+Rule: Enforce non-null canonical result in schema; unexpected legacy nulls return typed non-fresh corrupt-state without mutation.
+Reason: SQL null propagation can erase the envelope and make route broadcast gating ambiguous.
+
+### timebox-final-review-loops
+Trigger: Verified implementation remains open for hours while successive broad reviews discover narrow issues.
+Rule: Timebox reviewers, batch findings once, fix only blockers, and run one focused re-review before final verification.
+Reason: Open-ended review loops waste founder time without proportionally improving safety.
+
+### founder-is-not-the-verification-layer
+Trigger: Repository ambiguity causes the agent to ask Brandon to validate or choose a reversible technical preservation step.
+Rule: Preserve all states with backup refs or worktrees, complete the safe path, and verify independently.
+Reason: Brandon should decide product and release gates, not perform technical verification for the agent.
+
+### name-the-production-release-gate
+Trigger: Local integration finishes while the requested production outcome still requires founder-authorized release.
+Rule: State that production is unchanged and request exact release approval; never say nothing or stop silently.
+Reason: A local checkpoint is not production readiness, and vague status makes Brandon rediscover the remaining work.
+
+### never-autolink-vercel-during-verification
+Trigger: A Vercel CLI verification command runs from a worktree without a confirmed existing project link.
+Rule: Resolve and verify the existing project and team IDs before CLI use; abort rather than allow automatic linking or project creation.
+Reason: Read-only release verification must not create orphan external projects or interrupt the production rollout.
+### host-phone-full-workflow-parity
+Trigger: Brandon expects a host to create, audit, and run the full game from an iPhone.
+Rule: Treat mobile host as a first-class 320–440px workflow, not an optional live-control companion.
+Reason: Pocket convenience should make phone hosting painless and nearly preferable to desktop.
+
+### parity-means-familiar-control-not-feature-count
+Trigger: Production mobile controls expose actions but make Heather relearn question selection and hunt for desktop tools.
+Rule: Preserve the laptop board's mental model on mobile; surface every live host action contextually with no buried control paths.
+Reason: Feature availability is not parity when familiar, time-critical show actions become slower or harder to find.
+
+### founder-input-needs-translation-not-vocabulary
+Trigger: Brandon describes product intent through venue moments, feelings, pain, or incomplete phrases.
+Rule: Translate his raw intent into exact product language, requirements, and visuals; never make him supply professional vocabulary.
+Reason: His lived signal is the source; structuring and naming it is the agent's job.
+
+### customer-copy-names-the-actual-thing
+Trigger: Product language uses `room` as a generic stand-in for the game, venue, TV, players, audience, or show.
+Rule: Use `game` by default; use TV, players, answer, or audience only when more exact. Reserve `room` for invisible internal code symbols.
+Reason: Generic container words create questions and force unnecessary interpretation instead of answering what the interface means.
