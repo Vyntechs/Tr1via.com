@@ -641,7 +641,20 @@ function HostSectionSummary({
           href={`/tv/${roomCode}`}
           target="_blank"
           rel="noreferrer"
-          style={{ color: t.accent, fontWeight: 800 }}
+          style={{
+            minWidth: 48,
+            minHeight: 48,
+            padding: "0 16px",
+            border: `1px solid ${t.line}`,
+            borderRadius: 10,
+            color: t.accent,
+            textDecoration: "none",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxSizing: "border-box",
+            fontWeight: 800,
+          }}
         >
           Open venue TV
         </a>
@@ -837,14 +850,18 @@ function ErrorToast({ message, onDismiss }: { message: string; onDismiss: () => 
         type="button"
         onClick={onDismiss}
         style={{
+          minWidth: 48,
+          minHeight: 48,
           background: "transparent",
           color: "#FFF",
           border: "1px solid rgba(255,255,255,.4)",
-          padding: "4px 10px",
+          padding: "8px 12px",
           borderRadius: 6,
           fontSize: 11,
           fontWeight: 600,
           cursor: "pointer",
+          flexShrink: 0,
+          boxSizing: "border-box",
         }}
       >
         Dismiss

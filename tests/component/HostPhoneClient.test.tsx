@@ -539,7 +539,13 @@ describe("HostPhoneClient reveal flow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "TV" }));
     expect(screen.getByRole("heading", { name: "Venue TV" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Open venue TV" })).toHaveAttribute("href", "/tv/ABC123");
+    const venueTVLink = screen.getByRole("link", { name: "Open venue TV" });
+    expect(venueTVLink).toHaveAttribute("href", "/tv/ABC123");
+    expect(venueTVLink).toHaveStyle({
+      display: "inline-flex",
+      minHeight: "48px",
+      minWidth: "48px",
+    });
 
     fireEvent.click(screen.getByRole("button", { name: "Board" }));
     expect(screen.getByRole("grid", { name: "Question board" })).toBeVisible();
@@ -615,6 +621,10 @@ describe("HostPhoneClient reveal flow", () => {
     );
     fireEvent.click(await screen.findByRole("button", { name: "Start Game 1" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("game control failed");
+    expect(screen.getByRole("button", { name: "Dismiss" })).toHaveStyle({
+      minHeight: "48px",
+      minWidth: "48px",
+    });
     expect(screen.queryByText(/show control/i)).not.toBeInTheDocument();
   });
 
