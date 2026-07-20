@@ -8,7 +8,8 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { HostGenOverview, type GameOverviewData, type CategorySlotData } from "@/components/host/gen";
 import { PalettePeek } from "@/components/shared/PalettePeek";
-import { type ThemeKey } from "@/lib/theme/tokens";
+import { useTheme } from "@/components/system";
+import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import type { HostTopicSuggestion } from "@/lib/host/topicSuggestions";
 import type { CategoryRow, GameRow } from "@/lib/supabase/types";
@@ -275,114 +276,17 @@ export function HostSetupOverviewClient({
         onOpenRoom={handleOpenRoom}
         isReadyToOpen={isReadyToOpen}
         isOpening={opening}
+        gameSettings={
+          <SetupExperienceControls
+            themeKey={themeKey}
+            roomMagicEnabled={roomMagicEnabled}
+            savingRoomMagic={savingRoomMagic}
+            locked={liveGameExists}
+            onPickTheme={() => setThemePickerOpen(true)}
+            onToggleRoomMagic={(enabled) => void handleToggleRoomMagic(enabled)}
+          />
+        }
       />
-      <div
-        style={{
-          position: "fixed",
-          right: 24,
-          bottom: 24,
-          zIndex: 30,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "flex-end",
-          gap: 6,
-        }}
-      >
-        <div
-          role="group"
-          aria-label="Room Magic"
-          style={{
-            padding: 4,
-            borderRadius: 999,
-            border: "1px solid rgba(255,255,255,.12)",
-            background: liveGameExists
-              ? "rgba(20,19,15,.55)"
-              : "rgba(20,19,15,.92)",
-            color: liveGameExists ? "rgba(244,230,196,.35)" : "#F4E6C4",
-            boxShadow: liveGameExists ? "none" : "0 12px 28px rgba(0,0,0,.45)",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 4,
-            fontFamily: "var(--font-sans)",
-          }}
-        >
-          <span
-            style={{
-              padding: "0 9px 0 10px",
-              fontSize: 11,
-              fontWeight: 700,
-              letterSpacing: "0.04em",
-              textTransform: "uppercase",
-              lineHeight: "30px",
-              whiteSpace: "nowrap",
-            }}
-          >
-            Room Magic
-          </span>
-          <button
-            type="button"
-            onClick={() => void handleToggleRoomMagic(false)}
-            aria-pressed={!roomMagicEnabled}
-            disabled={liveGameExists || savingRoomMagic}
-            style={roomMagicSegmentStyle(!roomMagicEnabled, liveGameExists)}
-          >
-            Off
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleToggleRoomMagic(true)}
-            aria-pressed={roomMagicEnabled}
-            disabled={liveGameExists || savingRoomMagic}
-            style={roomMagicSegmentStyle(roomMagicEnabled, liveGameExists)}
-          >
-            On
-          </button>
-        </div>
-        {liveGameExists && (
-          <div
-            style={{
-              fontSize: 11,
-              color: "rgba(244,230,196,.55)",
-              fontFamily: "var(--font-sans)",
-              fontWeight: 500,
-              textAlign: "right",
-            }}
-          >
-            Themes lock during a live game. End the game first.
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => !liveGameExists && setThemePickerOpen(true)}
-          aria-label={
-            liveGameExists
-              ? "Theme locked while a game is live"
-              : "Pick the game's theme"
-          }
-          disabled={liveGameExists}
-          style={{
-            padding: "10px 16px",
-            borderRadius: 99,
-            border: "1px solid rgba(255,255,255,.12)",
-            background: liveGameExists
-              ? "rgba(20,19,15,.55)"
-              : "rgba(20,19,15,.92)",
-            color: liveGameExists ? "rgba(244,230,196,.35)" : "#F4E6C4",
-            fontSize: 12,
-            fontWeight: 600,
-            fontFamily: "var(--font-sans)",
-            letterSpacing: "0.04em",
-            cursor: liveGameExists ? "not-allowed" : "pointer",
-            boxShadow: liveGameExists ? "none" : "0 12px 28px rgba(0,0,0,.45)",
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
-          <span aria-hidden="true">◐</span>
-          Theme · {themeKey}
-        </button>
-      </div>
       <PalettePeek
         open={themePickerOpen}
         onClose={() => setThemePickerOpen(false)}
@@ -415,27 +319,178 @@ export function HostSetupOverviewClient({
   );
 }
 
-function roomMagicSegmentStyle(active: boolean, disabled: boolean) {
+function SetupExperienceControls({
+  themeKey,
+  roomMagicEnabled,
+  savingRoomMagic,
+  locked,
+  onPickTheme,
+  onToggleRoomMagic,
+}: {
+  themeKey: ThemeKey;
+  roomMagicEnabled: boolean;
+  savingRoomMagic: boolean;
+  locked: boolean;
+  onPickTheme: () => void;
+  onToggleRoomMagic: (enabled: boolean) => void;
+}) {
+  const { t } = useTheme();
+  const themeName = TR1VIA_THEMES[themeKey].name;
+
+  return (
+    <section
+      aria-label="Game settings"
+      data-testid="host-setup-experience-controls"
+      style={{
+        padding: "14px 16px",
+        borderRadius: 14,
+        background: t.surface,
+        border: `1px solid ${t.line}`,
+        color: t.ink,
+      }}
+    >
+      <div
+        style={{
+          fontFamily: "var(--font-mono)",
+          fontSize: 10,
+          fontWeight: 700,
+          letterSpacing: ".14em",
+          color: t.inkMute,
+        }}
+      >
+        GAME SETTINGS
+      </div>
+
+      <button
+        type="button"
+        onClick={onPickTheme}
+        aria-label={locked ? "Theme locked while a game is live" : "Pick the game's theme"}
+        disabled={locked}
+        style={{
+          width: "100%",
+          minHeight: 48,
+          marginTop: 8,
+          padding: 0,
+          border: "none",
+          background: "transparent",
+          color: locked ? t.inkMute : t.ink,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+          textAlign: "left",
+          cursor: locked ? "not-allowed" : "pointer",
+          fontFamily: "var(--font-sans)",
+        }}
+      >
+        <span style={{ display: "flex", alignItems: "center", gap: 10, fontSize: 13, fontWeight: 700 }}>
+          <span
+            aria-hidden="true"
+            style={{
+              width: 12,
+              height: 12,
+              borderRadius: 999,
+              background: t.accent,
+              boxShadow: `0 0 0 4px ${t.accent}18`,
+            }}
+          />
+          Theme
+        </span>
+        <span style={{ minWidth: 0, color: locked ? t.inkMute : t.inkMid, fontSize: 12, fontWeight: 600 }}>
+          {themeName} {!locked && "→"}
+        </span>
+      </button>
+
+      <div
+        style={{
+          minHeight: 54,
+          paddingTop: 10,
+          borderTop: `1px solid ${t.line}`,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 12,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div style={{ color: locked ? t.inkMute : t.ink, fontSize: 13, fontWeight: 700 }}>
+            Room Magic
+          </div>
+          <div style={{ marginTop: 2, color: t.inkMute, fontSize: 11, lineHeight: 1.3 }}>
+            Player reactions on the TV
+          </div>
+        </div>
+        <div
+          role="group"
+          aria-label="Room Magic"
+          style={{
+            flex: "0 0 auto",
+            padding: 3,
+            borderRadius: 999,
+            border: `1px solid ${t.line}`,
+            background: t.paper,
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 2,
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => onToggleRoomMagic(false)}
+            aria-pressed={!roomMagicEnabled}
+            disabled={locked || savingRoomMagic}
+            style={roomMagicSegmentStyle(!roomMagicEnabled, locked, t)}
+          >
+            Off
+          </button>
+          <button
+            type="button"
+            onClick={() => onToggleRoomMagic(true)}
+            aria-pressed={roomMagicEnabled}
+            disabled={locked || savingRoomMagic}
+            style={roomMagicSegmentStyle(roomMagicEnabled, locked, t)}
+          >
+            On
+          </button>
+        </div>
+      </div>
+
+      {locked && (
+        <div style={{ marginTop: 8, color: t.inkMute, fontSize: 11, lineHeight: 1.35 }}>
+          Settings lock while a game is live. End the game first.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function roomMagicSegmentStyle(
+  active: boolean,
+  disabled: boolean,
+  t: ReturnType<typeof useTheme>["t"],
+) {
   return {
     minWidth: 44,
-    height: 30,
-    padding: "0 12px",
+    minHeight: 36,
+    padding: "0 10px",
     borderRadius: 999,
     border: "0",
     background: active
       ? disabled
-        ? "rgba(244,230,196,.16)"
-        : "#F4E6C4"
+        ? t.line
+        : t.accent
       : "transparent",
     color: active
       ? disabled
-        ? "rgba(244,230,196,.46)"
-        : "#0E0805"
+        ? t.inkMute
+        : t.dark
+          ? "#0E0E0C"
+          : "#FFF"
       : disabled
-        ? "rgba(244,230,196,.32)"
-        : "rgba(244,230,196,.72)",
+        ? t.inkMute
+        : t.inkMid,
     fontFamily: "var(--font-sans)",
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 800,
     letterSpacing: 0,
     cursor: disabled ? "not-allowed" : "pointer",

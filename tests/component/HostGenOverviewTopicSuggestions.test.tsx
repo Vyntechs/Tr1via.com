@@ -32,6 +32,24 @@ describe("HostGenOverview player ideas", () => {
     expect(screen.getByText(/no player ideas yet/i)).toBeInTheDocument();
   });
 
+  it("keeps game settings in the sidebar flow before the primary action", () => {
+    render(
+      <HostGenOverview
+        themeKey="july"
+        topSuggestions={[]}
+        isReadyToOpen
+        gameSettings={<section data-testid="game-settings">Game settings</section>}
+      />,
+    );
+
+    const settings = screen.getByTestId("game-settings");
+    const openNight = screen.getByRole("button", { name: /open the night/i });
+    expect(screen.getByTestId("host-gen-overview-layout")).toContainElement(settings);
+    expect(
+      settings.compareDocumentPosition(openNight) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("does not render touched user-facing room copy", () => {
     render(<HostGenOverview themeKey="july" topSuggestions={[]} />);
     expect(screen.queryByText(/suggested by the room/i)).toBeNull();

@@ -40,12 +40,21 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
 
   useEffect(() => {
     if (!open) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousRootOverflow = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
     closeButtonRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousRootOverflow;
+    };
   }, [open, onClose]);
 
   if (!open) return null;
@@ -76,6 +85,7 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
           width: "min(860px, 100%)",
           maxHeight: "min(760px, calc(100dvh - 28px))",
           overflowY: "auto",
+          overscrollBehavior: "contain",
           display: "grid",
           gridTemplateColumns: compact ? "1fr" : "156px 1fr",
           background: t.paper,

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
 import { HostSetupOverviewClient } from "@/app/host/setup/[nightId]/HostSetupOverviewClient";
 import { ThemeProvider } from "@/components/system/ThemeProvider";
 import type { CategoryRow, GameRow } from "@/lib/supabase/types";
@@ -11,7 +12,9 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/components/host/gen", () => ({
-  HostGenOverview: () => <div data-testid="host-gen-overview" />,
+  HostGenOverview: ({ gameSettings }: { gameSettings?: ReactNode }) => (
+    <div data-testid="host-gen-overview">{gameSettings}</div>
+  ),
 }));
 
 const NIGHT_ID = "night-1";
@@ -72,6 +75,16 @@ describe("Host setup Room Magic toggle", () => {
       "aria-pressed",
       "false",
     );
+  });
+
+  it("keeps game settings inside the setup layout instead of over the primary action", () => {
+    renderSetup();
+
+    const overview = screen.getByTestId("host-gen-overview");
+    const roomMagic = screen.getByRole("group", { name: "Room Magic" });
+    expect(overview).toContainElement(roomMagic);
+    expect(roomMagic.parentElement?.style.position).not.toBe("fixed");
+    expect(screen.getByRole("button", { name: /pick the game's theme/i })).toBeVisible();
   });
 
   it("optimistically saves the enabled state", async () => {
