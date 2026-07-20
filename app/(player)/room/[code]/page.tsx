@@ -1501,7 +1501,7 @@ function RoomMissingScreen({ roomCode }: { roomCode: string }) {
       <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 24 }}>
         <Display size={48} color={t.ink}>
-          That room
+          That game
           <br />
           <span style={{ color: t.wrong }}>isn&apos;t open.</span>
         </Display>
@@ -1544,7 +1544,7 @@ function RejoinScreen({ roomCode }: { roomCode: string }) {
           <span style={{ color: t.accent }}>name first.</span>
         </Display>
         <div style={{ marginTop: 16, color: t.inkMid, fontSize: 14 }}>
-          Pick a name to join the room.
+          Pick a name to join the game.
         </div>
       </div>
       <button

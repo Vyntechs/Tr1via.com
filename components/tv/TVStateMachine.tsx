@@ -825,10 +825,16 @@ function TVIntermissionView({
       headerRight={
         game2?.state === "ready"
           ? "GAME 2 · READY"
-          : "GAME 2 LAUNCHES WHEN HOST SAYS GO"
+          : game2?.state === "live"
+            ? "GAME 2 STARTED · FIRST QUESTION NEXT"
+            : "GAME 2 LAUNCHES WHEN HOST SAYS GO"
       }
       footerLeft={`TR1VIA.COM · ${formatRoomCode(snapshot.night.roomCode)} · GAME STILL OPEN`}
-      footerRight="GAME 2 STARTS WHEN THE HOST IS READY"
+      footerRight={
+        game2?.state === "live"
+          ? "FIRST QUESTION APPEARS WHEN THE HOST CHOOSES IT"
+          : "GAME 2 STARTS WHEN THE HOST IS READY"
+      }
       podium={podium}
       readyCount={null}
       totalCount={snapshot.players.length}

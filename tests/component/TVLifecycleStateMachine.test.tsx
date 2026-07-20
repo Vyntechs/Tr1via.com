@@ -112,7 +112,7 @@ describe("TVStateMachine lifecycle boundaries", () => {
     expect(screen.getByTestId("tv-reveal")).toBeVisible();
   });
 
-  it("keeps the Game 2 first-question gap in intermission instead of flashing Game 1's reveal", () => {
+  it("labels the live Game 2 first-question gap honestly instead of promising a future launch", () => {
     render(
       <ThemeProvider themeKey="april">
         <TVStateMachine snapshot={lifecycleSnapshot()} themeKey="april" />
@@ -120,8 +120,33 @@ describe("TVStateMachine lifecycle boundaries", () => {
     );
 
     expect(screen.getByTestId("tv-intermission")).toBeVisible();
+    expect(screen.getByText("GAME 2 STARTED · FIRST QUESTION NEXT")).toBeVisible();
+    expect(screen.getByText("FIRST QUESTION APPEARS WHEN THE HOST CHOOSES IT")).toBeVisible();
+    expect(screen.queryByText("GAME 2 LAUNCHES WHEN HOST SAYS GO")).not.toBeInTheDocument();
+    expect(screen.queryByText("GAME 2 STARTS WHEN THE HOST IS READY")).not.toBeInTheDocument();
     expect(screen.queryByTestId("tv-reveal")).not.toBeInTheDocument();
     expect(screen.queryByText("Old answer")).not.toBeInTheDocument();
+  });
+
+  it("keeps the ready Game 2 state distinct from a started game", () => {
+    const ready = lifecycleSnapshot({
+      games: lifecycleSnapshot().games.map((game) =>
+        game.id === "g2"
+          ? { ...game, state: "ready", startedAt: null }
+          : game,
+      ),
+    });
+
+    render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine snapshot={ready} themeKey="april" />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId("tv-intermission")).toBeVisible();
+    expect(screen.getByText("GAME 2 · READY")).toBeVisible();
+    expect(screen.getByText("GAME 2 STARTS WHEN THE HOST IS READY")).toBeVisible();
+    expect(screen.queryByText("GAME 2 STARTED · FIRST QUESTION NEXT")).not.toBeInTheDocument();
   });
 
   it("shows the venue finale only after the final game is durably done", () => {
