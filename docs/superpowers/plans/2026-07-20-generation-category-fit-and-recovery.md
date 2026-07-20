@@ -12,8 +12,8 @@
 verified. All durable generation effects now validate the attempt inside the
 same locked database transaction. Full tests, typecheck, build, static review,
 security review, and runtime validation pass. Heather's existing unopened Game
-1 was also corrected with guarded production data edits. PR and migration-first
-production release remain.
+1 was also corrected with guarded production data edits. PR #154 is open;
+migration-first production release remains.
 
 ## Global Constraints
 
@@ -207,7 +207,7 @@ Expected: no new failures; any documented baseline TypeScript noise is identifie
 
 Review category-fit fail-closed behavior, retry bounds, duplicate POST prevention, and preservation of certified rows.
 
-- [ ] **Step 3: Commit, push, and open a PR**
+- [x] **Step 3: Commit, push, and open a PR**
 
 Commit only the scoped implementation, tests, and this plan. Push `fix/category-fit-certification` and open a PR targeting `main`.
 
