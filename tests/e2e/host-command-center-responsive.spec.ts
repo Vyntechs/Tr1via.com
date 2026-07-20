@@ -5,7 +5,7 @@ const VIEWPORTS = [
   { name: "small phone", width: 320, height: 568, previewAlwaysVisible: false },
   { name: "large phone", width: 430, height: 932, previewAlwaysVisible: false },
   { name: "landscape phone", width: 844, height: 390, previewAlwaysVisible: true },
-  { name: "iPad", width: 1180, height: 820, previewAlwaysVisible: true },
+  { name: "tablet portrait", width: 768, height: 1024, previewAlwaysVisible: false },
 ] as const;
 
 async function expectInitiallyInViewport(page: Page, locator: Locator) {
@@ -59,7 +59,7 @@ test("host command center keeps the game action and exact venue picture usable o
   try {
     for (const viewport of VIEWPORTS) {
       await page.setViewportSize(viewport);
-      await page.goto(`/host/phone/${seed.nightId}`);
+      await page.goto(`/host/live/${seed.nightId}`);
 
       const shell = page.locator("main[data-stage]");
       const nav = page.getByRole("navigation", { name: "Host controls" });
@@ -77,12 +77,15 @@ test("host command center keeps the game action and exact venue picture usable o
 
       if (!viewport.previewAlwaysVisible) {
         await expect(preview).not.toBeVisible();
-        await page.getByRole("button", { name: "TV" }).click();
+        await page.getByRole("button", { name: "TV preview" }).click();
       }
 
       await expect(preview).toBeVisible();
       await expectInitiallyInViewport(page, preview);
       await expect(page.getByTestId("venue-tv-preview-canvas")).toBeAttached();
+      await expect(page.getByTestId("venue-tv-preview-canvas")).toHaveCSS("width", "1600px");
+      await expect(page.getByTestId("venue-tv-preview-canvas")).toHaveCSS("height", "900px");
+      await expect(page.locator('a[href^="/tv/"]')).toHaveCount(0);
       await expect(page.getByTestId("tv-lobby")).toBeAttached();
       const frame = page.getByTestId("venue-tv-preview-frame");
       const frameBox = await frame.boundingBox();

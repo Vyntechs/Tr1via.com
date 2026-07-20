@@ -22,7 +22,7 @@ test("offline mode retains the last safe host command and venue picture", async 
 
     await context.setOffline(true);
     await expect(primary).toBeVisible();
-    await page.getByRole("button", { name: "TV" }).click();
+    await page.getByRole("button", { name: "TV preview" }).click();
     await expect(page.getByRole("region", { name: "Venue TV preview" })).toBeVisible();
     await expect(page.getByTestId("tv-lobby")).toBeAttached();
 

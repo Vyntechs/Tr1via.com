@@ -41,15 +41,15 @@ describe("host live device routing", () => {
     expect(client).not.toContain("/host/phone/${nightId}");
   });
 
-  it("lets the phone host open the public venue screen without losing the controller tab", () => {
+  it("keeps the public venue route out of the compact host controller", () => {
     const phoneClient = readFileSync(
       join(process.cwd(), "app/host/phone/[nightId]/HostPhoneClient.tsx"),
       "utf8",
     );
 
-    expect(phoneClient).toContain('href={`/tv/${roomCode}`}');
-    expect(phoneClient).toContain('target="_blank"');
-    expect(phoneClient).toContain("Open venue screen");
+    expect(phoneClient).not.toContain('href={`/tv/${roomCode}`}');
+    expect(phoneClient).not.toContain("TV view ↗");
+    expect(phoneClient).not.toContain("Open venue screen");
   });
 
   it("removes the chip reserve at the layout boundary without negative-margin cancellation", () => {

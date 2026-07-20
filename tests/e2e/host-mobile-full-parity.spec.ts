@@ -148,13 +148,11 @@ test.describe.serial("phone-first host parity", () => {
 
       await page.goto(`/host/live/${readyNight.nightId}`);
       await expect(page.getByTestId("host-phone-round-controls")).toBeVisible();
-      await expect(page.getByRole("link", { name: "Open venue screen" })).toHaveAttribute(
-        "href",
-        `/tv/${readyNight.roomCode}`,
-      );
+      await expect(page.locator('a[href^="/tv/"]')).toHaveCount(0);
       await expectPhoneFit(page);
 
       await page.goto(`/host/phone/${readyNight.nightId}`);
+      await expect(page).toHaveURL(`/host/live/${readyNight.nightId}`);
       await expect(page.getByTestId("host-phone-round-controls")).toBeVisible();
       await expectPhoneFit(page);
 
@@ -167,24 +165,25 @@ test.describe.serial("phone-first host parity", () => {
     }
   });
 
-  test("private phone route runs Game 1, recovery, Game 2, and night close", async ({
+  test("canonical phone controller runs Game 1, recovery, Game 2, and night close", async ({
     page,
   }, testInfo) => {
     test.setTimeout(180_000);
     expect(readyNight).not.toBeNull();
     await loginAsHost(page, HOST_EMAIL, "Mobile Host");
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`/host/phone/${readyNight!.nightId}`);
+    await page.goto(`/host/live/${readyNight!.nightId}`);
 
     await page.getByRole("button", { name: "Start Game 1" }).click();
     await page.goto("/host");
-    const privatePhoneControl = page.getByTestId("host-private-phone-controls");
-    await expect(privatePhoneControl).toBeVisible();
-    const privatePhoneBox = await privatePhoneControl.boundingBox();
-    expect(privatePhoneBox!.width).toBeGreaterThanOrEqual(43.5);
-    expect(privatePhoneBox!.height).toBeGreaterThanOrEqual(43.5);
+    const liveGameControl = page.getByRole("button", { name: "Control live game" });
+    await expect(liveGameControl).toBeVisible();
+    const liveGameControlBox = await liveGameControl.boundingBox();
+    expect(liveGameControlBox!.width).toBeGreaterThanOrEqual(43.5);
+    expect(liveGameControlBox!.height).toBeGreaterThanOrEqual(43.5);
     await expectTouchSafeHostActions(page);
-    await page.goto(`/host/phone/${readyNight!.nightId}`);
+    await liveGameControl.click();
+    await expect(page).toHaveURL(`/host/live/${readyNight!.nightId}`);
     await expect(page.getByRole("button", { name: /Reveal to the room/ })).toBeVisible();
 
     // Reveal, undo inside the guarded window, then reload to prove the
