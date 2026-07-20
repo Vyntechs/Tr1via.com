@@ -2,17 +2,17 @@
 
 Live trivia, designed to make the room feel alive.
 
-This is the web app for **[tr1via.com](https://tr1via.com)** — a Jeopardy-style multiplayer trivia game run live at small venues. One host on a laptop (mirrored to a TV), a private host phone, and 20–40 players each on their own phone — one press, three synchronized surfaces, in realtime.
+> **Status:** Publicly accessible at [tr1via.com](https://tr1via.com). This repository does not claim paid events or verified venue adoption.
+
+One host action updates three synchronized surfaces: the host controls, the venue display, and player phones. The public proof is the deployed product, the realtime recovery design, and multi-context Playwright tests that exercise those surfaces together.
 
 <p align="center">
   <img src="docs/screenshots/player-question/after-iphone-15-pro-max-image.png" alt="A live question on a player's phone" width="300">
 </p>
 
-**Live at [tr1via.com](https://tr1via.com).** My pride-and-joy project — real venues, real players, in production.
-
 ## How it's built
 
-AI-directed, human-verified. I direct the agents; I own the judgment and the verification. The realtime sync model, the three-surface design (TV, host, player), and the call on what "done" means are mine — enforced in the code and the tests. The line-by-line authoring is paired with Claude, credited in the commit trailers. I don't claim I hand-wrote every line. I claim I know exactly why every line is there — and the multi-context Playwright tests that prove the TV, host, and player phones stay in sync are how I check it.
+AI-assisted and human-verified. Brandon directs implementation and owns the product decisions, realtime behavior, failure handling, and verification. Tests and observable behavior decide when the work is accepted.
 
 ## Stack
 
@@ -72,8 +72,8 @@ npm run test:e2e       # E2E (Playwright, including multi-context sync tests)
 
 ## What this is
 
-The real production app behind tr1via.com, shared to show how I build — not a drop-in template. Still learning, still building; the deploy doc is a known gap, noted below. I'd rather show the limit than hide it.
+The production app behind tr1via.com, shared as technical proof rather than as a drop-in template. It is actively developed.
 
 ## Deploy
 
-Auto-deploys to Vercel preview on every push. Production is `tr1via.com`. See `docs/deploy.md` (forthcoming) for env vars + DNS.
+Vercel creates a preview deployment for each pull request. Production is `tr1via.com`.
