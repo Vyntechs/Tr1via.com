@@ -51,10 +51,12 @@ import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import {
   beginGenerationJob,
+  generationProgressFromRow,
   readGenerationJob,
   updateGenerationJob,
   type GenerationJobClient,
 } from "@/lib/ai/generation-job";
+import { createGenerationHeartbeat } from "@/lib/ai/generation-heartbeat";
 import { rerollPlan } from "@/lib/host/rerollPlan";
 import {
   pickQuestionsForCategory,
@@ -117,7 +119,10 @@ export async function POST(
       // is still the existing duplicate-click guard—not a second AI worker.
       return conflict("already generating");
     }
-    if (existingJob?.phase !== "needs_attention") {
+    if (
+      !existingJob ||
+      generationProgressFromRow(existingJob).phase !== "needs_attention"
+    ) {
       return conflict("already generating");
     }
   }
@@ -130,7 +135,8 @@ export async function POST(
   // still a duplicate-click/race and remains blocked.
   const resume =
     category.state === "generating" &&
-    existingJob?.phase === "needs_attention" &&
+    existingJob !== null &&
+    generationProgressFromRow(existingJob).phase === "needs_attention" &&
     !parsed.data.keptIds;
   if (category.state === "generating" && !resume) {
     return conflict("already generating");
@@ -375,9 +381,12 @@ async function runGenerationJob(opts: {
     );
   };
   void emitProgress();
+  const durableHeartbeat = createGenerationHeartbeat(() =>
+    updateGenerationJob(jobClient, opts.categoryId, { phase }),
+  );
   const heartbeat = setInterval(() => {
     void emitProgress();
-    void updateGenerationJob(jobClient, opts.categoryId, { phase });
+    durableHeartbeat.beat();
   }, GENERATION_HEARTBEAT_MS);
 
   // Accumulate real token spend across every generate + verify call this job
@@ -511,6 +520,7 @@ async function runGenerationJob(opts: {
     });
   } finally {
     clearInterval(heartbeat);
+    await durableHeartbeat.drain();
   }
   console.log(
     `[generation-cost] category=${opts.categoryId} kept=${generated?.length ?? 0} ` +

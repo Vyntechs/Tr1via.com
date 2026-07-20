@@ -43,6 +43,7 @@ import {
   explainGenerationFailure,
 } from "@/lib/host/generationFailureMessages";
 import { mergePickedAfterRefetch } from "@/lib/host/mergePickedAfterRefetch";
+import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
   explainLockFailure,
   explainPhotoSaveFailure,
@@ -188,6 +189,9 @@ export function HostSetupPickClient({
     }),
   );
   const [retrying, setRetrying] = useState(false);
+  // Durable attempts, not component renders, bound automatic recovery. A
+  // stale poll can repeat many times while the resume POST is in flight.
+  const autoResumedAttemptsRef = useRef(new Set<number>());
 
   const refetchQuestions = useCallback(async () => {
     // Query Supabase directly via the browser client (RLS allows the host
@@ -385,6 +389,16 @@ export function HostSetupPickClient({
       return;
     }
     if (watchStatus.kind === "needs-attention") {
+      if (
+        shouldAutoResumeGeneration(watchStatus.progress) &&
+        !autoResumedAttemptsRef.current.has(watchStatus.progress.attempt)
+      ) {
+        autoResumedAttemptsRef.current.add(watchStatus.progress.attempt);
+        const id = window.setTimeout(() => {
+          void handleRetryGeneration();
+        }, 0);
+        return () => window.clearTimeout(id);
+      }
       const id = window.setTimeout(() => {
         setGenerationFailureMessage(watchStatus.progress.statusLine);
         setGenPhase("needs_attention");
@@ -411,8 +425,7 @@ export function HostSetupPickClient({
       setState("draft");
     }, 0);
     return () => window.clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [watchStatus.kind]);
+  }, [watchStatus]);
 
   // ── pick toggling ────────────────────────────────────────────────────
   function togglePick(questionId: string) {
@@ -796,7 +809,14 @@ export function HostSetupPickClient({
           flavor: flavor.length > 0 ? flavor : undefined,
         }),
       });
-      if (!res.ok && res.status !== 202 && res.status !== 409) {
+      if (res.status === 409) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setGenerationFailureMessage(
+          body.error ?? "Generation is still paused. Continue when you are ready.",
+        );
+        return;
+      }
+      if (!res.ok && res.status !== 202) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         setGenerationFailureMessage(
           explainGenerationFailure({
@@ -807,7 +827,7 @@ export function HostSetupPickClient({
         );
         return;
       }
-      if (res.status === 202 || res.status === 409) {
+      if (res.status === 202) {
         setState("generating");
       }
     } catch (err) {
@@ -871,6 +891,18 @@ export function HostSetupPickClient({
     watchStatus.kind === "progress" || watchStatus.kind === "needs-attention"
       ? watchStatus.progress
       : null;
+  const autoResumeLoading =
+    durableProgress !== null &&
+    shouldAutoResumeGeneration(durableProgress) &&
+    autoResumedAttemptsRef.current.has(durableProgress.attempt) &&
+    generationFailureMessage === null;
+  const autoResumeStatusLine = autoResumeLoading
+    ? `Continuing with ${durableProgress!.certifiedCount} certified ${
+        durableProgress!.certifiedCount === 1 ? "choice" : "choices"
+      }; ${durableProgress!.remainingCount} ${
+        durableProgress!.remainingCount === 1 ? "choice" : "choices"
+      } still needed.`
+    : null;
 
   // ── mapped data for the components ───────────────────────────────────
   const loadingList = useMemo<HostGenLoadingQuestion[]>(
@@ -911,7 +943,7 @@ export function HostSetupPickClient({
 
   return (
     <>
-      {showGenerationFailure ? (
+      {showGenerationFailure && !autoResumeLoading ? (
         <HostGenError
           themeKey={themeKey as ThemeKey}
           shellTitle={`generation paused · ${categoryName.toLowerCase()}`}
@@ -930,6 +962,7 @@ export function HostSetupPickClient({
           loaded={loadingList}
           total={20}
           statusLine={
+            autoResumeStatusLine ??
             durableProgress?.statusLine ??
             (genPhase === "checking"
               ? "Fact-checking every answer for accuracy — this part takes a moment."

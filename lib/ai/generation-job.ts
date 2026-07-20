@@ -27,6 +27,7 @@ export interface QuestionGenerationJobRow {
 
 export interface GenerationJobProgress {
   phase: GenerationJobPhase;
+  attempt: number;
   targetCount: number;
   writtenCount: number;
   certifiedCount: number;
@@ -214,6 +215,7 @@ export function generationProgressFromRow(
 
   return {
     phase,
+    attempt: row.attempt,
     targetCount,
     writtenCount,
     certifiedCount,

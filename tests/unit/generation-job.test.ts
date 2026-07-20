@@ -45,6 +45,7 @@ describe("generationProgressFromRow", () => {
       targetCount: 20,
       writtenCount: 8,
       certifiedCount: 3,
+      attempt: 1,
       statusLine: "8 of 20 question choices written",
     });
 
