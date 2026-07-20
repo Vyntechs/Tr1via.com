@@ -22,8 +22,7 @@ describe("deriveHostStage", () => {
         game2: "ready",
         currentGame: 1,
         livePlay: null,
-        lastResolve: "q21",
-        lastResolveGame: 1,
+        lastResolve: { id: "q21", game: 1 },
         nightClosed: false,
       }),
     ).toEqual({ stage: "intermission", primary: "start-game-2" });
@@ -36,8 +35,7 @@ describe("deriveHostStage", () => {
         game2: "live",
         currentGame: 2,
         livePlay: null,
-        lastResolve: "q7",
-        lastResolveGame: 2,
+        lastResolve: { id: "q7", game: 2 },
         nightClosed: false,
       }),
     ).toEqual({ stage: "answer-result", primary: "return-to-board" });
@@ -50,11 +48,26 @@ describe("deriveHostStage", () => {
         game2: "live",
         currentGame: 2,
         livePlay: null,
-        lastResolve: "q21",
-        lastResolveGame: 1,
+        lastResolve: { id: "q21", game: 1 },
         nightClosed: false,
       }),
     ).toEqual({ stage: "board", primary: null });
+  });
+
+  it("fails closed when a live game receives an unowned legacy resolve", () => {
+    const malformedLegacyInput = {
+      game1: "done",
+      game2: "live",
+      currentGame: 2,
+      livePlay: null,
+      lastResolve: { id: "q21" },
+      nightClosed: false,
+    } as unknown as Parameters<typeof deriveHostStage>[0];
+
+    expect(deriveHostStage(malformedLegacyInput)).toEqual({
+      stage: "board",
+      primary: null,
+    });
   });
 
   it("prioritizes a staged question over a prior result in the current game", () => {
@@ -64,8 +77,7 @@ describe("deriveHostStage", () => {
         game2: "ready",
         currentGame: 1,
         livePlay: null,
-        lastResolve: "q7",
-        lastResolveGame: 1,
+        lastResolve: { id: "q7", game: 1 },
         stagedQuestion: "q8",
         nightClosed: false,
       }),
@@ -93,8 +105,7 @@ describe("deriveHostStage", () => {
         game2: "done",
         currentGame: 2,
         livePlay: null,
-        lastResolve: "q42",
-        lastResolveGame: 2,
+        lastResolve: { id: "q42", game: 2 },
         nightClosed: false,
       }),
     ).toEqual({ stage: "finale", primary: "present-winners" });
@@ -105,8 +116,7 @@ describe("deriveHostStage", () => {
         game2: "done",
         currentGame: 2,
         livePlay: null,
-        lastResolve: "q42",
-        lastResolveGame: 2,
+        lastResolve: { id: "q42", game: 2 },
         nightClosed: true,
         winnersPresented: true,
       }),

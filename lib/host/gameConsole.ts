@@ -1,9 +1,9 @@
 /**
  * Pure, audience-safe stage model for the live host console.
  *
- * The adapter that builds this input from RoomSnapshot/TVSnapshot must attach
- * `lastResolveGame` when a prior game's resolve remains in a cached snapshot.
- * That prevents historical reveal state from becoming the next game's result.
+ * The adapter that builds this input from RoomSnapshot/TVSnapshot must retain
+ * resolved-question ownership so historical reveal state cannot become the
+ * next game's result.
  */
 export type HostStage =
   | "game-ready"
@@ -27,15 +27,19 @@ export type HostPrimaryAction =
 type HostGameState = "draft" | "ready" | "live" | "done" | null;
 type HostGameNumber = 1 | 2;
 
+export interface HostResolveRef {
+  id: string;
+  game: HostGameNumber;
+}
+
 export interface HostStageInput {
   game1: HostGameState;
   game2: HostGameState;
   /** The authoritative current game, when the source snapshot identifies it. */
   currentGame?: HostGameNumber | null;
   livePlay: string | null;
-  lastResolve: string | null;
-  /** Game that owns `lastResolve`; omit only when it is already current. */
-  lastResolveGame?: HostGameNumber | null;
+  /** A resolved question and the game that owns it. */
+  lastResolve: HostResolveRef | null;
   nightClosed: boolean;
   stagedQuestion?: string | null;
   winnersPresented?: boolean;
@@ -51,6 +55,15 @@ function activeGame(input: HostStageInput): HostGameNumber | null {
   if (input.game1 === "live") return 1;
   if (input.game2 === "live") return 2;
   return null;
+}
+
+function resolvedInCurrentGame(
+  lastResolve: unknown,
+  currentGame: HostGameNumber | null,
+): boolean {
+  if (!lastResolve || typeof lastResolve !== "object" || !currentGame) return false;
+  const resolve = lastResolve as Partial<HostResolveRef>;
+  return typeof resolve.id === "string" && resolve.game === currentGame;
 }
 
 export function deriveHostStage(input: HostStageInput): HostStageContext {
@@ -87,10 +100,7 @@ export function deriveHostStage(input: HostStageInput): HostStageContext {
     return { stage: "private-preview", primary: "show-question" };
   }
 
-  const resolvedInCurrentGame =
-    input.lastResolve &&
-    (input.lastResolveGame === undefined || input.lastResolveGame === currentGame);
-  if (resolvedInCurrentGame) {
+  if (resolvedInCurrentGame(input.lastResolve, currentGame)) {
     return { stage: "answer-result", primary: "return-to-board" };
   }
 
