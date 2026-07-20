@@ -8,6 +8,10 @@ export { HostGameStatus } from "./HostGameStatus";
 export type { HostDeliveryReceipt, HostGameStatusProps } from "./HostGameStatus";
 export { HostPhoneLive } from "./HostPhoneLive";
 export type { HostPhoneLiveProps, HostPhoneLivePlayer } from "./HostPhoneLive";
+export { HostAnswerResult } from "./HostAnswerResult";
+export type { HostAnswerResultProps } from "./HostAnswerResult";
+export { HostScores } from "./HostScores";
+export type { HostScoresProps } from "./HostScores";
 export { HostDashboard } from "./HostDashboard";
 export type {
   HostDashboardProps,

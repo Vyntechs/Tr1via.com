@@ -11,7 +11,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Eyebrow, Numeric } from "@/components/system";
+import { Eyebrow, Numeric, useTheme } from "@/components/system";
+import { readableForeground } from "@/lib/theme/contrast";
 import type { HostLivePlayer } from "./HostLiveConsole";
 
 export interface AdjustPointsModalProps {
@@ -33,6 +34,7 @@ export function AdjustPointsModal({
   onCancel,
   onSubmit,
 }: AdjustPointsModalProps) {
+  const { t } = useTheme();
   const [selectedId, setSelectedId] = useState(initialPlayer.id);
   const [deltaStr, setDeltaStr] = useState("100");
   const [reason, setReason] = useState("");
@@ -90,9 +92,30 @@ export function AdjustPointsModal({
           overflowY: "auto",
         }}
       >
-        <Eyebrow color="var(--ink-mute)" size={11}>
-          ADJUST POINTS
-        </Eyebrow>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+          <Eyebrow color="var(--ink-mute)" size={11}>
+            ADJUST POINTS
+          </Eyebrow>
+          <button
+            type="button"
+            aria-label="Close point adjustment"
+            onClick={onCancel}
+            style={{
+              minWidth: 48,
+              minHeight: 48,
+              padding: 0,
+              border: "1px solid var(--line)",
+              borderRadius: 12,
+              background: "transparent",
+              color: "var(--ink-mid)",
+              font: "inherit",
+              fontSize: 22,
+              cursor: "pointer",
+            }}
+          >
+            ×
+          </button>
+        </div>
 
         <div
           style={{
@@ -149,7 +172,7 @@ export function AdjustPointsModal({
               type="text"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
-              placeholder="Pub round bonus / suspected sharing / scoring fix"
+              placeholder="Host-awarded bonus, scoring fix, or manual correction"
               maxLength={200}
               style={fieldStyle}
             />
@@ -173,6 +196,8 @@ export function AdjustPointsModal({
             disabled={!canApply}
             style={{
               ...primaryBtn,
+              background: t.accent,
+              color: readableForeground(t.accent),
               opacity: canApply ? 1 : 0.5,
               cursor: canApply ? "pointer" : "not-allowed",
             }}
@@ -211,6 +236,8 @@ function Field({
 }
 
 const fieldStyle: React.CSSProperties = {
+  minHeight: 48,
+  boxSizing: "border-box",
   padding: "10px 12px",
   borderRadius: 8,
   border: "1px solid var(--line)",
@@ -221,6 +248,8 @@ const fieldStyle: React.CSSProperties = {
 };
 
 const chipStyle: React.CSSProperties = {
+  minWidth: 48,
+  minHeight: 48,
   padding: "6px 10px",
   borderRadius: 999,
   background: "var(--surface)",
@@ -232,6 +261,8 @@ const chipStyle: React.CSSProperties = {
 
 const ghostBtn: React.CSSProperties = {
   flex: 1,
+  minWidth: 48,
+  minHeight: 48,
   padding: "10px 0",
   borderRadius: 10,
   border: "1px solid var(--line)",
@@ -244,6 +275,8 @@ const ghostBtn: React.CSSProperties = {
 
 const primaryBtn: React.CSSProperties = {
   flex: 2,
+  minWidth: 48,
+  minHeight: 48,
   padding: "10px 0",
   borderRadius: 10,
   border: "none",

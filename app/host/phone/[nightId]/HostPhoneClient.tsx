@@ -13,7 +13,7 @@ import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
 import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
-import { HostPhoneUpcoming, HostPhoneLive, type HostPhoneLivePlayer } from "@/components/host";
+import { HostAnswerResult, HostPhoneUpcoming, HostPhoneLive, HostScores } from "@/components/host";
 import { HostCommandCenter, type HostSection } from "@/components/host/HostCommandCenter";
 import { HostPhoneBoard } from "@/components/host/HostPhoneBoard";
 import { HostGameReady, type HostPreflight } from "@/components/host/HostGameReady";
@@ -48,6 +48,19 @@ export function HostPhoneClient({
     rows: GameScoreRow[];
   } | null>(null);
   const { backupMode, payload: fallbackPayload } = useRoomFallback();
+  const resolvedCategoryForAnswers = room.lastResolvedQuestion
+    ? room.categories.find((category) => category.id === room.lastResolvedQuestion?.category_id) ?? null
+    : null;
+  const resolvedQuestionGameForAnswers = resolvedCategoryForAnswers
+    ? room.games.find((game) => game.id === resolvedCategoryForAnswers.game_id) ?? null
+    : null;
+  const resolvedBelongsToCurrentLiveGame = Boolean(
+    room.lastResolvedQuestion &&
+    room.currentGame?.state === "live" &&
+    resolvedQuestionGameForAnswers?.id === room.currentGame.id,
+  );
+  const answerTargetId = room.currentQuestion?.id ??
+    (resolvedBelongsToCurrentLiveGame ? room.lastResolvedQuestion?.id ?? null : null);
   const sourceQuestions =
     backupMode && fallbackPayload ? fallbackPayload.allQuestions : directAllQuestions;
   const allQuestions = useMemo(
@@ -68,15 +81,14 @@ export function HostPhoneClient({
     [room.currentQuestion, room.lastBroadcast, sourceQuestions],
   );
   const answers = useMemo(
-    () =>
-      backupMode && fallbackPayload
+    () => {
+      if (!answerTargetId) return [];
+      const source = backupMode && fallbackPayload
         ? fallbackPayload.liveAnswers
-        : room.currentQuestion
-          ? directAnswers.filter(
-              (answer) => answer.question_id === room.currentQuestion?.id,
-            )
-          : [],
-    [backupMode, directAnswers, fallbackPayload, room.currentQuestion],
+        : directAnswers;
+      return source.filter((answer) => answer.question_id === answerTargetId);
+    },
+    [answerTargetId, backupMode, directAnswers, fallbackPayload],
   );
   const scores = useMemo(
     () =>
@@ -94,6 +106,7 @@ export function HostPhoneClient({
     section: HostSection;
     contextKey: string;
   } | null>(null);
+  const [dismissedResultKey, setDismissedResultKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmingEnd, setConfirmingEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -134,30 +147,32 @@ export function HostPhoneClient({
     };
   }, [room.games, room.currentQuestion]);
 
-  // Subscribe to answers for the live question, for the lock-in counter.
+  // Subscribe to the live or current-game resolved question. The latter is
+  // needed for result math; game ownership above prevents stale Game 1 data
+  // from becoming Game 2's result.
   useEffect(() => {
-    if (!room.currentQuestion) return;
+    if (!answerTargetId) return;
+    const targetId = answerTargetId;
     const supa = getSupabaseBrowser();
     let cancelled = false;
     async function load() {
-      if (!room.currentQuestion) return;
       const { data } = await supa
         .from("answers")
         .select("*")
-        .eq("question_id", room.currentQuestion.id);
+        .eq("question_id", targetId);
       if (cancelled) return;
       setDirectAnswers(((data as AnswerRow[] | null) ?? []));
     }
     void load();
     const channel = supa
-      .channel(`host-phone-answers:${room.currentQuestion.id}`)
+      .channel(`host-phone-answers:${targetId}`)
       .on(
         "postgres_changes",
         {
           event: "*",
           schema: "public",
           table: "answers",
-          filter: `question_id=eq.${room.currentQuestion.id}`,
+          filter: `question_id=eq.${targetId}`,
         },
         () => void load(),
       )
@@ -166,7 +181,7 @@ export function HostPhoneClient({
       cancelled = true;
       void supa.removeChannel(channel);
     };
-  }, [room.currentQuestion]);
+  }, [answerTargetId]);
 
   const activePlayerIdSignature = useMemo(
     () => room.players.map((player) => player.id).sort().join(","),
@@ -436,19 +451,36 @@ export function HostPhoneClient({
     }
   }
 
+  async function adjustPoints(playerId: string, delta: number, reason: string) {
+    if (!controlGame || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/adjustments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          playerId,
+          gameId: controlGame.id,
+          delta,
+          reason: reason || undefined,
+        }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "adjust failed");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Point adjustment failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Display state.
   const isLive = room.currentQuestion !== null;
   const playerCount = room.players.length;
   const lockedIds = new Set(answers.map((a) => a.player_id));
-  const stillThinking: HostPhoneLivePlayer[] = room.players
-    .filter((p) => !lockedIds.has(p.id))
-    .map((p) => ({
-      id: p.id,
-      name: p.display_name,
-      flag: p.app_switch_total_seconds >= 30
-        ? `app-switched ${Math.floor(p.app_switch_total_seconds / 60)}m`
-        : null,
-    }));
   const currentGame = controlGame;
   const directEligibilityKey = room.currentGame
     ? `${room.currentGame.id}:${activePlayerIdSignature}`
@@ -479,19 +511,18 @@ export function HostPhoneClient({
   const allGamesEnded = room.games.length > 0 && room.games.every((game) => game.state === "done");
   const game1 = room.games.find((game) => game.game_no === 1) ?? null;
   const game2 = room.games.find((game) => game.game_no === 2) ?? null;
-  const resolvedCategory = room.lastResolvedQuestion
-    ? room.categories.find((category) => category.id === room.lastResolvedQuestion?.category_id) ?? null
+  const resolvedGame = resolvedQuestionGameForAnswers;
+  const resultKey = resolvedBelongsToCurrentLiveGame && room.lastResolvedQuestion && resolvedGame
+    ? `${resolvedGame.id}:${room.lastResolvedQuestion.id}:${room.lastResolvedQuestion.finished_at ?? "resolved"}`
     : null;
-  const resolvedGame = resolvedCategory
-    ? room.games.find((game) => game.id === resolvedCategory.game_id) ?? null
-    : null;
+  const resultDismissed = resultKey !== null && dismissedResultKey === resultKey;
   const stage = deriveHostStage({
     game1: game1?.state ?? null,
     game2: game2?.state ?? null,
     currentGame: room.currentGame?.game_no ?? null,
     livePlay: room.currentQuestion?.id ?? null,
     lastResolve:
-      room.lastResolvedQuestion && resolvedGame
+      room.lastResolvedQuestion && resolvedGame && !resultDismissed
         ? { id: room.lastResolvedQuestion.id, game: resolvedGame.game_no }
         : null,
     nightClosed: Boolean(room.night?.closed_at),
@@ -538,7 +569,7 @@ export function HostPhoneClient({
     };
   }, [fetchPreflight, isGame1Preflight]);
 
-  const roundControls = isGame1Preflight ? undefined : (
+  const roundControls = isGame1Preflight || stage.stage === "answer-result" ? undefined : (
     <PhoneRoundControls
       themeKey={themeKey}
       gameNo={currentGame?.game_no ?? null}
@@ -558,17 +589,34 @@ export function HostPhoneClient({
 
   let boardContent: React.ReactNode;
   if (isLive) {
+    const liveCategory = room.categories.find((category) => category.id === room.currentQuestion?.category_id) ?? null;
     boardContent = (
       <HostPhoneLive
         themeKey={themeKey}
         secondsRemaining={Math.max(0, Math.floor(timer.secondsRemaining))}
-        lockedCount={answers.length}
+        lockedCount={lockedIds.size}
         totalPlayers={playerCount}
-        stillThinking={stillThinking}
+        categoryName={liveCategory?.name ?? "Question"}
+        pointValue={room.currentQuestion?.point_value ?? (room.currentQuestion?.difficulty ?? 0) * 100}
+        prompt={room.currentQuestion?.prompt ?? "Question in progress"}
         onEndEarly={() => void endEarly()}
         onUndo={() => void undo()}
         canUndo={canUndo}
         isEnding={busy}
+      />
+    );
+  } else if (stage.stage === "answer-result" && room.lastResolvedQuestion && resultKey) {
+    boardContent = (
+      <HostAnswerResult
+        themeKey={themeKey}
+        question={room.lastResolvedQuestion}
+        answers={answers}
+        players={room.players}
+        onReturnToBoard={() => {
+          setDismissedResultKey(resultKey);
+          setSelection(null);
+          setNavigation(null);
+        }}
       />
     );
   } else if (stagedQuestion) {
@@ -614,7 +662,15 @@ export function HostPhoneClient({
     );
   }
 
-  const sectionContent = activeSection === "board"
+  const sectionContent = activeSection === "scores"
+    ? (
+      <HostScores
+        gameNo={currentGame?.game_no ?? null}
+        scores={scores}
+        onSubmitAdjustment={(playerId, delta, reason) => void adjustPoints(playerId, delta, reason)}
+      />
+    )
+    : activeSection === "board"
     ? isGame1Preflight
       ? preflight
         ? (
@@ -644,10 +700,7 @@ export function HostPhoneClient({
         section={activeSection}
         roomCode={roomCode}
         playerNames={room.players.map((player) => player.display_name)}
-        scores={scores.map((row) => ({
-          name: row.display_name ?? "Player",
-          score: row.score ?? 0,
-        }))}
+        scores={[]}
       />
     );
 
@@ -657,7 +710,7 @@ export function HostPhoneClient({
       stage={stage.stage}
       active={activeSection}
       playerCount={playerCount}
-      lockedCount={answers.length}
+      lockedCount={lockedIds.size}
       onNavigate={navigate}
       controls={roundControls}
     >

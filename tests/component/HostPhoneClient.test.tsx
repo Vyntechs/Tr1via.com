@@ -354,8 +354,7 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
-    const lockedSection = (await screen.findByText("LOCKED IN")).parentElement;
-    expect(lockedSection).toHaveTextContent(/1of 2/);
+    expect(await screen.findByText("1 of 2 locked")).toBeVisible();
   });
 
   it("uses shared eligibility to auto-end only when every eligible player is locked", async () => {
@@ -624,7 +623,7 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.getByText("Player p1")).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "Scores" }));
-    expect(screen.getByRole("heading", { name: "Scores" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Game 1 standings" })).toBeVisible();
 
     fireEvent.click(screen.getByRole("button", { name: "TV" }));
     expect(screen.getByRole("heading", { name: "Venue TV" })).toBeVisible();
@@ -837,7 +836,7 @@ describe("HostPhoneClient reveal flow", () => {
     ));
   });
 
-  it("returns to an unselected board after the live question resolves", async () => {
+  it("shows the current game's answer result, then returns to an unselected board on request", async () => {
     const liveGame = game("g1", 1, "live");
     const liveQuestion = {
       ...pickedQuestion,
@@ -848,6 +847,7 @@ describe("HostPhoneClient reveal flow", () => {
       games: [liveGame],
       currentGame: liveGame,
       currentQuestion: liveQuestion,
+      players: [player("p1")],
     };
     const view = render(
       <HostPhoneClient
@@ -868,6 +868,19 @@ describe("HostPhoneClient reveal flow", () => {
       currentQuestion: null,
       lastResolvedQuestion: { ...liveQuestion, finished_at: "2026-07-08T00:01:45Z" },
     };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({
+        games: [liveGame],
+        categories: [readyCategory],
+        players: h.room.players,
+        currentQuestion: null,
+        lastResolvedQuestion: h.room.lastResolvedQuestion,
+        allQuestions: h.questions,
+        liveAnswers: [{ ...answer("a1", "p1"), is_correct: true, awarded_points: 100 }],
+        scores: [{ ...score("p1"), score: 100, answered_count: 1, correct_count: 1 }],
+      }),
+    };
     view.rerender(
       <HostPhoneClient
         nightId="night-1"
@@ -877,8 +890,88 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
+    expect(await screen.findByText("1 Salsa on 2")).toBeVisible();
+    const returnToBoard = screen.getByRole("button", { name: "Return to board" });
+    expect(returnToBoard).toHaveStyle({ minHeight: "48px" });
+    fireEvent.click(returnToBoard);
     expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
     expect(screen.queryByText(secondPickedQuestion.prompt)).not.toBeInTheDocument();
+  });
+
+  it("never renders a stale Game 1 answer result after Game 2 becomes authoritative", async () => {
+    const game1 = game("g1", 1, "done");
+    const game2 = game("g2", 2, "live");
+    const resolvedGame1Question = { ...pickedQuestion, finished_at: "2026-07-08T00:01:45Z" };
+    h.room = {
+      ...room(),
+      games: [game1, game2],
+      currentGame: game2,
+      currentQuestion: null,
+      lastResolvedQuestion: resolvedGame1Question,
+      categories: [readyCategory, { ...readyCategory, id: "c2", game_id: "g2", name: "Game 2" }],
+    };
+    h.questions = [{ ...secondPickedQuestion, category_id: "c2" }];
+
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Return to board" })).not.toBeInTheDocument();
+    expect(screen.queryByText("1 Salsa on 2")).not.toBeInTheDocument();
+  });
+
+  it("posts a score adjustment with the host-entered audit reason from Scores", async () => {
+    const liveGame = game("g1", 1, "live");
+    h.room = {
+      ...room(),
+      games: [liveGame],
+      currentGame: liveGame,
+      players: [player("p1")],
+    };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({
+        games: [liveGame],
+        categories: [readyCategory],
+        players: h.room.players,
+        allQuestions: h.questions,
+        scores: [{ ...score("p1"), display_name: "Jordan", score: 6100, answered_count: 12, correct_count: 8 }],
+      }),
+    };
+
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Scores" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Adjust points for Jordan" }));
+    fireEvent.change(screen.getByPlaceholderText(/scoring fix/i), { target: { value: "Host-awarded bonus" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply +100" }));
+
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/adjustments",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          playerId: "p1",
+          gameId: "g1",
+          delta: 100,
+          reason: "Host-awarded bonus",
+        }),
+      },
+    ));
   });
 
   it("returns an undone reveal to the board and requires an explicit re-selection", async () => {
