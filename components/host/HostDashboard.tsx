@@ -160,7 +160,9 @@ function HostDashboardInner({
   const ctaLabel = !tonight
     ? "Set up tonight's games"
     : tonight.status === "live"
-      ? "Resume the live game"
+      ? compact
+        ? "Host from this phone"
+        : "Resume the live game"
       : tonight.status === "done"
         ? "See tonight's recap"
         : "Continue setup";
@@ -283,7 +285,7 @@ function HostDashboardInner({
                   </span>
                 )}
               </button>
-              {tonight?.status === "live" && (
+              {tonight?.status === "live" && !compact && (
                 <Link
                   href={`/host/phone/${tonight.nightId}`}
                   data-testid="host-private-phone-controls"

@@ -177,3 +177,8 @@ Reason: A mutable header plus leaked identifier lets one player impersonate anot
 Trigger: Player controls froze before the server stopped accepting first-time answers.
 Rule: Make the official input deadline match server acceptance unless authoritative pre-deadline proof exists.
 Reason: A hidden grace period rewards modified clients and breaks fairness.
+
+### phone-host-entry-is-the-product
+Trigger: A phone host resumed a live game and received the clipped venue canvas while the usable controller stayed behind a secondary link.
+Rule: Device-appropriate hosting must be the primary path; expose venue display as an explicit companion view from the controller.
+Reason: Responsive setup means nothing if live-game entry strands the host without controls.
