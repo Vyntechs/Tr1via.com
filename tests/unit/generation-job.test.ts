@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   beginGenerationJob,
+  claimGenerationResume,
   generationProgressFromRow,
   readGenerationJob,
   updateGenerationJob,
@@ -184,6 +185,55 @@ describe("generation job persistence", () => {
     expect(payload.attempt).toBe(3);
     expect(payload).not.toHaveProperty("certified_count");
     expect(payload).not.toHaveProperty("created_at");
+  });
+
+  it("allows exactly one concurrent claim for the observed stale attempt", async () => {
+    let stored = row({ phase: "repairing", attempt: 2, certified_count: 19 });
+    const client = {
+      from: () => ({
+        update: (values: Record<string, unknown>) => {
+          const filters: Record<string, unknown> = {};
+          const query = {
+            eq(column: string, value: string | number) {
+              filters[column] = value;
+              return query;
+            },
+            select() {
+              return {
+                maybeSingle: async () => {
+                  const matches =
+                    filters.category_id === stored.category_id &&
+                    filters.attempt === stored.attempt &&
+                    filters.phase === stored.phase;
+                  if (!matches) return { data: null, error: null };
+                  stored = { ...stored, ...values } as QuestionGenerationJobRow;
+                  return { data: stored, error: null };
+                },
+              };
+            },
+          };
+          return query;
+        },
+      }),
+    };
+
+    const [winner, loser] = await Promise.all([
+      claimGenerationResume(client as never, {
+        categoryId: "category-1",
+        observedAttempt: 2,
+        observedPhase: "repairing",
+        nowIso: "2026-07-20T12:00:00.000Z",
+      }),
+      claimGenerationResume(client as never, {
+        categoryId: "category-1",
+        observedAttempt: 2,
+        observedPhase: "repairing",
+        nowIso: "2026-07-20T12:00:00.000Z",
+      }),
+    ]);
+
+    expect(winner).toMatchObject({ phase: "queued", attempt: 3, certified_count: 19 });
+    expect(loser).toBeNull();
   });
 
   it("updates heartbeat and the requested real progress fields", async () => {

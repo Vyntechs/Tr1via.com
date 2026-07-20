@@ -51,6 +51,7 @@ import { verifyAnswers } from "@/lib/ai/verify-answers";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import {
   beginGenerationJob,
+  claimGenerationResume,
   generationProgressFromRow,
   readGenerationJob,
   updateGenerationJob,
@@ -143,15 +144,24 @@ export async function POST(
   }
 
   try {
-    await beginGenerationJob(jobClient, {
-      categoryId,
-      gameId: category.game_id,
-      nightId: owned.night.id,
-      hostId: owned.host.id,
-      targetCount: 20,
-      resume,
-      existing: existingJob,
-    });
+    if (resume) {
+      const claimed = await claimGenerationResume(jobClient, {
+        categoryId,
+        observedAttempt: existingJob!.attempt,
+        observedPhase: existingJob!.phase,
+      });
+      if (!claimed) return conflict("generation recovery already starting");
+    } else {
+      await beginGenerationJob(jobClient, {
+        categoryId,
+        gameId: category.game_id,
+        nightId: owned.night.id,
+        hostId: owned.host.id,
+        targetCount: 20,
+        resume: false,
+        existing: null,
+      });
+    }
   } catch (error) {
     return badRequest(
       error instanceof Error ? error.message : "could not start generation progress",

@@ -91,6 +91,56 @@ export interface BeginGenerationJobInput {
   nowIso?: string;
 }
 
+export interface ClaimGenerationResumeInput {
+  categoryId: string;
+  observedAttempt: number;
+  /** The stored phase, not its derived stale needs_attention presentation. */
+  observedPhase: GenerationJobPhase;
+  nowIso?: string;
+}
+
+/**
+ * Atomically claims a stopped job for exactly one resuming worker. The
+ * observed attempt and raw phase make an already-claimed/stale read a clean
+ * loser instead of launching a duplicate background job.
+ */
+export async function claimGenerationResume(
+  client: GenerationJobClient,
+  input: ClaimGenerationResumeInput,
+): Promise<QuestionGenerationJobRow | null> {
+  const nowIso = input.nowIso ?? new Date().toISOString();
+  const table = client.from("question_generation_jobs") as unknown as {
+    update(values: Record<string, unknown>): {
+      eq(column: string, value: string | number): {
+        eq(column: string, value: string | number): {
+          eq(column: string, value: string | number): {
+            select(columns: string): {
+              maybeSingle(): Promise<GenerationJobResult<QuestionGenerationJobRow>>;
+            };
+          };
+        };
+      };
+    };
+  };
+  const { data, error } = await table
+    .update({
+      phase: "queued",
+      attempt: input.observedAttempt + 1,
+      last_error: null,
+      heartbeat_at: nowIso,
+      updated_at: nowIso,
+    })
+    .eq("category_id", input.categoryId)
+    .eq("attempt", input.observedAttempt)
+    .eq("phase", input.observedPhase)
+    .select("*")
+    .maybeSingle();
+  if (error) {
+    throw new Error(`failed to claim generation recovery: ${error.message}`);
+  }
+  return data;
+}
+
 export async function beginGenerationJob(
   client: GenerationJobClient,
   input: BeginGenerationJobInput,

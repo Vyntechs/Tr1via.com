@@ -52,3 +52,31 @@ npm run lint
 
 Result: unavailable because this Next 16 project still invokes the removed
 `next lint` command.
+
+## Reviewer repair — atomic concurrent-resume claim
+
+A reviewer identified that two requests could read the same stopped row and
+both schedule resume workers. The recovery route now conditionally updates by
+`category_id`, the observed durable `attempt`, and the stored raw `phase`.
+Only the request whose update returns a row schedules `after()`; the other
+returns `409`. This also permits a stale raw `repairing` row because stale is
+derived before the raw phase is supplied to the claim predicate.
+
+TDD RED:
+
+```sh
+npx vitest run tests/unit/generation-job.test.ts tests/unit/api-generate-resume-claim-contract.test.ts
+```
+
+Result: 2 failures — missing `claimGenerationResume` and no route claim wiring.
+
+Focused GREEN:
+
+```sh
+npx vitest run tests/unit/generation-job.test.ts tests/unit/generation-auto-resume.test.ts tests/unit/generation-heartbeat.test.ts tests/unit/useGenerationStatus.test.tsx tests/component/HostGenError.test.tsx tests/component/HostSetupPickClient-auto-resume.test.tsx tests/unit/api-generate-resume-claim-contract.test.ts
+```
+
+Result: 7 files passed, 39 tests passed.
+
+`npx tsc --noEmit` remains blocked only by the same four unrelated fixture and
+environment typing errors listed above; the atomic-claim changes add none.
