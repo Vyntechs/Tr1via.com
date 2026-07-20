@@ -241,14 +241,48 @@ function room(): RoomSnapshot {
   };
 }
 
+function preflightResponse(overrides: Record<string, unknown> = {}) {
+  return {
+    checks: {
+      content: "ready",
+      tv: "unknown",
+      players: "unknown",
+      network: "control-path-healthy",
+      controls: "ready",
+    },
+    canStart: true,
+    checkedAt: "2026-07-20T12:00:00.000Z",
+    elapsedMs: 37,
+    playerCount: 0,
+    content: {
+      gameId: "g1",
+      categoryCount: 1,
+      expectedCategoryCount: 1,
+      pickedQuestionCount: 1,
+      expectedQuestionCount: 1,
+      reason: null,
+    },
+    ...overrides,
+  };
+}
+
 describe("HostPhoneClient reveal flow", () => {
   beforeEach(() => {
-    h.room = room();
+    const liveGame = game("g1", 1, "live");
+    h.room = { ...room(), games: [liveGame], currentGame: liveGame };
     h.questions = [pickedQuestion, secondPickedQuestion];
     h.fetch.mockReset();
     h.fallback = { backupMode: false, payload: null };
     h.autoRevealOptions = null;
-    h.fetch.mockResolvedValue(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    h.fetch.mockImplementation(async (input: RequestInfo | URL) =>
+      new Response(
+        JSON.stringify(
+          String(input) === "/api/nights/night-1/preflight"
+            ? preflightResponse()
+            : { ok: true },
+        ),
+        { status: 200 },
+      ));
     vi.stubGlobal("fetch", h.fetch);
   });
 
@@ -354,7 +388,7 @@ describe("HostPhoneClient reveal flow", () => {
     );
   });
 
-  it("starts a draft or ready game before revealing the exact selected question", async () => {
+  it("reveals the exact selected question after Game 1 has started", async () => {
     render(
       <HostPhoneClient
         nightId="night-1"
@@ -368,11 +402,9 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.getByText(secondPickedQuestion.prompt)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Show question" }));
 
-    await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(2));
-    expect(h.fetch.mock.calls[0][0]).toBe("/api/games/g1/start");
-    expect(h.fetch.mock.calls[0][1]).toMatchObject({ method: "POST" });
-    expect(h.fetch.mock.calls[1][0]).toBe("/api/games/g1/reveal");
-    expect(h.fetch.mock.calls[1][1]).toMatchObject({
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1));
+    expect(h.fetch.mock.calls[0][0]).toBe("/api/games/g1/reveal");
+    expect(h.fetch.mock.calls[0][1]).toMatchObject({
       method: "POST",
       body: JSON.stringify({ questionId: "q2" }),
     });
@@ -468,7 +500,7 @@ describe("HostPhoneClient reveal flow", () => {
   });
 
   it("clears a selection when control advances to another game", async () => {
-    const game1 = game("g1", 1, "ready");
+    const game1 = game("g1", 1, "live");
     const game2 = game("g2", 2, "ready");
     const game2Category: CategoryRow = {
       ...readyCategory,
@@ -519,7 +551,8 @@ describe("HostPhoneClient reveal flow", () => {
   });
 
   it("provides honest Board, Players, Scores, and TV destinations", async () => {
-    h.room = { ...room(), players: [player("p1")] };
+    const liveGame = game("g1", 1, "live");
+    h.room = { ...room(), games: [liveGame], currentGame: liveGame, players: [player("p1")] };
     render(
       <HostPhoneClient
         nightId="night-1"
@@ -569,6 +602,7 @@ describe("HostPhoneClient reveal flow", () => {
   });
 
   it("keeps every lifecycle and TV command at least 48px tall", async () => {
+    h.room = room();
     const view = render(
       <HostPhoneClient
         nightId="night-1"
@@ -610,7 +644,6 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.queryByText(/show control/i)).not.toBeInTheDocument();
 
     h.room = room();
-    h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 500 }));
     view.rerender(
       <HostPhoneClient
         nightId="night-1"
@@ -619,7 +652,9 @@ describe("HostPhoneClient reveal flow", () => {
         themeKey="house"
       />,
     );
-    fireEvent.click(await screen.findByRole("button", { name: "Start Game 1" }));
+    const start = await screen.findByRole("button", { name: "Start Game 1" });
+    h.fetch.mockResolvedValueOnce(new Response(JSON.stringify({}), { status: 500 }));
+    fireEvent.click(start);
     expect(await screen.findByRole("alert")).toHaveTextContent("game control failed");
     expect(screen.getByRole("button", { name: "Dismiss" })).toHaveStyle({
       minHeight: "48px",
@@ -645,6 +680,7 @@ describe("HostPhoneClient reveal flow", () => {
   });
 
   it("exposes explicit round controls on the same private phone surface", async () => {
+    h.room = room();
     render(
       <HostPhoneClient
         nightId="night-1"
@@ -828,5 +864,57 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Salsa for 100 points" }));
     expect(await screen.findByText(pickedQuestion.prompt)).toBeVisible();
+  });
+
+  it("uses the truthful preflight as the only Game 1 start surface", async () => {
+    h.room = room();
+    h.fetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url === "/api/nights/night-1/preflight") {
+        return new Response(JSON.stringify(preflightResponse()), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    });
+
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Game 1 is ready for a final check" })).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Start Game 1" })).toHaveLength(1);
+    expect(screen.queryByRole("grid", { name: "Question board" })).not.toBeInTheDocument();
+    expect(screen.getByText("Venue TV not confirmed")).toBeVisible();
+    expect(h.fetch).toHaveBeenCalledWith(
+      "/api/nights/night-1/preflight",
+      expect.objectContaining({ cache: "no-store", signal: expect.any(AbortSignal) }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Start Game 1" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/start",
+      expect.objectContaining({ method: "POST" }),
+    ));
+  });
+
+  it("does not fetch or mount the preflight after Game 1 has started", async () => {
+    const liveGame = game("g1", 1, "live");
+    h.room = { ...room(), games: [liveGame], currentGame: liveGame };
+
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(h.fetch.mock.calls.some(([url]) => url === "/api/nights/night-1/preflight")).toBe(false);
   });
 });

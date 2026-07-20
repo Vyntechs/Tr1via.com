@@ -6,7 +6,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
@@ -16,11 +16,14 @@ import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { HostPhoneUpcoming, HostPhoneLive, type HostPhoneLivePlayer } from "@/components/host";
 import { HostCommandCenter, type HostSection } from "@/components/host/HostCommandCenter";
 import { HostPhoneBoard } from "@/components/host/HostPhoneBoard";
+import { HostGameReady, type HostPreflight } from "@/components/host/HostGameReady";
 import { Eyebrow, ThemeProvider, useTheme } from "@/components/system";
 import { deriveHostStage, type HostStage } from "@/lib/host/gameConsole";
 import type { AnswerRow, GameScoreRow, QuestionRow } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { readableForeground } from "@/lib/theme/contrast";
+import { fetchJsonWithRetry } from "@/lib/realtime/fetchWithRetry";
+import { BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -94,6 +97,8 @@ export function HostPhoneClient({
   const [busy, setBusy] = useState(false);
   const [confirmingEnd, setConfirmingEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [preflight, setPreflight] = useState<HostPreflight | null>(null);
+  const [preflightError, setPreflightError] = useState<string | null>(null);
 
   // Pull all picked questions for the current game (so we can stage the
   // next one).
@@ -453,7 +458,48 @@ export function HostPhoneClient({
     nightClosed: Boolean(room.night?.closed_at),
     stagedQuestion: stagedQuestion?.id ?? null,
   });
-  const roundControls = (
+  const isGame1Preflight =
+    stage.stage === "game-ready" &&
+    game1 !== null &&
+    game1.started_at === null &&
+    (game1.state === "draft" || game1.state === "ready");
+  const fetchPreflight = useCallback(async (signal: AbortSignal) => {
+    const payload = await fetchJsonWithRetry<unknown>(
+      `/api/nights/${nightId}/preflight`,
+      {
+        attempts: 2,
+        perAttemptTimeoutMs: Math.floor(BOOTSTRAP_TIMEOUT_MS / 2),
+        signal,
+      },
+    );
+    if (!isHostPreflight(payload)) throw new Error("invalid preflight response");
+    return payload;
+  }, [nightId]);
+
+  useEffect(() => {
+    if (!isGame1Preflight) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), BOOTSTRAP_TIMEOUT_MS);
+    void fetchPreflight(controller.signal).then(
+      (next) => {
+        if (!cancelled) {
+          setPreflight(next);
+          setPreflightError(null);
+        }
+      },
+      () => {
+        if (!cancelled) setPreflightError("Could not check Game 1 readiness. Check the control connection and try again.");
+      },
+    ).finally(() => clearTimeout(timeout));
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
+    };
+  }, [fetchPreflight, isGame1Preflight]);
+
+  const roundControls = isGame1Preflight ? undefined : (
     <PhoneRoundControls
       themeKey={themeKey}
       gameNo={currentGame?.game_no ?? null}
@@ -530,7 +576,30 @@ export function HostPhoneClient({
   }
 
   const sectionContent = activeSection === "board"
-    ? boardContent
+    ? isGame1Preflight
+      ? preflight
+        ? (
+          <HostGameReady
+            roomCode={roomCode}
+            preflight={preflight}
+            onCheck={fetchPreflight}
+            onStart={() => game1 && void runLifecycle(`/api/games/${game1.id}/start`)}
+            isStarting={busy}
+          />
+        )
+        : (
+          <GameReadyBootstrap
+            error={preflightError}
+            onRetry={() => {
+              const controller = new AbortController();
+              setPreflightError(null);
+              void fetchPreflight(controller.signal).then(setPreflight).catch(() => {
+                setPreflightError("Could not check Game 1 readiness. Check the control connection and try again.");
+              });
+            }}
+          />
+        )
+      : boardContent
     : (
       <HostSectionSummary
         section={activeSection}
@@ -556,6 +625,77 @@ export function HostPhoneClient({
       {sectionContent}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
     </PhoneCenter>
+  );
+}
+
+function GameReadyBootstrap({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+  const { t } = useTheme();
+  return (
+    <section
+      aria-label="Game Ready preflight"
+      style={{
+        margin: 14,
+        padding: 18,
+        border: `1px solid ${t.line}`,
+        borderRadius: 16,
+        background: t.surface,
+        color: t.ink,
+      }}
+    >
+      <h1 style={{ margin: 0, fontSize: 22 }}>Checking Game 1 readiness…</h1>
+      <p role={error ? "alert" : "status"} style={{ color: error ? t.wrong : t.inkMid, fontSize: 13 }}>
+        {error ?? "Checking the owned game, content, players, and control path."}
+      </p>
+      {error && (
+        <button
+          type="button"
+          onClick={onRetry}
+          style={{
+            minWidth: 48,
+            minHeight: 48,
+            padding: "0 16px",
+            border: `1px solid ${t.line}`,
+            borderRadius: 10,
+            background: t.surfaceH,
+            color: t.ink,
+            font: "inherit",
+            fontWeight: 800,
+          }}
+        >
+          Try readiness check again
+        </button>
+      )}
+    </section>
+  );
+}
+
+function isHostPreflight(value: unknown): value is HostPreflight {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<HostPreflight>;
+  const checks = candidate.checks;
+  const content = candidate.content;
+  return (
+    Boolean(checks) &&
+    (checks?.content === "ready" || checks?.content === "invalid") &&
+    (checks?.tv === "unknown" || checks?.tv === "missing") &&
+    checks?.players === "unknown" &&
+    checks?.network === "control-path-healthy" &&
+    checks?.controls === "ready" &&
+    typeof candidate.canStart === "boolean" &&
+    typeof candidate.checkedAt === "string" &&
+    Number.isFinite(Date.parse(candidate.checkedAt)) &&
+    typeof candidate.elapsedMs === "number" &&
+    Number.isFinite(candidate.elapsedMs) &&
+    typeof candidate.playerCount === "number" &&
+    Number.isInteger(candidate.playerCount) &&
+    candidate.playerCount >= 0 &&
+    Boolean(content) &&
+    (typeof content?.gameId === "string" || content?.gameId === null) &&
+    typeof content?.categoryCount === "number" &&
+    typeof content?.expectedCategoryCount === "number" &&
+    typeof content?.pickedQuestionCount === "number" &&
+    typeof content?.expectedQuestionCount === "number" &&
+    (typeof content?.reason === "string" || content?.reason === null)
   );
 }
 
