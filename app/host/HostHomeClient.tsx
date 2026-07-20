@@ -19,7 +19,7 @@ import { OnboardingFirstDashboard } from "@/components/onboarding";
 import { BillingUpgrade } from "@/components/host/BillingUpgrade";
 import { hostRunPath } from "@/lib/host/hostRunPath";
 
-const HOST_WHATS_NEW_KEY = "tr1via-host-whats-new-original-v1";
+const HOST_WHATS_NEW_KEY = "tr1via-host-whats-new-original-v2";
 
 export interface HostHomeClientProps {
   hostName: string;
