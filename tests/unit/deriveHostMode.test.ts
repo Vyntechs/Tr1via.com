@@ -179,6 +179,43 @@ describe("deriveHostMode", () => {
     expect(ctx.mode).toBe("reveal-sticky");
   });
 
+  it("does not revive Game 1's last answer after Game 2 starts", () => {
+    const ctx = deriveHostMode(
+      snapshot({
+        games: [
+          game({ id: "g1", gameNo: 1, state: "done" }),
+          game({ id: "g2", gameNo: 2, state: "live" }),
+        ],
+        currentGameId: "g2",
+        categories: [
+          category({ id: "c1", gameId: "g1" }),
+          category({ id: "c2", gameId: "g2" }),
+        ],
+        questions: [
+          question({
+            id: "q1",
+            categoryId: "c1",
+            finishedAt: "2026-05-24T00:00:30Z",
+          }),
+          question({ id: "q2", categoryId: "c2", finishedAt: null }),
+        ],
+        targetQuestionId: "q1",
+        reveals: [
+          {
+            id: "r1",
+            gameId: "g1",
+            questionId: "q1",
+            event: "resolve",
+            occurredAt: "2026-05-24T00:00:30Z",
+            metadata: null,
+          },
+        ],
+      }),
+    );
+
+    expect(ctx.mode).toBe("picking");
+  });
+
   it("falls back to picking when host has advanced past a sticky reveal", () => {
     const ctx = deriveHostMode(
       snapshot({

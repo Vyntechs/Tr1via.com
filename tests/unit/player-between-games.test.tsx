@@ -25,14 +25,28 @@ describe("PlayerBetweenGames", () => {
   it("reassures the player they're in game 2", () => {
     render(wrap(<PlayerBetweenGames playerName="You" top={TOP} you={null} />));
     expect(screen.getByTestId("player-between-games")).toBeInTheDocument();
-    expect(screen.getByText(/in game 2/i)).toBeInTheDocument();
+    expect(screen.getByText("You're in Game 2.")).toBeInTheDocument();
+    expect(
+      screen.getByText("You can relax—your place in Game 2 is saved."),
+    ).toBeInTheDocument();
   });
 
-  it("explains the exact waiting state before Heather chooses the first question", () => {
-    render(wrap(<PlayerBetweenGames playerName="You" top={TOP} you={null} />));
-    expect(screen.getByText("Round 2 is starting.")).toBeInTheDocument();
+  it("explains the exact waiting state after the host starts Game 2", () => {
+    render(
+      wrap(
+        <PlayerBetweenGames
+          playerName="You"
+          top={TOP}
+          you={null}
+          game2Started
+        />,
+      ),
+    );
     expect(
-      screen.getByText("Waiting for Heather to choose the first question."),
+      screen.getByText("Game 2 starts when your host is ready."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Waiting for your host to choose the first question."),
     ).toBeInTheDocument();
   });
 

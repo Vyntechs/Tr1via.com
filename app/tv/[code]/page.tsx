@@ -36,6 +36,7 @@ import { useTVRoom, type TVBroadcast, type TVSnapshot } from "@/lib/hooks/useTVR
 import { useSectionCompleteCelebration } from "@/lib/hooks/useSectionCompleteCelebration";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { playWelcomeChime } from "@/lib/audio/welcomeChime";
+import { useSurfaceObservation } from "@/lib/hooks/useGameDelivery";
 
 export default function TVPage({
   params,
@@ -50,6 +51,11 @@ export default function TVPage({
     lastFireworksBeat,
     lastRoomMagicReaction,
   } = useTVRoom(code);
+  useSurfaceObservation({
+    endpoint: `/api/tv/${code}/observe`,
+    canonical: snapshot?.live ?? null,
+    enabled: status === "ready",
+  });
 
   // Hooks must run on every render — call BEFORE any conditional return.
   // (`snapshot` is null until the room loads; the hook reads `players?.length`

@@ -11,7 +11,10 @@ import { ok, forbidden, unauthorized, serverError, notFound, conflict, badReques
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { UuidSchema } from "@/lib/api/schemas";
-import { broadcastAppliedLiveRoomEvent } from "@/lib/api/broadcast";
+import {
+  broadcastAppliedLiveRoomEvent,
+  broadcastGameStarted,
+} from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 
@@ -91,6 +94,11 @@ export async function POST(
   // Start is harmless. Done games can't restart — that would clobber
   // history.
   if (existing.state === "live") {
+    try {
+      await broadcastGameStarted(owned.night.room_code, id);
+    } catch {
+      console.warn("broadcast legacy game-started failed");
+    }
     return ok({ state: "live" });
   }
   if (existing.state === "done") {
@@ -117,5 +125,12 @@ export async function POST(
     .update({ state: "live", started_at: startedAt })
     .eq("id", id);
   if (error) return serverError(error.message);
+  try {
+    await broadcastGameStarted(owned.night.room_code, id);
+  } catch {
+    // The database mutation is durable; a missed best-effort wake-up heals on
+    // each surface's safety refresh and must not make Start look unsuccessful.
+    console.warn("broadcast legacy game-started failed");
+  }
   return ok({ state: "live", startedAt });
 }

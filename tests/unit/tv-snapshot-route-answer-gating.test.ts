@@ -35,28 +35,47 @@ const OTHER_ANSWER_ID = "55555555-5555-4555-8555-555555555555";
 // (eq/is/not) actually narrow the seeded rows so the route's two distinct
 // `questions` queries (picked vs live) resolve to faithful subsets; the object
 // is thenable so `await`/`Promise.all` resolve it to { data, error }.
-function qb(rows: Record<string, unknown>[], error: { message: string } | null = null) {
+function fieldAt(row: Record<string, unknown>, path: string): unknown {
+  return path.split(".").reduce<unknown>((value, key) =>
+    value && typeof value === "object"
+      ? (value as Record<string, unknown>)[key]
+      : undefined, row);
+}
+
+function qb(
+  rows: Record<string, unknown>[],
+  error: { message: string } | null = null,
+  onEq?: (column: string, value: unknown) => void,
+) {
   let data = [...rows];
   const b: Record<string, unknown> = {
     select: () => b,
     eq: (c: string, v: unknown) => {
-      data = data.filter((r) => r[c] === v);
+      onEq?.(c, v);
+      data = data.filter((r) => fieldAt(r, c) === v);
       return b;
     },
     neq: (c: string, v: unknown) => {
-      data = data.filter((r) => r[c] !== v);
+      data = data.filter((r) => fieldAt(r, c) !== v);
       return b;
     },
     is: (c: string, v: unknown) => {
-      data = data.filter((r) => (r[c] ?? null) === v);
+      data = data.filter((r) => (fieldAt(r, c) ?? null) === v);
       return b;
     },
     not: (c: string, _op: string, v: unknown) => {
-      data = data.filter((r) => (r[c] ?? null) !== v);
+      data = data.filter((r) => (fieldAt(r, c) ?? null) !== v);
       return b;
     },
-    order: () => b,
-    limit: () => b,
+    order: (c: string, options?: { ascending?: boolean }) => {
+      const ascending = options?.ascending ?? true;
+      data.sort((a, b) => String(fieldAt(a, c) ?? "").localeCompare(String(fieldAt(b, c) ?? "")) * (ascending ? 1 : -1));
+      return b;
+    },
+    limit: (count: number) => {
+      data = data.slice(0, count);
+      return b;
+    },
     maybeSingle: () => Promise.resolve({ data: data[0] ?? null, error }),
     then: (onF: (v: { data: unknown; error: { message: string } | null }) => unknown) =>
       Promise.resolve({ data, error }).then(onF),
@@ -86,15 +105,77 @@ function makeAdmin({
   live = true,
   resilient = false,
   secondGame = false,
+  secondGameQuestionPlayed = false,
+  secondGameQuestionResolved = false,
   playGameId = "G1",
+  foreignRevealCount = 0,
+  foreignQuestionCount = 0,
   errorTable,
 }: {
   live?: boolean;
   resilient?: boolean;
   secondGame?: boolean;
+  secondGameQuestionPlayed?: boolean;
+  secondGameQuestionResolved?: boolean;
   playGameId?: "G1" | "G2";
+  foreignRevealCount?: number;
+  foreignQuestionCount?: number;
   errorTable?: string;
 } = {}) {
+  const foreignReveals = Array.from({ length: foreignRevealCount }, (_, index) => ({
+    id: `foreign-r${index}`,
+    game_id: `foreign-g${index}`,
+    question_id: `foreign-q${index}`,
+    event: "resolve",
+    occurred_at: `2026-06-08T00:${String(index).padStart(2, "0")}:00Z`,
+    metadata: null,
+    games: { night_id: `foreign-night-${index}` },
+  }));
+  const foreignCategories = Array.from({ length: foreignQuestionCount }, (_, index) => ({
+    id: `foreign-c${index}`,
+    game_id: `foreign-g${index}`,
+    name: `Foreign ${index}`,
+    topic: "foreign",
+    position: index,
+    color: null,
+    state: "ready",
+    games: { night_id: `foreign-night-${index}` },
+  }));
+  const foreignQuestions = Array.from({ length: foreignQuestionCount }, (_, index) => ({
+    id: `foreign-q${index}`,
+    category_id: `foreign-c${index}`,
+    point_value: 100,
+    prompt: `Foreign ${index}`,
+    options: ["a", "b", "c", "d"],
+    correct_index: 0,
+    image_url: null,
+    fact_blurb: null,
+    played_at: `2026-06-08T00:${String(index).padStart(2, "0")}:00Z`,
+    finished_at: null,
+    is_picked: true,
+    categories: { games: { night_id: `foreign-night-${index}` } },
+  }));
+  const currentQuestions = (live
+    ? [Q_UNPLAYED, Q_LIVE, Q_RESOLVED]
+    : [Q_UNPLAYED, Q_RESOLVED]
+  ).map((question) => ({
+    ...question,
+    categories: { games: { night_id: NIGHT_ID } },
+  }));
+  const secondGameQuestions = secondGame ? [{
+    id: "q-g2",
+    category_id: "C2",
+    point_value: 100,
+    prompt: "Game 2 question",
+    options: ["a", "b", "c", "d"],
+    correct_index: 0,
+    image_url: null,
+    fact_blurb: null,
+    played_at: secondGameQuestionPlayed ? "2026-06-07T00:12:00Z" : null,
+    finished_at: secondGameQuestionResolved ? "2026-06-07T00:12:20Z" : null,
+    is_picked: true,
+    categories: { games: { night_id: NIGHT_ID } },
+  }] : [];
   const seed: Record<string, Record<string, unknown>[]> = {
     nights: [{
       id: NIGHT_ID, venue_name: "V", theme_key: "house", room_code: CODE,
@@ -113,30 +194,36 @@ function makeAdmin({
       id: "G2", game_no: 2, state: "live", started_at: "2026-06-07T00:11:00Z",
       ended_at: null, category_count: 1, question_count: 7, night_id: NIGHT_ID,
     }] : [])],
-    categories: [{
+    categories: [...foreignCategories, {
       id: "C1", game_id: "G1", name: "Cat", topic: "t", position: 0,
-      color: null, state: "ready",
+      color: null, state: "ready", games: { night_id: NIGHT_ID },
     }, ...(secondGame ? [{
       id: "C2", game_id: "G2", name: "Cat 2", topic: "t2", position: 0,
-      color: null, state: "ready",
+      color: null, state: "ready", games: { night_id: NIGHT_ID },
     }] : [])],
     // With `live: false` there's no open question, so the TV targets the
     // most-recently-resolved one (the reveal screen) via the 'resolve' reveal.
-    questions: live ? [Q_UNPLAYED, Q_LIVE, Q_RESOLVED] : [Q_UNPLAYED, Q_RESOLVED],
+    questions: [...foreignQuestions, ...currentQuestions, ...secondGameQuestions],
     players: [
       { id: PLAYER_ID, display_name: "Alice", night_id: NIGHT_ID,
         joined_at: "2026-06-07T00:00:00Z", last_seen_at: null, removed_at: null },
       { id: OTHER_PLAYER_ID, display_name: "Bob", night_id: NIGHT_ID,
         joined_at: "2026-06-07T00:00:01Z", last_seen_at: null, removed_at: null },
     ],
-    reveals: live ? [] : [{
+    reveals: [...foreignReveals, ...(live ? [] : [{
       id: "r1", game_id: "G1", question_id: "q-resolved", event: "resolve",
       occurred_at: "2026-06-07T00:00:21Z", metadata: null,
-    }],
+      games: { night_id: NIGHT_ID },
+    }])],
     game_scores: [{
       game_id: "G1", player_id: PLAYER_ID, display_name: "Alice", score: 500,
       answered_count: 1, correct_count: 1, fastest_correct_ms: 1200,
-    }],
+    }, ...(secondGame ? [{
+      game_id: "G2", player_id: OTHER_PLAYER_ID, display_name: "Bob", score: 100,
+      answered_count: secondGameQuestionPlayed ? 1 : 0,
+      correct_count: secondGameQuestionPlayed ? 1 : 0,
+      fastest_correct_ms: secondGameQuestionPlayed ? 900 : null,
+    }] : [])],
     answers: [
       // Another player's pick on the LIVE question — the anti-cheat target a
       // player must never read off this public feed while the question is open.
@@ -168,10 +255,17 @@ function makeAdmin({
       device_id: "DEVICE-LEAK",
     }],
   };
+  const scoreGameIds: unknown[] = [];
   return {
+    scoreGameIds,
     from: vi.fn((table: string) => qb(
       seed[table] ?? [],
       table === errorTable ? { message: "RAW-DATABASE-ERROR-LEAK" } : null,
+      table === "game_scores"
+        ? (column, value) => {
+            if (column === "game_id") scoreGameIds.push(value);
+          }
+        : undefined,
     )),
   };
 }
@@ -180,6 +274,52 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SESSION_SECRET = "snapshot-test-secret";
+  });
+
+  it("scopes reveal history before limiting and keeps the final current-game answer targeted", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      live: false,
+      foreignRevealCount: 55,
+    }));
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.targetQuestionId).toBe("q-resolved");
+    expect(body.reveals).toHaveLength(1);
+    expect(body.reveals[0]).toMatchObject({
+      gameId: "G1",
+      questionId: "q-resolved",
+      event: "resolve",
+    });
+  });
+
+  it("scopes categories and questions before the live-question cap without leaking join metadata", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      foreignQuestionCount: 55,
+    }));
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+
+    expect(body.liveQuestionId).toBe("q-live");
+    expect(body.targetQuestionId).toBe("q-live");
+    expect(body.categories.map((category: { id: string }) => category.id)).toEqual(["C1"]);
+    expect(body.questions.map((question: { id: string }) => question.id)).toEqual([
+      "q-unplayed",
+      "q-live",
+      "q-resolved",
+    ]);
+    expect(JSON.stringify(body.categories)).not.toContain("games");
+    expect(JSON.stringify(body.questions)).not.toContain("categories");
   });
 
   it("withholds correctIndex for unplayed + live questions, exposes it for resolved", async () => {
@@ -337,6 +477,51 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
 
     expect(body.currentGameId).toBe("G2");
     expect(body.live).toMatchObject({ playId: null, play: null });
+  });
+
+  it("keeps Game 1 standings during the started-Game-2 intermission gap, then switches to Game 2 after its first question plays", async () => {
+    const gapAdmin = makeAdmin({
+      live: false,
+      secondGame: true,
+      secondGameQuestionPlayed: false,
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(gapAdmin);
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+
+    const gapRes = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(gapRes.status).toBe(200);
+    const gapBody = await gapRes.json();
+
+    expect(gapBody.currentGameId).toBe("G2");
+    expect(gapAdmin.scoreGameIds).toEqual(["G1"]);
+    expect(gapBody.scores).toEqual([
+      expect.objectContaining({ display_name: "Alice", score: 500 }),
+    ]);
+
+    for (const secondGameQuestionResolved of [false, true]) {
+      const playedAdmin = makeAdmin({
+        live: false,
+        secondGame: true,
+        secondGameQuestionPlayed: true,
+        secondGameQuestionResolved,
+      });
+      adminMock.getSupabaseAdmin.mockReturnValue(playedAdmin);
+      const playedRes = await GET(
+        new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+        { params: Promise.resolve({ code: CODE }) },
+      );
+      expect(playedRes.status).toBe(200);
+      const playedBody = await playedRes.json();
+
+      expect(playedBody.currentGameId).toBe("G2");
+      expect(playedAdmin.scoreGameIds).toEqual(["G2"]);
+      expect(playedBody.scores).toEqual([
+        expect.objectContaining({ display_name: "Bob", score: 100 }),
+      ]);
+    }
   });
 
   it("maps a public snapshot database failure to a generic typed error", async () => {

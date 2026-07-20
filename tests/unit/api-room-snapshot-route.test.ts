@@ -202,6 +202,12 @@ function makeAdmin(
       received_at: "2026-06-07T00:00:04Z",
       locked_at: "2026-06-07T00:00:04Z", ms_to_lock: 4_000,
       is_correct: null, awarded_points: null, device_id: "DEVICE-ANSWER-LEAK",
+    }, {
+      play_id: "old-play", player_id: OTHER_PLAYER_ID,
+      submission_id: "OLD-SUBMISSION-ID", visible_slot: 1, canonical_index: 3,
+      received_at: "2026-06-06T00:00:04Z",
+      locked_at: "2026-06-06T00:00:04Z", ms_to_lock: 100,
+      is_correct: true, awarded_points: 700,
     }] : [],
   };
   return {
@@ -462,7 +468,7 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(body.live.canonicalAnswer).toBeNull();
   });
 
-  it("RESILIENT HOST: receives aggregate operations without player answer identity", async () => {
+  it("RESILIENT HOST: receives only exact-play canonical answers with aggregate operations", async () => {
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({ resilient: true }));
     authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
     authMock.getDeviceId.mockResolvedValue(null);
@@ -477,9 +483,21 @@ describe("GET /api/room/[code]/snapshot", () => {
       awaitingCount: 0,
     });
     expect(JSON.stringify(body.live)).not.toContain(PLAYER_ID);
+    expect(body.liveAnswers).toEqual([{
+      id: `play-1:${PLAYER_ID}`,
+      questionId: "q-live",
+      playerId: PLAYER_ID,
+      chosenIndex: 1,
+      lockedAt: "2026-06-07T00:00:04Z",
+      msToLock: 4_000,
+      isCorrect: null,
+      awardedPoints: null,
+    }]);
+    expect(JSON.stringify(body.liveAnswers)).not.toContain("OLD-SUBMISSION-ID");
+    expect(JSON.stringify(body.liveAnswers)).not.toContain("SUBMISSION-ID-LEAK");
   });
 
-  it("RESILIENT PLAYER: ignores any number of undone plays when selecting the current play", async () => {
+  it("RESILIENT PLAYER: a newer undone play clears state instead of reviving an older play", async () => {
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
       resilient: true,
       recentUndone: 6,
@@ -490,8 +508,9 @@ describe("GET /api/room/[code]/snapshot", () => {
     const res = await callRoute();
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.live.playId).toBe("play-1");
-    expect(body.live.canAnswerThisPlay).toBe(true);
+    expect(body.live.playId).toBeNull();
+    expect(body.live.play).toBeNull();
+    expect(body.live.canAnswerThisPlay).toBe(false);
   });
 
   it("RESILIENT PLAYER: does not carry Game 1 play state into Game 2 before its first question", async () => {

@@ -104,31 +104,31 @@ export async function GET(
       .order("joined_at", { ascending: true }),
     admin
       .from("categories")
-      .select("id, game_id, name, topic, position, color, state")
+      .select("id, game_id, name, topic, position, color, state, games!inner(night_id)")
+      .eq("games.night_id", nightId)
       .order("position", { ascending: true }),
     admin
       .from("questions")
       .select(
-        "id, category_id, point_value, prompt, options, correct_index, image_url, fact_blurb, played_at, finished_at, is_picked",
+        "id, category_id, point_value, prompt, options, correct_index, image_url, fact_blurb, played_at, finished_at, is_picked, categories!inner(games!inner(night_id))",
       )
+      .eq("categories.games.night_id", nightId)
       .eq("is_picked", true),
-    // Live question candidates across ALL rooms — we'll post-filter to this
-    // night's categories below. `.maybeSingle()` here would error/return null
-    // any time another room has an unresolved question (Brandon mid-test in
-    // another tab, a half-played manual session, etc.), causing the TV in
-    // THIS room to silently lose its live question. A bounded list + JS
-    // filter dodges that without needing a join.
+    // Scope before limiting so another active game cannot push this game's
+    // live question outside a global candidate cap.
     admin
       .from("questions")
       .select(
-        "id, category_id, point_value, prompt, options, correct_index, image_url, fact_blurb, played_at, finished_at, is_picked",
+        "id, category_id, point_value, prompt, options, correct_index, image_url, fact_blurb, played_at, finished_at, is_picked, categories!inner(games!inner(night_id))",
       )
+      .eq("categories.games.night_id", nightId)
       .not("played_at", "is", null)
       .is("finished_at", null)
-      .limit(50),
+      .limit(1),
     admin
       .from("reveals")
-      .select("id, game_id, question_id, event, occurred_at, metadata")
+      .select("id, game_id, question_id, event, occurred_at, metadata, games!inner(night_id)")
+      .eq("games.night_id", nightId)
       .order("occurred_at", { ascending: false })
       .limit(50),
     roomMagicEnabled
@@ -157,7 +157,8 @@ export async function GET(
 
   const games = gamesRes.data ?? [];
   const gameIds = new Set(games.map((g) => g.id));
-  // Filter to categories owned by this night.
+  // Queries are already scoped in Postgres; keep ownership filters as
+  // defense-in-depth and to discard malformed relationship rows.
   const categories = (categoriesRes.data ?? []).filter((c) => gameIds.has(c.game_id));
   const categoryIds = new Set(categories.map((c) => c.id));
   // Filter to questions owned by this night.
@@ -165,16 +166,14 @@ export async function GET(
     categoryIds.has(q.category_id),
   );
 
-  // Live question: must belong to this night. The query returns up to 50
-  // candidates across all rooms; pick the first one whose category lives
-  // in this night. In a healthy single-room night there's at most one such
-  // row; multi-tab scenarios used to silently lose it (see comment on the
-  // query above).
+  // A healthy game has at most one unresolved picked question. Retain the
+  // category guard even though the relational query is already night-scoped.
   const liveQuestion =
     (liveQuestionRes.data ?? []).find((q) => categoryIds.has(q.category_id)) ??
     null;
 
-  // Recent reveals belonging to this night, newest first.
+  // Recent reveals are scoped to this night in Postgres before the limit.
+  // Keep the in-memory guard as defense-in-depth against malformed join data.
   const reveals = (recentRevealsRes.data ?? []).filter((r) => gameIds.has(r.game_id));
   const roomMagicReactions = (recentRoomMagicReactionsRes.data ?? [])
     .filter((row) => isRoomMagicReactionKind(row.kind))
@@ -193,6 +192,26 @@ export async function GET(
     : null;
   const readyGame = games.find((g) => g.state === "ready") ?? null;
   const currentGame = liveGame ?? lastDone ?? readyGame ?? games[0] ?? null;
+  const gameOne = games.find((game) => game.game_no === 1) ?? null;
+  const liveGameCategoryIds = new Set(
+    categories
+      .filter((category) => category.game_id === liveGame?.id)
+      .map((category) => category.id),
+  );
+  const gameTwoHasPlayedQuestion = questions.some(
+    (question) =>
+      liveGameCategoryIds.has(question.category_id) &&
+      question.played_at !== null,
+  );
+  // Starting Game 2 intentionally leaves the TV on intermission until its
+  // first question is selected. Keep the completed Game 1 standings in that
+  // exact gap; currentGame still remains Game 2 for lifecycle truth.
+  const scoreGame =
+    liveGame?.game_no === 2 &&
+    gameOne?.state === "done" &&
+    !gameTwoHasPlayedQuestion
+      ? gameOne
+      : currentGame;
   const live = night.answer_engine === "resilient_v1" && night.current_run_id
     ? projectLiveRoom({
         night: {
@@ -207,7 +226,8 @@ export async function GET(
       })
     : null;
 
-  // Fetch game_scores for currentGame (used by Grid/Leaderboard/Finale).
+  // Fetch game_scores for the visible lifecycle state. This normally matches
+  // currentGame, except for the deliberate Game 1 → Game 2 intermission gap.
   let scores: Array<{
     player_key: string;
     display_name: string;
@@ -216,11 +236,11 @@ export async function GET(
     answered_count: number;
     fastest_correct_ms: number | null;
   }> = [];
-  if (currentGame) {
+  if (scoreGame) {
     const { data: scoreRows, error: scoresError } = await admin
       .from("game_scores")
       .select("*")
-      .eq("game_id", currentGame.id);
+      .eq("game_id", scoreGame.id);
     if (scoresError) return serverError();
     if (scoreRows) {
       // game_scores is a LEFT JOIN view so player_id + display_name can
@@ -244,12 +264,27 @@ export async function GET(
 
   // Pull the live answers for the "target" question — the one the TV is
   // currently rendering. If a question is live, that's the target. Else,
-  // fall back to the most recently resolved question so the reveal screen
-  // can paint the fastest-five.
+  // fall back to the authoritative newest finished question in the current
+  // game. Audit history is deliberately not the source of display state:
+  // bounded reveal history can lag or be truncated while the question row is
+  // already durably finished.
   let targetQuestionId: string | null = liveQuestion?.id ?? null;
-  if (!targetQuestionId) {
-    const resolveReveal = reveals.find((r) => r.event === "resolve") ?? reveals[0];
-    targetQuestionId = resolveReveal?.question_id ?? null;
+  if (!targetQuestionId && currentGame) {
+    const currentCategoryIds = new Set(
+      categories
+        .filter((category) => category.game_id === currentGame.id)
+        .map((category) => category.id),
+    );
+    const newestFinishedQuestion = questions
+      .filter(
+        (question) =>
+          currentCategoryIds.has(question.category_id) &&
+          question.finished_at !== null,
+      )
+      .sort((a, b) =>
+        (b.finished_at ?? "").localeCompare(a.finished_at ?? ""),
+      )[0] ?? null;
+    targetQuestionId = newestFinishedQuestion?.id ?? null;
   }
 
   // SECURITY (anti-cheat): the target is either the LIVE (unresolved) question
@@ -335,7 +370,7 @@ export async function GET(
       state: c.state,
     })),
     questions: questions.map((q) =>
-      serializeBoardQuestion(q as TVBoardQuestionRow),
+      serializeBoardQuestion(q as unknown as TVBoardQuestionRow),
     ),
     liveQuestionId: liveQuestion?.id ?? null,
     targetQuestionId,

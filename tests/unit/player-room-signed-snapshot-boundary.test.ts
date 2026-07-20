@@ -60,4 +60,11 @@ describe("player room signed-snapshot boundary", () => {
     expect(ROOM_PAGE).not.toContain("optimistic-${question.id}");
     expect(ROOM_PAGE).not.toContain("setOptimisticAnswers");
   });
+
+  it("uses game language in customer-facing missing and rejoin fallbacks", () => {
+    expect(ROOM_PAGE).toContain("That game");
+    expect(ROOM_PAGE).toContain("Pick a name to join the game.");
+    expect(ROOM_PAGE).not.toContain("That room");
+    expect(ROOM_PAGE).not.toContain("Pick a name to join the room.");
+  });
 });

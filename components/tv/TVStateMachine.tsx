@@ -122,14 +122,30 @@ export function TVStateMachine({
   // Live question handling. A "current" question is one whose row exists
   // with played_at set; we keep a sticky pointer for the resolve frame
   // so the TV shows reveal → grid (host advances by clicking next cell).
-  const liveQuestion = snapshot.questions.find(
+  const categoryGameById = new Map(snapshot.categories.map((category) => [category.id, category.gameId]));
+  const belongsToCurrentGame = (question: TVSnapshot["questions"][number] | null) =>
+    Boolean(question && currentGame && categoryGameById.get(question.categoryId) === currentGame.id);
+  const liveQuestionCandidate = snapshot.questions.find(
     (q) => q.id === snapshot.liveQuestionId,
   ) ?? null;
-  const targetQuestion = snapshot.questions.find(
+  const liveQuestion = belongsToCurrentGame(liveQuestionCandidate) ? liveQuestionCandidate : null;
+  const targetQuestionCandidate = snapshot.questions.find(
     (q) => q.id === snapshot.targetQuestionId,
   ) ?? null;
+  const targetQuestion = belongsToCurrentGame(targetQuestionCandidate) ? targetQuestionCandidate : null;
 
-  const lastResolve = snapshot.reveals.find((r) => r.event === "resolve") ?? null;
+  const lastResolve = snapshot.reveals.find(
+    (r) => r.event === "resolve" && r.gameId === currentGame?.id,
+  ) ?? null;
+  const resolvedQuestionCandidate = lastResolve
+    ? snapshot.questions.find((question) => question.id === lastResolve.questionId) ?? null
+    : null;
+  const resolvedQuestion = belongsToCurrentGame(resolvedQuestionCandidate)
+    ? resolvedQuestionCandidate
+    : null;
+  const revealQuestion = targetQuestion?.finishedAt
+    ? targetQuestion
+    : resolvedQuestion;
 
   // After a resolve event, the reveal frame should stay visible until the
   // host clicks the next cell. The previous auto-transition to a
@@ -138,7 +154,8 @@ export function TVStateMachine({
   // replaced by the leaderboard before she could read it. The reveal now
   // sticks until the next live question arrives (which the state machine
   // catches via `liveQuestion && !finishedAt`) OR the game ends.
-  const stickyReveal = !!lastResolve && !hostAdvanced;
+  const stickyReveal =
+    (!!lastResolve || Boolean(targetQuestion?.finishedAt)) && !hostAdvanced;
 
   // Ceremony-queue pending count — TVQuestionView reports this up so the
   // reveal branch can hold the transition for up to 3 s while ceremonies
@@ -149,11 +166,24 @@ export function TVStateMachine({
   }, []);
   const revealHoldClock = useRevealHoldClock(
     stickyReveal &&
-      !!targetQuestion?.finishedAt &&
+      !!revealQuestion?.finishedAt &&
       pendingCeremonyCount > 0 &&
       hasCeremony(themeKey),
-    targetQuestion?.id ?? null,
+    revealQuestion?.id ?? null,
   );
+
+  // Starting Game 2 and picking its first question are separate host actions.
+  // During that gap, retain the explicit intermission instead of allowing a
+  // stale Game 1 target/reveal to own the venue TV.
+  if (
+    intermission &&
+    currentGame?.id === game2?.id &&
+    currentGame.state === "live" &&
+    !liveQuestion &&
+    !lastResolve
+  ) {
+    return <TVIntermissionView snapshot={snapshot} game1={game1} />;
+  }
 
   // ── Lobby branch ──
   if (!currentGame || currentGame.state === "draft" || currentGame.state === "ready") {
@@ -201,7 +231,7 @@ export function TVStateMachine({
     // Ceremony-queue pause (May/Storm only): if lock-in ceremonies are still
     // pending when the question resolves, hold reveal for up to 3 s so every
     // player gets their ceremony before the answer flips into view.
-    if (stickyReveal && targetQuestion && targetQuestion.finishedAt) {
+    if (stickyReveal && revealQuestion && revealQuestion.finishedAt) {
       const hold = shouldHoldReveal({
         timerExpired: true, // finishedAt being set means the timer has expired
         pendingCount: pendingCeremonyCount,
@@ -214,13 +244,13 @@ export function TVStateMachine({
         // pass finishedAt=null-equivalent by keeping liveQuestion in scope,
         // but since liveQuestion.finishedAt IS set here, we render with the
         // live question data. The question still displays; ceremonies overlay.
-        // Use targetQuestion as the question since liveQuestion may be null.
+        // Use the durable resolve's question when live/target pointers clear.
         return (
           <TVQuestionView
-            key={`${targetQuestion.id}-hold`}
+            key={`${revealQuestion.id}-hold`}
             snapshot={snapshot}
-            question={targetQuestion}
-            revealedAt={lastBroadcastRevealedAt ?? targetQuestion.playedAt}
+            question={revealQuestion}
+            revealedAt={lastBroadcastRevealedAt ?? revealQuestion.playedAt}
             serverNow={lastBroadcastServerNow}
             themeKey={themeKey}
             onPendingCountChange={onPendingCountChange}
@@ -232,9 +262,9 @@ export function TVStateMachine({
       // swap — belt-and-suspenders on top of the newest-resolved guard upstream.
       return (
         <TVRevealView
-          key={targetQuestion.id}
+          key={revealQuestion.id}
           snapshot={snapshot}
-          question={targetQuestion}
+          question={revealQuestion}
           themeKey={themeKey}
         />
       );
@@ -789,23 +819,24 @@ function TVIntermissionView({
     },
   ];
 
-  // game_participations isn't exposed in the snapshot — readyCount is best
-  // approximated by "players who are still in" (i.e. haven't been removed
-  // and have a recent last_seen). We use the total roster count here.
-  const readyCount = snapshot.players.length;
-
   return (
     <TVIntermission
       headerLeft="GAME 1 · COMPLETE"
       headerRight={
         game2?.state === "ready"
           ? "GAME 2 · READY"
-          : "GAME 2 LAUNCHES WHEN HOST SAYS GO"
+          : game2?.state === "live"
+            ? "GAME 2 STARTED · FIRST QUESTION NEXT"
+            : "GAME 2 LAUNCHES WHEN HOST SAYS GO"
       }
-      footerLeft={`TR1VIA.COM · ${formatRoomCode(snapshot.night.roomCode)} · ROOM STILL OPEN`}
-      footerRight="HOST STARTS GAME 2 WHEN ENOUGH ARE IN"
+      footerLeft={`TR1VIA.COM · ${formatRoomCode(snapshot.night.roomCode)} · GAME STILL OPEN`}
+      footerRight={
+        game2?.state === "live"
+          ? "FIRST QUESTION APPEARS WHEN THE HOST CHOOSES IT"
+          : "GAME 2 STARTS WHEN THE HOST IS READY"
+      }
       podium={podium}
-      readyCount={readyCount}
+      readyCount={null}
       totalCount={snapshot.players.length}
       roomCode={formatRoomCode(snapshot.night.roomCode)}
       joinUrl={joinUrl(snapshot.night.roomCode)}

@@ -2,8 +2,24 @@
 
 export { HostPhoneUpcoming } from "./HostPhoneUpcoming";
 export type { HostPhoneUpcomingProps } from "./HostPhoneUpcoming";
+export { HostCommandCenter } from "./HostCommandCenter";
+export type { HostCommandCenterProps, HostSection } from "./HostCommandCenter";
+export { HostGameStatus } from "./HostGameStatus";
+export type { HostDeliveryReceipt, HostGameStatusProps } from "./HostGameStatus";
+export { HostVenueMonitor } from "./HostVenueMonitor";
+export type { HostVenueMonitorProps } from "./HostVenueMonitor";
 export { HostPhoneLive } from "./HostPhoneLive";
 export type { HostPhoneLiveProps, HostPhoneLivePlayer } from "./HostPhoneLive";
+export { HostAnswerResult } from "./HostAnswerResult";
+export type { HostAnswerResultProps } from "./HostAnswerResult";
+export { HostScores } from "./HostScores";
+export type { HostScoresProps } from "./HostScores";
+export { HostBetweenGames } from "./HostBetweenGames";
+export type {
+  HostBetweenGamesMode,
+  HostBetweenGamesProps,
+  HostBetweenGamesStanding,
+} from "./HostBetweenGames";
 export { HostDashboard } from "./HostDashboard";
 export type {
   HostDashboardProps,

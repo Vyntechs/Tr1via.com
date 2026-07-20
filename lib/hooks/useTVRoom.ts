@@ -10,7 +10,8 @@
 // In practice the TV refreshes the snapshot on these triggers:
 //   1. The initial mount (bootstrap).
 //   2. Any broadcast on `room:{code}` (`reveal`, `undo`, `resolve`,
-//      `end-early`) — these are the host's high-signal moments.
+//      `end-early`, `game-started`, `game-ended`) — these are the host's
+//      high-signal moments.
 //   3. A 4-second safety re-fetch so any missed broadcast self-heals.
 //
 // The hook also exposes the most recent broadcast tag so the TV can derive
@@ -27,6 +28,7 @@ import {
   isRoomMagicReactionKind,
   type RoomMagicReactionEvent,
 } from "@/lib/room-magic/reactions";
+import type { LiveRoomProjection } from "@/lib/live-answer/contracts";
 
 const SAFETY_REFETCH_MS = 4000;
 
@@ -132,6 +134,7 @@ export interface TVReveal {
 }
 
 export interface TVSnapshot {
+  live?: LiveRoomProjection | null;
   night: TVNight;
   games: TVGame[];
   currentGameId: string | null;
@@ -340,6 +343,12 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
             serverNow: String(p.serverNow),
           },
         });
+        void fetchSnapshot(code);
+      })
+      .on("broadcast", { event: "game-started" }, () => {
+        if (!isActiveRoom()) return;
+        // Move from intermission to Game 2 live immediately. The curated
+        // snapshot remains authority; this event carries no gameplay data.
         void fetchSnapshot(code);
       })
       .on("broadcast", { event: "game-ended" }, () => {

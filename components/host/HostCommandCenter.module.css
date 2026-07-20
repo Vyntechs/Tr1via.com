@@ -1,0 +1,130 @@
+.root {
+  box-sizing: border-box;
+  container-name: host-command-center;
+  container-type: inline-size;
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--host-paper);
+  color: var(--host-ink);
+  font-family: var(--font-sans, sans-serif);
+}
+
+.layout {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  height: 100%;
+  min-height: 0;
+  padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
+}
+
+.status {
+  min-width: 0;
+  border: 1px solid var(--host-status-line);
+  border-radius: 16px;
+  padding: 14px;
+  background: var(--host-status-surface);
+}
+
+.statusHeading { display: flex; align-items: center; gap: 10px; }
+.statusIcon { color: var(--host-status-success); font-size: 20px; line-height: 1; }
+.statusEyebrow { margin: 0; color: var(--host-status-accent); font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+.statusStage { margin: 3px 0 0; color: var(--host-status-ink); font-size: 16px; font-weight: 700; }
+.statusFacts { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 13px; color: var(--host-status-muted); font-size: 13px; line-height: 1.35; }
+.statusFacts span { min-width: 0; overflow-wrap: anywhere; }
+.current { color: var(--host-status-success); }
+.recovering { color: var(--host-status-danger); }
+
+.workspace {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.body {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.monitor {
+  display: none;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.root[data-active="tv"] .body { display: none; }
+.root[data-active="tv"] .monitor { display: block; }
+
+.nav {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--host-line);
+  border-radius: 16px;
+  padding: 6px;
+  background: var(--host-surface);
+}
+
+.navAction {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+  min-height: 52px;
+  border: 0;
+  border-radius: 11px;
+  padding: 6px 4px;
+  background: transparent;
+  color: var(--host-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.navAction[aria-current="page"] {
+  background: var(--host-active);
+  color: var(--host-ink);
+  box-shadow: inset 0 -2px 0 var(--host-success);
+}
+
+.navAction:focus-visible { outline: 3px solid var(--host-focus); outline-offset: 2px; }
+.navIcon { color: var(--host-accent); font-size: 16px; line-height: 1; }
+.navAction[aria-current="page"] .navIcon { color: var(--host-success); }
+
+@container host-command-center (min-width: 768px) {
+  .layout { grid-template-columns: minmax(0, 1fr) 92px; grid-template-rows: auto minmax(0, 1fr); }
+  .status, .workspace { grid-column: 1; }
+  .nav { grid-column: 2; grid-row: 1 / span 2; grid-template-columns: 1fr; align-content: center; }
+  .workspace { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(320px, .95fr); gap: 16px; }
+  .monitor { display: block; }
+  .root[data-active="tv"] .body { display: block; }
+  .navAction { min-height: 64px; }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .layout { grid-template-columns: minmax(0, 1fr) 88px; grid-template-rows: auto minmax(0, 1fr); }
+  .status, .workspace { grid-column: 1; }
+  .nav { grid-column: 2; grid-row: 1 / span 2; grid-template-columns: 1fr; align-content: center; }
+  .layout { padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .workspace { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(260px, .8fr); gap: 10px; }
+  .monitor { display: block; grid-column: 1; grid-row: 1; }
+  .body { grid-column: 2; grid-row: 1; }
+  .root[data-active="tv"] .body { display: block; }
+  .status { padding: 8px 12px; }
+  .statusFacts { margin-top: 6px; }
+}

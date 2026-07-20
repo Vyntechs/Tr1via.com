@@ -44,6 +44,15 @@ export function buildGame1Standings(
 
 export type BetweenGamesView = "join" | "waiting" | null;
 
+/** Finale becomes visible only after the last configured game is durably done. */
+export function isPlayerFinale(args: {
+  game1State: string | null;
+  game2State: string | null;
+}): boolean {
+  if (args.game2State !== null) return args.game2State === "done";
+  return args.game1State === "done";
+}
+
 /**
  * Decide which between-games screen (if any) the player should see.
  * - "join": Game 1 done, Game 2 not done, player has NOT opted in → recap + Join CTA.

@@ -66,6 +66,10 @@ export interface RoomToTVSnapshotInput {
   /** game_scores rows for the current game (host loads these on mount and
    *  re-subscribes to answers/adjustments). */
   scores: GameScoreRow[];
+  /** Every game's score rows when available. Used to preserve Game 1's
+   *  podium after Game 2 starts but before its first question, matching the
+   *  standalone venue TV lifecycle exactly. */
+  allScores?: GameScoreRow[];
   /** answers rows for the currently live OR most-recently-resolved
    *  question. Host's subscription targets the current question; when that
    *  question resolves, the rows stay valid through the reveal frame. */
@@ -79,7 +83,7 @@ export interface RoomToTVSnapshotInput {
 export function roomToTVSnapshot(
   input: RoomToTVSnapshotInput,
 ): TVSnapshot | null {
-  const { room, allQuestions, scores, answers } = input;
+  const { room, allQuestions, scores, allScores, answers } = input;
   if (!room.night) return null;
 
   const night = nightToTVNight(room.night, room.hostDefaultThemeKey);
@@ -124,7 +128,29 @@ export function roomToTVSnapshot(
     return tvPlayerKey ? [playerRowToTVPlayer(player, tvPlayerKey)] : [];
   });
 
-  const tvScores: TVScore[] = scores
+  const gameOne = room.games.find((game) => game.game_no === 1) ?? null;
+  const liveGame = room.games.find((game) => game.state === "live") ?? null;
+  const liveGameCategoryIds = new Set(
+    room.categories
+      .filter((category) => category.game_id === liveGame?.id)
+      .map((category) => category.id),
+  );
+  const liveGameHasPlayedQuestion = Array.from(questionsById.values()).some(
+    (question) =>
+      liveGameCategoryIds.has(question.category_id) &&
+      question.played_at !== null,
+  );
+  const visibleScoreGameId =
+    liveGame?.game_no === 2 &&
+    gameOne?.state === "done" &&
+    !liveGameHasPlayedQuestion
+      ? gameOne.id
+      : currentGameId;
+  const scoreRows = allScores && allScores.length > 0
+    ? allScores.filter((score) => score.game_id === visibleScoreGameId)
+    : scores;
+
+  const tvScores: TVScore[] = scoreRows
     .filter(
       (s): s is GameScoreRow & { player_id: string; display_name: string } =>
         s.player_id !== null && s.display_name !== null,

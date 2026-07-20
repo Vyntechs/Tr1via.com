@@ -4,6 +4,7 @@ import {
   selectBetweenGamesView,
   isWaitingForGame2FirstQuestion,
   clearEndedGameQuestions,
+  isPlayerFinale,
 } from "@/lib/player/betweenGames";
 import type {
   GameScoreRow,
@@ -157,5 +158,27 @@ describe("clearEndedGameQuestions", () => {
       games, categories, currentQuestion: null, lastResolvedQuestion: orphan,
     });
     expect(out.lastResolvedQuestion).toBe(orphan);
+  });
+
+  it("clears both stale Game 1 pointers while Game 2 is live before its first question", () => {
+    const out = clearEndedGameQuestions({
+      games,
+      categories,
+      currentQuestion: q("q1", "c1"),
+      lastResolvedQuestion: q("q1", "c1"),
+    });
+    expect(out).toEqual({ currentQuestion: null, lastResolvedQuestion: null });
+  });
+});
+
+describe("isPlayerFinale", () => {
+  it("waits for durable completion of the final game", () => {
+    expect(isPlayerFinale({ game1State: "done", game2State: "live" })).toBe(false);
+    expect(isPlayerFinale({ game1State: "done", game2State: "done" })).toBe(true);
+  });
+
+  it("supports a single-game night without inventing Game 2", () => {
+    expect(isPlayerFinale({ game1State: "done", game2State: null })).toBe(true);
+    expect(isPlayerFinale({ game1State: "live", game2State: null })).toBe(false);
   });
 });

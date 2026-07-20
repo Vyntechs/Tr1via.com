@@ -43,7 +43,6 @@ export interface PlayerJoinGame2Props {
 }
 
 export function PlayerJoinGame2({
-  themeKey: _themeKey,
   playerName = "Maya",
   finalRank = 5,
   finalScore = 4820,
@@ -107,7 +106,7 @@ export function PlayerJoinGame2({
         </div>
 
         <div style={{ marginTop: 26, fontSize: 14, color: t.inkMid, lineHeight: 1.5 }}>
-          Game 2 starts fresh — everyone back to zero. Same room, new board.{" "}
+          Game 2 starts when your host is ready. Everyone is back to zero with a new board.{" "}
           <span style={{ color: t.ink, fontWeight: 600 }}>Your name is already in.</span>
         </div>
 
