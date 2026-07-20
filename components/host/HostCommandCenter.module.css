@@ -9,18 +9,19 @@
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   background: var(--host-paper);
   color: var(--host-ink);
   font-family: var(--font-sans, sans-serif);
 }
 
 .layout {
+  box-sizing: border-box;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
   gap: 12px;
   height: 100%;
   min-height: 0;
+  padding: max(14px, env(safe-area-inset-top)) max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
 }
 
 .status {
@@ -99,5 +100,5 @@
   .layout { grid-template-columns: minmax(0, 1fr) 88px; grid-template-rows: auto minmax(0, 1fr); }
   .status, .body { grid-column: 1; }
   .nav { grid-column: 2; grid-row: 1 / span 2; grid-template-columns: 1fr; align-content: center; }
-  .root { padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
+  .layout { padding-top: max(8px, env(safe-area-inset-top)); padding-bottom: max(8px, env(safe-area-inset-bottom)); }
 }
