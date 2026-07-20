@@ -40,29 +40,6 @@
   line-height: 1.1;
 }
 
-.open {
-  box-sizing: border-box;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 48px;
-  min-height: 48px;
-  border: 1px solid var(--venue-monitor-line);
-  border-radius: 11px;
-  padding: 6px 12px;
-  color: var(--venue-monitor-accent);
-  font-size: 12px;
-  font-weight: 800;
-  line-height: 1.15;
-  text-align: center;
-  text-decoration: none;
-}
-
-.open:focus-visible {
-  outline: 3px solid var(--venue-monitor-accent);
-  outline-offset: 2px;
-}
-
 .viewport {
   display: grid;
   place-items: center;
@@ -83,13 +60,6 @@
   background: #000;
 }
 
-.canvas {
-  position: absolute;
-  inset: 0 auto auto 0;
-  transform-origin: top left;
-  pointer-events: none;
-}
-
 .waiting {
   align-self: center;
   margin: 0;
@@ -102,9 +72,4 @@
   .header { gap: 8px; }
   .title { font-size: 15px; }
   .eyebrow { font-size: 8px; }
-  .open { min-height: 44px; max-width: 128px; font-size: 10px; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .canvas { transition: none; }
 }

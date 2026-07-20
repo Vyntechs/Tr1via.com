@@ -71,7 +71,8 @@ describe("HostVenueMonitor", () => {
 
     const preview = screen.getByRole("region", { name: "Venue TV preview" });
     expect(preview).toHaveAttribute("data-audience-safe", "true");
-    expect(screen.getByText("Audience view")).toBeVisible();
+    expect(screen.getByText("What players see")).toBeVisible();
+    expect(screen.getByText("TV preview")).toBeVisible();
     expect(screen.getByTestId("venue-tv-preview-frame")).toHaveClass(
       "venue-tv-preview-frame",
     );
@@ -83,17 +84,14 @@ describe("HostVenueMonitor", () => {
     expect(screen.queryByText("Prince released Purple Rain in 1984.")).not.toBeInTheDocument();
   });
 
-  it("keeps the full venue display one tap away without making the preview interactive", () => {
+  it("keeps the preview read-only without navigating the phone into the venue route", () => {
     render(
       <ThemeProvider themeKey="house">
         <HostVenueMonitor snapshot={snapshot} roomCode="ABC123" />
       </ThemeProvider>,
     );
 
-    expect(screen.getByRole("link", { name: "Open full venue display" })).toHaveAttribute(
-      "href",
-      "/tv/ABC123",
-    );
+    expect(screen.queryByRole("link", { name: "Open full venue display" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Music for 100 points/i })).not.toBeInTheDocument();
   });
 });
