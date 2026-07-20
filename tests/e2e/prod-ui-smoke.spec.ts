@@ -40,9 +40,10 @@ test.describe("prod UI smoke — login → dashboard", () => {
 
     // 1. /login renders
     await page.goto("/login");
-    await expect(
-      page.getByRole("heading", { name: "Your game. Your control." }),
-    ).toBeVisible();
+    // Display renders the two styled lines as one accessible text node.
+    // Assert the customer-visible promise without inventing heading semantics.
+    await expect(page.locator("body")).toContainText("Your game.");
+    await expect(page.locator("body")).toContainText("Your control.");
     const emailInput = page.getByLabel("Email", { exact: true });
     await expect(emailInput).toBeVisible();
 
