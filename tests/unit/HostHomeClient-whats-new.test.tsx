@@ -32,6 +32,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  document.body.style.overflow = "";
+  document.documentElement.style.overflow = "";
   vi.restoreAllMocks();
 });
 
@@ -68,6 +70,22 @@ describe("HostHomeClient host-only What's New", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /what's new/i }));
     expect(await screen.findByRole("dialog")).toBeVisible();
+  });
+
+  it("keeps the dashboard fixed while the notice scrolls, then restores it", async () => {
+    document.body.style.overflow = "auto";
+    document.documentElement.style.overflow = "scroll";
+
+    renderThemed(<HostHomeClient {...baseProps} />);
+
+    const dialog = await screen.findByRole("dialog");
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(document.documentElement.style.overflow).toBe("hidden");
+    expect(dialog.style.overscrollBehavior).toBe("contain");
+
+    fireEvent.click(screen.getByRole("button", { name: /got it/i }));
+    expect(document.body.style.overflow).toBe("auto");
+    expect(document.documentElement.style.overflow).toBe("scroll");
   });
 
   it("does not interrupt a brand-new host's onboarding flow", async () => {

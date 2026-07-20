@@ -3,6 +3,16 @@ Trigger: Mobile controls passed size and viewport bounds while overlapping adjac
 Rule: Check pairwise peer overlap across the complete surface after animations settle.
 Reason: Individually valid rectangles can still collide and make controls unusable.
 
+### modal-scroll-stays-contained
+Trigger: A scrollable modal leaves the underlying page scrollable.
+Rule: Lock and restore document scrolling while open, and contain overscroll inside the modal.
+Reason: One gesture must move only the active surface.
+
+### setup-controls-never-cover-primary-action
+Trigger: Persistent setup controls float above content near a primary action.
+Rule: Place discoverable settings in the page layout; never overlay the primary action across viewports.
+Reason: Hosts must see settings without losing access to the next step.
+
 ### touch-audits-must-discover-controls
 Trigger: Mobile accessibility test measured only explicitly tagged controls and missed undersized actions.
 Rule: Enumerate from one outer surface wrapper, never fragment IDs; allow only narrow documented exceptions.

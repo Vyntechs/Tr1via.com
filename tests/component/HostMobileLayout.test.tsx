@@ -73,6 +73,21 @@ describe("phone-first host generation layouts", () => {
     });
   });
 
+  it("puts game settings before the topic grid on a phone", async () => {
+    render(
+      <HostGenOverview
+        themeKey="house"
+        gameSettings={<section data-testid="mobile-game-settings">Game settings</section>}
+      />,
+    );
+
+    const settings = await screen.findByTestId("mobile-game-settings");
+    const [firstTopic] = screen.getAllByRole("button", { name: /add a topic/i });
+    expect(
+      settings.compareDocumentPosition(firstTopic) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("uses a phone-sized topic field and a sticky-safe primary action", async () => {
     render(<HostGenTopicEntry themeKey="house" />);
 

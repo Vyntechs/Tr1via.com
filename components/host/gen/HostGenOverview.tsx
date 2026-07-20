@@ -15,6 +15,7 @@ import {
   useState,
   type FocusEvent,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import {
   Display,
@@ -56,6 +57,8 @@ export interface HostGenOverviewProps {
   games?: [GameOverviewData, GameOverviewData];
   /** Top topic suggestions from players. */
   topSuggestions?: Array<{ name: string; count: number }>;
+  /** In-flow controls for game-wide setup choices such as theme and Room Magic. */
+  gameSettings?: ReactNode;
   /** Display estimate like "00:38" for the ready-in card. */
   readyIn?: string;
   /** Percentage 0..100 for the ready-in progress bar. */
@@ -134,6 +137,7 @@ function HostGenOverviewInner({
   eyebrow = "TONIGHT · WED MAY 27",
   games = DEMO_GAMES,
   topSuggestions = DEMO_SUGGESTIONS,
+  gameSettings,
   readyIn = "00:38",
   readyPct = 47,
   readyLabel = "5 of 12 categories locked.",
@@ -164,6 +168,8 @@ function HostGenOverviewInner({
           <div style={{ marginTop: 8, color: t.inkMid, fontSize: 14.5, lineHeight: 1.45, maxWidth: 600 }}>
             Type a topic. We pull 20 fresh questions; you pick the seven for the board. Difficulty sorts itself.
           </div>
+
+          {mobile && gameSettings && <div style={{ marginTop: 18 }}>{gameSettings}</div>}
 
           <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 24, overflow: mobile ? "visible" : "auto", paddingRight: mobile ? 0 : 8 }}>
             {games.map((g) => (
@@ -209,6 +215,8 @@ function HostGenOverviewInner({
             </div>
             <div style={{ marginTop: 8, fontSize: 12, color: "rgba(14,8,5,.7)" }}>{readyLabel}</div>
           </div>
+
+          {!mobile && gameSettings}
 
           <div style={{ padding: "16px 18px", borderRadius: 14, background: t.surface }}>
             <Eyebrow color={t.inkMute} size={10}>PLAYER IDEAS FOR NEXT WEEK</Eyebrow>
