@@ -12,6 +12,12 @@ export { HostAnswerResult } from "./HostAnswerResult";
 export type { HostAnswerResultProps } from "./HostAnswerResult";
 export { HostScores } from "./HostScores";
 export type { HostScoresProps } from "./HostScores";
+export { HostBetweenGames } from "./HostBetweenGames";
+export type {
+  HostBetweenGamesMode,
+  HostBetweenGamesProps,
+  HostBetweenGamesStanding,
+} from "./HostBetweenGames";
 export { HostDashboard } from "./HostDashboard";
 export type {
   HostDashboardProps,

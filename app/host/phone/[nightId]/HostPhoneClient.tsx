@@ -13,7 +13,13 @@ import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
 import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
-import { HostAnswerResult, HostPhoneUpcoming, HostPhoneLive, HostScores } from "@/components/host";
+import {
+  HostAnswerResult,
+  HostBetweenGames,
+  HostPhoneUpcoming,
+  HostPhoneLive,
+  HostScores,
+} from "@/components/host";
 import { HostCommandCenter, type HostSection } from "@/components/host/HostCommandCenter";
 import { HostPhoneBoard } from "@/components/host/HostPhoneBoard";
 import { HostGameReady, type HostPreflight } from "@/components/host/HostGameReady";
@@ -698,6 +704,15 @@ export function HostPhoneClient({
   const allGamesEnded = room.games.length > 0 && room.games.every((game) => game.state === "done");
   const game1 = room.games.find((game) => game.game_no === 1) ?? null;
   const game2 = room.games.find((game) => game.game_no === 2) ?? null;
+  const finalControlGame = controlGame && (
+    game2 ? controlGame.id === game2.id : controlGame.id === game1?.id
+  );
+  const finalGameExhausted = Boolean(
+    finalControlGame &&
+    controlGame?.state === "live" &&
+    controlQuestions.length > 0 &&
+    controlQuestions.every((question) => question.finished_at !== null),
+  );
   const resolvedGame = resolvedQuestionGameForAnswers;
   const resultKey = resolvedBelongsToCurrentLiveGame && room.lastResolvedQuestion && resolvedGame
     ? `${resolvedGame.id}:${room.lastResolvedQuestion.id}:${room.lastResolvedQuestion.finished_at ?? "resolved"}`
@@ -714,6 +729,7 @@ export function HostPhoneClient({
         : null,
     nightClosed: Boolean(room.night?.closed_at),
     stagedQuestion: stagedQuestion?.id ?? null,
+    finalGameExhausted,
   });
   const isGame1Preflight =
     stage.stage === "game-ready" &&
@@ -756,7 +772,13 @@ export function HostPhoneClient({
     };
   }, [fetchPreflight, isGame1Preflight]);
 
-  const roundControls = isGame1Preflight || stage.stage === "answer-result" ? undefined : (
+  const roundControls =
+    isGame1Preflight ||
+    stage.stage === "answer-result" ||
+    stage.stage === "intermission" ||
+    stage.stage === "finale"
+      ? undefined
+      : (
     <PhoneRoundControls
       themeKey={themeKey}
       gameNo={currentGame?.game_no ?? null}
@@ -816,6 +838,34 @@ export function HostPhoneClient({
           setSelection(null);
           setNavigation(null);
         }}
+      />
+    );
+  } else if (stage.stage === "intermission") {
+    boardContent = (
+      <HostBetweenGames
+        mode="intermission"
+        standings={toHostBetweenStandings(scores)}
+        onPrimary={game2 ? () => void runStartGame(game2.id) : undefined}
+        busy={busy}
+      />
+    );
+  } else if (stage.stage === "finale") {
+    const mode = stage.primary === "present-winners"
+      ? "present-winners"
+      : stage.primary === "end-game"
+        ? "finale"
+        : "complete";
+    const onPrimary = stage.primary === "present-winners" && controlGame
+      ? () => void runLifecycle(`/api/games/${controlGame.id}/end`, controlGame.id)
+      : stage.primary === "end-game"
+        ? () => void runLifecycle(`/api/nights/${nightId}/close`)
+        : undefined;
+    boardContent = (
+      <HostBetweenGames
+        mode={mode}
+        standings={toHostBetweenStandings(scores)}
+        onPrimary={onPrimary}
+        busy={busy}
       />
     );
   } else if (stagedQuestion) {
@@ -994,6 +1044,14 @@ function isHostPreflight(value: unknown): value is HostPreflight {
     typeof content?.pickedQuestionCount === "number" &&
     typeof content?.expectedQuestionCount === "number" &&
     (typeof content?.reason === "string" || content?.reason === null)
+  );
+}
+
+function toHostBetweenStandings(scores: GameScoreRow[]) {
+  return scores.flatMap((row) =>
+    row.player_id && row.display_name
+      ? [{ playerId: row.player_id, name: row.display_name, score: row.score ?? 0 }]
+      : [],
   );
 }
 

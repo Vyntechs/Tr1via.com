@@ -264,3 +264,8 @@ Reason: Generic container words create questions and force unnecessary interpret
 Trigger: Implementing Figma-derived UI in TR1VIA.
 Rule: Treat Figma colors as examples; shipped components must use semantic monthly theme tokens.
 Reason: Every month needs its intentional palette without sacrificing layout, hierarchy, or contrast.
+
+### e2e-asserts-customer-facing-category-copy
+Trigger: E2E expected a seed's raw AI topic while the product intentionally showed its cleaned category name.
+Rule: Assert exact customer-facing labels and the absence of hidden generation metadata.
+Reason: Tests should protect product language, not internal seed details.

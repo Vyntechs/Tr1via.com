@@ -8,11 +8,43 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme, Display, Eyebrow, Numeric } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
+import { readableForeground } from "@/lib/theme/contrast";
 import { categoryColor } from "@/lib/theme/categories";
 import type { StandingRow } from "@/lib/player/betweenGames";
 import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 
 const CHEERS = ["🔥", "👏", "🎉"] as const;
+
+function BetweenGameStandingRow({
+  row,
+  pinned,
+}: {
+  row: StandingRow;
+  pinned?: boolean;
+}) {
+  const { t } = useTheme();
+  return (
+    <div
+      data-testid={row.isYou ? "standings-you" : "standings-row"}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "32px 1fr auto",
+        alignItems: "center",
+        gap: 12,
+        padding: "12px 14px",
+        borderRadius: 12,
+        background: row.isYou ? t.accent : t.surface,
+        color: row.isYou ? readableForeground(t.accent) : t.ink,
+        border: pinned ? `1.5px dashed ${t.accent}` : "none",
+        fontWeight: row.isYou ? 700 : 500,
+      }}
+    >
+      <Numeric size={18} weight={700} color="currentColor">{row.rank}</Numeric>
+      <span style={{ fontSize: 16, fontWeight: row.isYou ? 700 : 600 }}>{row.name}</span>
+      <Numeric size={18} weight={700} color="currentColor">{row.score.toLocaleString()}</Numeric>
+    </div>
+  );
+}
 
 export interface PlayerBetweenGamesProps {
   playerName?: string;
@@ -24,6 +56,8 @@ export interface PlayerBetweenGamesProps {
    *  lobby show. Renders a preview panel so a waiting player sees what Game 2 is
    *  about. Empty/omitted → no panel (matches the lobby's empty-state). */
   topics?: LobbyTopic[];
+  /** Game 2 has started, but the host has not selected its first question. */
+  game2Started?: boolean;
 }
 
 export function PlayerBetweenGames({
@@ -31,6 +65,7 @@ export function PlayerBetweenGames({
   top = [],
   you = null,
   topics = [],
+  game2Started = false,
 }: PlayerBetweenGamesProps = {}) {
   const { t } = useTheme();
   const [floats, setFloats] = useState<{ id: number; emoji: string }[]>([]);
@@ -51,49 +86,27 @@ export function PlayerBetweenGames({
     );
   }
 
-  function Row({ row, pinned }: { row: StandingRow; pinned?: boolean }) {
-    return (
-      <div
-        data-testid={row.isYou ? "standings-you" : "standings-row"}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "32px 1fr auto",
-          alignItems: "center",
-          gap: 12,
-          padding: "12px 14px",
-          borderRadius: 12,
-          background: row.isYou ? t.accent : t.surface,
-          color: row.isYou ? "#0E0805" : t.ink,
-          border: pinned ? `1.5px dashed ${t.accent}` : "none",
-          fontWeight: row.isYou ? 700 : 500,
-        }}
-      >
-        <Numeric size={18} weight={700} color="currentColor">{row.rank}</Numeric>
-        <span style={{ fontSize: 16, fontWeight: row.isYou ? 700 : 600 }}>{row.name}</span>
-        <Numeric size={18} weight={700} color="currentColor">{row.score.toLocaleString()}</Numeric>
-      </div>
-    );
-  }
-
   return (
     <PhoneScreen data-testid="player-between-games">
       <PhoneHeader eyebrow="HALFTIME · GAME 2 NEXT" />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 14, position: "relative" }}>
         <Display size={44} color={t.ink}>
-          Round 2 is starting.
+          Game 2 starts when your host is ready.
         </Display>
         <div style={{ marginTop: 6, fontSize: 14, color: t.inkMid }}>
           You&apos;re in Game 2.
         </div>
         <div style={{ marginTop: 3, fontSize: 14, color: t.inkMid }}>
-          Waiting for Heather to choose the first question.
+          {game2Started
+            ? "Waiting for your host to choose the first question."
+            : "You can relax—your place in Game 2 is saved."}
         </div>
 
         <div style={{ marginTop: 18, display: "flex", flexDirection: "column", gap: 8 }}>
           <Eyebrow color={t.inkMute} size={10}>AFTER GAME 1</Eyebrow>
-          {top.map((row) => <Row key={`${row.rank}-${row.name}`} row={row} />)}
-          {you && <Row row={you} pinned />}
+          {top.map((row) => <BetweenGameStandingRow key={`${row.rank}-${row.name}`} row={row} />)}
+          {you && <BetweenGameStandingRow row={you} pinned />}
         </div>
 
         {topics.length > 0 && (

@@ -38,6 +38,7 @@ export type RoomEventName =
   | "undo"
   | "resolve"
   | "end-early"
+  | "game-started"
   | "game-ended"
   | "roster-changed"
   | "room-magic-reaction"
@@ -243,6 +244,28 @@ export async function broadcastRosterChanged(
         displayName: player.displayName,
         joinedAt: player.joinedAt,
         colorKey: player.colorKey,
+        serverNow: new Date().toISOString(),
+      },
+    },
+  ]);
+}
+
+/**
+ * Broadcast that a legacy game just started. This is deliberately a
+ * game-level, identity-free wake-up: players re-read their signed snapshot,
+ * while the anonymous TV re-reads its curated snapshot. Durable game state
+ * remains authoritative if this best-effort signal is missed.
+ */
+export async function broadcastGameStarted(
+  roomCode: string,
+  gameId: string,
+): Promise<void> {
+  await postBroadcasts([
+    {
+      topic: `room:${roomCode}`,
+      event: "game-started",
+      payload: {
+        gameId,
         serverNow: new Date().toISOString(),
       },
     },

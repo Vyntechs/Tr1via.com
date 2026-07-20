@@ -110,6 +110,27 @@ describe("useTVRoom snapshot request lifecycle", () => {
     vi.unstubAllGlobals();
   });
 
+  it("refetches immediately when a game-started wake-up arrives", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Game 2 ready")))
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Game 2 live")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+    await waitFor(() => expect(result.current.snapshot?.night.venueName).toBe("Game 2 ready"));
+
+    act(() => {
+      h.broadcast("ABCDEF", "game-started", {
+        gameId: "game-2",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+    });
+
+    await waitFor(() => expect(result.current.snapshot?.night.venueName).toBe("Game 2 live"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps a newer same-room response when an older request finishes last", async () => {
     const older = deferred<Response>();
     const newer = deferred<Response>();

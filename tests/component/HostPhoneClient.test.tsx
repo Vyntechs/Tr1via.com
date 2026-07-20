@@ -867,6 +867,19 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
+    expect(await screen.findByRole("heading", { name: "Game 2 is ready" })).toBeVisible();
+    expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
+
+    const liveGame2 = { ...game2, state: "live" as const, started_at: "2026-07-08T00:03:00Z" };
+    h.room = { ...h.room, games: [{ ...game1, state: "done" }, liveGame2], currentGame: liveGame2 };
+    view.rerender(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
     expect(await screen.findByRole("button", { name: "Movies for 100 points" })).toBeVisible();
     expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
   });
@@ -1095,11 +1108,114 @@ describe("HostPhoneClient reveal flow", () => {
       />,
     );
 
-    fireEvent.click(await screen.findByRole("button", { name: "End the night" }));
+    expect(await screen.findByRole("heading", { name: "Winners are being presented" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "End game" }));
     await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
       "/api/nights/night-1/close",
       expect.objectContaining({ method: "POST" }),
     ));
+  });
+
+  it("renders the Game 1 intermission and starts Game 2 without reusing the old result", async () => {
+    const game1 = game("g1", 1, "done");
+    const game2 = game("g2", 2, "ready");
+    h.room = {
+      ...room(),
+      games: [game1, game2],
+      currentGame: game1,
+      lastResolvedQuestion: { ...pickedQuestion, finished_at: "2026-07-08T00:02:00Z" },
+      scoreGameId: "g1",
+      scores: [{ ...score("p1"), display_name: "Jordan", score: 6100 }],
+    };
+
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+
+    expect(await screen.findByText("Game 1 complete")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Game 2 is ready" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Return to board" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Start Game 2" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g2/start",
+      expect.objectContaining({ method: "POST" }),
+    ));
+  });
+
+  it("uses the exact resilient final-game End command when the host presents winners", async () => {
+    const game1 = game("g1", 1, "done");
+    const game2 = game("g2", 2, "live");
+    const game2Category = { ...readyCategory, id: "c2", game_id: "g2", name: "Final game" };
+    const finalQuestion = {
+      ...pickedQuestion,
+      id: "q-final",
+      category_id: "c2",
+      played_at: "2026-07-08T00:01:30Z",
+      finished_at: "2026-07-08T00:02:00Z",
+    };
+    h.room = {
+      ...room(),
+      night: resilientNight({ control_revision: 9 }),
+      games: [game1, game2],
+      categories: [readyCategory, game2Category],
+      currentGame: game2,
+      currentQuestion: null,
+      lastResolvedQuestion: null,
+      live: resilientLive({
+        playId: null,
+        play: null,
+        controlRevision: 9,
+        operations: { eligibleCount: 0, confirmedCount: 0, awaitingCount: 0 },
+      }),
+      scoreGameId: "g2",
+      scores: [{ ...score("p1"), game_id: "g2", display_name: "Jordan", score: 7200 }],
+    };
+    h.fallback = {
+      backupMode: true,
+      payload: fallbackPayload({
+        games: [game1, game2],
+        categories: [readyCategory, game2Category],
+        allQuestions: [finalQuestion],
+        scoreGameId: "g2",
+        scores: h.room.scores ?? [],
+      }),
+    };
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
+
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Final scores are ready" })).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Present winners" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g2/end",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: RUN_ID,
+          commandId: COMMAND_ID,
+          expectedControlRevision: 9,
+        }),
+      },
+    ));
+  });
+
+  it("shows a completed finale with no active End action after close", async () => {
+    const game1 = game("g1", 1, "done");
+    const game2 = game("g2", 2, "done");
+    h.room = {
+      ...room(),
+      night: { ...night, closed_at: "2026-07-08T03:00:00Z" },
+      games: [game1, game2],
+      currentGame: game2,
+    };
+    render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="april" />,
+    );
+    expect(await screen.findByRole("heading", { name: "Game complete" })).toBeVisible();
+    expect(screen.queryByRole("button", { name: "End game" })).not.toBeInTheDocument();
   });
 
   it("shows the current game's answer result, then returns to an unselected board on request", async () => {

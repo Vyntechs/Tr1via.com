@@ -31,6 +31,7 @@ import {
   ThemeProvider,
   Display,
   Eyebrow,
+  Numeric,
   useTheme,
   fireJuneBeat,
   PyrotechnicsBeatConductor,
@@ -66,6 +67,7 @@ import { playerColorHex } from "@/lib/player/playerColor";
 import {
   selectBetweenGamesView,
   isWaitingForGame2FirstQuestion,
+  isPlayerFinale,
   buildGame1Standings,
   type StandingRow,
 } from "@/lib/player/betweenGames";
@@ -113,6 +115,78 @@ export default function PlayerRoomPage() {
 
   if (!isValidRoomCode(code)) return null;
   return <PlayerRoomInner roomCode={code} />;
+}
+
+function PlayerFinaleView({
+  won,
+  rank,
+  score,
+  correct,
+  answered,
+  fastestMs,
+  longestStreak,
+}: {
+  won: boolean;
+  rank: number | null;
+  score: number | null;
+  correct: number | null;
+  answered: number | null;
+  fastestMs: number | null;
+  longestStreak: number;
+}) {
+  const { t } = useTheme();
+  const stats = [
+    correct !== null && answered !== null
+      ? { label: "GOT RIGHT", value: `${correct} / ${answered}` }
+      : null,
+    fastestMs !== null
+      ? { label: "FASTEST ANSWER", value: `${(fastestMs / 1000).toFixed(1)}s` }
+      : null,
+    longestStreak > 0
+      ? { label: "LONGEST STREAK", value: `× ${longestStreak}` }
+      : null,
+  ].filter((row): row is { label: string; value: string } => row !== null);
+
+  return (
+    <PhoneScreen data-testid="player-finale">
+      <PhoneHeader eyebrow="FINAL RESULTS" />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
+        <Display size="clamp(44px, 15vw, 64px)" color={t.ink} weight={700}>
+          {won ? "You won." : rank !== null ? `You finished #${rank}.` : "Game complete."}
+        </Display>
+
+        <section
+          aria-label="Your final result"
+          style={{ marginTop: 24, padding: "20px 18px", borderRadius: 16, background: t.surface, border: `1px solid ${t.line}` }}
+        >
+          {score !== null ? (
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
+              <Eyebrow color={t.inkMid} size={10}>YOUR SCORE</Eyebrow>
+              <Numeric size={40} weight={800} color={t.ink}>{score.toLocaleString()}</Numeric>
+            </div>
+          ) : (
+            <p style={{ margin: 0, color: t.inkMid, lineHeight: 1.5 }}>
+              Your final score is still catching up.
+            </p>
+          )}
+          {stats.length > 0 && (
+            <dl style={{ margin: "16px 0 0", paddingTop: 14, borderTop: `1px solid ${t.line}`, display: "grid", gap: 12 }}>
+              {stats.map((stat) => (
+                <div key={stat.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                  <dt><Eyebrow color={t.inkMid} size={9}>{stat.label}</Eyebrow></dt>
+                  <dd style={{ margin: 0 }}><Numeric size={16} weight={800} color={t.ink}>{stat.value}</Numeric></dd>
+                </div>
+              ))}
+            </dl>
+          )}
+        </section>
+
+        <p style={{ margin: "auto 0 0", paddingTop: 22, color: t.inkMid, fontSize: 14, lineHeight: 1.5 }}>
+          Final results are ready. Your host will end the game after the celebration.
+        </p>
+      </div>
+    </PhoneScreen>
+  );
 }
 
 function PlayerRoomInner({ roomCode }: { roomCode: string }) {
@@ -405,7 +479,33 @@ function RoomStateMachine({
     game2Id: game2?.id ?? null,
     currentQuestionGameId: currentCategory?.game_id ?? null,
   });
-  if ((betweenView || waitingForGame2FirstQuestion) && game1 && game2) {
+  const playerFinale = isPlayerFinale({
+    game1State: game1?.state ?? null,
+    game2State: game2?.state ?? null,
+  });
+  const finalGameForRecap = game2 ?? game1;
+  if (playerFinale && finalGameForRecap) {
+    const finalScores = allScores.filter((score) => score.game_id === finalGameForRecap.id);
+    const myFinalScore = finalScores.find((score) => score.player_id === me.id) ?? null;
+    const finalRankIndex = finalScores.findIndex((score) => score.player_id === me.id);
+    const finalQuestionIds = new Set(
+      [...questionGameMap.entries()]
+        .filter(([, gameId]) => gameId === finalGameForRecap.id)
+        .map(([questionId]) => questionId),
+    );
+    const finalAnswers = myAnswers.filter((answer) => finalQuestionIds.has(answer.question_id));
+    inner = (
+      <PlayerFinaleView
+        won={finalScores[0]?.player_id === me.id}
+        rank={finalRankIndex >= 0 ? finalRankIndex + 1 : null}
+        score={myFinalScore?.score ?? null}
+        correct={myFinalScore?.correct_count ?? null}
+        answered={myFinalScore?.answered_count ?? null}
+        fastestMs={myFinalScore?.fastest_correct_ms ?? null}
+        longestStreak={longestResolvedStreak(finalAnswers)}
+      />
+    );
+  } else if ((betweenView || waitingForGame2FirstQuestion) && game1 && game2) {
     inner = (
       <PlayerBetweenGamesWired
         roomCode={roomCode}
@@ -418,6 +518,7 @@ function RoomStateMachine({
         allQuestions={allQuestions}
         scores={allScores}
         joined={betweenView === "waiting" || waitingForGame2FirstQuestion}
+        game2Started={waitingForGame2FirstQuestion}
         onJoinSuccess={() => setOptimisticInGame2(true)}
         // The same "Tonight's Topics" the TV/lobby show — here it resolves to the
         // UPCOMING game 2's ready categories (selectLobbyTopicsFromRoom skips the
@@ -1166,7 +1267,7 @@ function BetweenView({ playerName }: { playerName: string }) {
   const { t } = useTheme();
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow="IN THE ROOM" />
+      <PhoneHeader eyebrow="IN THE GAME" />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
         <Display size={56} color={t.ink}>
           Stay sharp,
@@ -1219,6 +1320,7 @@ function PlayerBetweenGamesWired({
   joined,
   onJoinSuccess,
   topics,
+  game2Started,
 }: {
   roomCode: string;
   me: PlayerRow;
@@ -1237,6 +1339,7 @@ function PlayerBetweenGamesWired({
   onJoinSuccess?: () => void;
   /** Upcoming game 2's ready topics — previewed on both looks. */
   topics: LobbyTopic[];
+  game2Started: boolean;
 }) {
   const [submitting, setSubmitting] = useState(false);
 
@@ -1298,6 +1401,7 @@ function PlayerBetweenGamesWired({
         top={standings.top}
         you={standings.you}
         topics={topics}
+        game2Started={game2Started}
       />
     );
   }
@@ -1323,7 +1427,7 @@ function LoadingScreen({ roomCode }: { roomCode: string }) {
   const { t } = useTheme();
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow={`ROOM · ${formatRoomCode(roomCode)}`} />
+      <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}>
         <Eyebrow color={t.inkMid} size={11}>SYNCING</Eyebrow>
         <Display size={48} color={t.ink}>
@@ -1340,7 +1444,7 @@ function UnreachableScreen({ roomCode }: { roomCode: string }) {
   const { t } = useTheme();
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow={`ROOM · ${formatRoomCode(roomCode)}`} />
+      <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
       <div
         data-testid="player-unreachable"
         role="status"
@@ -1394,7 +1498,7 @@ function RoomMissingScreen({ roomCode }: { roomCode: string }) {
   const { t } = useTheme();
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow={`ROOM · ${formatRoomCode(roomCode)}`} />
+      <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 24 }}>
         <Display size={48} color={t.ink}>
           That room
@@ -1432,7 +1536,7 @@ function RejoinScreen({ roomCode }: { roomCode: string }) {
   const { t } = useTheme();
   return (
     <PhoneScreen>
-      <PhoneHeader eyebrow={`ROOM · ${formatRoomCode(roomCode)}`} />
+      <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 24 }}>
         <Display size={52} color={t.ink}>
           Add your
@@ -1582,6 +1686,20 @@ function computeStreak(
     if (a.question_id === current.id) break;
   }
   return streak;
+}
+
+function longestResolvedStreak(answers: AnswerRow[]): number {
+  let longest = 0;
+  let current = 0;
+  for (const answer of [...answers].sort((a, b) => a.locked_at.localeCompare(b.locked_at))) {
+    if (answer.is_correct === true) {
+      current += 1;
+      longest = Math.max(longest, current);
+    } else if (answer.is_correct === false) {
+      current = 0;
+    }
+  }
+  return longest;
 }
 
 // The recap/summary sums every answer it's handed (its caller already scopes to

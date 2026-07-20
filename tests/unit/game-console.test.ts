@@ -98,7 +98,21 @@ describe("deriveHostStage", () => {
     ).toEqual({ stage: "question-live", primary: "end-early" });
   });
 
-  it("uses finale actions after the last game and preserves presentation state", () => {
+  it("offers Present winners only after the final live game has no questions left", () => {
+    expect(
+      deriveHostStage({
+        game1: "done",
+        game2: "live",
+        currentGame: 2,
+        livePlay: null,
+        lastResolve: null,
+        nightClosed: false,
+        finalGameExhausted: true,
+      }),
+    ).toEqual({ stage: "finale", primary: "present-winners" });
+  });
+
+  it("uses durable final-game completion to separate End game from the closed state", () => {
     expect(
       deriveHostStage({
         game1: "done",
@@ -108,7 +122,7 @@ describe("deriveHostStage", () => {
         lastResolve: { id: "q42", game: 2 },
         nightClosed: false,
       }),
-    ).toEqual({ stage: "finale", primary: "present-winners" });
+    ).toEqual({ stage: "finale", primary: "end-game" });
 
     expect(
       deriveHostStage({
@@ -118,8 +132,7 @@ describe("deriveHostStage", () => {
         livePlay: null,
         lastResolve: { id: "q42", game: 2 },
         nightClosed: true,
-        winnersPresented: true,
       }),
-    ).toEqual({ stage: "finale", primary: "end-game" });
+    ).toEqual({ stage: "finale", primary: null });
   });
 });

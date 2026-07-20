@@ -19,6 +19,7 @@ import {
 } from "@/components/system";
 import type { ResolvedTheme } from "@/lib/theme/resolve";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { readableForeground } from "@/lib/theme/contrast";
 
 export interface TVIntermissionPodiumRow {
   rank: number;
@@ -48,7 +49,7 @@ export interface TVIntermissionProps {
   /** Top 3 winners. */
   podium?: TVIntermissionPodiumRow[];
   /** Total players who have re-joined for Game 2. */
-  readyCount?: number;
+  readyCount?: number | null;
   /** Total players in the night. */
   totalCount?: number;
   /** Pre-formatted room code with middle dot, e.g. "K9P·R4M". */
@@ -90,7 +91,7 @@ function TVIntermissionInner({
   footerLeft = "",
   footerRight = "HOST STARTS GAME 2 WHEN ENOUGH ARE IN",
   podium,
-  readyCount = 0,
+  readyCount = null,
   totalCount = 0,
   roomCode = "",
   joinUrl = "",
@@ -124,6 +125,7 @@ function TVIntermissionInner({
           <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 10 }}>
             {rows.map((p) => {
               const color = p.color ?? (p.rank === 1 ? t.accent : p.rank === 2 ? t.pop : t.correct);
+              const rowForeground = readableForeground(color);
               return (
                 <div
                   key={p.rank}
@@ -135,14 +137,14 @@ function TVIntermissionInner({
                     padding: "22px 26px",
                     borderRadius: 16,
                     background: p.rank === 1 ? color : "transparent",
-                    color: p.rank === 1 ? "#0E0805" : t.ink,
+                    color: p.rank === 1 ? rowForeground : t.ink,
                     border: `1.5px solid ${color}`,
                   }}
                 >
                   <Numeric
                     size={56}
                     weight={700}
-                    color={p.rank === 1 ? "#0E0805" : color}
+                    color={p.rank === 1 ? rowForeground : color}
                     tracking={-0.04}
                   >
                     {p.rank}
@@ -171,25 +173,31 @@ function TVIntermissionInner({
           </div>
 
           <div style={{ marginTop: 24, fontSize: 16, color: t.inkMid, lineHeight: 1.5, maxWidth: 560 }}>
-            Game 2 starts fresh. Everyone back to zero, new categories — same room.
+            Game 2 starts fresh. Everyone is back to zero with new categories.
           </div>
         </div>
 
         <div style={{ display: "flex", flexDirection: "column" }}>
-          <div style={{ padding: "22px 24px", borderRadius: 16, background: t.accent, color: "#0E0805" }}>
-            <Eyebrow color="rgba(14,8,5,.65)" size={10}>READY FOR GAME 2</Eyebrow>
-            <div style={{ marginTop: 8, display: "flex", alignItems: "baseline", gap: 14 }}>
-              <Numeric
-                size={96}
-                weight={700}
-                color="#0E0805"
-                tracking={-0.05}
-                style={{ lineHeight: 0.9 }}
-              >
-                {readyCount}
-              </Numeric>
-              <span style={{ fontSize: 22, fontWeight: 500, opacity: 0.6 }}>of {totalCount}</span>
-            </div>
+          <div style={{ padding: "22px 24px", borderRadius: 16, background: t.accent, color: readableForeground(t.accent) }}>
+            <Eyebrow color="currentColor" size={10}>READY FOR GAME 2</Eyebrow>
+            {readyCount === null ? (
+              <Display size={58} color="currentColor" weight={700} style={{ display: "block", marginTop: 12 }}>
+                Starts when the host is ready.
+              </Display>
+            ) : (
+              <div style={{ marginTop: 8, display: "flex", alignItems: "baseline", gap: 14 }}>
+                <Numeric
+                  size={96}
+                  weight={700}
+                  color="currentColor"
+                  tracking={-0.05}
+                  style={{ lineHeight: 0.9 }}
+                >
+                  {readyCount}
+                </Numeric>
+                <span style={{ fontSize: 22, fontWeight: 500, opacity: 0.7 }}>of {totalCount}</span>
+              </div>
+            )}
             <div style={{ marginTop: 8, fontSize: 15, fontWeight: 500 }}>
               Open your phone. Tap <span style={{ fontWeight: 700 }}>Join Game 2</span> — your name is already in.
             </div>

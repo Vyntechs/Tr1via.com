@@ -303,7 +303,7 @@ describe("useRoom player audience", () => {
     );
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    for (const event of ["reveal", "undo", "resolve", "game-ended"] as const) {
+    for (const event of ["reveal", "undo", "resolve", "game-started", "game-ended"] as const) {
       const before = h.fetchSnapshot.mock.calls.length;
       act(() => {
         h.broadcastHandlers.get(event)?.({
@@ -317,6 +317,49 @@ describe("useRoom player audience", () => {
     }
 
     expect(h.channelNames).toEqual(["room:ABCDEF"]);
+    expect(h.fromCalls).toEqual([]);
+  });
+
+  it("moves a signed player from Game 2 ready to live on game-started", async () => {
+    const beforeStart = playerPayload("waiting for Game 2");
+    beforeStart.games = [
+      { ...beforeStart.games[0], state: "done", ended_at: "2026-07-18T19:00:00.000Z" },
+      {
+        ...beforeStart.games[0],
+        id: "game-2",
+        game_no: 2,
+        state: "ready",
+        started_at: null,
+        ended_at: null,
+      },
+    ];
+    beforeStart.currentQuestion = null;
+    const afterStart = structuredClone(beforeStart);
+    afterStart.games[1] = {
+      ...afterStart.games[1],
+      state: "live",
+      started_at: "2026-07-18T19:05:00.000Z",
+    };
+    h.fetchSnapshot
+      .mockResolvedValueOnce(beforeStart)
+      .mockResolvedValueOnce(afterStart);
+
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "player", sessionReady: true }),
+    );
+    await waitFor(() => expect(result.current.currentGame?.state).toBe("done"));
+
+    act(() => {
+      h.broadcastHandlers.get("game-started")?.({
+        payload: {
+          gameId: "game-2",
+          serverNow: "2026-07-18T19:05:00.000Z",
+        },
+      });
+    });
+
+    await waitFor(() => expect(result.current.currentGame?.state).toBe("live"));
+    expect(result.current.currentGame?.id).toBe("game-2");
     expect(h.fromCalls).toEqual([]);
   });
 

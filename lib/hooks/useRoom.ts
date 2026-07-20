@@ -443,6 +443,11 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             correctIndex: typeof p.correctIndex === "number" ? p.correctIndex : undefined,
           });
         })
+        .on("broadcast", { event: "game-started" }, () => {
+          // Game-level, identity-free wake-up. The signed player snapshot is
+          // the durable authority for the ready → live transition.
+          refetchForBroadcast();
+        })
         .on("broadcast", { event: "game-ended" }, () => {
           refetchForBroadcast();
         })
@@ -1179,6 +1184,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             String(p.questionId),
             typeof p.correctIndex === "number" ? p.correctIndex : undefined,
           );
+        })
+        .on("broadcast", { event: "game-started" }, () => {
+          // Legacy starts mutate only the games row. Postgres Changes can be
+          // missed over venue networks, so converge immediately over the
+          // authenticated HTTP read instead of waiting for a later reveal.
+          void refreshLiveState(nightId);
         })
         .on("broadcast", { event: "game-ended" }, () => {
           // Game state flipped to 'done' on the server. Refresh games rows

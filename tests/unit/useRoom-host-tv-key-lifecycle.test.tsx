@@ -7,6 +7,7 @@ const h = vi.hoisted(() => {
   const broadcastHandlers = new Map<string, (message: { payload: unknown }) => void>();
   let activeNightId = "night-a";
   let resilient = false;
+  let gameState: "ready" | "live" = "live";
   const runId = "11111111-1111-4111-8111-111111111111";
 
   const nightRow = () => ({
@@ -34,8 +35,8 @@ const h = vi.hoisted(() => {
       id: `game-${activeNightId}`,
       night_id: activeNightId,
       game_no: 1,
-      state: "live",
-      started_at: "2026-07-19T00:00:00.000Z",
+      state: gameState,
+      started_at: gameState === "live" ? "2026-07-19T00:00:00.000Z" : null,
       ended_at: null,
       category_count: 1,
       question_count: 1,
@@ -154,10 +155,14 @@ const h = vi.hoisted(() => {
     setResilient(value: boolean) {
       resilient = value;
     },
+    setGameState(value: "ready" | "live") {
+      gameState = value;
+    },
     runId,
     reset() {
       activeNightId = "night-a";
       resilient = false;
+      gameState = "live";
       broadcastHandlers.clear();
       client.from.mockClear();
       client.channel.mockClear();
@@ -493,5 +498,30 @@ describe("useRoom host TV-key lifecycle", () => {
     expect(h.fetchSnapshot).toHaveBeenCalledTimes(3);
     expect(result.current.live?.roomRevision).toBe(6);
     expect(result.current.scoreGameId).toBe("game-night-a");
+  });
+
+  it("refreshes the authenticated host's direct game state on game-started", async () => {
+    h.setGameState("ready");
+    h.fetchSnapshot.mockResolvedValue(hostPayload("night-a", {
+      "player-night-a": "pk_tv_a",
+    }));
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "host" }),
+    );
+    await flushBootstrap();
+    expect(result.current.currentGame?.state).toBe("ready");
+
+    h.setGameState("live");
+    act(() => {
+      h.broadcastHandlers.get("game-started")?.({
+        payload: {
+          gameId: "game-night-a",
+          serverNow: "2026-07-19T00:00:01.000Z",
+        },
+      });
+    });
+    await flushBootstrap();
+
+    expect(result.current.currentGame?.state).toBe("live");
   });
 });

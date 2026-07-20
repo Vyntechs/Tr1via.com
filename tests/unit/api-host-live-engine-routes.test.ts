@@ -10,6 +10,7 @@ const projectMock = vi.hoisted(() => ({ projectExactLiveEvent: vi.fn() }));
 const broadcastMock = vi.hoisted(() => ({
   broadcastAppliedLiveRoomEvent: vi.fn(),
   broadcastToRoom: vi.fn(),
+  broadcastGameStarted: vi.fn(),
   broadcastGameEnded: vi.fn(),
   broadcastFireworks: vi.fn(),
 }));
@@ -74,6 +75,34 @@ function applied(eventKind: string, extra: Record<string, unknown> = {}) {
   };
 }
 
+function legacyStartAdmin(
+  state: "ready" | "live" = "ready",
+  updateError: { message: string } | null = null,
+) {
+  const updateEq = vi.fn(async () => ({ error: updateError }));
+  const update = vi.fn(() => ({ eq: updateEq }));
+  const existing = {
+    select: vi.fn(() => existing),
+    eq: vi.fn(() => existing),
+    single: vi.fn(async () => ({ data: { state }, error: null })),
+  };
+  const categories = {
+    select: vi.fn(() => categories),
+    eq: vi.fn(() => categories),
+    then: (resolve: (value: { count: number; error: null }) => unknown) =>
+      Promise.resolve({ count: 1, error: null }).then(resolve),
+  };
+  const admin = {
+    rpc: vi.fn(),
+    from: vi.fn((table: string) => {
+      if (table === "games") return { ...existing, update };
+      if (table === "categories") return categories;
+      throw new Error(`unexpected legacy start table: ${table}`);
+    }),
+  };
+  return { admin, update };
+}
+
 describe("resilient host lifecycle routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -128,6 +157,7 @@ describe("resilient host lifecycle routes", () => {
       p_expected_control_revision: 4,
     });
     expect(broadcastMock.broadcastAppliedLiveRoomEvent).toHaveBeenCalledTimes(1);
+    expect(broadcastMock.broadcastGameStarted).not.toHaveBeenCalled();
   });
 
   it("opens a question play through the authoritative reveal RPC", async () => {
@@ -338,5 +368,74 @@ describe("resilient host lifecycle routes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual(result);
     expect(console.warn).toHaveBeenCalledWith("broadcast game-started failed");
+  });
+});
+
+describe("legacy game start convergence", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    authMock.requireOwnedGame.mockResolvedValue({
+      ok: true,
+      host: { id: "host" },
+      night: {
+        id: NIGHT_ID,
+        room_code: "ABCDEF",
+        answer_engine: "legacy",
+      },
+      gameId: GAME_ID,
+    });
+    broadcastMock.broadcastGameStarted.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => vi.restoreAllMocks());
+
+  it("broadcasts one game-level wake-up after the legacy start commits", async () => {
+    const { admin } = legacyStartAdmin();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/games/[id]/start/route");
+    const response = await POST(request(`/api/games/${GAME_ID}/start`), gameContext());
+
+    expect(response.status).toBe(200);
+    expect(broadcastMock.broadcastGameStarted).toHaveBeenCalledWith("ABCDEF", GAME_ID);
+    expect(broadcastMock.broadcastAppliedLiveRoomEvent).not.toHaveBeenCalled();
+  });
+
+  it("keeps a committed legacy start successful when the wake-up broadcast fails", async () => {
+    const { admin } = legacyStartAdmin();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    broadcastMock.broadcastGameStarted.mockRejectedValueOnce(new Error("offline"));
+
+    const { POST } = await import("@/app/api/games/[id]/start/route");
+    const response = await POST(request(`/api/games/${GAME_ID}/start`), gameContext());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ state: "live" });
+    expect(console.warn).toHaveBeenCalledWith("broadcast legacy game-started failed");
+  });
+
+  it("retries the wake-up without rewriting an already-live legacy game", async () => {
+    const { admin, update } = legacyStartAdmin("live");
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/games/[id]/start/route");
+    const response = await POST(request(`/api/games/${GAME_ID}/start`), gameContext());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ state: "live" });
+    expect(update).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastGameStarted).toHaveBeenCalledWith("ABCDEF", GAME_ID);
+  });
+
+  it("does not broadcast when the legacy game update fails", async () => {
+    const { admin } = legacyStartAdmin("ready", { message: "write failed" });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/games/[id]/start/route");
+    const response = await POST(request(`/api/games/${GAME_ID}/start`), gameContext());
+
+    expect(response.status).toBe(500);
+    expect(broadcastMock.broadcastGameStarted).not.toHaveBeenCalled();
   });
 });

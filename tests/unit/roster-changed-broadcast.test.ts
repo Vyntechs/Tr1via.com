@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { broadcastRosterChanged } from "@/lib/api/broadcast";
+import {
+  broadcastGameStarted,
+  broadcastRosterChanged,
+} from "@/lib/api/broadcast";
 
 const RAW_PLAYER_ID = "22222222-2222-4222-8222-222222222222";
 
@@ -40,5 +43,31 @@ describe("roster changed broadcast boundary", () => {
     ]);
     expect(JSON.stringify(body)).not.toContain(RAW_PLAYER_ID);
     expect(body.messages[0].payload).not.toHaveProperty("playerId");
+  });
+
+  it("publishes an identity-free game-started wake-up", async () => {
+    const fetchMock = vi.spyOn(global, "fetch").mockResolvedValue(
+      new Response(null, { status: 202 }),
+    );
+
+    await broadcastGameStarted(
+      "ABCDEF",
+      "22222222-2222-4222-8222-222222222222",
+    );
+
+    const init = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(String(init.body));
+    expect(body.messages).toEqual([
+      {
+        topic: "room:ABCDEF",
+        event: "game-started",
+        payload: {
+          gameId: "22222222-2222-4222-8222-222222222222",
+          serverNow: expect.any(String),
+        },
+      },
+    ]);
+    expect(body.messages[0].payload).not.toHaveProperty("playerId");
+    expect(body.messages[0].payload).not.toHaveProperty("questionId");
   });
 });

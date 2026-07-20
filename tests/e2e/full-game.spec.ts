@@ -16,7 +16,7 @@
 //     PlayerJoinGame2 branch and proves that non-opted players don't break
 //     the game-2 flow for the others.
 
-import { test, expect, type BrowserContext } from "@playwright/test";
+import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import {
   loginAsHost,
   seedNight,
@@ -30,6 +30,40 @@ import {
 import { openTV } from "./helpers/tv";
 import { joinPhone, tapAnswerSlot } from "./helpers/player-phone";
 import { TID } from "./helpers/selectors";
+
+async function expectResolvedTVSnapshot(
+  page: Page,
+  roomCode: string,
+  gameId: string,
+  questionId: string,
+) {
+  await expect.poll(async () => {
+    const response = await page.request.get(`/api/tv/${roomCode}/snapshot`);
+    if (!response.ok()) return `status:${response.status()}`;
+    const body = await response.json() as {
+      currentGameId: string | null;
+      liveQuestionId: string | null;
+      targetQuestionId: string | null;
+      questions: Array<{ id: string; finishedAt: string | null }>;
+    };
+    const question = body.questions.find((candidate) => candidate.id === questionId);
+    return {
+      currentGameId: body.currentGameId,
+      liveQuestionId: body.liveQuestionId,
+      targetQuestionId: body.targetQuestionId,
+      finished: Boolean(question?.finishedAt),
+    };
+  }, {
+    message: `TV snapshot should target resolved question ${questionId}`,
+    timeout: 8_000,
+    intervals: [100, 250, 500, 1_000],
+  }).toEqual({
+    currentGameId: gameId,
+    liveQuestionId: null,
+    targetQuestionId: questionId,
+    finished: true,
+  });
+}
 
 test.describe.configure({ mode: "serial" });
 
@@ -80,6 +114,10 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     const phone1 = await p1.newPage();
     const phone2 = await p2.newPage();
     const phone3 = await p3.newPage();
+    const hostPhone = await host.newPage();
+    await hostPhone.setViewportSize({ width: 430, height: 932 });
+    const tvPageErrors: string[] = [];
+    tvPage.on("pageerror", (error) => tvPageErrors.push(error.message));
 
     // ── Bootstrap ──────────────────────────────────────────────────────
     const { hostId } = await loginAsHost(hostPage, `full-${Date.now()}@tr1via.test`);
@@ -109,6 +147,8 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
           tapAnswerSlot(phone3, 3),
         ]);
         await fastForwardTimer(hostPage, qid);
+        await expectResolvedTVSnapshot(tvPage, seed.roomCode, seed.game1.id, qid);
+        expect(tvPageErrors).toEqual([]);
         // Wait for the resolve view on TV — the next iteration's
         // revealViaApi will supersede this within ~200ms.
         await expect(tvPage.getByTestId(TID.tvReveal.root))
@@ -124,15 +164,19 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     // PlayerJoinGame2 screen.
     await expect(phone1.getByTestId(TID.playerJoinGame2.root))
       .toBeVisible({ timeout: 15_000 });
+    await hostPhone.goto(`/host/phone/${seed.nightId}`);
+    await expect(hostPhone.getByText("Game 1 complete")).toBeVisible({ timeout: 15_000 });
+    await expect(hostPhone.getByRole("heading", { name: "Game 2 is ready" })).toBeVisible();
 
-    // The join recap previews the UPCOMING game 2's ready topics (the seeded
-    // "Bonus round" category, topic "general trivia") — both not-opted phones
-    // see it. Proves the topics thread through PlayerJoinGame2 end-to-end.
+    // The join recap previews the UPCOMING game's cleaned category name.
+    // The seed's raw AI topic ("general trivia") is generation metadata and
+    // must never leak into the player-facing intermission.
     await expect(phone1.getByTestId(TID.playerJoinGame2.topics))
       .toBeVisible({ timeout: 15_000 });
     expect(await phone1.getByTestId(TID.playerJoinGame2.topic).count())
       .toBeGreaterThan(0);
-    await expect(phone1.getByText("general trivia")).toBeVisible();
+    await expect(phone1.getByText("Bonus round", { exact: true })).toBeVisible();
+    await expect(phone1.getByText("general trivia", { exact: true })).toHaveCount(0);
     await expect(phone3.getByTestId(TID.playerJoinGame2.topics))
       .toBeVisible({ timeout: 15_000 });
 
@@ -146,6 +190,9 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     // waiting screen — which previews the same upcoming game-2 topics.
     await expect(phone1.getByTestId(TID.playerBetweenGames.root))
       .toBeVisible({ timeout: 15_000 });
+    await expect(
+      phone1.getByText("Game 2 starts when your host is ready."),
+    ).toBeVisible();
     await expect(phone1.getByTestId(TID.playerBetweenGames.topics))
       .toBeVisible();
     expect(await phone1.getByTestId(TID.playerBetweenGames.topic).count())
@@ -158,18 +205,21 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
       .toBeVisible({ timeout: 15_000 });
     await expect(phone1.getByTestId(TID.playerRevealCorrect.root)).toHaveCount(0);
     await expect(phone1.getByTestId(TID.playerRevealWrong.root)).toHaveCount(0);
+    await expect(phone1.getByText(/The answer was/i)).toHaveCount(0);
 
     // ── Game 2: 7 reveals (1 category × 7) ────────────────────────────
-    await startGame(hostPage, seed.game2.id);
+    await hostPhone.getByRole("button", { name: "Start Game 2" }).click();
     // Starting the game and choosing its first question are separate host
     // actions. Phones keep a clear Round-2 waiting screen in that gap—even
     // after another reload—rather than displaying a historical answer.
     await phone1.reload();
     await expect(phone1.getByTestId(TID.playerBetweenGames.root))
       .toBeVisible({ timeout: 15_000 });
-    await expect(phone1.getByText("Round 2 is starting.")).toBeVisible();
     await expect(
-      phone1.getByText("Waiting for Heather to choose the first question."),
+      phone1.getByText("Game 2 starts when your host is ready."),
+    ).toBeVisible();
+    await expect(
+      phone1.getByText("Waiting for your host to choose the first question."),
     ).toBeVisible();
     await expect(phone1.getByTestId(TID.playerRevealCorrect.root)).toHaveCount(0);
     await expect(phone1.getByTestId(TID.playerRevealWrong.root)).toHaveCount(0);
@@ -184,6 +234,8 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
           // phone 3 does NOT tap — they're not in game 2.
         ]);
         await fastForwardTimer(hostPage, qid);
+        await expectResolvedTVSnapshot(tvPage, seed.roomCode, seed.game2.id, qid);
+        expect(tvPageErrors).toEqual([]);
         await expect(tvPage.getByTestId(TID.tvReveal.root))
           .toBeVisible({ timeout: 8_000 });
       }
@@ -193,9 +245,17 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     // — they didn't opt in, so the state machine kept them on that screen.
     await expect(phone3.getByTestId(TID.playerJoinGame2.root)).toBeVisible();
 
-    // ── End game 2 → finale ───────────────────────────────────────────
-    await endGame(hostPage, seed.game2.id);
+    // ── Present winners → finale ──────────────────────────────────────
+    await expect(hostPhone.getByRole("button", { name: "Return to board" }))
+      .toBeVisible({ timeout: 15_000 });
+    await hostPhone.getByRole("button", { name: "Return to board" }).click();
+    await expect(
+      hostPhone.getByRole("heading", { name: "Final scores are ready" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await hostPhone.getByRole("button", { name: "Present winners" }).click();
     await expect(tvPage.getByTestId(TID.tvFinaleWinner.root))
+      .toBeVisible({ timeout: 15_000 });
+    await expect(phone1.getByTestId("player-finale"))
       .toBeVisible({ timeout: 15_000 });
 
     // Assert the WINNER'S VALUES, not just that the card rendered. The
@@ -215,5 +275,14 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     const winnerScore = Number(scoreText.replace(/[^\d]/g, ""));
     expect(Number.isInteger(winnerScore)).toBe(true);
     expect(winnerScore).toBeGreaterThanOrEqual(0);
+
+    await expect(
+      hostPhone.getByRole("heading", { name: "Winners are being presented" }),
+    ).toBeVisible({ timeout: 15_000 });
+    await hostPhone.getByRole("button", { name: "End game" }).click();
+    await expect(phone1).toHaveURL(
+      new RegExp(`/room/${seed.roomCode}/(?:won|recap)$`),
+      { timeout: 15_000 },
+    );
   });
 });

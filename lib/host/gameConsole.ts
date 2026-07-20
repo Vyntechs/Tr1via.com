@@ -42,7 +42,9 @@ export interface HostStageInput {
   lastResolve: HostResolveRef | null;
   nightClosed: boolean;
   stagedQuestion?: string | null;
-  winnersPresented?: boolean;
+  /** True only when the final live game's persisted picked slate is nonempty
+   * and every question has finished. Ending that game is Present winners. */
+  finalGameExhausted?: boolean;
 }
 
 export interface HostStageContext {
@@ -67,15 +69,15 @@ function resolvedInCurrentGame(
 }
 
 export function deriveHostStage(input: HostStageInput): HostStageContext {
+  if (input.nightClosed) {
+    return { stage: "finale", primary: null };
+  }
+
   const isFinale =
-    input.nightClosed ||
     input.game2 === "done" ||
     (input.game1 === "done" && input.game2 === null);
   if (isFinale) {
-    return {
-      stage: "finale",
-      primary: input.winnersPresented ? "end-game" : "present-winners",
-    };
+    return { stage: "finale", primary: "end-game" };
   }
 
   const isIntermission =
@@ -102,6 +104,11 @@ export function deriveHostStage(input: HostStageInput): HostStageContext {
 
   if (resolvedInCurrentGame(input.lastResolve, currentGame)) {
     return { stage: "answer-result", primary: "return-to-board" };
+  }
+
+  const isLastGame = currentGame === 2 || (currentGame === 1 && input.game2 === null);
+  if (isLastGame && input.finalGameExhausted) {
+    return { stage: "finale", primary: "present-winners" };
   }
 
   return { stage: "board", primary: null };
