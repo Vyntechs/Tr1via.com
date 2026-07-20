@@ -1,4 +1,4 @@
-# Live-Room Show Console Design
+# Live Game Console Design
 
 **Status:** Approved by Brandon for written-spec review on 2026-07-19.
 
@@ -8,15 +8,15 @@
 
 ## Outcome
 
-TR1VIA becomes the self-confirming live-room show console: one ordinary host can run a professional room-wide game show because one action coordinates the venue TV and every player phone, proves what arrived, and turns the result into one shared room moment.
+TR1VIA becomes the self-confirming live game console: one ordinary host can run a professional game because one action coordinates the TV and every player phone, proves what arrived, and turns the result into one shared audience moment.
 
-Trivia is the first proven format. The category is live-room play.
+Trivia is the first proven format. The category is live games.
 
 The product must make four outcomes visible:
 
 - **Host certainty:** Heather knows what every surface is showing without checking the laptop or guessing.
 - **Player confidence:** a player knows their answer was saved and that their phone shows the current game state.
-- **Shared room energy:** phones feel personal while the TV turns individual actions into a collective beat.
+- **Shared audience energy:** phones feel personal while the TV turns individual actions into a collective beat.
 - **Return momentum:** the finale gives players and the venue a specific reason to return next week.
 
 ## Protected Contract
@@ -40,8 +40,8 @@ Show Pulse is a coordinated cross-surface state transition, not a success toast.
 When Heather shows a question or answer:
 
 1. The host control compresses and gives one restrained haptic response when supported.
-2. The host phone enters `sending` while retaining the last confirmed room state.
-3. The canonical server action advances the room once.
+2. The host phone enters `sending` while retaining the last confirmed game state.
+3. The canonical server action advances the game once.
 4. The venue TV and player phones apply the new run/revision/play state.
 5. The host receives an audience-safe delivery receipt:
    - `TV live ✓`
@@ -60,9 +60,9 @@ The product must never claim a disconnected or sleeping browser is current.
 Portrait phone navigation remains one tap deep:
 
 - **Board** — familiar 3-column by 7-row board and private cell preview.
-- **Room** — roster, connection health, late-player entry, player removal, and show lifecycle controls.
+- **Players** — roster, connection health, late-player entry, player removal, and show lifecycle controls.
 - **Scores** — standings, point adjustments, audit reason, and temporary undo where the action is genuinely reversible.
-- **Monitor** — the exact venue-TV state plus the controls relevant to the current show moment.
+- **TV** — the exact venue-TV state plus the controls relevant to the current show moment.
 
 There is no generic `More` drawer for live-critical controls.
 
@@ -79,7 +79,7 @@ Heather may navigate away, but she should rarely need to.
 
 ### Always-visible truth
 
-Every live host surface includes a compact room-truth region showing the applicable subset of:
+Every live host surface includes a compact **Show Status** region showing the applicable subset of:
 
 - active game and question state;
 - player count;
@@ -100,16 +100,16 @@ Before Game 1, Heather sees one preflight screen with five independent checks:
 - certified game content is ready;
 - venue TV is connected and showing the waiting screen;
 - joined players are current;
-- room network test is healthy;
+- venue connection test is healthy;
 - host phone and laptop controls are available.
 
-The screen includes a scaled venue-TV preview, room code, player count, `Run room sync test`, and `Start Game 1`.
+The screen includes a scaled venue-TV preview, game code, player count, `Check TV & phones`, and `Start Game 1`.
 
 The start button is enabled when the game, host ownership, and venue-TV state are valid. Player count alone does not block start. A recovering player produces a truthful warning, not an indefinite spinner.
 
 ### 2. Private Selection
 
-The familiar board remains the default. Heather taps a cell, reviews the question, answer choices, correct answer, and host note privately, then selects `Reveal to room`.
+The familiar board remains the default. Heather taps a cell, reviews the question, answer choices, correct answer, and host note privately, then selects `Show question`.
 
 While Heather previews:
 
@@ -119,7 +119,7 @@ While Heather previews:
 
 ### 3. Question Launch
 
-Show Pulse advances host, TV, and player surfaces to the same immutable play and room revision.
+Show Pulse advances host, TV, and player surfaces to the same immutable play and game revision. The existing internal code symbol remains `roomRevision`; players and hosts never see that term.
 
 - The TV prioritizes readable question text, four choices, timer, and aggregate locked count.
 - Player phones replace prior-game or prior-question history immediately.
@@ -130,7 +130,7 @@ Show Pulse advances host, TV, and player surfaces to the same immutable play and
 Player submission follows the approved authoritative answer engine:
 
 - tap → `Sending your answer…`;
-- server confirmation → small haptic and `Saved to the room` / `Locked in ✓`;
+- server confirmation → small haptic and `Answer saved` / `Locked in ✓`;
 - lost acknowledgement → automatic reconciliation;
 - player reconnect → canonical current screen plus brief `Back in sync`;
 - proven missed deadline → honest message and synchronization for the next question.
@@ -148,7 +148,7 @@ After resolution, the host phone shows:
 - a quiet evidence-only review entry when repeated fair-play patterns meet the approved threshold;
 - one primary action: `Return to board`.
 
-Player phones show the player's personal result and score movement. The venue TV shows a large correct answer, readable fact/tip, room outcome, and brief bounded celebration.
+Player phones show the player's personal result and score movement. The venue TV shows a large correct answer, readable fact/tip, how everyone answered, and a brief bounded celebration.
 
 The played cell marks itself and the board returns automatically after the reveal moment or immediately when Heather presses `Return to board`.
 
@@ -168,11 +168,11 @@ After the final game:
 
 1. Heather reviews final adjustments and their audit history.
 2. Heather selects `Present winners`.
-3. The TV presents the winner and top standings with room-readable typography.
+3. The TV presents the winner and top standings with typography readable from the back of the venue.
 4. Each player phone shows a personal recap: score, placement, correct count, streak, and movement during the night.
 5. TV and phone surfaces show the next scheduled venue night when one exists.
 
-The room closes deliberately after the celebration. Presenting winners does not silently close the room.
+The game closes deliberately after the celebration. Presenting winners does not silently end the game.
 
 ## Weak-Network Experience
 
@@ -194,7 +194,7 @@ The detail view separates:
 
 Rules:
 
-- Keep the last confirmed TV/player state visible; never blank the room.
+- Keep the last confirmed TV/player state visible; never blank the venue TV or player screens.
 - Do not replace the host command surface with a blocking spinner.
 - Do not expose Wi-Fi/cellular details, device identifiers, or individual answer choices.
 - Do not ask Heather to retry routine delivery.
@@ -211,12 +211,12 @@ The default state is `No unusual patterns`.
 A player becomes `Worth a look` only from repeated evidence across questions, such as:
 
 - repeated off-screen events during live answer windows followed by unusually fast correct answers;
-- consistently extreme response speed and accuracy relative to the room;
+- consistently extreme response speed and accuracy compared with other players;
 - repeated synchronized answer patterns that exceed the approved false-positive threshold.
 
 One app switch, one fast answer, or one lucky streak never creates a flag.
 
-The review presents the evidence timeline and room baseline. It never uses `cheater`, automatically changes a score, or publicly identifies the player. Heather may take no action or open the existing audited point-adjustment flow.
+The review presents the evidence timeline and other-player baseline. It never uses `cheater`, automatically changes a score, or publicly identifies the player. Heather may take no action or open the existing audited point-adjustment flow.
 
 ## Responsive and Accessibility Contract
 
@@ -230,7 +230,7 @@ The review presents the evidence timeline and room baseline. It never uses `chea
 ### Venue TV
 
 - Validate at 1280×720 and 1920×1080.
-- Use the existing room-distance typography requirements from Original Mode Refinements.
+- Use the existing typography requirements for reading from the back of the venue in Original Mode Refinements.
 - Never use a moving player-name ticker during a question.
 - Never expose private host evidence, correct answers before reveal, or device/network details.
 
@@ -271,7 +271,7 @@ Do not broadcast device identifiers or build a public per-device presence feed. 
 | One or more player phones lag | Show aggregate recovering count; answers already accepted remain protected |
 | Player answer acknowledgement is lost | Reconcile to canonical saved answer |
 | Game 2 has no active question | Show explicit Game 2 waiting/intermission, never Game 1 reveal history |
-| Room-wide interruption | First recovered surface triggers idempotent canonical reconciliation; never auto-void |
+| Venue network interruption | First recovered surface triggers idempotent canonical reconciliation; never auto-void |
 | Fair-play evidence is incomplete | Show no flag |
 | Next event is unknown | Omit the invitation rather than invent a date |
 | Haptics or motion unavailable | Preserve the same labels, state transitions, and delivery receipt |
@@ -292,13 +292,13 @@ Do not broadcast device identifiers or build a public per-device presence feed. 
 
 Run the finished experience for four recurring weeks with Heather and at least two additional hosts.
 
-The live-room show console thesis earns continuation when:
+The live game console thesis earns continuation when:
 
 - hosts perform most live actions from the phone by choice while the laptop remains available;
 - no player reports a stale screen, missing save, or uncertainty about the current game;
 - hosts require no more than one manual recovery intervention per night;
 - at least 70% of joined players remain through the finale;
-- at least one bounded shared room reaction occurs without host explanation;
+- at least one bounded shared audience reaction occurs without host explanation;
 - returning anonymous devices increase over consecutive weeks;
 - at least two venues voluntarily schedule another night.
 
@@ -318,7 +318,7 @@ The thesis is not yet proven if hosts retreat to the laptop, players ignore the 
 ## Implementation Order
 
 1. Lock the show-state contract and audience-safe delivery-observation model.
-2. Build Show Ready and the always-visible room-truth region.
+2. Build Show Ready and the always-visible Show Status region.
 3. Build Show Pulse receipts on top of canonical revisions without changing scoring authority.
 4. Complete answer-result and automatic board-return choreography.
 5. Complete explicit intermission and finale states across all surfaces.

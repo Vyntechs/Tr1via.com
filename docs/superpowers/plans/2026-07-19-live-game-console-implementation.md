@@ -1,10 +1,10 @@
-# Live-Room Show Console Implementation Plan
+# Live Game Console Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Turn Heather's Classic host phone into a complete, familiar live-show command center while keeping the laptop complete, every audience surface synchronized, and delivery status truthful.
 
-**Architecture:** Derive one pure host stage from the existing canonical room snapshot, render device-specific controls from that stage, and keep game authority in the existing resilient answer engine. Add a write-only, audience-safe observation channel solely for Show Pulse delivery receipts; observations never advance, score, resolve, or identify players in a public payload.
+**Architecture:** Derive one pure host stage from the existing canonical game snapshot, render device-specific controls from that stage, and keep game authority in the existing resilient answer engine. Add a write-only, audience-safe observation channel solely for Show Pulse delivery receipts; observations never advance, score, resolve, or identify players in a public payload. Existing internal route, type, and database names containing `room` remain unchanged; no host or player sees those names.
 
 **Tech Stack:** Next.js 16 App Router, React 19, TypeScript strict, Tailwind v4/theme tokens, Supabase Postgres/Auth/Realtime, Vitest, Testing Library, Playwright.
 
@@ -13,7 +13,7 @@
 - Classic question order, scoring, board, and laptop controls remain available and familiar.
 - The phone supports 320–440 CSS-pixel portrait viewports, landscape phones, and iPad landscape without clipped or buried live controls.
 - The venue TV remains legible at 1280×720 and 1920×1080; no moving player-name ticker appears during a question.
-- A delivery observation is informational only. It cannot advance the room, change a score, resolve a question, or claim a sleeping/disconnected browser is current.
+- A delivery observation is informational only. It cannot advance the game, change a score, resolve a question, or claim a sleeping/disconnected browser is current.
 - Host payloads may show only aggregate player delivery counts. Player/device identifiers and answer choices never enter a public delivery payload.
 - Weak-network recovery never replaces the command surface with a blocking spinner.
 - Motion and haptics are enhancements. The same labels and state transitions work with reduced motion and no haptics.
@@ -27,15 +27,15 @@
 
 **New pure contracts**
 
-- `lib/host/showConsole.ts` — maps canonical room/TV state into the host's stage and primary action.
+- `lib/host/showConsole.ts` — maps canonical game/TV state into the host's stage and primary action.
 - `lib/host/showDelivery.ts` — classifies current/recovering TV and aggregate phone observations.
 - `lib/hooks/useShowDelivery.ts` — reports the current surface revision and polls the host-only aggregate receipt.
 
 **New host presentation**
 
-- `components/host/HostCommandCenter.tsx` — responsive shell and persistent Board/Room/Scores/Monitor navigation.
-- `components/host/HostRoomTruth.tsx` — compact always-visible room truth and Show Pulse receipt.
-- `components/host/HostShowReady.tsx` — five-check preflight and room sync test.
+- `components/host/HostCommandCenter.tsx` — responsive shell and persistent Board/Players/Scores/TV navigation.
+- `components/host/HostShowStatus.tsx` — compact always-visible show status and Show Pulse receipt.
+- `components/host/HostShowReady.tsx` — five-check preflight and TV/phone connection test.
 - `components/host/HostPhoneBoard.tsx` — familiar 3×7 board and private preview.
 - `components/host/HostAnswerResult.tsx` — result, distribution, fastest five, and return-to-board action.
 - `components/host/HostBetweenGames.tsx` — explicit intermission and finale controls.
@@ -103,7 +103,7 @@ Expected: FAIL because `@/lib/host/showConsole` does not exist.
 
 ```ts
 export type HostStage = "show-ready" | "board" | "private-preview" | "question-live" | "answer-result" | "intermission" | "finale";
-export type HostPrimaryAction = "start-game-1" | "reveal-to-room" | "end-early" | "return-to-board" | "start-game-2" | "present-winners" | "close-room" | null;
+export type HostPrimaryAction = "start-game-1" | "show-question" | "end-early" | "return-to-board" | "start-game-2" | "present-winners" | "end-game" | null;
 
 export interface HostStageInput {
   game1: "draft" | "ready" | "live" | "done" | null;
@@ -116,12 +116,12 @@ export interface HostStageInput {
 }
 
 export function deriveHostStage(input: HostStageInput): { stage: HostStage; primary: HostPrimaryAction } {
-  if (input.nightClosed || input.game2 === "done") return { stage: "finale", primary: input.winnersPresented ? "close-room" : "present-winners" };
+  if (input.nightClosed || input.game2 === "done") return { stage: "finale", primary: input.winnersPresented ? "end-game" : "present-winners" };
   if (input.game1 === "done" && input.game2 !== "live" && input.game2 !== "done") return { stage: "intermission", primary: "start-game-2" };
   if (input.game1 !== "live" && input.game2 !== "live") return { stage: "show-ready", primary: "start-game-1" };
   if (input.livePlay) return { stage: "question-live", primary: "end-early" };
   if (input.lastResolve) return { stage: "answer-result", primary: "return-to-board" };
-  if (input.stagedQuestion) return { stage: "private-preview", primary: "reveal-to-room" };
+  if (input.stagedQuestion) return { stage: "private-preview", primary: "show-question" };
   return { stage: "board", primary: null };
 }
 ```
@@ -145,13 +145,13 @@ git commit -m "feat: define canonical host show stages"
 
 **Files:**
 - Create: `components/host/HostCommandCenter.tsx`
-- Create: `components/host/HostRoomTruth.tsx`
+- Create: `components/host/HostShowStatus.tsx`
 - Modify: `components/host/index.ts`
 - Test: `tests/component/HostCommandCenter.test.tsx`
 
 **Interfaces:**
 - Consumes: `HostStage`, counts, delivery receipt, and current venue preview.
-- Produces: persistent `board | room | scores | monitor` navigation and a slot for the current stage.
+- Produces: persistent `board | players | scores | tv` navigation and a slot for the current stage.
 
 - [ ] **Step 1: Write tests for one-tap live navigation and accessible state**
 
@@ -172,15 +172,15 @@ Expected: FAIL because the shell is missing.
 - [ ] **Step 3: Build the shell with CSS container breakpoints**
 
 ```tsx
-export type HostSection = "board" | "room" | "scores" | "monitor";
+export type HostSection = "board" | "players" | "scores" | "tv";
 
 export function HostCommandCenter({ active = "board", onNavigate, truth, children }: Props) {
   return (
     <main className="host-command-center" data-stage={truth.stage}>
-      <HostRoomTruth {...truth} />
+      <HostShowStatus {...truth} />
       <section className="host-command-center__body">{children}</section>
       <nav aria-label="Host controls" className="host-command-center__nav">
-        {(["board", "room", "scores", "monitor"] as const).map((section) => (
+        {(["board", "players", "scores", "tv"] as const).map((section) => (
           <button key={section} aria-current={active === section ? "page" : undefined} onClick={() => onNavigate(section)}>{section[0].toUpperCase() + section.slice(1)}</button>
         ))}
       </nav>
@@ -200,7 +200,7 @@ Expected: PASS; navigation is present without a `More` menu and the truth region
 - [ ] **Step 5: Commit**
 
 ```bash
-git add components/host/HostCommandCenter.tsx components/host/HostRoomTruth.tsx components/host/index.ts tests/component/HostCommandCenter.test.tsx
+git add components/host/HostCommandCenter.tsx components/host/HostShowStatus.tsx components/host/index.ts tests/component/HostCommandCenter.test.tsx
 git commit -m "feat: add responsive host command center"
 ```
 
@@ -247,7 +247,7 @@ Expected: FAIL because the phone has no 3×7 selectable board.
 </div>
 ```
 
-Replace automatic rotation in `HostPhoneClient` with selected cell identity. Render the prompt, four choices, correct answer, fact/tip, image readiness, `Reveal to room`, and `Back to board`. Never send this private preview through the TV snapshot.
+Replace automatic rotation in `HostPhoneClient` with selected cell identity. Render the prompt, four choices, correct answer, fact/tip, image readiness, `Show question`, and `Back to board`. Never send this private preview through the TV snapshot.
 
 - [ ] **Step 4: Run board and reveal regression tests**
 
@@ -300,7 +300,7 @@ Expected: FAIL because route and screen do not exist.
 
 - [ ] **Step 3: Implement truthful readiness rules**
 
-`canStart` is `content === "ready" && controls === "ready" && tv !== "missing"`. A recovering player is a warning, not a blocker. `Run room sync test` re-fetches this same endpoint and shows elapsed time; it never spins longer than the existing bootstrap timeout and never creates game state.
+`canStart` is `content === "ready" && controls === "ready" && tv !== "missing"`. A recovering player is a warning, not a blocker. `Check TV & phones` re-fetches this same endpoint and shows elapsed time; it never spins longer than the existing bootstrap timeout and never creates game state.
 
 - [ ] **Step 4: Verify start behavior and ownership**
 
@@ -379,7 +379,7 @@ git commit -m "feat: complete live host controls on phone"
 
 **Interfaces:**
 - Consumes: canonical game states and explicit absence of an active play.
-- Produces: Game 2 waiting, `Start Game 2`, `Present winners`, personal recap, and deliberate room close.
+- Produces: Game 2 waiting, `Start Game 2`, `Present winners`, personal recap, and deliberate game end.
 
 - [ ] **Step 1: Extend the full-game test before changing UI**
 
@@ -399,7 +399,7 @@ Expected: FAIL on the phone host state or any stale prior reveal.
 
 - [ ] **Step 3: Implement canonical lifecycle presentation**
 
-Clear resolved-question presentation whenever Game 1 is done and Game 2 is not live. Give host, TV, and player their distinct intermission copy. After Game 2, require `Present winners` before celebration and a separate `Close room` action afterward. Do not invent a next date when none exists.
+Clear resolved-question presentation whenever Game 1 is done and Game 2 is not live. Give host, TV, and player their distinct intermission copy. After Game 2, require `Present winners` before celebration and a separate `End game` action afterward. Do not invent a next date when none exists.
 
 - [ ] **Step 4: Run lifecycle tests**
 
@@ -460,7 +460,7 @@ revoke all on public.surface_observations from anon, authenticated;
 create index surface_observations_expiry_idx on public.surface_observations (observed_at);
 ```
 
-Classify `current` only when run, room revision, control revision, and play match the canonical target and `observed_at` is within 45 seconds. Count only active, non-removed players in the denominator. Old rows are `recovering`, never current.
+Classify `current` only when the internal run, `roomRevision`, control revision, and play match the canonical target and `observed_at` is within 45 seconds. Count only active, non-removed players in the denominator. Old rows are `recovering`, never current.
 
 - [ ] **Step 4: Run schema and classifier tests**
 
@@ -491,10 +491,10 @@ git commit -m "feat: add private show delivery observations"
 - Modify: `app/(player)/room/[code]/page.tsx`
 - Modify: `app/tv/[code]/page.tsx`
 - Modify: `app/host/phone/[nightId]/HostPhoneClient.tsx`
-- Modify: `components/host/HostRoomTruth.tsx`
+- Modify: `components/host/HostShowStatus.tsx`
 - Test: `tests/unit/api-surface-observe.test.ts`
 - Test: `tests/unit/api-host-delivery.test.ts`
-- Test: `tests/component/HostRoomTruth.test.tsx`
+- Test: `tests/component/HostShowStatus.test.tsx`
 
 **Interfaces:**
 - Surface POST body: `{ runId, roomRevision, controlRevision, playId }`.
@@ -517,7 +517,7 @@ Expected: FAIL because routes are absent.
 
 - [ ] **Step 3: Implement server-derived subjects and monotonic upserts**
 
-The player route derives the player from the signed device cookie plus room membership, then hashes that server-side identity for `subject_key`. The TV route uses one server-derived TV key per night. Reject a revision from another run and ignore observations older than the stored revision. Add per-subject rate limiting and `Cache-Control: no-store`.
+The player route derives the player from the signed device cookie plus participation in the game, then hashes that server-side identity for `subject_key`. The TV route uses one server-derived TV key per night. Reject a revision from another run and ignore observations older than the stored revision. Add per-subject rate limiting and `Cache-Control: no-store`.
 
 - [ ] **Step 4: Report only after a surface paints canonical state**
 
@@ -529,14 +529,14 @@ Use exact labels `Sending…`, `TV live ✓`, `{n} phones live ✓`, `{n} recove
 
 - [ ] **Step 6: Run route, component, and live-answer authority tests**
 
-Run: `npx vitest run tests/unit/api-surface-observe.test.ts tests/unit/api-host-delivery.test.ts tests/component/HostRoomTruth.test.tsx tests/integration/live-answer-engine-schema.test.ts`
+Run: `npx vitest run tests/unit/api-surface-observe.test.ts tests/unit/api-host-delivery.test.ts tests/component/HostShowStatus.test.tsx tests/integration/live-answer-engine-schema.test.ts`
 
 Expected: PASS; forged/stale observations cannot alter canonical state and host receipts contain aggregates only.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add app/api/room/'[code]'/observe/route.ts app/api/tv/'[code]'/observe/route.ts app/api/host/rooms/'[code]'/delivery/route.ts lib/hooks/useShowDelivery.ts app/'(player)'/room/'[code]'/page.tsx app/tv/'[code]'/page.tsx app/host/phone/'[nightId]'/HostPhoneClient.tsx components/host/HostRoomTruth.tsx tests/unit/api-surface-observe.test.ts tests/unit/api-host-delivery.test.ts tests/component/HostRoomTruth.test.tsx
+git add app/api/room/'[code]'/observe/route.ts app/api/tv/'[code]'/observe/route.ts app/api/host/rooms/'[code]'/delivery/route.ts lib/hooks/useShowDelivery.ts app/'(player)'/room/'[code]'/page.tsx app/tv/'[code]'/page.tsx app/host/phone/'[nightId]'/HostPhoneClient.tsx components/host/HostShowStatus.tsx tests/unit/api-surface-observe.test.ts tests/unit/api-host-delivery.test.ts tests/component/HostShowStatus.test.tsx
 git commit -m "feat: add truthful show pulse receipts"
 ```
 
@@ -562,7 +562,7 @@ git commit -m "feat: add truthful show pulse receipts"
 for (const viewport of [{ width: 320, height: 568 }, { width: 430, height: 932 }, { width: 844, height: 390 }, { width: 1180, height: 820 }]) {
   await page.setViewportSize(viewport);
   await expect(page.getByRole("navigation", { name: "Host controls" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Reveal to room|End early|Return to board|Start Game 2/ })).toBeInViewport();
+  await expect(page.getByRole("button", { name: /Show question|End early|Return to board|Start Game 2/ })).toBeInViewport();
 }
 ```
 
@@ -617,7 +617,7 @@ git commit -m "test: prove command center across devices and recovery"
 
 ## Market-Proof Follow-Through
 
-After release, run the approved four-week pilot with Heather and two additional hosts. Capture only aggregate operational metrics: phone-vs-laptop host actions, stale-screen/missing-save reports, manual recovery interventions, finale retention, returning anonymous devices, and venue rebooking. A four-week pilot is evidence for or against the live-room show-console category; it is not permission to add CRM or a new mode.
+After release, run the approved four-week pilot with Heather and two additional hosts. Capture only aggregate operational metrics: phone-vs-laptop host actions, stale-screen/missing-save reports, manual recovery interventions, finale retention, returning anonymous devices, and venue rebooking. A four-week pilot is evidence for or against the live game-console category; it is not permission to add CRM or a new mode.
 
 ## Self-Review Record
 
