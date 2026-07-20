@@ -279,3 +279,8 @@ Reason: Reflowing wall-display UI inside phone dimensions destroys composition e
 Trigger: Host sees remote, player, and TV QR or link choices without knowing which device should use them.
 Rule: Name destination, scanner, privacy, and result for every QR; never present unlabeled device handoffs.
 Reason: Three valid URLs become one confusing setup when roles are implicit.
+
+### agent-verifies-spec-transcription
+Trigger: Agent asks Brandon to compare a written specification with an already-approved conversational design.
+Rule: Build a requirements checklist, verify the specification, resolve differences, and escalate only material product decisions.
+Reason: Documentation fidelity is agent work; Brandon approves product choices rather than auditing transcription.
