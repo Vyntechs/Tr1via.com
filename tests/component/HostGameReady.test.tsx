@@ -15,6 +15,7 @@ function preflight(overrides: Partial<HostPreflight> = {}): HostPreflight {
       controls: "ready",
     },
     canStart: true,
+    startReason: null,
     checkedAt: "2026-07-20T12:00:00.000Z",
     elapsedMs: 42,
     playerCount: 0,
@@ -81,7 +82,7 @@ describe("HostGameReady", () => {
   it("explains content, control-path, reachability, player, and TV truth", () => {
     renderReady();
 
-    expect(screen.getByText("Certified Game 1 content is ready")).toBeVisible();
+    expect(screen.getByText("Saved Game 1 content is complete")).toBeVisible();
     expect(screen.getByText("Control path and database responded")).toBeVisible();
     expect(screen.getByText("Server round-trip healthy · venue Wi-Fi not measured")).toBeVisible();
     expect(screen.getByText("No players joined · rehearsal is allowed")).toBeVisible();
@@ -108,6 +109,7 @@ describe("HostGameReady", () => {
           content: "invalid",
         },
         canStart: false,
+        startReason: "Game 1 needs 7 picked questions before it can start.",
         content: {
           ...preflight().content,
           reason: "Game 1 needs 7 picked questions before it can start.",
@@ -117,6 +119,20 @@ describe("HostGameReady", () => {
 
     expect(screen.getByRole("button", { name: "Start Game 1" })).toBeDisabled();
     expect(screen.getByText("Game 1 needs 7 picked questions before it can start.")).toBeVisible();
+  });
+
+  it("uses the closed-night reason instead of mislabeling the TV", () => {
+    renderReady({
+      preflight: preflight({
+        checks: { ...preflight().checks, controls: "unavailable" },
+        canStart: false,
+        startReason: "This trivia night is closed.",
+      }),
+    });
+
+    expect(screen.getByRole("button", { name: "Start Game 1" })).toBeDisabled();
+    expect(screen.getByRole("alert")).toHaveTextContent("This trivia night is closed.");
+    expect(screen.queryByText("The venue TV surface is unavailable.")).not.toBeInTheDocument();
   });
 
   it("shows refresh progress and elapsed time before applying fresh evidence", async () => {

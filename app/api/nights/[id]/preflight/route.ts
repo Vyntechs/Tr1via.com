@@ -25,7 +25,6 @@ interface PickedQuestion {
   options: unknown;
   correct_index: number;
   point_value: number | null;
-  source: string;
 }
 
 export async function GET(
@@ -53,7 +52,6 @@ export async function GET(
 
     let categories: Array<{ id: string; state: string }> = [];
     let questions: PickedQuestion[] = [];
-    let reports: Array<{ category_id: string | null; status: string }> = [];
 
     if (game) {
       const categoriesResult = await admin
@@ -68,19 +66,11 @@ export async function GET(
       if (categoryIds.length > 0) {
         const questionsResult = await admin
           .from("questions")
-          .select("category_id, prompt, options, correct_index, point_value, source")
+          .select("category_id, prompt, options, correct_index, point_value")
           .in("category_id", categoryIds)
           .eq("is_picked", true);
         if (questionsResult.error) throw questionsResult.error;
         questions = (questionsResult.data ?? []) as PickedQuestion[];
-
-        const reportsResult = await admin
-          .from("question_generation_reports")
-          .select("category_id, status, created_at")
-          .in("category_id", categoryIds)
-          .order("created_at", { ascending: false });
-        if (reportsResult.error) throw reportsResult.error;
-        reports = reportsResult.data ?? [];
       }
     }
 
@@ -99,13 +89,15 @@ export async function GET(
       game,
       categories,
       questions,
-      reports,
       expectedCategoryCount,
       expectedQuestionCount,
     });
     const content: ContentStatus = contentReason ? "invalid" : "ready";
     const tv = owned.night.room_code.trim() ? "unknown" as const : "missing" as const;
-    const controls = "ready" as const;
+    const controls = owned.night.closed_at ? "unavailable" as const : "ready" as const;
+    const startReason = controls === "unavailable"
+      ? "This trivia night is closed."
+      : contentReason ?? (tv === "missing" ? "The venue TV surface is unavailable." : null);
 
     return ok({
       checks: {
@@ -116,7 +108,8 @@ export async function GET(
         network: "control-path-healthy" as const,
         controls,
       },
-      canStart: content === "ready" && controls === "ready" && tv !== "missing",
+      canStart: startReason === null,
+      startReason,
       checkedAt: new Date().toISOString(),
       elapsedMs: Math.max(0, Date.now() - startedAt),
       playerCount: playersResult.count ?? 0,
@@ -143,12 +136,14 @@ function contentFailureReason(input: {
   } | null;
   categories: Array<{ id: string; state: string }>;
   questions: PickedQuestion[];
-  reports: Array<{ category_id: string | null; status: string }>;
   expectedCategoryCount: number;
   expectedQuestionCount: number;
 }): string | null {
   if (!input.game) return "Game 1 is missing.";
   if (input.game.state !== "ready") return "Game 1 is not marked ready.";
+  if (input.game.category_count <= 0 || input.game.question_count <= 0) {
+    return "Game 1 has invalid board dimensions.";
+  }
   if (
     input.categories.length !== input.expectedCategoryCount ||
     input.categories.some((category) => category.state !== "ready")
@@ -162,20 +157,22 @@ function contentFailureReason(input: {
     return "A picked question is incomplete.";
   }
 
-  const aiCategoryIds = new Set(
-    input.questions
-      .filter((question) => question.source === "ai")
-      .map((question) => question.category_id),
+  const canonicalPoints = Array.from(
+    { length: input.game.question_count },
+    (_, index) => (index + 1) * 100,
   );
-  if (aiCategoryIds.size > 0) {
-    const certifiedCategoryIds = new Set(
-      input.reports
-        .filter((report) => report.status === "completed" && report.category_id)
-        .map((report) => report.category_id as string),
+  const hasCanonicalDistribution = input.categories.every((category) => {
+    const points = input.questions
+      .filter((question) => question.category_id === category.id)
+      .map((question) => question.point_value)
+      .sort((left, right) => (left ?? 0) - (right ?? 0));
+    return (
+      points.length === canonicalPoints.length &&
+      points.every((point, index) => point === canonicalPoints[index])
     );
-    if ([...aiCategoryIds].some((categoryId) => !certifiedCategoryIds.has(categoryId))) {
-      return "AI questions are not certified yet.";
-    }
+  });
+  if (!hasCanonicalDistribution) {
+    return `Every category needs exactly ${input.game.question_count} canonical point ${pluralize("slot", input.game.question_count)}.`;
   }
   return null;
 }

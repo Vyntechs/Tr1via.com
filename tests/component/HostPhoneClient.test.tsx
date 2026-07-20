@@ -26,6 +26,9 @@ const h = vi.hoisted(() => ({
   } | null,
 }));
 
+const RUN_ID = "33333333-3333-4333-8333-333333333333";
+const COMMAND_ID = "44444444-4444-4444-8444-444444444444" as `${string}-${string}-${string}-${string}-${string}`;
+
 vi.mock("@/lib/hooks/useRoom", () => ({
   useRoom: () => h.room,
 }));
@@ -102,6 +105,16 @@ const night: NightRow = {
   room_magic_enabled: false,
   created_at: "2026-07-08T00:00:00Z",
 };
+
+function resilientNight(overrides: Partial<NightRow> = {}): NightRow {
+  return {
+    ...night,
+    answer_engine: "resilient_v1",
+    current_run_id: RUN_ID,
+    control_revision: 4,
+    ...overrides,
+  };
+}
 
 const readyGame: GameRow = {
   id: "g1",
@@ -251,6 +264,7 @@ function preflightResponse(overrides: Record<string, unknown> = {}) {
       controls: "ready",
     },
     canStart: true,
+    startReason: null,
     checkedAt: "2026-07-20T12:00:00.000Z",
     elapsedMs: 37,
     playerCount: 0,
@@ -268,6 +282,7 @@ function preflightResponse(overrides: Record<string, unknown> = {}) {
 
 describe("HostPhoneClient reveal flow", () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
     const liveGame = game("g1", 1, "live");
     h.room = { ...room(), games: [liveGame], currentGame: liveGame };
     h.questions = [pickedQuestion, secondPickedQuestion];
@@ -408,6 +423,47 @@ describe("HostPhoneClient reveal flow", () => {
       method: "POST",
       body: JSON.stringify({ questionId: "q2" }),
     });
+  });
+
+  it("starts a ready resilient game with authoritative control metadata before revealing", async () => {
+    const live = game("g1", 1, "live");
+    h.room = {
+      ...room(),
+      night: resilientNight(),
+      games: [live],
+      currentGame: live,
+    };
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
+
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    live.state = "ready";
+    live.started_at = null;
+    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
+
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/start",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: RUN_ID,
+          commandId: COMMAND_ID,
+          expectedControlRevision: 4,
+        }),
+      },
+    ));
+    expect(h.fetch.mock.calls.findIndex(([url]) => url === "/api/games/g1/start")).toBeLessThan(
+      h.fetch.mock.calls.findIndex(([url]) => url === "/api/games/g1/reveal"),
+    );
   });
 
   it("returns from private preview to the board without revealing", async () => {
@@ -695,7 +751,7 @@ describe("HostPhoneClient reveal flow", () => {
 
     await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
       "/api/games/g1/start",
-      expect.objectContaining({ method: "POST" }),
+      { method: "POST" },
     ));
   });
 
@@ -704,9 +760,11 @@ describe("HostPhoneClient reveal flow", () => {
     const game2 = game("g2", 2, "draft");
     h.room = {
       ...room(),
+      night: resilientNight(),
       games: [game1, game2],
       currentGame: game1,
     };
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
 
     render(
       <HostPhoneClient
@@ -720,7 +778,15 @@ describe("HostPhoneClient reveal flow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Start Game 2" }));
     await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
       "/api/games/g2/start",
-      expect.objectContaining({ method: "POST" }),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: RUN_ID,
+          commandId: COMMAND_ID,
+          expectedControlRevision: 4,
+        }),
+      },
     ));
   });
 
@@ -867,7 +933,8 @@ describe("HostPhoneClient reveal flow", () => {
   });
 
   it("uses the truthful preflight as the only Game 1 start surface", async () => {
-    h.room = room();
+    h.room = { ...room(), night: resilientNight() };
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
     h.fetch.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url === "/api/nights/night-1/preflight") {
@@ -897,8 +964,39 @@ describe("HostPhoneClient reveal flow", () => {
     fireEvent.click(screen.getByRole("button", { name: "Start Game 1" }));
     await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
       "/api/games/g1/start",
-      expect.objectContaining({ method: "POST" }),
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: RUN_ID,
+          commandId: COMMAND_ID,
+          expectedControlRevision: 4,
+        }),
+      },
     ));
+  });
+
+  it("blocks a resilient Game 1 start when required control metadata is missing", async () => {
+    h.room = {
+      ...room(),
+      night: resilientNight({ current_run_id: null }),
+    };
+
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Start Game 1" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Game control metadata is not ready. Refresh the game before starting.",
+    );
+    expect(h.fetch.mock.calls.some(([url]) => url === "/api/games/g1/start")).toBe(false);
   });
 
   it("does not fetch or mount the preflight after Game 1 has started", async () => {

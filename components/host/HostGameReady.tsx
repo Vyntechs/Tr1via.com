@@ -11,9 +11,10 @@ export interface HostPreflight {
     tv: "unknown" | "missing";
     players: "unknown";
     network: "control-path-healthy";
-    controls: "ready";
+    controls: "ready" | "unavailable";
   };
   canStart: boolean;
+  startReason: string | null;
   checkedAt: string;
   elapsedMs: number;
   playerCount: number;
@@ -210,9 +211,9 @@ export function HostGameReady({
         </section>
       </div>
 
-      {current.content.reason && (
+      {current.startReason && (
         <p id="game-ready-blocker" role="alert" style={{ margin: "12px 0 0", color: t.wrong, fontSize: 12, fontWeight: 750 }}>
-          {current.content.reason}
+          {current.startReason}
         </p>
       )}
       {refreshMessage && (
@@ -237,7 +238,7 @@ export function HostGameReady({
           type="button"
           onClick={onStart}
           disabled={!current.canStart || checking || isStarting}
-          aria-describedby={!current.canStart && current.content.reason ? "game-ready-blocker" : undefined}
+          aria-describedby={!current.canStart && current.startReason ? "game-ready-blocker" : undefined}
           style={{
             ...buttonStyle(t.accent, readableForeground(t.accent), t.accent),
             opacity: !current.canStart || checking || isStarting ? 0.48 : 1,
@@ -246,11 +247,6 @@ export function HostGameReady({
           {isStarting ? "Starting Game 1…" : "Start Game 1"}
         </button>
       </div>
-      {!current.canStart && !current.content.reason && (
-        <p id="game-ready-blocker" style={{ margin: "8px 0 0", color: t.inkMid, fontSize: 11 }}>
-          The venue TV surface is unavailable.
-        </p>
-      )}
     </section>
   );
 }
@@ -261,7 +257,7 @@ function readinessRows(preflight: HostPreflight): Array<{ label: string; detail:
   return [
     {
       label: preflight.checks.content === "ready"
-        ? "Certified Game 1 content is ready"
+        ? "Saved Game 1 content is complete"
         : "Game 1 content needs attention",
       detail: `${preflight.content.pickedQuestionCount} of ${preflight.content.expectedQuestionCount} picked questions are complete.`,
       tone: preflight.checks.content === "ready" ? "confirmed" : "attention",
@@ -286,9 +282,13 @@ function readinessRows(preflight: HostPreflight): Array<{ label: string; detail:
       tone: "confirmed",
     },
     {
-      label: "Control path and database responded",
-      detail: "Host ownership and the read-only Game 1 query succeeded.",
-      tone: "confirmed",
+      label: preflight.checks.controls === "ready"
+        ? "Control path and database responded"
+        : "Game controls are unavailable",
+      detail: preflight.checks.controls === "ready"
+        ? "Host ownership and the read-only Game 1 query succeeded."
+        : "This trivia night is closed, so Game 1 cannot be started.",
+      tone: preflight.checks.controls === "ready" ? "confirmed" : "attention",
     },
   ];
 }

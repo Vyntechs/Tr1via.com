@@ -25,8 +25,6 @@ type Fixture = {
   categoryError?: { message: string } | null;
   questions?: Array<Record<string, unknown>>;
   questionError?: { message: string } | null;
-  reports?: Array<Record<string, unknown>>;
-  reportError?: { message: string } | null;
   playerCount?: number;
   playerError?: { message: string } | null;
 };
@@ -45,16 +43,6 @@ function question(categoryId: string, overrides: Record<string, unknown> = {}) {
     point_value: 100,
     source: "ai",
     is_picked: true,
-    ...overrides,
-  };
-}
-
-function report(categoryId: string, overrides: Record<string, unknown> = {}) {
-  return {
-    category_id: categoryId,
-    status: "completed",
-    accepted_count: 20,
-    created_at: "2026-07-20T12:00:00.000Z",
     ...overrides,
   };
 }
@@ -90,10 +78,6 @@ function adminWith(fixture: Fixture = {}) {
     fixture.questions ?? [question("cat-1")],
     fixture.questionError,
   );
-  const reports = queryResult(
-    fixture.reports ?? [report("cat-1")],
-    fixture.reportError,
-  );
   const players = queryResult([], fixture.playerError);
   players.then = (resolve) => Promise.resolve(resolve({
     data: [],
@@ -101,9 +85,14 @@ function adminWith(fixture: Fixture = {}) {
     count: fixture.playerCount ?? 0,
   })) as never;
 
-  const byTable = { games: game, categories, questions, question_generation_reports: reports, players };
+  const byTable = { games: game, categories, questions, players };
   return {
-    from: vi.fn((table: keyof typeof byTable) => byTable[table]),
+    from: vi.fn((table: keyof typeof byTable) => {
+      if (table === ("question_generation_reports" as keyof typeof byTable)) {
+        throw new Error("stale reports must not determine current readiness");
+      }
+      return byTable[table];
+    }),
     queries: Object.values(byTable),
   };
 }
@@ -151,6 +140,7 @@ describe("GET /api/nights/[id]/preflight", () => {
         controls: "ready",
       },
       playerCount: 0,
+      startReason: null,
       canStart: true,
       content: {
         gameId: GAME_ID,
@@ -187,7 +177,6 @@ describe("GET /api/nights/[id]/preflight", () => {
   it("accepts complete manual questions without an AI generation report", async () => {
     const admin = adminWith({
       questions: [question("cat-1", { source: "host-edit" })],
-      reports: [],
     });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
     const { GET } = await import("@/app/api/nights/[id]/preflight/route");
@@ -213,11 +202,6 @@ describe("GET /api/nights/[id]/preflight", () => {
       name: "invalid picked content",
       fixture: { questions: [question("cat-1", { options: ["A", "B"], correct_index: 3 })] },
       reason: "A picked question is incomplete.",
-    },
-    {
-      name: "uncertified AI content",
-      fixture: { reports: [report("cat-1", { status: "partial" })] },
-      reason: "AI questions are not certified yet.",
     },
   ])("blocks start for $name", async ({ fixture, reason }) => {
     const admin = adminWith(fixture);
@@ -245,6 +229,99 @@ describe("GET /api/nights/[id]/preflight", () => {
 
     expect(body.checks.tv).toBe("missing");
     expect(body.canStart).toBe(false);
+    expect(body.startReason).toBe("The venue TV surface is unavailable.");
+  });
+
+  it("ignores stale generation-report history as authority for current saved rows", async () => {
+    const admin = adminWith();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { GET } = await import("@/app/api/nights/[id]/preflight/route");
+
+    const body = await (await GET(request(), context())).json();
+
+    expect(body.checks.content).toBe("ready");
+    expect(admin.from).not.toHaveBeenCalledWith("question_generation_reports");
+  });
+
+  it("fails closed with an accurate reason when the night is closed", async () => {
+    const admin = adminWith();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    authMock.requireOwnedNight.mockResolvedValue({
+      ok: true,
+      host: { id: "host-1" },
+      night: {
+        id: NIGHT_ID,
+        room_code: "ABC123",
+        closed_at: "2026-07-20T13:00:00.000Z",
+      },
+    });
+    const { GET } = await import("@/app/api/nights/[id]/preflight/route");
+
+    const body = await (await GET(request(), context())).json();
+
+    expect(body.checks.controls).toBe("unavailable");
+    expect(body.canStart).toBe(false);
+    expect(body.startReason).toBe("This trivia night is closed.");
+  });
+
+  it.each([
+    {
+      name: "zero board dimensions",
+      fixture: {
+        game: { id: GAME_ID, state: "ready", category_count: 0, question_count: 1 },
+        categories: [],
+        questions: [],
+      },
+      reason: "Game 1 has invalid board dimensions.",
+    },
+    {
+      name: "aggregate-balanced but uneven categories",
+      fixture: {
+        game: { id: GAME_ID, state: "ready", category_count: 2, question_count: 2 },
+        categories: [category("cat-1"), category("cat-2")],
+        questions: [
+          question("cat-1", { id: "q1", point_value: 100 }),
+          question("cat-1", { id: "q2", point_value: 200 }),
+          question("cat-1", { id: "q3", point_value: 300 }),
+          question("cat-2", { id: "q4", point_value: 100 }),
+        ],
+      },
+      reason: "Every category needs exactly 2 canonical point slots.",
+    },
+    {
+      name: "duplicate point slots",
+      fixture: {
+        game: { id: GAME_ID, state: "ready", category_count: 1, question_count: 2 },
+        categories: [category("cat-1")],
+        questions: [
+          question("cat-1", { id: "q1", point_value: 100 }),
+          question("cat-1", { id: "q2", point_value: 100 }),
+        ],
+      },
+      reason: "Every category needs exactly 2 canonical point slots.",
+    },
+    {
+      name: "noncanonical point slots",
+      fixture: {
+        game: { id: GAME_ID, state: "ready", category_count: 1, question_count: 2 },
+        categories: [category("cat-1")],
+        questions: [
+          question("cat-1", { id: "q1", point_value: 0 }),
+          question("cat-1", { id: "q2", point_value: 200 }),
+        ],
+      },
+      reason: "Every category needs exactly 2 canonical point slots.",
+    },
+  ])("rejects $name", async ({ fixture, reason }) => {
+    const admin = adminWith(fixture);
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { GET } = await import("@/app/api/nights/[id]/preflight/route");
+
+    const body = await (await GET(request(), context())).json();
+
+    expect(body.checks.content).toBe("invalid");
+    expect(body.canStart).toBe(false);
+    expect(body.startReason).toBe(reason);
   });
 
   it("sanitizes database errors and never returns query details", async () => {

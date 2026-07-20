@@ -308,13 +308,7 @@ export function HostPhoneClient({
     setError(null);
     try {
       if (controlGame.state === "draft" || controlGame.state === "ready") {
-        const startRes = await fetch(`/api/games/${controlGame.id}/start`, {
-          method: "POST",
-        });
-        if (!startRes.ok) {
-          const body = (await startRes.json().catch(() => ({}))) as { error?: string };
-          throw new Error(body.error ?? "could not start the game");
-        }
+        await startGame(controlGame.id);
       }
       const res = await fetch(`/api/games/${controlGame.id}/reveal`, {
         method: "POST",
@@ -389,6 +383,51 @@ export function HostPhoneClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "game control failed");
       }
+      setConfirmingEnd(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Game control failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function startGame(gameId: string) {
+    let request: RequestInit = { method: "POST" };
+    if (room.night?.answer_engine === "resilient_v1") {
+      const runId = room.night.current_run_id;
+      const expectedControlRevision = room.night.control_revision;
+      if (
+        !runId ||
+        !Number.isInteger(expectedControlRevision) ||
+        (expectedControlRevision ?? -1) < 0 ||
+        typeof globalThis.crypto?.randomUUID !== "function"
+      ) {
+        throw new Error("Game control metadata is not ready. Refresh the game before starting.");
+      }
+      request = {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId,
+          commandId: globalThis.crypto.randomUUID(),
+          expectedControlRevision,
+        }),
+      };
+    }
+
+    const response = await fetch(`/api/games/${gameId}/start`, request);
+    if (!response.ok) {
+      const body = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(body.error ?? "game control failed");
+    }
+  }
+
+  async function runStartGame(gameId: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await startGame(gameId);
       setConfirmingEnd(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Game control failed.");
@@ -509,7 +548,7 @@ export function HostPhoneClient({
       confirmingEnd={confirmingEnd}
       allGamesEnded={allGamesEnded}
       roomCode={roomCode}
-      onStart={() => currentGame && void runLifecycle(`/api/games/${currentGame.id}/start`)}
+      onStart={() => currentGame && void runStartGame(currentGame.id)}
       onRequestEnd={() => setConfirmingEnd(true)}
       onCancelEnd={() => setConfirmingEnd(false)}
       onConfirmEnd={() => currentGame && void runLifecycle(`/api/games/${currentGame.id}/end`)}
@@ -583,7 +622,7 @@ export function HostPhoneClient({
             roomCode={roomCode}
             preflight={preflight}
             onCheck={fetchPreflight}
-            onStart={() => game1 && void runLifecycle(`/api/games/${game1.id}/start`)}
+            onStart={() => game1 && void runStartGame(game1.id)}
             isStarting={busy}
           />
         )
@@ -680,8 +719,9 @@ function isHostPreflight(value: unknown): value is HostPreflight {
     (checks?.tv === "unknown" || checks?.tv === "missing") &&
     checks?.players === "unknown" &&
     checks?.network === "control-path-healthy" &&
-    checks?.controls === "ready" &&
+    (checks?.controls === "ready" || checks?.controls === "unavailable") &&
     typeof candidate.canStart === "boolean" &&
+    (typeof candidate.startReason === "string" || candidate.startReason === null) &&
     typeof candidate.checkedAt === "string" &&
     Number.isFinite(Date.parse(candidate.checkedAt)) &&
     typeof candidate.elapsedMs === "number" &&
