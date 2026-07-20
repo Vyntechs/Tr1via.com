@@ -401,7 +401,7 @@ test("dashboard makes phone hosting the primary complete hit target", async ({
     const dashboard = page.getByTestId("host-dashboard");
     await expect(dashboard).toHaveAttribute("data-host-mobile-surface", "true");
     await expectNoHorizontalOverflow(page);
-    const primary = page.getByRole("button", { name: "Host from this phone" });
+    const primary = page.getByRole("button", { name: "Control live game" });
     await expect(primary).toBeVisible();
     await expect(
       page.getByTestId("host-private-phone-controls"),

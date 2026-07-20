@@ -1,19 +1,8 @@
-// /host/phone/[nightId] — the host's private phone view.
-//
-// Lives OUTSIDE the (host) route group on purpose. Linda opens this URL on
-// her phone while her laptop drives the TV. Auth is the same Supabase magic
-// link — middleware.ts protects every /host/* path including this one.
-//
-// The phone shows one of two screens:
-//   • Upcoming — she sees the question text + correct answer privately and
-//     taps "Reveal to the room" to fire the question.
-//   • Live — while a question is live, she sees the lock-in count, the
-//     still-thinking list, end-early, and undo.
+// Compatibility route for older saved links. Ownership is checked before the
+// host is returned to the canonical responsive live console.
 
 import { notFound, redirect } from "next/navigation";
 import { requireOwnedNight } from "@/lib/api/auth";
-import { resolveTheme } from "@/lib/theme/resolveTheme";
-import { HostPhoneClient } from "./HostPhoneClient";
 
 export const dynamic = "force-dynamic";
 
@@ -28,12 +17,5 @@ export default async function HostPhonePage({
     if (owned.status === 404) notFound();
     redirect("/login");
   }
-  return (
-    <HostPhoneClient
-      nightId={owned.night.id}
-      roomCode={owned.night.room_code}
-      hostName={owned.host.display_name}
-      themeKey={resolveTheme(owned.night, owned.host)}
-    />
-  );
+  redirect(`/host/live/${owned.night.id}`);
 }
