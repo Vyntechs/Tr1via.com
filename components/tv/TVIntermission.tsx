@@ -214,6 +214,16 @@ function TVIntermissionInner({
               gap: 18,
             }}
           >
+            <div
+              style={{
+                color: t.ink,
+                fontSize: 15,
+                fontWeight: 700,
+                textAlign: "center",
+              }}
+            >
+              Players — scan to join this game
+            </div>
             <QRBlock url={joinUrl} size={110} light />
             <div>
               <Eyebrow color={t.inkMute} size={10}>NEW HERE?</Eyebrow>

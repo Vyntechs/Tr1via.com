@@ -98,7 +98,7 @@ function TVLobbyInner({
   roster = [],
   rosterPlayerIds,
   joinUrl = "",
-  hostStatusLine = "ROOM OPEN · STARTS WHEN HOST IS READY",
+  hostStatusLine = "GAME OPEN · STARTS WHEN HOST IS READY",
   gameStatusLine = "GAME 1 OF 2 · WAITING",
   welcomeEvent = null,
   topics = [],
@@ -165,7 +165,7 @@ function TVLobbyInner({
           </Display>
 
           <div style={{ marginTop: "clamp(8px, 1.4vh, 28px)", fontSize: "clamp(16px, 2vh, 22px)", color: t.inkMid, lineHeight: 1.4, maxWidth: 580 }}>
-            Open your camera, point at the code, pick a name. You&apos;re in the room in under ten seconds.
+            Open your camera, point at the code, pick a name. You&apos;re in the game in under ten seconds.
           </div>
 
           <div style={{ marginTop: "clamp(12px, 2vh, 44px)", display: "flex", gap: 36, alignItems: "flex-start" }}>
@@ -185,7 +185,7 @@ function TVLobbyInner({
               </div>
             </div>
             <div>
-              <Eyebrow color={t.inkMute} size={11}>ROOM CODE</Eyebrow>
+              <Eyebrow color={t.inkMute} size={11}>GAME CODE</Eyebrow>
               <div
                 data-testid="tv-lobby-room-code"
                 style={{
@@ -210,6 +210,17 @@ function TVLobbyInner({
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+          <div
+            style={{
+              marginBottom: 12,
+              color: t.ink,
+              fontSize: 18,
+              fontWeight: 700,
+              letterSpacing: "-0.01em",
+            }}
+          >
+            Players — scan to join this game
+          </div>
           <div
             data-testid="tv-lobby-qr"
             style={{
@@ -254,7 +265,7 @@ function TVLobbyInner({
             <Numeric size={22} weight={700} color="#0E0805" tracking={-0.02}>
               {inRoomCount}
             </Numeric>
-            <span style={{ fontSize: 14, color: "#0E0805", fontWeight: 600 }}>in the room</span>
+            <span style={{ fontSize: 14, color: "#0E0805", fontWeight: 600 }}>players joined</span>
           </div>
 
           <div style={{ marginTop: "clamp(12px, 1.8vh, 28px)", width: "100%", maxWidth: 420 }}>

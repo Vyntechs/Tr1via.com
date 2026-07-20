@@ -35,6 +35,13 @@ describe("PlayersSheet — mid-game scannable join QR", () => {
     expect(within(sheet).getByText(/Game's still running/i)).toBeInTheDocument();
   });
 
+  it("labels the QR by who scans it and what happens", () => {
+    const sheet = openSheet();
+    expect(
+      within(sheet).getByText("Players — scan to join this game"),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the roster and add-latecomer button (no regression)", () => {
     const sheet = openSheet();
     expect(within(sheet).getByTestId("host-add-player-btn")).toBeInTheDocument();

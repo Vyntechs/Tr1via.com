@@ -366,7 +366,7 @@ function TVLobbyView({
       roster={roster}
       rosterPlayerIds={rosterPlayerIds}
       joinUrl={joinUrl(snapshot.night.roomCode)}
-      hostStatusLine="ROOM OPEN · STARTS WHEN HOST IS READY"
+      hostStatusLine="GAME OPEN · STARTS WHEN HOST IS READY"
       gameStatusLine={gameStatus}
       topics={selectLobbyTopics(snapshot)}
       welcomeEvent={welcomeEvent}
