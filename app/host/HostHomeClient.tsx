@@ -17,6 +17,7 @@ import {
 } from "@/components/host";
 import { OnboardingFirstDashboard } from "@/components/onboarding";
 import { BillingUpgrade } from "@/components/host/BillingUpgrade";
+import { hostRunPath } from "@/lib/host/hostRunPath";
 
 const HOST_WHATS_NEW_KEY = "tr1via-host-whats-new-original-v1";
 
@@ -110,7 +111,7 @@ export function HostHomeClient({
   function goToTonight(nightId: string) {
     if (!tonight) return;
     if (tonight.status === "live") {
-      router.push(`/host/live/${nightId}`);
+      router.push(hostRunPath(nightId));
     } else {
       router.push(`/host/setup/${nightId}`);
     }

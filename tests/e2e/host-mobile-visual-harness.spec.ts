@@ -392,7 +392,7 @@ test("all production prep components fit every approved phone viewport", async (
   }
 });
 
-test("dashboard private phone control has a complete phone-sized hit target", async ({
+test("dashboard makes phone hosting the primary complete hit target", async ({
   page,
 }) => {
   for (const viewport of VIEWPORTS) {
@@ -401,14 +401,16 @@ test("dashboard private phone control has a complete phone-sized hit target", as
     const dashboard = page.getByTestId("host-dashboard");
     await expect(dashboard).toHaveAttribute("data-host-mobile-surface", "true");
     await expectNoHorizontalOverflow(page);
+    const primary = page.getByRole("button", { name: "Host from this phone" });
+    await expect(primary).toBeVisible();
+    await expect(
+      page.getByTestId("host-private-phone-controls"),
+    ).toHaveCount(0);
 
     const interactive = dashboard.locator(INTERACTIVE_SELECTOR);
     for (let index = 0; index < (await interactive.count()); index += 1) {
       await expectAccessibleHitTarget(page, interactive.nth(index));
     }
-    await expectAccessibleHitTarget(
-      page,
-      '[data-testid="host-private-phone-controls"]',
-    );
+    await expectAccessibleHitTarget(page, primary);
   }
 });

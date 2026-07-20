@@ -12,6 +12,7 @@ import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import type { HostTopicSuggestion } from "@/lib/host/topicSuggestions";
 import type { CategoryRow, GameRow } from "@/lib/supabase/types";
+import { hostRunPath } from "@/lib/host/hostRunPath";
 
 export interface HostSetupOverviewClientProps {
   nightId: string;
@@ -150,7 +151,7 @@ export function HostSetupOverviewClient({
 
   async function handleOpenRoom() {
     if (isOpen) {
-      router.push(`/host/live/${nightId}`);
+      router.push(hostRunPath(nightId));
       return;
     }
     setOpening(true);
@@ -161,7 +162,7 @@ export function HostSetupOverviewClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "could not open the room");
       }
-      router.push(`/host/live/${nightId}`);
+      router.push(hostRunPath(nightId));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not open the room.");
       setOpening(false);

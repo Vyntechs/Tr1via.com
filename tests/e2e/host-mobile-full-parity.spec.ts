@@ -147,8 +147,11 @@ test.describe.serial("phone-first host parity", () => {
       await expectTouchSafeHostActions(page);
 
       await page.goto(`/host/live/${readyNight.nightId}`);
-      await expect(page.getByTestId("host-live-console")).toBeVisible();
-      await expect(page.getByText("CORRECT", { exact: true })).toHaveCount(0);
+      await expect(page.getByTestId("host-phone-round-controls")).toBeVisible();
+      await expect(page.getByRole("link", { name: "Open venue screen" })).toHaveAttribute(
+        "href",
+        `/tv/${readyNight.roomCode}`,
+      );
       await expectPhoneFit(page);
 
       await page.goto(`/host/phone/${readyNight.nightId}`);

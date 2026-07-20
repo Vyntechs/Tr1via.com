@@ -50,6 +50,8 @@ import { playWelcomeChime } from "@/lib/audio/welcomeChime";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
 import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
+import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -57,10 +59,28 @@ export interface HostLiveConsoleClientProps {
   nightId: string;
   roomCode: string;
   venueName: string;
+  hostName: string;
   themeKey: string;
 }
 
-export function HostLiveConsoleClient({
+export function HostLiveConsoleClient(props: HostLiveConsoleClientProps) {
+  const compact = useMediaQuery("(max-width: 860px)");
+
+  if (compact) {
+    return (
+      <HostPhoneClient
+        nightId={props.nightId}
+        roomCode={props.roomCode}
+        hostName={props.hostName}
+        themeKey={props.themeKey as ThemeKey}
+      />
+    );
+  }
+
+  return <DesktopHostLiveConsoleClient {...props} />;
+}
+
+function DesktopHostLiveConsoleClient({
   nightId,
   roomCode,
   venueName,

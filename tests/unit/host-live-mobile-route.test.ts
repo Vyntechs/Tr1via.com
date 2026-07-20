@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-describe("host live privacy boundary", () => {
+describe("host live device routing", () => {
   it.each([320, 844])(
-    "keeps /host/live venue-safe at %ipx instead of selecting private UI by viewport",
+    "falls back to the private controller when /host/live is opened at %ipx",
     () => {
     const client = readFileSync(
       join(process.cwd(), "app/host/live/[nightId]/HostLiveConsoleClient.tsx"),
@@ -15,9 +15,9 @@ describe("host live privacy boundary", () => {
       "utf8",
     );
 
-      expect(client).not.toContain("HostPhoneClient");
-      expect(client).not.toContain('useMediaQuery("(max-width: 860px)")');
-      expect(page).not.toContain("hostName={owned.host.display_name}");
+      expect(client).toContain("HostPhoneClient");
+      expect(client).toContain('useMediaQuery("(max-width: 860px)")');
+      expect(page).toContain("hostName={owned.host.display_name}");
     },
   );
 
@@ -33,6 +33,17 @@ describe("host live privacy boundary", () => {
 
     expect(phonePage).toContain("<HostPhoneClient");
     expect(privatePreview).toContain("CORRECT");
+  });
+
+  it("lets the phone host open the public venue screen without losing the controller tab", () => {
+    const phoneClient = readFileSync(
+      join(process.cwd(), "app/host/phone/[nightId]/HostPhoneClient.tsx"),
+      "utf8",
+    );
+
+    expect(phoneClient).toContain('href={`/tv/${roomCode}`}');
+    expect(phoneClient).toContain('target="_blank"');
+    expect(phoneClient).toContain("Open venue screen");
   });
 
   it("removes the chip reserve at the layout boundary without negative-margin cancellation", () => {
