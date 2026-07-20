@@ -260,3 +260,7 @@ Reason: His lived signal is the source; structuring and naming it is the agent's
 Trigger: Product language uses `room` as a generic stand-in for the game, venue, TV, players, audience, or show.
 Rule: Use `game` by default; use TV, players, answer, or audience only when more exact. Reserve `room` for invisible internal code symbols.
 Reason: Generic container words create questions and force unnecessary interpretation instead of answering what the interface means.
+### figma-respects-monthly-themes
+Trigger: Implementing Figma-derived UI in TR1VIA.
+Rule: Treat Figma colors as examples; shipped components must use semantic monthly theme tokens.
+Reason: Every month needs its intentional palette without sacrificing layout, hierarchy, or contrast.
