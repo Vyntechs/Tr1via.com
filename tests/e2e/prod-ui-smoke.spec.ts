@@ -4,8 +4,8 @@
 // validation.
 //
 // What this proves (and the API-only smoke doesn't):
-//   1. /login renders and the email input accepts text
-//   2. Clicking "Sign in" fires the submit handler → /api/auth/founder-login
+//   1. /login renders its device-neutral promise and the email input accepts text
+//   2. Clicking "Sign in" fires the submit handler → /api/auth/host-access
 //      (via the page's wired-in fetch) and, on 200, the client navigates to
 //      /host
 //   3. /host renders without crashing — either the returning-host dashboard
@@ -40,6 +40,9 @@ test.describe("prod UI smoke — login → dashboard", () => {
 
     // 1. /login renders
     await page.goto("/login");
+    await expect(
+      page.getByRole("heading", { name: "Your game. Your control." }),
+    ).toBeVisible();
     const emailInput = page.getByLabel("Email", { exact: true });
     await expect(emailInput).toBeVisible();
 

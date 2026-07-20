@@ -1,7 +1,7 @@
 // HOST LOGIN — one email field, one "Sign in" button. Wrapped in the
-// LaptopShell so it matches the rest of the host-laptop aesthetic.
+// shared host shell so the same account-first door works on any device.
 //
-// Auth: POST /api/auth/founder-login looks the email up against the hosts
+// Auth: POST /api/auth/host-access looks the email up against the hosts
 // table and mints that host's session on the response — no magic link, no
 // OTP, no email round-trip. Sign-in completes in one request. On 200 the
 // client returns to a safe intended /host path; the first-time-vs-returning split is
@@ -135,9 +135,9 @@ function HostLoginInner() {
           tracking={-0.04}
           style={{ marginTop: 14, display: "block", lineHeight: 0.95 }}
         >
-          The host&apos;s
+          Your game.
           <br />
-          <span style={{ color: t.accent }}>laptop.</span>
+          <span style={{ color: t.accent }}>Your control.</span>
         </Display>
         <p
           style={{
