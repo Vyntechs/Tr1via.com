@@ -269,3 +269,13 @@ Reason: Every month needs its intentional palette without sacrificing layout, hi
 Trigger: E2E expected a seed's raw AI topic while the product intentionally showed its cleaned category name.
 Rule: Assert exact customer-facing labels and the absence of hidden generation metadata.
 Reason: Tests should protect product language, not internal seed details.
+
+### venue-display-preview-is-not-the-display-route
+Trigger: Host phone opens the full venue route and receives a cropped desktop TV layout.
+Rule: Render phone preview from a fixed 16:9 logical canvas; reserve full display routes for actual landscape screens.
+Reason: Reflowing wall-display UI inside phone dimensions destroys composition even when the outer aspect ratio is correct.
+
+### label-each-device-role-before-qr
+Trigger: Host sees remote, player, and TV QR or link choices without knowing which device should use them.
+Rule: Name destination, scanner, privacy, and result for every QR; never present unlabeled device handoffs.
+Reason: Three valid URLs become one confusing setup when roles are implicit.
