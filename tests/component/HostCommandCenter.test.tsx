@@ -19,6 +19,7 @@ describe("HostCommandCenter", () => {
           lockedCount={0}
           delivery={{ tv: "current", currentPhones: 31, recoveringPhones: 0 }}
           onNavigate={onNavigate}
+          venueMonitor={<div>Exact venue picture</div>}
         >
           <div>Board body</div>
         </HostCommandCenter>
@@ -37,6 +38,9 @@ describe("HostCommandCenter", () => {
     expect(screen.getByText("31 phones live ✓")).toBeVisible();
     expect(screen.getByText("Shown everywhere")).toBeVisible();
     expect(screen.getByText("Board body")).toBeVisible();
+    expect(screen.getByRole("main")).toHaveAttribute("data-active", "board");
+    expect(screen.getByRole("region", { name: "Live host workspace" })).toBeVisible();
+    expect(screen.getByText("Exact venue picture")).toBeVisible();
 
     for (const section of ["Players", "Scores", "TV"]) {
       fireEvent.click(screen.getByRole("button", { name: section }));

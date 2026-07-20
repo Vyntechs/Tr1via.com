@@ -16,6 +16,7 @@ import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
   HostAnswerResult,
   HostBetweenGames,
+  HostVenueMonitor,
   HostPhoneUpcoming,
   HostPhoneLive,
   HostScores,
@@ -33,6 +34,7 @@ import { BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
 import type { HostLiveProjection } from "@/lib/live-answer/contracts";
 import { useGameDelivery } from "@/lib/hooks/useGameDelivery";
 import type { HostDeliveryReceipt } from "@/components/host/HostGameStatus";
+import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -761,6 +763,16 @@ export function HostPhoneClient({
     stageKey: stage.stage,
     enabled: isResilient,
   });
+  const venueTVSnapshot = useMemo(
+    () => roomToTVSnapshot({
+      room,
+      allQuestions,
+      scores,
+      allScores: room.allScores,
+      answers,
+    }),
+    [allQuestions, answers, room, scores],
+  );
   const isGame1Preflight =
     stage.stage === "game-ready" &&
     game1 !== null &&
@@ -949,7 +961,7 @@ export function HostPhoneClient({
         onSubmitAdjustment={adjustPoints}
       />
     )
-    : activeSection === "board"
+    : activeSection === "board" || activeSection === "tv"
     ? isGame1Preflight
       ? preflight
         ? (
@@ -977,7 +989,6 @@ export function HostPhoneClient({
     : (
       <HostSectionSummary
         section={activeSection}
-        roomCode={roomCode}
         playerNames={room.players.map((player) => player.display_name)}
         scores={[]}
       />
@@ -999,6 +1010,20 @@ export function HostPhoneClient({
       delivery={delivery}
       onNavigate={navigate}
       controls={roundControls}
+      venueMonitor={(
+        <HostVenueMonitor
+          snapshot={venueTVSnapshot}
+          roomCode={roomCode}
+          active={activeSection === "tv"}
+          themeKey={themeKey}
+          lastBroadcastRevealedAt={
+            room.lastBroadcast?.event === "reveal"
+              ? room.lastBroadcast.serverNow
+              : null
+          }
+          lastBroadcastServerNow={room.lastBroadcast?.serverNow ?? null}
+        />
+      )}
     >
       {sectionContent}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
@@ -1096,6 +1121,7 @@ interface PhoneCenterProps {
   lockedCount: number;
   delivery: HostDeliveryReceipt;
   onNavigate: (section: HostSection) => void;
+  venueMonitor: React.ReactNode;
 }
 
 function PhoneCenter({ themeKey, ...props }: PhoneCenterProps) {
@@ -1115,6 +1141,7 @@ function PhoneCenterInner({
   lockedCount,
   delivery,
   onNavigate,
+  venueMonitor,
 }: Omit<PhoneCenterProps, "themeKey">) {
   return (
     <div data-host-mobile-surface="true" data-host-full-bleed="true">
@@ -1125,6 +1152,7 @@ function PhoneCenterInner({
         lockedCount={lockedCount}
         delivery={delivery}
         onNavigate={onNavigate}
+        venueMonitor={venueMonitor}
       >
         <div style={{ minHeight: "100%", display: "flex", flexDirection: "column" }}>
           {controls}
@@ -1137,12 +1165,10 @@ function PhoneCenterInner({
 
 function HostSectionSummary({
   section,
-  roomCode,
   playerNames,
   scores,
 }: {
-  section: Exclude<HostSection, "board">;
-  roomCode: string;
+  section: Exclude<HostSection, "board" | "tv">;
   playerNames: string[];
   scores: Array<{ name: string; score: number }>;
 }) {
@@ -1154,38 +1180,6 @@ function HostSectionSummary({
     background: t.surface,
     color: t.ink,
   };
-
-  if (section === "tv") {
-    return (
-      <section style={panelStyle}>
-        <h2 style={{ margin: 0, fontSize: 20 }}>Venue TV</h2>
-        <p style={{ color: t.inkMid, fontSize: 13, lineHeight: 1.45 }}>
-          Open the audience-safe venue display in a separate tab.
-        </p>
-        <a
-          href={`/tv/${roomCode}`}
-          target="_blank"
-          rel="noreferrer"
-          style={{
-            minWidth: 48,
-            minHeight: 48,
-            padding: "0 16px",
-            border: `1px solid ${t.line}`,
-            borderRadius: 10,
-            color: t.accent,
-            textDecoration: "none",
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxSizing: "border-box",
-            fontWeight: 800,
-          }}
-        >
-          Open venue TV
-        </a>
-      </section>
-    );
-  }
 
   const isPlayers = section === "players";
   const rows = isPlayers

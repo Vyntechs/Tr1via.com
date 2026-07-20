@@ -6,6 +6,8 @@ export { HostCommandCenter } from "./HostCommandCenter";
 export type { HostCommandCenterProps, HostSection } from "./HostCommandCenter";
 export { HostGameStatus } from "./HostGameStatus";
 export type { HostDeliveryReceipt, HostGameStatusProps } from "./HostGameStatus";
+export { HostVenueMonitor } from "./HostVenueMonitor";
+export type { HostVenueMonitorProps } from "./HostVenueMonitor";
 export { HostPhoneLive } from "./HostPhoneLive";
 export type { HostPhoneLiveProps, HostPhoneLivePlayer } from "./HostPhoneLive";
 export { HostAnswerResult } from "./HostAnswerResult";

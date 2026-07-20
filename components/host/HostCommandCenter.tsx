@@ -15,6 +15,7 @@ export interface HostCommandCenterProps {
   lockedCount: number;
   delivery: HostDeliveryReceipt;
   onNavigate: (section: HostSection) => void;
+  venueMonitor?: ReactNode;
   children: ReactNode;
 }
 
@@ -32,6 +33,7 @@ export function HostCommandCenter({
   lockedCount,
   delivery,
   onNavigate,
+  venueMonitor,
   children,
 }: HostCommandCenterProps) {
   const { t } = useTheme();
@@ -49,7 +51,13 @@ export function HostCommandCenter({
   } as CSSProperties;
 
   return (
-    <main className={styles.root} data-stage={stage} style={themeStyle}>
+    <main
+      className={styles.root}
+      data-stage={stage}
+      data-active={active}
+      data-has-monitor={venueMonitor ? "true" : "false"}
+      style={themeStyle}
+    >
       <div className={styles.layout}>
         <HostGameStatus
           stage={stage}
@@ -57,7 +65,10 @@ export function HostCommandCenter({
           lockedCount={lockedCount}
           delivery={delivery}
         />
-        <section className={styles.body}>{children}</section>
+        <section className={styles.workspace} aria-label="Live host workspace">
+          <div className={styles.body}>{children}</div>
+          {venueMonitor && <aside className={styles.monitor}>{venueMonitor}</aside>}
+        </section>
         <nav className={styles.nav} aria-label="Host controls">
           {SECTIONS.map((section) => (
             <button

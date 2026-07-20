@@ -906,7 +906,11 @@ describe("HostPhoneClient reveal flow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "TV" }));
     expect(screen.getByRole("heading", { name: "Venue TV" })).toBeVisible();
-    const venueTVLink = screen.getByRole("link", { name: "Open venue TV" });
+    expect(screen.getByRole("region", { name: "Venue TV preview" })).toHaveAttribute(
+      "data-audience-safe",
+      "true",
+    );
+    const venueTVLink = screen.getByRole("link", { name: "Open full venue display" });
     expect(venueTVLink).toHaveAttribute("href", "/tv/ABC123");
     expect(venueTVLink).toHaveStyle({
       display: "inline-flex",
@@ -1149,6 +1153,45 @@ describe("HostPhoneClient reveal flow", () => {
       "/api/games/g2/start",
       expect.objectContaining({ method: "POST" }),
     ));
+  });
+
+  it("keeps the Game 1 podium in the exact venue preview until Game 2's first question", async () => {
+    const game1Done = game("g1", 1, "done");
+    const game2Live = game("g2", 2, "live");
+    const game2Category = { ...readyCategory, id: "c2", game_id: "g2", name: "Movies" };
+    const game1Score = {
+      ...score("p1"),
+      game_id: "g1",
+      display_name: "Jordan",
+      score: 6100,
+    };
+    h.room = {
+      ...room(),
+      games: [game1Done, game2Live],
+      categories: [game2Category],
+      currentGame: game2Live,
+      players: [player("p1")],
+      tvPlayerKeys: { p1: "tv-jordan" },
+      scoreGameId: "g2",
+      scores: [],
+      allScores: [game1Score],
+    };
+    h.questions = [{ ...pickedQuestion, id: "g2-q1", category_id: "c2" }];
+
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "TV" }));
+
+    expect(await screen.findByTestId("tv-intermission")).toBeInTheDocument();
+    expect(screen.getByText("Jordan")).toBeVisible();
+    expect(screen.getByText("6,100")).toBeVisible();
   });
 
   it("uses the exact resilient final-game End command when the host presents winners", async () => {
@@ -1577,6 +1620,58 @@ describe("HostPhoneClient reveal flow", () => {
         }),
       },
     ));
+  });
+
+  it("keeps a canonically applied command text-only under reduced motion", async () => {
+    h.room = { ...room(), night: resilientNight() };
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(COMMAND_ID);
+    const vibrate = vi.fn();
+    const originalMatchMedia = window.matchMedia;
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn().mockReturnValue({ matches: true }),
+    });
+    Object.defineProperty(navigator, "vibrate", {
+      configurable: true,
+      value: vibrate,
+    });
+    h.fetch.mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/nights/night-1/preflight") {
+        return new Response(JSON.stringify(preflightResponse()), { status: 200 });
+      }
+      return new Response(JSON.stringify({
+        code: "applied",
+        applied: true,
+        eventKind: "game_started",
+        runId: RUN_ID,
+        gameId: "g1",
+        roomRevision: 9,
+        controlRevision: 5,
+      }), { status: 200 });
+    });
+
+    try {
+      render(
+        <HostPhoneClient
+          nightId="night-1"
+          roomCode="ABC123"
+          hostName="Heather Moore"
+          themeKey="house"
+        />,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Start Game 1" }));
+      await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+        "/api/games/g1/start",
+        expect.any(Object),
+      ));
+      expect(vibrate).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "matchMedia", {
+        configurable: true,
+        value: originalMatchMedia,
+      });
+      delete (navigator as unknown as { vibrate?: unknown }).vibrate;
+    }
   });
 
   it("blocks a resilient Game 1 start when required control metadata is missing", async () => {

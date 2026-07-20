@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HostGameStatus } from "@/components/host/HostGameStatus";
 import { ThemeProvider } from "@/components/system";
@@ -8,7 +8,10 @@ import { TR1VIA_THEMES } from "@/lib/theme/tokens";
 
 const canonical = { runId: "run", roomRevision: 9, controlRevision: 4, playId: "play" };
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 function renderStatus(delivery: React.ComponentProps<typeof HostGameStatus>["delivery"]) {
   return render(
@@ -106,6 +109,56 @@ describe("game delivery hooks", () => {
 
     view.rerender(<SurfaceProbe enabled />);
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("retries a dropped observation acknowledgement on the existing heartbeat", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error("ack dropped"))
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<SurfaceProbe />);
+    await act(async () => { await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("converges from recovering to shown everywhere after the next truthful receipt", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        tv: "recovering",
+        currentPhones: 29,
+        recoveringPhones: 2,
+        canonical,
+      }), { status: 200, headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        tv: "current",
+        currentPhones: 31,
+        recoveringPhones: 0,
+        canonical,
+      }), { status: 200, headers: { "content-type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    function StatusProbe() {
+      const delivery = useGameDelivery({ roomCode: "ABC234", canonical, stageKey: "question-live" });
+      return <HostGameStatus stage="question-live" playerCount={31} lockedCount={23} delivery={delivery} />;
+    }
+
+    render(<ThemeProvider themeKey="november"><StatusProbe /></ThemeProvider>);
+    await act(async () => { await Promise.resolve(); });
+    expect(screen.getByText("2 recovering — answer protected")).toBeVisible();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+    expect(screen.getByText("Shown everywhere")).toBeVisible();
+    expect(screen.getByText("31 phones live ✓")).toBeVisible();
   });
 
   it("hides settled delivery claims while the next revision is pending", async () => {
