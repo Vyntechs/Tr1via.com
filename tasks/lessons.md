@@ -304,3 +304,13 @@ Reason: Answer correctness alone cannot prove that a question belongs in the req
 Trigger: A stale generation worker can revive after a replacement attempt starts.
 Rule: Validate the attempt inside the same locked database transaction as every durable side effect; separate preflight checks are only leases.
 Reason: A preflight can pass, block beyond lease expiry, then commit after a replacement claim.
+
+### factual-certification-needs-distinct-challenges
+Trigger: Repeated identical same-model verdicts agree on a generated trivia answer.
+Rule: Require blind answer derivation followed by an adversarial ambiguity challenge; never count repeated anchored verdicts as independent.
+Reason: Correlated passes can confidently approve the same disputed or non-unique answer.
+
+### persisted-ai-checkpoints-need-current-certification
+Trigger: Factual certification strengthens after AI-generated checkpoint rows already exist.
+Rule: Re-certify persisted candidates before reuse; fenced-delete rejects while preserving accepted IDs and images.
+Reason: Durable storage preserves prior evidence but cannot upgrade it to a newer safety guarantee.

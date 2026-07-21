@@ -10,10 +10,10 @@
 
 **Execution status (2026-07-20):** Tasks 1, 2, 2A, and 2B are implemented and
 verified. All durable generation effects now validate the attempt inside the
-same locked database transaction. Full tests, typecheck, build, static review,
-security review, and runtime validation pass. Heather's existing unopened Game
-1 was also corrected with guarded production data edits. PR #154 is open;
-migration-first production release remains.
+same locked database transaction. PR #154 was merged and released after the
+migration-first production gate. Live verification then exposed correlated
+answer certification, addressed by Task 4 below. Heather's existing unopened
+Game 1 was also corrected with guarded production data edits.
 
 ## Global Constraints
 
@@ -220,3 +220,55 @@ Production remains unchanged until founder approval to merge. After approval, me
 Completed before release with a read-before-write guarded production query: the
 unplayed King-cobra candidate was removed from Heather's `non-Venomous snakes`
 category while the remaining category and unopened Game 1 were preserved.
+
+### Task 4: Replace repeated anchored verdicts with blind derivation and adversarial challenge
+
+**Production finding:** Two identical Opus calls received the proposed answer
+and fact blurb, so their agreement was correlated and anchored. Production
+validation found a disputed protection-year item and an open-world snake item
+with another defensible answer.
+
+**Files:**
+- Modify: `lib/ai/verify-answers.ts`
+- Modify: `lib/ai/collect-verified-questions.ts`
+- Modify: `app/api/categories/[id]/generate/route.ts`
+- Modify: `tests/unit/verify-answers.test.ts`
+- Modify: `tests/unit/collect-verified-questions.test.ts`
+
+- [x] **Step 1: Prove the failure with semantic fixtures**
+
+Add the eastern-indigo protection-year conflict and the competing-kingsnake
+answer as named regression fixtures. Prove that the orchestrator supplies pass
+identity and rejects disagreement or ambiguity.
+
+- [x] **Step 2: Make pass zero genuinely blind**
+
+Omit the marked answer, correct index, and fact blurb from the model payload.
+Require an independently derived option index or null, ambiguity, image
+independence, topic fit, and concise basis. Compare the derived index with the
+private marked index in application code.
+
+- [x] **Step 3: Make pass one adversarial**
+
+Include the complete item and explicitly challenge alternate answers inside or
+outside the choices, missing jurisdiction/date/metric, conflicting facts,
+unsupported blurbs, and open-world wording. Fail closed when uncertain.
+
+- [x] **Step 4: Wire and verify the distinct passes**
+
+Pass verification identity through the collection loop and select `blind` for
+pass zero and `adversarial` for subsequent passes in the generation route.
+Run focused tests and strict TypeScript checking before release review.
+
+- [x] **Step 5: Re-certify durable pre-hotfix checkpoints**
+
+On resume, run every persisted AI candidate through both current passes before
+counting it clean. Preserve accepted rows with their IDs and images, delete only
+rejected IDs through the attempt-fenced question RPC, and generate the resulting
+shortfall while avoiding rejected prompts.
+
+- [x] **Step 6: Fail closed on hostile input and duplicate verdict indices**
+
+Treat all trivia fields as untrusted quoted data and ignore embedded
+instructions. Invalidate duplicate indices within one model response; accept a
+later retry only when it returns one unique verdict for that index.

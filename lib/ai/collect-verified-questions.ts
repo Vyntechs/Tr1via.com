@@ -1,15 +1,14 @@
 // Generate → verify → regenerate loop. Returns only questions that EVERY
-// independent verify pass agrees are correct AND non-ambiguous. Regenerates
+// distinct verify pass agrees are correct AND non-ambiguous. Regenerates
 // (avoiding prompts already shown) until `target` clean questions exist or
 // `maxRounds` is hit. Returns however many passed — fewer, never wrong.
 //
-// Why multiple passes: a single AI fact-check has wobble on borderline
-// questions — it can bless one and flag it the next. Requiring agreement
-// across `verifyPasses` independent checks halves the slip rate (measured
-// ~5% -> ~2.5% across a broad topic battery) AND drops the genuinely
-// contestable questions, not just the clearly wrong ones. It cannot reach 0%
-// — some trivia is inherently debatable — so the make-good adjustment path
-// remains the catch for the rare residual.
+// Why multiple passes: pass 0 derives the answer without seeing the proposed
+// answer; later passes actively challenge ambiguity and supporting facts.
+// Agreement between distinct checks drops contestable questions instead of
+// counting repeated, correlated model calls as independent evidence. It cannot
+// reach 0% — some trivia is inherently debatable — so the make-good adjustment
+// path remains the catch for the rare residual.
 //
 // Pure orchestration: `generate` and `verify` are injected so this is unit-
 // tested without the network. The route supplies the real implementations.
@@ -40,12 +39,17 @@ export interface CollectVerifiedRoundEvent {
   rejected: CollectVerifiedRejectedCandidate[];
 }
 
+export interface VerifiedQuestionClassification {
+  acceptedIndexes: number[];
+  rejected: Array<CollectVerifiedRejectedCandidate & { index: number }>;
+}
+
 export interface CollectVerifiedOptions {
   target: number;
   maxRounds: number;
   /** Previously certified questions restored from durable storage. */
   initialClean?: GeneratedQuestion[];
-  /** Independent verify passes that must ALL agree a question is clean. Default 2. */
+  /** Distinct verify passes that must ALL agree a question is clean. Default 2. */
   verifyPasses?: number;
   /**
    * Produce a fresh batch. `avoidPrompts` are prompts already shown (skip them);
@@ -53,7 +57,10 @@ export interface CollectVerifiedOptions {
    * can request just the shortfall instead of a whole new batch.
    */
   generate: (avoidPrompts: string[], need: number) => Promise<GeneratedQuestion[]>;
-  verify: (questions: GeneratedQuestion[]) => Promise<AnswerVerdict[]>;
+  verify: (
+    questions: GeneratedQuestion[],
+    passIndex: number,
+  ) => Promise<AnswerVerdict[]>;
   /** Persist each newly accepted batch before the next refill round starts. */
   onAccepted?: (questions: GeneratedQuestion[]) => void | Promise<void>;
   /** Optional: observe per-round verification quality. No-op if omitted. */
@@ -89,28 +96,26 @@ export async function collectVerifiedQuestions(
     }
     for (const q of batch) seenPrompts.push(q.prompt);
 
-    // Independent verify passes, run concurrently. Keep a question only if
-    // EVERY pass marks it correct and unambiguous.
+    // Distinct verify passes, run concurrently. The pass identity lets the
+    // caller make pass 0 blind and later passes adversarial instead of asking
+    // the same anchored model question twice.
     const passResults = await Promise.all(
-      Array.from({ length: passes }, () => opts.verify(batch)),
+      Array.from({ length: passes }, (_, passIndex) =>
+        opts.verify(batch, passIndex),
+      ),
     );
-    const verdictsByPass = passResults.map(
-      (verdicts) => new Map(verdicts.map((v) => [v.index, v])),
-    );
+    const classification = classifyVerifiedQuestions(batch, passResults);
     const accepted: GeneratedQuestion[] = [];
-    const rejected: CollectVerifiedRejectedCandidate[] = [];
-    batch.forEach((q, i) => {
-      const reasons = rejectionReasonsForIndex(verdictsByPass, i);
-      if (blockingRiskFlagsForQuestion(q).length > 0) {
-        reasons.push("deterministic_risk");
-      }
-      if (reasons.length === 0 && clean.length < opts.target) {
-        clean.push(q);
-        accepted.push(q);
-      } else if (reasons.length > 0) {
-        rejected.push({ prompt: q.prompt, reasons });
-      }
-    });
+    for (const index of classification.acceptedIndexes) {
+      if (clean.length >= opts.target) break;
+      const question = batch[index]!;
+      clean.push(question);
+      accepted.push(question);
+    }
+    const rejected = classification.rejected.map(({ prompt, reasons }) => ({
+      prompt,
+      reasons,
+    }));
     if (accepted.length > 0) {
       await opts.onAccepted?.(accepted);
     }
@@ -124,6 +129,31 @@ export async function collectVerifiedQuestions(
   }
 
   return clean.slice(0, opts.target);
+}
+
+export function classifyVerifiedQuestions(
+  questions: GeneratedQuestion[],
+  passResults: AnswerVerdict[][],
+): VerifiedQuestionClassification {
+  const verdictsByPass = passResults.map(
+    (verdicts) => new Map(verdicts.map((verdict) => [verdict.index, verdict])),
+  );
+  const acceptedIndexes: number[] = [];
+  const rejected: VerifiedQuestionClassification["rejected"] = [];
+
+  questions.forEach((question, index) => {
+    const reasons = rejectionReasonsForIndex(verdictsByPass, index);
+    if (blockingRiskFlagsForQuestion(question).length > 0) {
+      reasons.push("deterministic_risk");
+    }
+    if (reasons.length === 0) {
+      acceptedIndexes.push(index);
+    } else {
+      rejected.push({ index, prompt: question.prompt, reasons });
+    }
+  });
+
+  return { acceptedIndexes, rejected };
 }
 
 function rejectionReasonsForIndex(
@@ -145,7 +175,9 @@ function rejectionReasonsForIndex(
     }
     if (!verdict.markedAnswerIsCorrect) verifierWrong = true;
     if (verdict.ambiguous) verifierAmbiguous = true;
-    if (!verdict.factBlurbIsCorrect) factBlurbWrong = true;
+    // Blind verification deliberately does not see the fact blurb, so null
+    // means "not assessed in this pass." The adversarial pass must assess it.
+    if (verdict.factBlurbIsCorrect === false) factBlurbWrong = true;
     if (!verdict.answerableWithoutImage) imageRequired = true;
     if (!verdict.fitsRequestedTopic) categoryMismatch = true;
   }

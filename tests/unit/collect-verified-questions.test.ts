@@ -1,5 +1,8 @@
 import { it, expect } from "vitest";
-import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
+import {
+  classifyVerifiedQuestions,
+  collectVerifiedQuestions,
+} from "@/lib/ai/collect-verified-questions";
 import type { GeneratedQuestion } from "@/lib/ai/generate-questions";
 import type { AnswerVerdict } from "@/lib/ai/verify-answers";
 
@@ -268,6 +271,55 @@ it("requires ALL verify passes to agree — drops a question one pass flags (ver
     },
   });
   expect(out.map((x) => x.prompt)).toEqual(["agree"]); // "split" dropped — passes disagreed
+});
+
+it("passes verification identity and rejects the rattlesnake fixture when the adversarial pass finds kingsnakes also fit", async () => {
+  const passIndexes: number[] = [];
+  const easternIndigo: GeneratedQuestion = {
+    ...q("Which North American non-venomous snake is known for pursuing and eating rattlesnakes?"),
+    options: ["Eastern indigo snake", "Garter snake", "Corn snake", "Rat snake"],
+    factBlurb: "Eastern indigo snakes actively pursue and eat rattlesnakes.",
+  };
+
+  const out = await collectVerifiedQuestions({
+    target: 1,
+    maxRounds: 1,
+    generate: async () => [easternIndigo],
+    verify: async (_questions, passIndex) => {
+      passIndexes.push(passIndex);
+      return passIndex === 0
+        ? [ok(0)]
+        : [{ ...ok(0), ambiguous: true }];
+    },
+  });
+
+  expect(passIndexes.sort()).toEqual([0, 1]);
+  expect(out).toEqual([]);
+});
+
+it("classifies resumed legacy candidates so only twice-certified rows stay clean", () => {
+  const persisted = [
+    { id: "keep-id", q: q("safe persisted row"), hasImage: true },
+    { id: "delete-id", q: q("disputed persisted row"), hasImage: true },
+  ];
+  const classification = classifyVerifiedQuestions(persisted.map((row) => row.q), [
+    [ok(0), wrong(1)],
+    [ok(0), ok(1)],
+  ]);
+  const acceptedIndexes = new Set(classification.acceptedIndexes);
+  const preserved = persisted.filter((_, index) => acceptedIndexes.has(index));
+  const rejectedIds = classification.rejected.map(({ index }) => persisted[index]!.id);
+
+  expect(classification.acceptedIndexes).toEqual([0]);
+  expect(preserved).toEqual([persisted[0]]);
+  expect(rejectedIds).toEqual(["delete-id"]);
+  expect(classification.rejected).toEqual([
+    {
+      index: 1,
+      prompt: "disputed persisted row",
+      reasons: ["verifier_wrong"],
+    },
+  ]);
 });
 
 it("resumes from already-certified choices and requests only the shortfall", async () => {
