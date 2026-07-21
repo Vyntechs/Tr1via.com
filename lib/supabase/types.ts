@@ -1186,6 +1186,7 @@ export type Database = {
           image_url: string | null
           is_picked: boolean
           options: Json
+          photo_query: string | null
           played_at: string | null
           point_value: number | null
           prompt: string
@@ -1203,6 +1204,7 @@ export type Database = {
           image_url?: string | null
           is_picked?: boolean
           options: Json
+          photo_query?: string | null
           played_at?: string | null
           point_value?: number | null
           prompt: string
@@ -1220,6 +1222,7 @@ export type Database = {
           image_url?: string | null
           is_picked?: boolean
           options?: Json
+          photo_query?: string | null
           played_at?: string | null
           point_value?: number | null
           prompt?: string
@@ -1342,6 +1345,47 @@ export type Database = {
             columns: ["question_id"]
             isOneToOne: false
             referencedRelation: "questions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      surface_observations: {
+        Row: {
+          control_revision: number
+          night_id: string
+          observed_at: string
+          play_id: string | null
+          room_revision: number
+          run_id: string | null
+          subject_key: string
+          surface_kind: string
+        }
+        Insert: {
+          control_revision: number
+          night_id: string
+          observed_at?: string
+          play_id?: string | null
+          room_revision: number
+          run_id?: string | null
+          subject_key: string
+          surface_kind: string
+        }
+        Update: {
+          control_revision?: number
+          night_id?: string
+          observed_at?: string
+          play_id?: string | null
+          room_revision?: number
+          run_id?: string | null
+          subject_key?: string
+          surface_kind?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "surface_observations_night_id_fkey"
+            columns: ["night_id"]
+            isOneToOne: false
+            referencedRelation: "nights"
             referencedColumns: ["id"]
           },
         ]
@@ -1513,12 +1557,20 @@ export type Database = {
         Args: { p_opened_at: string; p_received_at: string }
         Returns: boolean
       }
+      _lock_current_generation_attempt: {
+        Args: { p_attempt: number; p_category_id: string }
+        Returns: boolean
+      }
       apply_claimed_question_play_answer: {
         Args: {
           p_play_id: string
           p_run_id: string
           p_verified_device_id: string
         }
+        Returns: Json
+      }
+      begin_question_generation: {
+        Args: { p_category_id: string; p_flavor: Json; p_target_count: number }
         Returns: Json
       }
       begin_question_play_final_window: {
@@ -1531,6 +1583,16 @@ export type Database = {
         }
         Returns: Json
       }
+      claim_question_generation_resume: {
+        Args: {
+          p_category_id: string
+          p_flavor: Json
+          p_observed_attempt: number
+          p_observed_heartbeat_at: string
+          p_observed_phase: string
+        }
+        Returns: Json
+      }
       claim_question_play_answer: {
         Args: {
           p_play_id: string
@@ -1538,6 +1600,40 @@ export type Database = {
           p_submission_id: string
           p_verified_device_id: string
           p_visible_slot: number
+        }
+        Returns: Json
+      }
+      cleanup_expired_surface_observations: { Args: never; Returns: number }
+      commit_generation_photo: {
+        Args: {
+          p_attempt: number
+          p_category_id: string
+          p_image_attribution: string
+          p_image_source: string
+          p_image_url: string
+          p_question_id: string
+        }
+        Returns: Json
+      }
+      commit_generation_questions: {
+        Args: {
+          p_attempt: number
+          p_category_id: string
+          p_delete_ids?: string[]
+          p_questions: Json
+        }
+        Returns: Json
+      }
+      complete_question_generation: {
+        Args: {
+          p_assignments: Json
+          p_attempt: number
+          p_category_id: string
+          p_category_state: string
+          p_certified_count: number
+          p_image_count: number
+          p_report: Json
+          p_written_count: number
         }
         Returns: Json
       }
@@ -1552,11 +1648,32 @@ export type Database = {
         }
         Returns: Json
       }
+      fail_question_generation: {
+        Args: {
+          p_attempt: number
+          p_category_id: string
+          p_error: string
+          p_restore_state: string
+        }
+        Returns: Json
+      }
       finalize_current_play_if_due: {
         Args: { p_play_id: string; p_room_code: string; p_run_id: string }
         Returns: Json
       }
       is_night_host: { Args: { p_night_id: string }; Returns: boolean }
+      observe_surface_delivery: {
+        Args: {
+          p_control_revision: number
+          p_night_id: string
+          p_play_id: string
+          p_room_revision: number
+          p_run_id: string
+          p_subject_key: string
+          p_surface_kind: string
+        }
+        Returns: string
+      }
       open_night_run: {
         Args: {
           p_command_id: string
@@ -1801,11 +1918,12 @@ export type CategoryUpdate = Omit<TablesUpdate<"categories">, "state"> & {
 
 export type QuestionRow = Omit<
   Tables<"questions">,
-  "options" | "correct_index" | "point_value"
+  "options" | "correct_index" | "point_value" | "photo_query"
 > & {
   options: [string, string, string, string]
   correct_index: 0 | 1 | 2 | 3
   point_value: 100 | 200 | 300 | 400 | 500 | 600 | 700 | null
+  photo_query?: string | null
 }
 export type QuestionInsert = Omit<
   TablesInsert<"questions">,

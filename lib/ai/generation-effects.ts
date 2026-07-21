@@ -82,7 +82,7 @@ export async function claimQuestionGenerationResume(
 export interface PersistedGeneratedQuestion {
   id: string;
   q: GeneratedQuestion;
-  hasImage: false;
+  imageUrl: null;
 }
 
 export async function commitGenerationQuestions(
@@ -105,7 +105,7 @@ export async function commitGenerationQuestions(
   return rows.map(({ id, ...q }) => ({
     id,
     q: q as GeneratedQuestion,
-    hasImage: false,
+    imageUrl: null,
   }));
 }
 

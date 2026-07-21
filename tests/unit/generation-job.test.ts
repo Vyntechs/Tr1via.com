@@ -76,14 +76,24 @@ describe("generationProgressFromRow", () => {
     expect(progress.certifiedCount).toBe(20);
   });
 
-  it("never reports ready below the certified target", () => {
+  it("reports a playable partial set ready after bounded refill", () => {
     const progress = generationProgressFromRow(
       row({ phase: "ready", certified_count: 19, image_count: 19 }),
       NOW,
     );
+    expect(progress.phase).toBe("ready");
+    expect(progress.ready).toBe(true);
+    expect(progress.statusLine).toBe("19 certified question choices ready");
+  });
+
+  it("fails closed when fewer than seven certified choices are marked ready", () => {
+    const progress = generationProgressFromRow(
+      row({ phase: "ready", certified_count: 6, image_count: 6 }),
+      NOW,
+    );
     expect(progress.phase).toBe("needs_attention");
     expect(progress.ready).toBe(false);
-    expect(progress.statusLine).toMatch(/1 question choice still needs checking/i);
+    expect(progress.statusLine).toMatch(/14 question choices still need checking/i);
   });
 
   it("turns a stale nonterminal heartbeat into an honest needs-attention state", () => {

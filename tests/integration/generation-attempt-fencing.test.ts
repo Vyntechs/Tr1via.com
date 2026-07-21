@@ -15,6 +15,22 @@ const FENCE_PATH = path.join(
   "0029_generation_attempt_fencing.sql",
 );
 const fenceSql = existsSync(FENCE_PATH) ? readFileSync(FENCE_PATH, "utf8") : "";
+const PHOTO_QUERY_PATH = path.join(
+  MIGRATIONS_DIR,
+  "0030_questions_photo_query.sql",
+);
+const photoQuerySql = existsSync(PHOTO_QUERY_PATH)
+  ? readFileSync(PHOTO_QUERY_PATH, "utf8")
+  : "";
+
+interface FunctionSecurity {
+  owner: string;
+  security_definer: boolean;
+  config: string[] | null;
+  anon_can_execute: boolean;
+  authenticated_can_execute: boolean;
+  service_role_can_execute: boolean;
+}
 
 describe("generation attempt transactional fencing", () => {
   let db: PGlite | null = null;
@@ -22,6 +38,8 @@ describe("generation attempt transactional fencing", () => {
   let gameId = "";
   let nightId = "";
   let hostId = "";
+  let securityBeforePhotoQuery: FunctionSecurity | null = null;
+  let securityAfterPhotoQuery: FunctionSecurity | null = null;
 
   beforeAll(async () => {
     if (!fenceSql) return;
@@ -47,6 +65,23 @@ describe("generation attempt transactional fencing", () => {
       await db.exec(readFileSync(path.join(MIGRATIONS_DIR, migration), "utf8"));
     }
     await db.exec(fenceSql);
+    const readFunctionSecurity = async () =>
+      (
+        await db!.query<FunctionSecurity>(`
+          select
+            pg_get_userbyid(p.proowner) as owner,
+            p.prosecdef as security_definer,
+            p.proconfig as config,
+            has_function_privilege('anon', p.oid, 'EXECUTE') as anon_can_execute,
+            has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_can_execute,
+            has_function_privilege('service_role', p.oid, 'EXECUTE') as service_role_can_execute
+          from pg_proc p
+          where p.oid = 'public.commit_generation_questions(uuid,smallint,jsonb,uuid[])'::regprocedure
+        `)
+      ).rows[0]!;
+    securityBeforePhotoQuery = await readFunctionSecurity();
+    await db.exec(photoQuerySql);
+    securityAfterPhotoQuery = await readFunctionSecurity();
 
     const one = async <T>(sql: string, params: unknown[] = []) =>
       (await db!.query<T>(sql, params)).rows[0]!;
@@ -86,12 +121,26 @@ describe("generation attempt transactional fencing", () => {
     expect(fenceSql).toContain("revoke all on function");
   });
 
+  test("the photo-query replacement preserves the fenced function security contract", () => {
+    expect(photoQuerySql).not.toBe("");
+    expect(securityAfterPhotoQuery).toEqual(securityBeforePhotoQuery);
+    expect(securityAfterPhotoQuery).toMatchObject({
+      security_definer: true,
+      anon_can_execute: false,
+      authenticated_can_execute: false,
+      service_role_can_execute: true,
+    });
+    expect(securityAfterPhotoQuery?.config).toContain(
+      "search_path=pg_catalog, public",
+    );
+  });
+
   test("a certified batch commits only for the current attempt", async () => {
     expect(db).not.toBeNull();
     if (!db) return;
     const currentQuestionId = crypto.randomUUID();
     const staleQuestionId = crypto.randomUUID();
-    const question = (id: string, prompt: string) =>
+    const question = (id: string, prompt: string, photoQuery: string) =>
       JSON.stringify([
         {
           id,
@@ -100,12 +149,20 @@ describe("generation attempt transactional fencing", () => {
           correctIndex: 0,
           difficulty: 4,
           factBlurb: "Verified fact.",
+          photoQuery,
         },
       ]);
 
     const current = await db.query<{ result: { applied: boolean; code: string } }>(
       "select commit_generation_questions($1, 1::smallint, $2::jsonb, '{}'::uuid[]) as result",
-      [categoryId, question(currentQuestionId, "Current worker question")],
+      [
+        categoryId,
+        question(
+          currentQuestionId,
+          "Current worker question",
+          "surveillance television studio",
+        ),
+      ],
     );
     expect(current.rows[0]?.result).toMatchObject({ applied: true, code: "applied" });
 
@@ -128,15 +185,23 @@ describe("generation attempt transactional fencing", () => {
     });
     const stale = await db.query<{ result: { applied: boolean; code: string } }>(
       "select commit_generation_questions($1, 1::smallint, $2::jsonb, '{}'::uuid[]) as result",
-      [categoryId, question(staleQuestionId, "Stale worker question")],
+      [
+        categoryId,
+        question(staleQuestionId, "Stale worker question", "stale visual query"),
+      ],
     );
     expect(stale.rows[0]?.result).toEqual({ applied: false, code: "stale" });
 
-    const rows = await db.query<{ id: string }>(
-      "select id from questions where category_id = $1 order by id",
+    const rows = await db.query<{ id: string; photo_query: string | null }>(
+      "select id, photo_query from questions where category_id = $1 order by id",
       [categoryId],
     );
-    expect(rows.rows.map((row) => row.id)).toEqual([currentQuestionId]);
+    expect(rows.rows).toEqual([
+      {
+        id: currentQuestionId,
+        photo_query: "surveillance television studio",
+      },
+    ]);
   });
 
   test("stale photo, completion, and failure effects change no durable state", async () => {

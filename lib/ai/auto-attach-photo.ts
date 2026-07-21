@@ -41,6 +41,8 @@ export interface AttachedPhotoResult {
 export interface AutoAttachOptions {
   /** Category topic — used as the secondary fallback query. */
   topic?: string;
+  /** Image URLs already used by another question in this category. */
+  excludeImageUrls?: ReadonlySet<string>;
 }
 
 const GENERIC_FALLBACK_QUERY = "abstract texture";
@@ -54,35 +56,36 @@ export async function autoAttachPhoto(
   q: GeneratedQuestion,
   opts: AutoAttachOptions = {},
 ): Promise<AttachedPhotoResult> {
-  // 1. Primary query — Claude's per-question photoQuery
-  let photos = await searchPexels(q.photoQuery, 12);
-  let source: AttachedPhotoResult["source"] = "primary";
+  const queries: Array<{
+    query: string | undefined;
+    source: NonNullable<AttachedPhotoResult["source"]>;
+  }> = [
+    { query: q.photoQuery, source: "primary" },
+    { query: opts.topic, source: "topic" },
+    { query: GENERIC_FALLBACK_QUERY, source: "generic" },
+  ];
+  const searched = new Set<string>();
 
-  // 2. Topic fallback — Pexels almost always has results for the broad
-  //    topic name; better than rendering nothing
-  if (photos.length === 0 && opts.topic && opts.topic.trim().length > 0) {
-    photos = await searchPexels(opts.topic.trim(), 12);
-    source = "topic";
+  for (const candidate of queries) {
+    const query = candidate.query?.trim();
+    if (!query) continue;
+    const queryKey = query.toLocaleLowerCase();
+    if (searched.has(queryKey)) continue;
+    searched.add(queryKey);
+
+    const available = (await searchPexels(query, 12)).filter(
+      (photo) => !opts.excludeImageUrls?.has(photo.src.large2x),
+    );
+    const selected = available[0];
+    if (!selected) continue;
+
+    return {
+      imageUrl: selected.src.large2x,
+      attribution: attributionFor(selected),
+      alternatives: available.slice(1),
+      source: candidate.source,
+    };
   }
 
-  // 3. Generic visual fallback — a textured abstract is better than the
-  //    striped placeholder card
-  if (photos.length === 0) {
-    photos = await searchPexels(GENERIC_FALLBACK_QUERY, 12);
-    source = "generic";
-  }
-
-  if (photos.length === 0) {
-    // Pexels truly returned nothing for any query — extremely rare. Caller
-    // surfaces the striped placeholder.
-    return { imageUrl: null, attribution: null, alternatives: [] };
-  }
-
-  const first = photos[0]!;
-  return {
-    imageUrl: first.src.large2x,
-    attribution: attributionFor(first),
-    alternatives: photos.slice(1),
-    source,
-  };
+  return { imageUrl: null, attribution: null, alternatives: [] };
 }

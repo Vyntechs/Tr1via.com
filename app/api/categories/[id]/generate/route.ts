@@ -38,6 +38,10 @@ import { hostAIAccess } from "@/lib/api/entitlements";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { Json } from "@/lib/supabase/types";
 import { autoAttachPhoto } from "@/lib/ai/auto-attach-photo";
+import {
+  recordCategoryImageUrl,
+  seedCategoryImageUrls,
+} from "@/lib/ai/category-photo-plan";
 import { generateQuestions, type GeneratedQuestion } from "@/lib/ai/generate-questions";
 import {
   createQuestionGenerationReportAccumulator,
@@ -62,6 +66,7 @@ import {
 } from "@/lib/ai/collect-verified-questions";
 import {
   generationProgressFromRow,
+  MIN_PLAYABLE_QUESTIONS,
   readGenerationJob,
   updateGenerationJob,
   updateGenerationJobForAttempt,
@@ -318,10 +323,11 @@ async function runGenerationJob(opts: {
   // Reroll: gather what the host has already seen so we avoid repeats, and
   // remember which unpicked rows to remove once the fresh batch is inserted.
   let reroll: { deleteIds: string[]; avoidPrompts: string[] } | null = null;
+  let existingCategoryImageUrls: Array<string | null> = [];
   if (opts.keptIds) {
     const { data: existing, error: existingError } = await admin
       .from("questions")
-      .select("id, prompt, is_picked")
+      .select("id, prompt, is_picked, image_url")
       .eq("category_id", opts.categoryId);
     // Surface the failure instead of degrading: if we can't read the current
     // pool, an `existing ?? []` would silently skip the swap + avoid-list and
@@ -332,6 +338,7 @@ async function runGenerationJob(opts: {
     }
     const plan = rerollPlan(existing ?? [], opts.keptIds);
     reroll = { deleteIds: plan.deleteIds, avoidPrompts: plan.avoidPrompts };
+    existingCategoryImageUrls = (existing ?? []).map((row) => row.image_url);
   }
 
   // A first-run retry may contain rows certified by an older verifier. Load
@@ -340,12 +347,12 @@ async function runGenerationJob(opts: {
   const storedQuestions: Array<{
     id: string;
     q: GeneratedQuestion;
-    hasImage: boolean;
+    imageUrl: string | null;
   }> = [];
   if (opts.resume && !opts.keptIds) {
     const { data, error } = await admin
       .from("questions")
-      .select("id, prompt, options, correct_index, difficulty, fact_blurb, image_url")
+      .select("id, prompt, options, correct_index, difficulty, fact_blurb, image_url, photo_query")
       .eq("category_id", opts.categoryId)
       .eq("source", "ai")
       .eq("is_picked", false);
@@ -364,11 +371,11 @@ async function runGenerationJob(opts: {
           correctIndex: row.correct_index as 0 | 1 | 2 | 3,
           difficulty: row.difficulty as 1 | 2 | 3 | 4 | 5 | 6 | 7,
           factBlurb: row.fact_blurb,
-          // Images are optional in Original mode; the topic is a safe fallback
-          // query because the original generated query is not persisted.
-          photoQuery: opts.topic,
+          // Legacy rows predate photo_query; the category topic remains their
+          // safe fallback while newer rows retain their specific visual intent.
+          photoQuery: row.photo_query?.trim() || opts.topic,
         },
-        hasImage: Boolean(row.image_url),
+        imageUrl: row.image_url,
       });
     }
   }
@@ -613,9 +620,9 @@ async function runGenerationJob(opts: {
       `llmCalls=${cost.calls} tokensIn=${cost.tokensIn} tokensOut=${cost.tokensOut} ` +
       `estUsd=${cost.usd.toFixed(4)}`,
   );
-  if (generated.length < 20) {
+  if (generated.length < MIN_PLAYABLE_QUESTIONS) {
     throw new Error(
-      `${20 - generated.length} certified question choices are still needed`,
+      `${MIN_PLAYABLE_QUESTIONS - generated.length} certified question choices are still needed`,
     );
   }
   qualityReport.recordAcceptedQuestions(generated);
@@ -625,12 +632,16 @@ async function runGenerationJob(opts: {
   if (opts.keptIds) {
     await persistCertifiedBatch(generated);
   }
-  const inserted = insertedQuestions.map(({ id, q, hasImage }) => ({
+  const inserted = insertedQuestions.map(({ id, q, imageUrl }) => ({
     id,
     prompt: q.prompt,
     q,
-    hasImage,
+    imageUrl,
   }));
+  const usedImageUrls = seedCategoryImageUrls([
+    ...existingCategoryImageUrls,
+    ...inserted.map((row) => row.imageUrl),
+  ]);
 
   // Pick BEFORE photos on the auto-build path. The founder "build a full game"
   // tool keeps only 7 of the 20 generated questions, so photographing all 20
@@ -645,7 +656,7 @@ async function runGenerationJob(opts: {
     certified_count: generated.length,
   });
   let photoTargets = inserted
-    .filter((row) => !row.hasImage)
+    .filter((row) => !row.imageUrl)
     .map((row) => ({ id: row.id, q: row.q }));
   let autoPickAssignments: Array<{ id: string; pointValue: number }> | null = null;
   if (opts.autoPick) {
@@ -669,10 +680,13 @@ async function runGenerationJob(opts: {
   // Step 3: attach photos. Sequential within a category because Pexels' free
   // tier is 200 req/hr — bursting risks brittleness without measurable
   // user-side latency benefit (the UI is already populated).
-  let imageCount = inserted.filter((row) => row.hasImage).length;
+  let imageCount = inserted.filter((row) => Boolean(row.imageUrl)).length;
   for (const { id, q } of photoTargets) {
     try {
-      const photo = await autoAttachPhoto(q, { topic: opts.topic });
+      const photo = await autoAttachPhoto(q, {
+        topic: opts.topic,
+        excludeImageUrls: usedImageUrls,
+      });
       if (photo.imageUrl) {
         const applied = await commitGenerationPhoto(rpcClient, {
           categoryId: opts.categoryId,
@@ -683,6 +697,7 @@ async function runGenerationJob(opts: {
           source: "pexels",
         });
         if (!applied) throw new GenerationAttemptSupersededError();
+        recordCategoryImageUrl(usedImageUrls, photo.imageUrl);
         qualityReport.recordImageAttached();
         imageCount += 1;
         await writeWorkerProgress({
@@ -726,8 +741,8 @@ async function runGenerationJob(opts: {
     ),
     assignments: autoPickAssignments,
     categoryState: opts.autoPick ? "ready" : "review",
-    writtenCount: 20,
-    certifiedCount: 20,
+    writtenCount: generated.length,
+    certifiedCount: generated.length,
     imageCount,
   });
   if (!completed) throw new GenerationAttemptSupersededError();

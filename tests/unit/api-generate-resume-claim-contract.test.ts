@@ -27,4 +27,23 @@ describe("category generation resume claim wiring", () => {
     expect(route).toContain("initialClean: certifiedStoredQuestions.map");
     expect(route).not.toContain("initialClean: storedQuestions.map");
   });
+
+  it("restores photo intent and excludes every category image during attachment", () => {
+    expect(route).toContain(
+      '.select("id, prompt, options, correct_index, difficulty, fact_blurb, image_url, photo_query")',
+    );
+    expect(route).toContain("photoQuery: row.photo_query?.trim() || opts.topic");
+    expect(route).toContain("imageUrl: row.image_url");
+    expect(route).toContain("seedCategoryImageUrls(");
+    expect(route).toContain("excludeImageUrls: usedImageUrls");
+    expect(route).toContain("recordCategoryImageUrl(usedImageUrls, photo.imageUrl)");
+  });
+
+  it("finishes playable partial sets with their actual certified count", () => {
+    expect(route).toContain("generated.length < MIN_PLAYABLE_QUESTIONS");
+    expect(route).toContain("writtenCount: generated.length");
+    expect(route).toContain("certifiedCount: generated.length");
+    expect(route).not.toContain("writtenCount: 20");
+    expect(route).not.toContain("certifiedCount: 20");
+  });
 });
