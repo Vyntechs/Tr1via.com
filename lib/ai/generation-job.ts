@@ -7,6 +7,8 @@ export type GenerationJobPhase =
   | "ready"
   | "needs_attention";
 
+export const MIN_PLAYABLE_QUESTIONS = 7;
+
 export interface QuestionGenerationJobRow {
   id: string;
   category_id: string;
@@ -147,7 +149,8 @@ export function generationProgressFromRow(
     !terminal &&
     Number.isFinite(heartbeatMs) &&
     nowMs - heartbeatMs > staleAfterMs;
-  const invalidReady = row.phase === "ready" && remainingCount > 0;
+  const invalidReady =
+    row.phase === "ready" && certifiedCount < MIN_PLAYABLE_QUESTIONS;
   const phase: GenerationJobPhase =
     stale || invalidReady ? "needs_attention" : row.phase;
 
@@ -194,6 +197,6 @@ export function generationProgressFromRow(
     imageCount,
     remainingCount,
     statusLine,
-    ready: phase === "ready" && remainingCount === 0,
+    ready: phase === "ready" && certifiedCount >= MIN_PLAYABLE_QUESTIONS,
   };
 }
