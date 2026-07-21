@@ -39,7 +39,8 @@ interface FakeAdminOptions {
   night?: Record<string, unknown> | null;
   player?: Record<string, unknown> | null;
   participation?: Record<string, unknown> | null;
-  insertError?: { code?: string; message: string } | null;
+  reactionData?: { id: string; created_at: string } | null;
+  upsertError?: { code?: string; message: string } | null;
 }
 
 function query(data: Record<string, unknown> | null) {
@@ -85,17 +86,21 @@ function makeAdmin(opts: FakeAdminOptions = {}) {
         : opts.participation,
   };
 
-  const reactionInserts: unknown[] = [];
-  const insertReaction = vi.fn((row: unknown) => {
-    reactionInserts.push(row);
+  const reactionWrites: unknown[] = [];
+  const reactionData =
+    opts.reactionData === undefined
+      ? { id: REACTION_ID, created_at: REACTION_CREATED_AT }
+      : opts.reactionData;
+  const reactionResult = () => ({
+    data: opts.upsertError ? null : reactionData,
+    error: opts.upsertError ?? null,
+  });
+  const upsertReaction = vi.fn((row: unknown, options: unknown) => {
+    void options;
+    reactionWrites.push(row);
     const builder = {
       select: vi.fn(() => builder),
-      single: vi.fn(async () => ({
-        data: opts.insertError
-          ? null
-          : { id: REACTION_ID, created_at: REACTION_CREATED_AT },
-        error: opts.insertError ?? null,
-      })),
+      maybeSingle: vi.fn(async () => reactionResult()),
     };
     return builder;
   });
@@ -103,7 +108,7 @@ function makeAdmin(opts: FakeAdminOptions = {}) {
   const client = {
     from: vi.fn((table: string) => {
       if (table === "room_magic_reactions") {
-        return { insert: insertReaction };
+        return { upsert: upsertReaction };
       }
       if (table in rows) {
         return query(rows[table as keyof typeof rows]);
@@ -112,7 +117,7 @@ function makeAdmin(opts: FakeAdminOptions = {}) {
     }),
   };
 
-  return { client, reactionInserts, insertReaction };
+  return { client, reactionWrites, upsertReaction };
 }
 
 async function callRoute(body: unknown) {
@@ -187,7 +192,7 @@ describe("POST /api/room-magic/reactions", () => {
       accepted: true,
       broadcasted: true,
     });
-    expect(admin.reactionInserts).toEqual([
+    expect(admin.reactionWrites).toEqual([
       {
         night_id: NIGHT_ID,
         game_id: GAME_ID,
@@ -206,11 +211,9 @@ describe("POST /api/room-magic/reactions", () => {
     );
   });
 
-  it("treats a duplicate reaction as an accepted no-op", async () => {
-    adminMock.getSupabaseAdmin.mockReturnValue(
-      makeAdmin({ insertError: { code: "23505", message: "duplicate" } })
-        .client,
-    );
+  it("treats a duplicate reaction as an accepted no-op without a constraint error", async () => {
+    const admin = makeAdmin({ reactionData: null });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin.client);
 
     const res = await callRoute({ questionId: QUESTION_ID, kind: "wow" });
 
@@ -219,13 +222,23 @@ describe("POST /api/room-magic/reactions", () => {
       accepted: false,
       reason: "already_sent",
     });
+    expect(admin.upsertReaction).toHaveBeenCalledWith(
+      {
+        night_id: NIGHT_ID,
+        game_id: GAME_ID,
+        question_id: QUESTION_ID,
+        player_id: PLAYER_ID,
+        kind: "wow",
+      },
+      { onConflict: "question_id,player_id,moment", ignoreDuplicates: true },
+    );
     expect(broadcastMock.broadcastRoomMagicReaction).not.toHaveBeenCalled();
   });
 
   it("never exposes a room magic database error", async () => {
     const sentinel = "SENTINEL room_magic_reactions private constraint";
     adminMock.getSupabaseAdmin.mockReturnValue(
-      makeAdmin({ insertError: { code: "XX000", message: sentinel } }).client,
+      makeAdmin({ upsertError: { code: "XX000", message: sentinel } }).client,
     );
 
     const res = await callRoute({ questionId: QUESTION_ID, kind: "wow" });

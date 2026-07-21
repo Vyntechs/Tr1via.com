@@ -110,25 +110,25 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const { data: insertedReaction, error: insertError } = await admin
     .from("room_magic_reactions")
-    .insert({
-      night_id: night.id,
-      game_id: game.id,
-      question_id: question.id,
-      player_id: player.id,
-      kind: parsed.data.kind,
-    })
+    .upsert(
+      {
+        night_id: night.id,
+        game_id: game.id,
+        question_id: question.id,
+        player_id: player.id,
+        kind: parsed.data.kind,
+      },
+      {
+        onConflict: "question_id,player_id,moment",
+        ignoreDuplicates: true,
+      },
+    )
     .select("id, created_at")
-    .single();
+    .maybeSingle();
 
-  if (insertError) {
-    if (insertError.code === "23505") {
-      return ok({ accepted: false, reason: "already_sent" as const });
-    }
-    return serverError();
-  }
-  if (!insertedReaction?.id || !insertedReaction.created_at) {
-    return serverError();
-  }
+  if (insertError) return serverError();
+  if (!insertedReaction) return ok({ accepted: false, reason: "already_sent" as const });
+  if (!insertedReaction.id || !insertedReaction.created_at) return serverError();
 
   try {
     await broadcastRoomMagicReaction(night.room_code, {

@@ -232,6 +232,11 @@ Trigger: A command receipt changes from pending to applied or rejected.
 Rule: Enforce non-null canonical result in schema; unexpected legacy nulls return typed non-fresh corrupt-state without mutation.
 Reason: SQL null propagation can erase the envelope and make route broadcast gating ambiguous.
 
+### manual-questions-no-paid-generation
+Trigger: Creating test or rehearsal trivia content while paid generation or image APIs are available.
+Rule: Use the manual question-authoring path; never invoke Anthropic, Pexels, or image generation without explicit founder approval.
+Reason: Routine verification and rehearsal must not spend production API budget.
+
 ### timebox-final-review-loops
 Trigger: Verified implementation remains open for hours while successive broad reviews discover narrow issues.
 Rule: Timebox reviewers, batch findings once, fix only blockers, and run one focused re-review before final verification.
