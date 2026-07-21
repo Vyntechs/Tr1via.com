@@ -17,4 +17,14 @@ describe("category generation resume claim wiring", () => {
     expect(route).toContain("completeQuestionGeneration");
     expect(route).toContain("failQuestionGeneration");
   });
+
+  it("re-certifies persisted AI rows and fences deletion of only rejected IDs", () => {
+    expect(route).toContain("classifyVerifiedQuestions");
+    expect(route).toContain("certifiedStoredQuestions");
+    expect(route).toContain("rejectedStoredIds");
+    expect(route).toMatch(/commitGenerationQuestions\(rpcClient, \{[\s\S]*?questions: \[\],[\s\S]*?deleteIds: rejectedStoredIds/);
+    expect(route).toContain("insertedQuestions.push(...certifiedStoredQuestions)");
+    expect(route).toContain("initialClean: certifiedStoredQuestions.map");
+    expect(route).not.toContain("initialClean: storedQuestions.map");
+  });
 });

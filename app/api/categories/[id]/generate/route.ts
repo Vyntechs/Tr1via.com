@@ -56,7 +56,10 @@ import {
 } from "@/lib/ai/generation-effects";
 import { costUsd, type TokenUsage } from "@/lib/ai/usage-cost";
 import { verifyAnswers } from "@/lib/ai/verify-answers";
-import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
+import {
+  classifyVerifiedQuestions,
+  collectVerifiedQuestions,
+} from "@/lib/ai/collect-verified-questions";
 import {
   generationProgressFromRow,
   readGenerationJob,
@@ -331,9 +334,9 @@ async function runGenerationJob(opts: {
     reroll = { deleteIds: plan.deleteIds, avoidPrompts: plan.avoidPrompts };
   }
 
-  // A first-run retry restores only questions that already passed every
-  // certification gate. They are the durable checkpoint; generation asks for
-  // the shortfall and never charges/waits for those choices twice.
+  // A first-run retry may contain rows certified by an older verifier. Load
+  // them with their durable IDs/images, then re-certify below before treating
+  // any as a safe checkpoint.
   const storedQuestions: Array<{
     id: string;
     q: GeneratedQuestion;
@@ -389,9 +392,9 @@ async function runGenerationJob(opts: {
   // ("took too long") even though the job is healthy. We tick a `progress`
   // broadcast every HEARTBEAT_MS carrying the current phase; the client arms
   // its timeout off the last heartbeat, so only a truly dead worker trips it.
-  let phase: GenerationPhase = "writing";
+  let phase: GenerationPhase = storedQuestions.length > 0 ? "checking" : "writing";
   let writtenCount = storedQuestions.length;
-  let certifiedCount = storedQuestions.length;
+  let certifiedCount = 0;
   const durableHeartbeat = createGenerationHeartbeat(() =>
     writeWorkerProgress({ phase }),
   );
@@ -427,7 +430,7 @@ async function runGenerationJob(opts: {
     qualityReport.recordUsage(model, u);
   };
 
-  const insertedQuestions = [...storedQuestions];
+  const insertedQuestions: typeof storedQuestions = [];
   const persistCertifiedBatch = async (batch: GeneratedQuestion[]) => {
     const persisted = await commitGenerationQuestions(rpcClient, {
       categoryId: opts.categoryId,
@@ -458,13 +461,85 @@ async function runGenerationJob(opts: {
   let generated: GeneratedQuestion[];
   try {
     await writeWorkerProgress({
-      phase: "writing",
+      phase,
       written_count: writtenCount,
       certified_count: certifiedCount,
     });
+    const verifyCandidateBatch = async (
+      questions: GeneratedQuestion[],
+      passIndex: number,
+    ) => {
+      phase = "checking";
+      await writeWorkerProgress({ phase: "checking" });
+      void emitProgress().catch(() => undefined);
+      return verifyAnswers(questions, {
+        topic: opts.topic,
+        mode: passIndex === 0 ? "blind" : "adversarial",
+        onUsage: trackUsage,
+      });
+    };
+
+    let certifiedStoredQuestions: typeof storedQuestions = [];
+    let rejectedStoredPrompts: string[] = [];
+    if (storedQuestions.length > 0) {
+      const storedPassResults = await Promise.all(
+        [0, 1].map((passIndex) =>
+          verifyCandidateBatch(
+            storedQuestions.map((item) => item.q),
+            passIndex,
+          ),
+        ),
+      );
+      const storedClassification = classifyVerifiedQuestions(
+        storedQuestions.map((item) => item.q),
+        storedPassResults,
+      );
+      const acceptedStoredIndexes = new Set(
+        storedClassification.acceptedIndexes,
+      );
+      certifiedStoredQuestions = storedQuestions.filter((_, index) =>
+        acceptedStoredIndexes.has(index),
+      );
+      const rejectedStoredIds = storedClassification.rejected.map(
+        ({ index }) => storedQuestions[index]!.id,
+      );
+      rejectedStoredPrompts = storedClassification.rejected.map(
+        ({ prompt }) => prompt,
+      );
+
+      if (rejectedStoredIds.length > 0) {
+        const deletion = await commitGenerationQuestions(rpcClient, {
+          categoryId: opts.categoryId,
+          attempt: opts.attempt,
+          questions: [],
+          deleteIds: rejectedStoredIds,
+        });
+        if (!deletion) throw new GenerationAttemptSupersededError();
+      }
+      insertedQuestions.push(...certifiedStoredQuestions);
+      certifiedCount = certifiedStoredQuestions.length;
+      writtenCount = certifiedCount;
+      phase = certifiedCount >= 20 ? "images" : "repairing";
+      qualityReport.recordRound({
+        round: 0,
+        requested: storedQuestions.length,
+        generated: storedQuestions.length,
+        accepted: certifiedStoredQuestions.length,
+        rejected: storedClassification.rejected.map(({ prompt, reasons }) => ({
+          prompt,
+          reasons,
+        })),
+      });
+      await writeWorkerProgress({
+        phase,
+        written_count: writtenCount,
+        certified_count: certifiedCount,
+      });
+    }
+
     generated = await collectVerifiedQuestions({
       target: 20,
-      initialClean: storedQuestions.map((item) => item.q),
+      initialClean: certifiedStoredQuestions.map((item) => item.q),
       // Up to 4 rounds to top back up to 20. Almost always 1; an occasional
       // rejected question takes a cheap 2nd round. The bound caps worst-case
       // latency if the model keeps producing borderline answers.
@@ -482,7 +557,11 @@ async function runGenerationJob(opts: {
           // without forcing yet another round), capped at the full target.
           count: Math.min(20, need + 1),
           themeKey: opts.themeKey,
-          avoidPrompts: [...(reroll?.avoidPrompts ?? []), ...avoid],
+          avoidPrompts: [
+            ...(reroll?.avoidPrompts ?? []),
+            ...rejectedStoredPrompts,
+            ...avoid,
+          ],
           onUsage: trackUsage,
           onRejectedCandidate: (event) => {
             qualityReport.recordInvalidCandidate(
@@ -500,12 +579,7 @@ async function runGenerationJob(opts: {
         void emitProgress().catch(() => undefined);
         return batch;
       },
-      verify: async (qs) => {
-        phase = "checking";
-        await writeWorkerProgress({ phase: "checking" });
-        void emitProgress().catch(() => undefined);
-        return verifyAnswers(qs, { topic: opts.topic, onUsage: trackUsage });
-      },
+      verify: verifyCandidateBatch,
       onRoundComplete: async (event) => {
         qualityReport.recordRound({
           round: event.round,
