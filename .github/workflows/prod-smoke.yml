@@ -1,8 +1,10 @@
 name: Prod smoke
 
-# Runs the end-to-end smoke against tr1via.com automatically:
+# Runs zero-cost production health and browser checks automatically:
 #   • After every push to main (waits for Vercel to deploy, then smokes)
 #   • On-demand via "Run workflow" button on the Actions tab
+# Paid Anthropic + Pexels generation runs only when a manual run explicitly
+# opts in with run_paid_generation.
 #
 # Silence means green. If anything turns red GitHub emails the repo owner.
 # That's the entire UX — Brandon never runs a check manually.
@@ -17,6 +19,12 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      run_paid_generation:
+        description: Run real Anthropic + Pexels generation (paid)
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   # Avoid stacking smokes if multiple pushes land close together. The
@@ -33,8 +41,8 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install deps
         run: npm ci --no-audit --no-fund
@@ -59,6 +67,7 @@ jobs:
           done
 
       - name: API smoke (real Anthropic + Pexels + Supabase)
+        if: github.event_name == 'workflow_dispatch' && inputs.run_paid_generation == true
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
@@ -84,6 +93,7 @@ jobs:
       # budget as the API smoke; the 12m step budget leaves room for two cold
       # verified generations plus the complete two-game arc and cleanup.
       - name: Full-flow driver (3 phones × 2 games, single theme pass)
+        if: github.event_name == 'workflow_dispatch' && inputs.run_paid_generation == true
         timeout-minutes: 12
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
