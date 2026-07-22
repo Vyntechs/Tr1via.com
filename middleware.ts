@@ -33,6 +33,20 @@ export async function middleware(request: NextRequest) {
   // any downstream `auth.getUser()` call) and the browser (for next time).
   let response = NextResponse.next({ request });
 
+  const { pathname } = request.nextUrl;
+
+  // Route handlers own their authorization boundary. Running Supabase host
+  // session refresh in front of every player heartbeat, room snapshot, TV
+  // snapshot, and lock-count poll multiplies one venue into thousands of
+  // unnecessary Auth requests. When Auth slows, those requests time out in
+  // middleware before their already-successful route responses can reach the
+  // browser, and every client retries at once. Keep API traffic out of the
+  // host-page session gate; authenticated handlers still call requireOwned*
+  // or getAuthedHost themselves.
+  if (pathname.startsWith("/api/")) {
+    return response;
+  }
+
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!supabaseUrl || !supabaseAnonKey) {
@@ -63,8 +77,6 @@ export async function middleware(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  const { pathname } = request.nextUrl;
 
   if (!user && isHostPath(pathname)) {
     const redirect = new URL("/login", request.url);

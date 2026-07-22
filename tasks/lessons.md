@@ -319,3 +319,13 @@ Reason: Correlated passes can confidently approve the same disputed or non-uniqu
 Trigger: Factual certification strengthens after AI-generated checkpoint rows already exist.
 Rule: Re-certify persisted candidates before reuse; fenced-delete rejects while preserving accepted IDs and images.
 Reason: Durable storage preserves prior evidence but cannot upgrade it to a newer safety guarantee.
+
+### live-recovery-traffic-must-not-run-host-auth
+Trigger: Venue polling caused player, TV, and heartbeat requests to time out in global host-auth middleware.
+Rule: Keep API recovery traffic outside host session refresh; prove host pages remain gated with a regression test.
+Reason: Recovery polling becomes a self-amplifying outage when every request performs unnecessary remote authentication.
+
+### systemic-live-failures-require-a-system-fix
+Trigger: A live production failure recurred after operational workarounds and temporarily cleared between questions.
+Rule: Once evidence identifies a repeatable systemic cause, implement the smallest verified fix instead of shifting behavior onto the host.
+Reason: Host workarounds cannot repair shared infrastructure and waste the founder's attention during the show.
