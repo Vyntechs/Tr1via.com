@@ -18,6 +18,7 @@
 
 import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
+import { rankScores } from "@/lib/game/rankScores";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
@@ -246,7 +247,7 @@ export async function GET(
       // game_scores is a LEFT JOIN view so player_id + display_name can
       // technically be null. In practice every game_participation pins a
       // real player; drop the safety-null rows defensively.
-      scores = scoreRows
+      const unsortedScores = scoreRows
         .filter((r): r is typeof r & { player_id: string; display_name: string } =>
           r.player_id !== null && r.display_name !== null,
         )
@@ -257,8 +258,8 @@ export async function GET(
           correct_count: Number(r.correct_count ?? 0),
           answered_count: Number(r.answered_count ?? 0),
           fastest_correct_ms: r.fastest_correct_ms,
-        }))
-        .sort((a, b) => b.score - a.score);
+        }));
+      scores = rankScores(unsortedScores).map(({ row }) => row);
     }
   }
 

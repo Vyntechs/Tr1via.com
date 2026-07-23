@@ -97,7 +97,7 @@ function HostAnswerResultInner({ question, answers, eligibleCount, players, onRe
       )}
 
       <button type="button" onClick={onReturnToBoard} style={{ width: "100%", minWidth: 48, minHeight: 48, padding: "12px 16px", border: `1px solid ${t.accent}`, borderRadius: 16, background: t.accent, color: readableForeground(t.accent), font: "inherit", fontWeight: 900, cursor: "pointer", marginTop: "auto" }}>
-        Return to board
+        Show standings &amp; board
       </button>
     </PhoneScreen>
   );

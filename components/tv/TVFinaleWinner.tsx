@@ -26,9 +26,9 @@ export interface TVFinaleWinnerData {
   name: string;
   score: number;
   /** Correct answers. */
-  correct: number;
+  correct?: number;
   /** Of total questions in the game. */
-  of: number;
+  of?: number;
   /** Longest correct streak. */
   streak?: number;
   /** Pre-formatted fastest correct time, e.g. "0.9s". */
@@ -246,7 +246,9 @@ function TVFinaleWinnerInner({
             </div>
 
             <div style={{ marginTop: 28, display: "flex", flexWrap: "wrap", gap: 12 }}>
-              <FinaleChip label="GOT RIGHT" value={`${winner.correct} of ${winner.of}`} color={t.correct} t={t} />
+              {winner.correct !== undefined && winner.of !== undefined && (
+                <FinaleChip label="GOT RIGHT" value={`${winner.correct} of ${winner.of}`} color={t.correct} t={t} />
+              )}
               {typeof winner.streak === "number" && winner.streak > 1 && (
                 <FinaleChip label="LONGEST STREAK" value={`×${winner.streak}`} color={t.accent} t={t} />
               )}

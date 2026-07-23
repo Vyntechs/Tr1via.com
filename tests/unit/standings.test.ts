@@ -12,6 +12,22 @@ function scores(n: number): GameScoreRow[] {
 }
 
 describe("buildNeighborhood", () => {
+  it("gives tied players the same rank in the same alphabetical order as host and TV", () => {
+    const tied = [
+      { game_id: "g1", player_id: "p1", display_name: "Momma t", score: 2300 },
+      { game_id: "g1", player_id: "p2", display_name: "Lisa H", score: 2300 },
+      { game_id: "g1", player_id: "p3", display_name: "Colton", score: 3200 },
+    ] as GameScoreRow[];
+
+    const neighborhood = buildNeighborhood(tied, "p1", 4);
+    expect(neighborhood.rows.map((row) => [row.name, row.rank])).toEqual([
+      ["Colton", 1],
+      ["Lisa H", 2],
+      ["Momma t", 2],
+    ]);
+    expect(neighborhood.meRank).toBe(2);
+  });
+
   it("returns up to 4 above + you + 4 below, you flagged, centered when mid-pack", () => {
     const nb = buildNeighborhood(scores(24), "p7", 4);
     expect(nb.meRank).toBe(7);

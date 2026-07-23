@@ -13,6 +13,7 @@ export interface HostBetweenGamesStanding {
   playerId: string;
   name: string;
   score: number;
+  rank?: number;
 }
 
 export interface HostBetweenGamesProps {
@@ -118,7 +119,7 @@ export function HostBetweenGames({
                   boxSizing: "border-box",
                 }}
               >
-                <Numeric size={18} weight={800} color={index === 0 ? t.accent : t.inkMid}>{index + 1}</Numeric>
+                <Numeric size={18} weight={800} color={index === 0 ? t.accent : t.inkMid}>{row.rank ?? index + 1}</Numeric>
                 <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontWeight: 750 }}>
                   {row.name}
                 </span>

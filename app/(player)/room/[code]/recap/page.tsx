@@ -16,6 +16,7 @@ import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import type { AnswerRow, CategoryRow, GameScoreRow, GameRow } from "@/lib/supabase/types";
 import { categoryColor } from "@/lib/theme/categories";
+import { rankScores } from "@/lib/game/rankScores";
 
 export default function PlayerRecapPage() {
   const params = useParams<{ code: string }>();
@@ -184,8 +185,7 @@ function computeLongestStreak(answers: AnswerRow[]): number {
 }
 
 function computeRank(scores: GameScoreRow[], playerId: string): number {
-  const idx = scores.findIndex((s) => s.player_id === playerId);
-  return idx >= 0 ? idx + 1 : 0;
+  return rankScores(scores).find(({ row }) => row.player_id === playerId)?.rank ?? 0;
 }
 
 function formatNightDate(iso: string | null): string {

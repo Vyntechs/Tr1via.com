@@ -255,7 +255,7 @@ function HostGenEditInner({
                     {pointValue ?? "—"}
                   </Numeric>
                   <span style={{ fontSize: 11, color: t.inkMid, fontFamily: "var(--font-mono)", letterSpacing: "0.04em" }}>
-                    {pointValue === null ? "AUTO ON LOCK" : "PLACED"}
+                    {pointValue === null ? "AUTO ON LOCK" : "ON YOUR BOARD"}
                   </span>
                 </div>
                 <div style={{ marginTop: 10, display: "grid", gridTemplateColumns: mobile ? "repeat(4, minmax(0, 1fr))" : "repeat(7, 1fr)", gap: 6 }}>

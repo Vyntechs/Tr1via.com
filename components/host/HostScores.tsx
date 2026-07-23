@@ -4,6 +4,7 @@ import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { ThemeProvider, useTheme } from "@/components/system";
 import type { GameScoreRow } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { rankScores } from "@/lib/game/rankScores";
 import { AdjustPointsModal } from "./AdjustPointsModal";
 import type { HostLivePlayer } from "./HostLiveConsole";
 
@@ -25,12 +26,12 @@ function HostScoresInner({ gameNo, scores, onSubmitAdjustment }: Omit<HostScores
   const [adjusting, setAdjusting] = useState<HostLivePlayer | null>(null);
   const invokingButtonRef = useRef<HTMLButtonElement | null>(null);
   const ranked = useMemo(
-    () => [...scores]
-      .filter((row): row is GameScoreRow & { player_id: string } => Boolean(row.player_id))
-      .sort((a, b) => (b.score ?? 0) - (a.score ?? 0) || (a.display_name ?? "Player").localeCompare(b.display_name ?? "Player")),
+    () => rankScores(
+      scores.filter((row): row is GameScoreRow & { player_id: string } => Boolean(row.player_id)),
+    ),
     [scores],
   );
-  const players = useMemo<HostLivePlayer[]>(() => ranked.map((row) => ({
+  const players = useMemo<HostLivePlayer[]>(() => ranked.map(({ row }) => ({
     id: row.player_id,
     name: row.display_name ?? "Player",
     score: row.score ?? 0,
@@ -38,7 +39,7 @@ function HostScoresInner({ gameNo, scores, onSubmitAdjustment }: Omit<HostScores
     appOff: "",
   })), [ranked]);
   const needle = query.trim().toLocaleLowerCase();
-  const visible = ranked.filter((row) => !needle || (row.display_name ?? "Player").toLocaleLowerCase().includes(needle));
+  const visible = ranked.filter(({ row }) => !needle || (row.display_name ?? "Player").toLocaleLowerCase().includes(needle));
   const panel: CSSProperties = { border: `1px solid ${t.line}`, borderRadius: 16, background: t.surface };
 
   return (
@@ -58,8 +59,7 @@ function HostScoresInner({ gameNo, scores, onSubmitAdjustment }: Omit<HostScores
         <p style={{ color: t.ink, fontSize: 13 }}>{ranked.length === 0 ? "Scores appear after play begins." : "No players match that search."}</p>
       ) : (
         <ol style={{ margin: "14px 0 0", padding: 0, listStyle: "none", display: "grid", gap: 9 }}>
-          {visible.map((row) => {
-            const rank = ranked.indexOf(row) + 1;
+          {visible.map(({ row, rank }) => {
             const player = players.find((candidate) => candidate.id === row.player_id)!;
             return (
               <li key={row.player_id}>

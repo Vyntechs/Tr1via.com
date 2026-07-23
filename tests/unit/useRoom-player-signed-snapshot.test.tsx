@@ -303,7 +303,7 @@ describe("useRoom player audience", () => {
     );
     await waitFor(() => expect(result.current.isLoading).toBe(false));
 
-    for (const event of ["reveal", "undo", "resolve", "game-started", "game-ended"] as const) {
+    for (const event of ["reveal", "undo", "resolve", "advance", "game-started", "game-ended"] as const) {
       const before = h.fetchSnapshot.mock.calls.length;
       act(() => {
         h.broadcastHandlers.get(event)?.({
@@ -318,6 +318,33 @@ describe("useRoom player audience", () => {
 
     expect(h.channelNames).toEqual(["room:ABCDEF"]);
     expect(h.fromCalls).toEqual([]);
+  });
+
+  it("does not turn every player's answer-progress event into a venue-wide snapshot storm", async () => {
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "player", sessionReady: true }),
+    );
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    const before = h.fetchSnapshot.mock.calls.length;
+
+    act(() => {
+      for (let index = 0; index < 40; index += 1) {
+        h.broadcastHandlers.get("live-room-event")?.({
+          payload: {
+            kind: "answer_progress",
+            live: { roomRevision: index + 1 },
+          },
+        });
+      }
+    });
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(before);
+
+    act(() => {
+      h.broadcastHandlers.get("live-room-event")?.({
+        payload: { kind: "play_resolved", live: { roomRevision: 41 } },
+      });
+    });
+    await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(before + 1));
   });
 
   it("moves a signed player from Game 2 ready to live on game-started", async () => {

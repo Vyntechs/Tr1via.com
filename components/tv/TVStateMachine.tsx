@@ -49,6 +49,7 @@ import {
 import { TVLockInCeremony, type CeremonyEvent } from "@/components/tv/TVLockInCeremony";
 import type { MarqueeChip } from "@/components/tv/TVScoreboardMarquee";
 import { formatRoomCode } from "@/lib/game/room-code";
+import { rankScores } from "@/lib/game/rankScores";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
@@ -137,8 +138,32 @@ export function TVStateMachine({
   const lastResolve = snapshot.reveals.find(
     (r) => r.event === "resolve" && r.gameId === currentGame?.id,
   ) ?? null;
-  const resolvedQuestionCandidate = lastResolve
-    ? snapshot.questions.find((question) => question.id === lastResolve.questionId) ?? null
+  const targetResolution = targetQuestion?.finishedAt
+    ? {
+        questionId: targetQuestion.id,
+        occurredAt: targetQuestion.finishedAt,
+      }
+    : null;
+  const explicitResolution = lastResolve
+    ? { questionId: lastResolve.questionId, occurredAt: lastResolve.occurredAt }
+    : null;
+  const resolutionAnchor =
+    targetResolution &&
+    (!explicitResolution ||
+      Date.parse(targetResolution.occurredAt) > Date.parse(explicitResolution.occurredAt))
+      ? targetResolution
+      : explicitResolution;
+  const durableAdvance = resolutionAnchor
+    ? snapshot.reveals.find(
+        (r) =>
+          r.event === "advance" &&
+          r.gameId === currentGame?.id &&
+          r.questionId === resolutionAnchor.questionId &&
+          Date.parse(r.occurredAt) >= Date.parse(resolutionAnchor.occurredAt),
+      ) ?? null
+    : null;
+  const resolvedQuestionCandidate = resolutionAnchor
+    ? snapshot.questions.find((question) => question.id === resolutionAnchor.questionId) ?? null
     : null;
   const resolvedQuestion = belongsToCurrentGame(resolvedQuestionCandidate)
     ? resolvedQuestionCandidate
@@ -155,7 +180,9 @@ export function TVStateMachine({
   // sticks until the next live question arrives (which the state machine
   // catches via `liveQuestion && !finishedAt`) OR the game ends.
   const stickyReveal =
-    (!!lastResolve || Boolean(targetQuestion?.finishedAt)) && !hostAdvanced;
+    Boolean(resolutionAnchor) &&
+    !hostAdvanced &&
+    !durableAdvance;
 
   // Ceremony-queue pending count — TVQuestionView reports this up so the
   // reveal branch can hold the transition for up to 3 s while ceremonies
@@ -180,7 +207,8 @@ export function TVStateMachine({
     currentGame?.id === game2?.id &&
     currentGame.state === "live" &&
     !liveQuestion &&
-    !lastResolve
+    !lastResolve &&
+    !onGridCellClick
   ) {
     return <TVIntermissionView snapshot={snapshot} game1={game1} />;
   }
@@ -755,12 +783,12 @@ function TVLeaderboardView({
   game: { id: string; gameNo?: 1 | 2 };
 }) {
   const gameNo = snapshot.games.find((g) => g.id === game.id)?.gameNo ?? 1;
-  const rows: TVLeaderboardRow[] = snapshot.scores
+  const rows: TVLeaderboardRow[] = rankScores(snapshot.scores)
     .slice(0, 10)
-    .map((s, idx) => ({
-      rank: idx + 1,
-      name: s.display_name,
-      score: s.score,
+    .map(({ row, rank }) => ({
+      rank,
+      name: row.display_name,
+      score: row.score,
     }));
 
   const answered = snapshot.scores.reduce((sum, s) => sum + s.answered_count, 0);
@@ -788,12 +816,12 @@ function TVIntermissionView({
   const game1Scores = game1
     ? snapshot.scores
     : [];
-  const podium: TVIntermissionPodiumRow[] = game1Scores
+  const podium: TVIntermissionPodiumRow[] = rankScores(game1Scores)
     .slice(0, 3)
-    .map((s, idx) => ({
-      rank: idx + 1,
-      name: s.display_name,
-      score: s.score,
+    .map(({ row, rank }) => ({
+      rank,
+      name: row.display_name,
+      score: row.score,
     }));
 
   // Best stats across game 1 for the "in numbers" block.
@@ -846,28 +874,29 @@ function TVIntermissionView({
 }
 
 function TVFinaleView({ snapshot }: { snapshot: TVSnapshot }) {
-  const sorted = snapshot.scores;
+  const sorted = rankScores(snapshot.scores);
   const top = sorted[0] ?? null;
-  const podium = sorted.slice(1, 3).map((s, idx) => ({
-    rank: idx + 2,
-    name: s.display_name,
-    score: s.score,
+  const topRanked = sorted.filter(({ rank }) => rank === 1);
+  const podium = sorted.filter(({ rank }) => rank > 1).slice(0, 2).map(({ row, rank }) => ({
+    rank,
+    name: row.display_name,
+    score: row.score,
   }));
 
   const winner = top
     ? {
-        name: top.display_name,
-        score: top.score,
-        correct: top.correct_count,
-        of: top.answered_count,
+        name: topRanked.map(({ row }) => row.display_name).join(" + "),
+        score: top.row.score,
+        correct: topRanked.length === 1 ? top.row.correct_count : undefined,
+        of: topRanked.length === 1 ? top.row.answered_count : undefined,
         streak: undefined,
-        fastest: top.fastest_correct_ms
-          ? `${(top.fastest_correct_ms / 1000).toFixed(1)}s`
+        fastest: topRanked.length === 1 && top.row.fastest_correct_ms
+          ? `${(top.row.fastest_correct_ms / 1000).toFixed(1)}s`
           : undefined,
       }
     : undefined;
 
-  const fastestEver = sorted
+  const fastestEver = snapshot.scores
     .filter((s) => s.fastest_correct_ms !== null)
     .sort((a, b) => (a.fastest_correct_ms ?? 0) - (b.fastest_correct_ms ?? 0))[0];
   const stats = [
@@ -904,13 +933,10 @@ function pickLiveQuestion(snapshot: TVSnapshot) {
 }
 
 function topScores(snapshot: TVSnapshot): TVGridLeaderRow[] {
-  // snapshot.scores is pre-sorted score-descending by both snapshot builders
-  // (roomToTVSnapshot + the /tv/[code] snapshot route), so the first four rows
-  // are the true top four.
-  return snapshot.scores.slice(0, 4).map((s, idx) => ({
-    rank: idx + 1,
-    name: s.display_name,
-    score: s.score,
+  return rankScores(snapshot.scores).slice(0, 4).map(({ row, rank }) => ({
+    rank,
+    name: row.display_name,
+    score: row.score,
   }));
 }
 

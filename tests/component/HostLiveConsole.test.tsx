@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { HostLiveConsole } from "@/components/host/HostLiveConsole";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
@@ -125,5 +125,28 @@ describe("HostLiveConsole public control strip", () => {
 
     expect(screen.getByTestId("host-end-early-btn")).toHaveTextContent("Show answer now");
     expect(screen.queryByText("End early · reveal")).not.toBeInTheDocument();
+  });
+
+  it("shows clickable Game 2 cards on the host laptop immediately after Game 2 starts", () => {
+    const onRevealCell = vi.fn();
+    render(
+      <HostLiveConsole
+        themeKey="house"
+        tvSnapshot={snapshot({
+          games: [
+            game({ id: "g1", gameNo: 1, state: "done" }),
+            game({ id: "g2", gameNo: 2, state: "live" }),
+          ],
+          currentGameId: "g2",
+          categories: [category({ id: "c2", gameId: "g2" })],
+          questions: [question({ id: "q2", categoryId: "c2" })],
+        })}
+        onRevealCell={onRevealCell}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("host-question-q2"));
+    expect(onRevealCell).toHaveBeenCalledWith("q2");
+    expect(screen.queryByTestId("tv-intermission")).not.toBeInTheDocument();
   });
 });

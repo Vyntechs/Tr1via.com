@@ -1,5 +1,6 @@
 import type { GameScoreRow } from "@/lib/supabase/types";
 import type { StandingRow } from "@/lib/player/betweenGames";
+import { rankScores } from "@/lib/game/rankScores";
 
 export interface Neighborhood {
   rows: StandingRow[];
@@ -12,16 +13,17 @@ export function buildNeighborhood(
   meId: string,
   radius = 4,
 ): Neighborhood {
-  const total = scores.length;
-  const meIndex = scores.findIndex((s) => s.player_id === meId);
+  const ranked = rankScores(scores);
+  const total = ranked.length;
+  const meIndex = ranked.findIndex(({ row }) => row.player_id === meId);
   if (meIndex < 0) return { rows: [], meRank: null, total };
   const start = Math.max(0, meIndex - radius);
   const end = Math.min(total, meIndex + radius + 1);
-  const rows: StandingRow[] = scores.slice(start, end).map((s, i) => ({
-    rank: start + i + 1,
-    name: s.display_name ?? "",
-    score: s.score ?? 0,
-    isYou: s.player_id === meId,
+  const rows: StandingRow[] = ranked.slice(start, end).map(({ row, rank }) => ({
+    rank,
+    name: row.display_name ?? "",
+    score: row.score ?? 0,
+    isYou: row.player_id === meId,
   }));
-  return { rows, meRank: meIndex + 1, total };
+  return { rows, meRank: ranked[meIndex]?.rank ?? null, total };
 }

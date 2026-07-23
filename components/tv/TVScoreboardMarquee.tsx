@@ -1,7 +1,7 @@
 // Auto-scrolling scoreboard marquee — the bottom strip of the TV during
 // live questions on the May/Storm theme. Replaces today's lock-in pile.
 //
-// Sort: score descending, join-order tiebreak (stable). Re-sort on score
+// Sort: score descending, name tiebreak (matching every standings surface). Re-sort on score
 // updates (which only occur at reveal — mid-question scores are static).
 //
 // Auto-scroll: when 6+ chips, the track slides left on a pure CSS keyframe
@@ -194,6 +194,6 @@ function Chip({ chip, spotlight }: { chip: MarqueeChip; spotlight: boolean }) {
 function sortChips(chips: MarqueeChip[]): MarqueeChip[] {
   return [...chips].sort((a, b) => {
     if (a.score !== b.score) return b.score - a.score;
-    return a.joinIndex - b.joinIndex;
+    return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   });
 }

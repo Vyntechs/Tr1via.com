@@ -12,6 +12,20 @@ const scores: GameScoreRow[] = [
 ];
 
 describe("HostScores", () => {
+  it("shows equal scores with the same rank and a deterministic name order", () => {
+    const tiedScores: GameScoreRow[] = [
+      { ...scores[0]!, player_id: "p1", display_name: "Momma t", score: 2300 },
+      { ...scores[1]!, player_id: "p2", display_name: "Lisa H", score: 2300 },
+    ];
+    render(<HostScores themeKey="house" gameNo={2} scores={tiedScores} onSubmitAdjustment={vi.fn()} />);
+
+    const rows = screen.getAllByRole("button", { name: /Adjust points for/ });
+    expect(rows.map((row) => row.textContent)).toEqual([
+      expect.stringMatching(/^1Lisa H/),
+      expect.stringMatching(/^1Momma t/),
+    ]);
+  });
+
   it("searches proven score fields without inventing score movement", () => {
     render(<HostScores themeKey="march" gameNo={1} scores={scores} onSubmitAdjustment={vi.fn()} />);
 

@@ -122,7 +122,7 @@ export interface RoomSnapshot {
 }
 
 export interface BroadcastTag {
-  event: "reveal" | "undo" | "resolve" | "end-early" | "roster-changed";
+  event: "reveal" | "undo" | "resolve" | "advance" | "end-early" | "roster-changed";
   /** Question id for reveal/undo/resolve/end-early; empty string for
    *  roster-changed. Kept on the
    *  union so existing consumers don't have to narrow before reading. */
@@ -467,6 +467,14 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             correctIndex: typeof p.correctIndex === "number" ? p.correctIndex : undefined,
           });
         })
+        .on("broadcast", { event: "advance" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          refetchForBroadcast({
+            event: "advance",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+          });
+        })
         .on("broadcast", { event: "end-early" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;
           refetchForBroadcast({
@@ -484,8 +492,14 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         .on("broadcast", { event: "game-ended" }, () => {
           refetchForBroadcast();
         })
-        .on("broadcast", { event: "live-room-event" }, () => {
-          // Broadcasts are wake-ups only. The signed route remains authority.
+        .on("broadcast", { event: "live-room-event" }, (msg) => {
+          const event = msg.payload as { kind?: unknown };
+          // Every confirmed answer emits answer_progress. Refetching a full
+          // signed snapshot on every one turns N answers into N×N venue
+          // requests and can delay the actual resolve. The answering phone
+          // already has its durable response; only shared state transitions
+          // wake every player for canonical reconciliation.
+          if (event.kind === "answer_progress") return;
           refetchForBroadcast();
         })
         .on("broadcast", { event: "roster-changed" }, (msg) => {
@@ -1199,6 +1213,15 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             String(p.questionId),
             typeof p.correctIndex === "number" ? p.correctIndex : undefined,
           );
+        })
+        .on("broadcast", { event: "advance" }, (msg) => {
+          const p = msg.payload as Record<string, unknown>;
+          mergeBroadcast({
+            event: "advance",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
+          });
+          void refreshLiveState(nightId, String(p.questionId));
         })
         .on("broadcast", { event: "end-early" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;

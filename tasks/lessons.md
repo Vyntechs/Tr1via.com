@@ -187,6 +187,11 @@ Reason: A mutable header plus leaked identifier lets one player impersonate anot
 Trigger: Player controls froze before the server stopped accepting first-time answers.
 Rule: Make the official input deadline match server acceptance unless authoritative pre-deadline proof exists.
 Reason: A hidden grace period rewards modified clients and breaks fairness.
+
+### saved-scores-do-not-make-a-live-screen-healthy
+Trigger: Scores are durable while players cannot see points or standings during live play.
+Rule: Keep the incident unresolved until the visible player experience recovers; never recommend continuing from database integrity alone.
+Reason: Correct hidden state does not restore competition, trust, or game flow.
 ### phone-host-entry-is-the-product
 Trigger: A phone host resumed a live game and received the clipped venue canvas while the usable controller stayed behind a secondary link.
 Rule: Device-appropriate hosting must be the primary path; expose venue display as an explicit companion view from the controller.
@@ -334,3 +339,8 @@ Reason: Host workarounds cannot repair shared infrastructure and waste the found
 Trigger: One game transition wakes every connected player simultaneously.
 Rule: Coalesce shared server reads and serialize each client's recovery fetches; never multiply identical room-wide work per player.
 Reason: Correct per-device behavior can still create a venue-wide thundering herd that blocks host control.
+
+### board-placement-is-selection
+Trigger: A host assigns a saved question to a board value.
+Rule: Atomically select that exact question and remove or swap the prior occupant.
+Reason: Point value alone must never imply a different question will play.

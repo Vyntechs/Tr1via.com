@@ -92,7 +92,7 @@ describe("HostAnswerResult", () => {
     expect(screen.queryByText("p4")).not.toBeInTheDocument();
     expect(screen.getByText(question.fact_blurb!)).toBeVisible();
 
-    const returnButton = screen.getByRole("button", { name: "Return to board" });
+    const returnButton = screen.getByRole("button", { name: "Show standings & board" });
     expect(returnButton).toHaveStyle({ minHeight: "48px" });
     fireEvent.click(returnButton);
     expect(onReturnToBoard).toHaveBeenCalledTimes(1);
