@@ -232,6 +232,59 @@ describe("player answer signed snapshot refresh", () => {
     expect(await screen.findByTestId("player-locked")).toBeInTheDocument();
   });
 
+  it("coalesces simultaneous transition wake-ups into sequential signed refreshes", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    h.fetchSnapshot
+      .mockResolvedValueOnce(payload([]))
+      .mockImplementation(
+        () => new Promise<RoomSnapshotPayload>((resolve) => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          releases.push(() => {
+            active -= 1;
+            resolve(payload([]));
+          });
+        }),
+      );
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      h.handlers.get("reveal")?.({
+        payload: {
+          questionId: "question-1",
+          serverNow: "2026-07-18T18:06:00.000Z",
+          revealedAt: "2026-07-18T18:06:00.000Z",
+        },
+      });
+      h.handlers.get("resolve")?.({
+        payload: {
+          questionId: "question-1",
+          serverNow: "2026-07-18T18:06:20.000Z",
+          correctIndex: 0,
+        },
+      });
+    });
+
+    // One request is active; the second wake-up is represented by one queued
+    // trailing refresh instead of overlapping the first.
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+    expect(active).toBe(1);
+
+    await act(async () => releases.shift()?.());
+    await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(3));
+    expect(active).toBe(1);
+    await act(async () => releases.shift()?.());
+
+    expect(maxActive).toBe(1);
+    expect(h.client.channel).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps Game 1 standings visible while Game 2 awaits its first question", async () => {
     const signed = payload([]) as Extract<
       RoomSnapshotPayload,

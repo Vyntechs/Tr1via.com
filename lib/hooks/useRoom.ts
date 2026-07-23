@@ -235,21 +235,28 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
   // Throttle so a flurry of bad statuses doesn't whip us into a rebootstrap loop.
   const lastReconnectAtRef = useRef(0);
 
-  // Heartbeat: defensive periodic re-bootstrap. Catches the case where the
+  // Heartbeat: defensive periodic refresh. Catches the case where the
   // realtime channel claims SUBSCRIBED but a broadcast was silently missed
   // (Supabase Realtime occasionally drops events under load / weird network
   // conditions even when the WebSocket stays open). Without this, a player
   // can be stuck on a previous question's reveal screen indefinitely until
   // they manually refresh. 15s gives the host enough time to actually
-  // advance between heartbeats, and is light enough that 30 players generate
-  // 2 req/sec of HTTP refresh traffic against prod Supabase — well within
-  // headroom proven by the 30-phone load test.
+  // advance between heartbeats. Player phones refresh their signed snapshot
+  // in-place; they must not tear down and rebuild their realtime channel every
+  // 15 seconds because that synchronizes venue traffic into a thundering herd.
+  // Host surfaces retain the full re-bootstrap watchdog behavior.
   const [heartbeatTick, setHeartbeatTick] = useState(0);
   useEffect(() => {
     if (!roomCode || waitingForSession) return;
-    const id = setInterval(() => setHeartbeatTick((t) => t + 1), 15000);
+    const id = setInterval(() => {
+      if (audience === "player") {
+        void playerRefreshRef.current?.();
+      } else {
+        setHeartbeatTick((t) => t + 1);
+      }
+    }, 15000);
     return () => clearInterval(id);
-  }, [roomCode, waitingForSession]);
+  }, [audience, roomCode, waitingForSession]);
 
   // ── Layer 4: freshness watchdog (HOST ONLY) ───────────────────────────
   // Layers 1-3 above all trust channel STATUS. None notices a socket that
@@ -371,8 +378,10 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     // only a low-latency wake-up signal to refetch that confirmed snapshot.
     if (audience === "player") {
       let requestVersion = 0;
+      let refreshInFlight: Promise<void> | null = null;
+      let refreshQueued = false;
 
-      async function refreshPlayerSnapshot(): Promise<void> {
+      async function performPlayerSnapshotRefresh(): Promise<void> {
         const version = ++requestVersion;
         try {
           const payload = await fetchRoomSnapshotPayload(code, {
@@ -397,6 +406,27 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           // recovery failure leaves the last confirmed room fully visible.
           setSnapshot((prev) => ({ ...prev, isLoading: false }));
         }
+      }
+
+      function refreshPlayerSnapshot(): Promise<void> {
+        if (refreshInFlight) {
+          // Several broadcasts can describe one committed transition. Preserve
+          // one trailing refresh in case the active request began before the
+          // newest commit, but never allow overlapping full snapshot reads.
+          refreshQueued = true;
+          return refreshInFlight;
+        }
+
+        const run = async () => {
+          do {
+            refreshQueued = false;
+            await performPlayerSnapshotRefresh();
+          } while (refreshQueued && !cancelled);
+        };
+        refreshInFlight = run().finally(() => {
+          refreshInFlight = null;
+        });
+        return refreshInFlight;
       }
 
       const requestRefresh = () => refreshPlayerSnapshot();

@@ -30,6 +30,21 @@ import type {
 
 const DEVICE_COOKIE = "tr1via_device";
 
+/**
+ * Cheaply determine whether this request can plausibly be a signed-in host.
+ * Supabase SSR stores the session in `sb-<project>-auth-token` cookies (which
+ * may be chunked as `.0`, `.1`, ...). Player-only browsers do not carry one.
+ *
+ * This is only a fast-path hint — it never authorizes anything. Callers that
+ * receive `true` must still use getAuthedHost() for cryptographic validation.
+ */
+export async function hasHostSessionCookie(): Promise<boolean> {
+  const jar = await cookies();
+  return jar.getAll().some(({ name }) =>
+    /^sb-[^-]+-auth-token(?:\.\d+)?$/.test(name),
+  );
+}
+
 export type HostAuthResult =
   | { ok: true; host: HostRow }
   | { ok: false; status: 401 | 403; error: string };

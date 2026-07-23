@@ -329,3 +329,8 @@ Reason: Recovery polling becomes a self-amplifying outage when every request per
 Trigger: A live production failure recurred after operational workarounds and temporarily cleared between questions.
 Rule: Once evidence identifies a repeatable systemic cause, implement the smallest verified fix instead of shifting behavior onto the host.
 Reason: Host workarounds cannot repair shared infrastructure and waste the founder's attention during the show.
+
+### coalesce-live-transition-fanout
+Trigger: One game transition wakes every connected player simultaneously.
+Rule: Coalesce shared server reads and serialize each client's recovery fetches; never multiply identical room-wide work per player.
+Reason: Correct per-device behavior can still create a venue-wide thundering herd that blocks host control.

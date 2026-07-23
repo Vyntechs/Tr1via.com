@@ -25,7 +25,11 @@ import { ok, badRequest, forbidden, notFound, serverError } from "@/lib/api/resp
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { getAuthedHost, getDeviceId } from "@/lib/api/auth";
+import {
+  getAuthedHost,
+  getDeviceId,
+  hasHostSessionCookie,
+} from "@/lib/api/auth";
 import {
   projectHostLiveRoom,
   projectPlayerLiveRoom,
@@ -67,6 +71,145 @@ type SafePlayerRow = Pick<
 const RECENT_REACTION_WINDOW_MS = 30_000;
 const RECENT_REACTION_LIMIT = 25;
 
+type AdminClient = ReturnType<typeof getSupabaseAdmin>;
+
+type SharedRoomState = {
+  night: NightRow;
+  hostDefaultThemeKey: string | null;
+  currentPlay: Record<string, unknown> | null;
+  games: GameRow[];
+  categories: CategoryRow[];
+  activePlayerRows: SafePlayerRow[];
+  allQuestionsRaw: QuestionRow[];
+  reveals: RevealRow[];
+  allScores: GameScoreRow[];
+};
+
+type SharedRoomResult =
+  | { ok: true; value: SharedRoomState }
+  | { ok: false; kind: "not-found" | "server-error" };
+
+// A reveal wakes every player at nearly the same instant. Without request
+// coalescing, each phone independently runs the same room-wide query fan-out,
+// multiplying one transition into hundreds of concurrent database reads.
+// Share only the in-flight promise: there is no TTL and therefore no stale
+// room state. Player-specific answers and identity remain outside this map.
+const sharedRoomLoads = new Map<string, Promise<SharedRoomResult>>();
+
+function loadSharedRoomState(
+  admin: AdminClient,
+  code: string,
+): Promise<SharedRoomResult> {
+  const existing = sharedRoomLoads.get(code);
+  if (existing) return existing;
+
+  const pending = loadSharedRoomStateUncached(admin, code);
+  sharedRoomLoads.set(code, pending);
+  const cleanup = () => {
+    if (sharedRoomLoads.get(code) === pending) sharedRoomLoads.delete(code);
+  };
+  void pending.then(cleanup, cleanup);
+  return pending;
+}
+
+async function loadSharedRoomStateUncached(
+  admin: AdminClient,
+  code: string,
+): Promise<SharedRoomResult> {
+  const { data: nightRaw, error: nightErr } = await admin
+    .from("nights")
+    .select("*, hosts!inner(default_theme_key)")
+    .eq("room_code", code)
+    .maybeSingle();
+  if (nightErr) return { ok: false, kind: "server-error" };
+  if (!nightRaw) return { ok: false, kind: "not-found" };
+
+  type HostJoin = { default_theme_key: string | null };
+  const hostsField = (nightRaw as { hosts?: HostJoin | HostJoin[] }).hosts;
+  const hostJoin = Array.isArray(hostsField) ? hostsField[0] : hostsField;
+  const hostDefaultThemeKey = hostJoin?.default_theme_key ?? null;
+  const nightRow = { ...(nightRaw as Record<string, unknown> & { hosts?: unknown }) };
+  delete nightRow.hosts;
+  const night = nightRow as unknown as NightRow;
+  const nightId = night.id;
+
+  const [gamesRes, categoriesRes, playersRes, pickedRes, revealsRes, playRes] =
+    await Promise.all([
+      admin
+        .from("games")
+        .select("*")
+        .eq("night_id", nightId)
+        .order("game_no", { ascending: true }),
+      admin
+        .from("categories")
+        .select("*, games!inner(night_id)")
+        .eq("games.night_id", nightId)
+        .order("position", { ascending: true }),
+      admin
+        .from("players")
+        .select(
+          "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds",
+        )
+        .eq("night_id", nightId)
+        .is("removed_at", null)
+        .order("joined_at", { ascending: true }),
+      admin
+        .from("questions")
+        .select("*, categories!inner(games!inner(night_id))")
+        .eq("categories.games.night_id", nightId)
+        .eq("is_picked", true),
+      admin
+        .from("reveals")
+        .select("*, games!inner(night_id)")
+        .eq("games.night_id", nightId)
+        .order("occurred_at", { ascending: false })
+        .limit(1),
+      night.answer_engine === "resilient_v1" && night.current_run_id
+        ? admin
+            .from("question_plays")
+            .select(
+              "id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count",
+            )
+            .eq("night_id", nightId)
+            .eq("run_id", night.current_run_id)
+            .order("opened_at", { ascending: false })
+            .limit(1)
+        : Promise.resolve({ data: [], error: null }),
+    ]);
+
+  if (
+    gamesRes.error || categoriesRes.error || playersRes.error ||
+    pickedRes.error || revealsRes.error || playRes.error
+  ) {
+    return { ok: false, kind: "server-error" };
+  }
+
+  const games = (gamesRes.data ?? []) as GameRow[];
+  const { data: scoresData, error: scoresError } = games.length > 0
+    ? await admin
+        .from("game_scores")
+        .select("*")
+        .in("game_id", games.map((game) => game.id))
+        .order("score", { ascending: false })
+    : { data: [] as GameScoreRow[], error: null };
+  if (scoresError) return { ok: false, kind: "server-error" };
+
+  return {
+    ok: true,
+    value: {
+      night,
+      hostDefaultThemeKey,
+      currentPlay: playRes.data?.[0] ?? null,
+      games,
+      categories: stripJoins(categoriesRes.data ?? [], "games") as CategoryRow[],
+      activePlayerRows: (playersRes.data ?? []) as SafePlayerRow[],
+      allQuestionsRaw: stripJoins(pickedRes.data ?? [], "categories") as QuestionRow[],
+      reveals: stripJoins(revealsRes.data ?? [], "games") as RevealRow[],
+      allScores: (scoresData ?? []) as GameScoreRow[],
+    },
+  };
+}
+
 export async function GET(
   _req: Request,
   ctx: { params: Promise<{ code: string }> },
@@ -76,34 +219,35 @@ export async function GET(
   if (!isValidRoomCode(code)) return badRequest("invalid room code");
 
   const admin = getSupabaseAdmin();
-
-  // Night + host default theme. Select * so we return a full NightRow (matching
-  // the player's direct `nights` read); the joined host theme is stripped off.
-  const { data: nightRaw, error: nightErr } = await admin
-    .from("nights")
-    .select("*, hosts!inner(default_theme_key)")
-    .eq("room_code", code)
-    .maybeSingle();
-  if (nightErr) return serverError();
-  if (!nightRaw) return notFound("room not found");
-
-  type HostJoin = { default_theme_key: string | null };
-  const hostsField = (nightRaw as { hosts?: HostJoin | HostJoin[] }).hosts;
-  const hostJoin = Array.isArray(hostsField) ? hostsField[0] : hostsField;
-  const hostDefaultThemeKey: string | null = hostJoin?.default_theme_key ?? null;
-  const nightRow = { ...(nightRaw as Record<string, unknown> & {
-    hosts?: unknown;
-  }) };
-  delete nightRow.hosts;
-  const night = nightRow as unknown as NightRow;
+  const sharedResult = await loadSharedRoomState(admin, code);
+  if (!sharedResult.ok) {
+    return sharedResult.kind === "not-found"
+      ? notFound("room not found")
+      : serverError();
+  }
+  const {
+    night,
+    hostDefaultThemeKey,
+    currentPlay,
+    games,
+    categories,
+    activePlayerRows,
+    allQuestionsRaw,
+    reveals,
+    allScores,
+  } = sharedResult.value;
   const nightId = night.id;
 
   // ── Authorize: host-owns-night OR device-cookie player in this night ──────
   let mode: "host" | "player";
   let playerRow: SafePlayerRow | null = null;
 
-  const hostAuth = await getAuthedHost();
-  if (hostAuth.ok && (night as { host_id?: string }).host_id === hostAuth.host.id) {
+  // Player phones normally have no host session. Avoid calling Supabase Auth
+  // hundreds of times during a reveal fan-out; the cookie check is only a
+  // hint, and real host sessions are still fully validated below.
+  const mayBeHost = await hasHostSessionCookie();
+  const hostAuth = mayBeHost ? await getAuthedHost() : null;
+  if (hostAuth?.ok && (night as { host_id?: string }).host_id === hostAuth.host.id) {
     mode = "host";
   } else {
     const deviceId = await getDeviceId();
@@ -123,23 +267,10 @@ export async function GET(
 
   // Resilient nights expose one explicit audience-safe projection. Raw plays,
   // frozen eligibility rows, and canonical answers never cross this route.
-  let currentPlay: Record<string, unknown> | null = null;
   let playerEligibility: { play_id: string } | null = null;
   let playerCanonicalAnswer: Record<string, unknown> | null = null;
   const resilient = night.answer_engine === "resilient_v1";
   if (resilient && night.current_run_id) {
-    const { data: playRows, error: playError } = await admin
-      .from("question_plays")
-      .select(
-        "id, game_id, question_id, status, opened_at, main_zero_at, final_window_starts_at, final_window_ends_at, finalize_at, eligible_count, confirmed_count",
-      )
-      .eq("night_id", nightId)
-      .eq("run_id", night.current_run_id)
-      .order("opened_at", { ascending: false })
-      .limit(1);
-    if (playError) return serverError();
-    currentPlay = playRows?.[0] ?? null;
-
     if (mode === "player" && playerRow && currentPlay) {
       const [eligibilityRes, canonicalAnswerRes] = await Promise.all([
         admin
@@ -162,54 +293,6 @@ export async function GET(
       playerCanonicalAnswer = canonicalAnswerRes.data;
     }
   }
-
-  // ── Room state (same reads useRoom's bootstrap does, server-side) ─────────
-  const [gamesRes, categoriesRes, playersRes, pickedRes, revealsRes] =
-    await Promise.all([
-      admin
-        .from("games")
-        .select("*")
-        .eq("night_id", nightId)
-        .order("game_no", { ascending: true }),
-      admin
-        .from("categories")
-        .select("*, games!inner(night_id)")
-        .eq("games.night_id", nightId)
-        .order("position", { ascending: true }),
-      admin
-        .from("players")
-        .select(
-          "id, night_id, display_name, joined_at, last_seen_at, removed_at, app_switch_total_seconds",
-        )
-        .eq("night_id", nightId)
-        .is("removed_at", null)
-        .order("joined_at", { ascending: true }),
-      // All picked questions for this night's categories — the board + the
-      // live/resolved derivation below.
-      admin
-        .from("questions")
-        .select("*, categories!inner(games!inner(night_id))")
-        .eq("categories.games.night_id", nightId)
-        .eq("is_picked", true),
-      admin
-        .from("reveals")
-        .select("*, games!inner(night_id)")
-        .eq("games.night_id", nightId)
-        .order("occurred_at", { ascending: false })
-        .limit(1),
-    ]);
-
-  if (gamesRes.error) return serverError();
-  if (categoriesRes.error) return serverError();
-  if (playersRes.error) return serverError();
-  if (pickedRes.error) return serverError();
-  if (revealsRes.error) return serverError();
-
-  const games = (gamesRes.data ?? []) as GameRow[];
-  const categories = stripJoins(categoriesRes.data ?? [], "games") as CategoryRow[];
-  const activePlayerRows = (playersRes.data ?? []) as SafePlayerRow[];
-  const allQuestionsRaw = stripJoins(pickedRes.data ?? [], "categories") as QuestionRow[];
-  const reveals = stripJoins(revealsRes.data ?? [], "games") as RevealRow[];
 
   // Derive currentQuestion (live) + lastResolvedQuestion from the picked set —
   // identical semantics to useRoom's dedicated live/last-resolved queries.
@@ -276,15 +359,8 @@ export async function GET(
   const targetQuestionId = currentQuestionRaw?.id ?? lastResolvedRaw?.id ?? null;
 
   // ── Aux reads: scores + target-question answers + the player's own data ───
-  const [allScoresRes, liveAnswersRes, myAnswersRes, myParticipationsRes, roomMagicReactionsRes] =
+  const [liveAnswersRes, myAnswersRes, myParticipationsRes, roomMagicReactionsRes] =
     await Promise.all([
-      games.length > 0
-        ? admin
-            .from("game_scores")
-            .select("*")
-            .in("game_id", games.map((game) => game.id))
-            .order("score", { ascending: false })
-        : Promise.resolve({ data: [] as GameScoreRow[], error: null }),
       // ANTI-CHEAT: only the HOST receives the target question's answers (lock
       // counts + reveal data). A player must NOT see other players' picks while
       // the question is live — so player mode resolves to []. Explicit column
@@ -330,11 +406,9 @@ export async function GET(
         : Promise.resolve({ data: [], error: null }),
     ]);
 
-  const allScores = (allScoresRes.data ?? []) as GameScoreRow[];
   const scores = currentGame
     ? allScores.filter((score) => score.game_id === currentGame.id)
     : [];
-  if (allScoresRes.error) return serverError();
   if (liveAnswersRes.error) return serverError();
   if (myAnswersRes.error) return serverError();
   if (myParticipationsRes.error) return serverError();
