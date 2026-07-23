@@ -13,6 +13,7 @@ const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
 const authMock = vi.hoisted(() => ({
   getAuthedHost: vi.fn(),
   getDeviceId: vi.fn(),
+  hasHostSessionCookie: vi.fn(),
 }));
 vi.mock("@/lib/supabase/admin", () => adminMock);
 vi.mock("@/lib/api/auth", () => authMock);
@@ -230,6 +231,7 @@ describe("GET /api/room/[code]/snapshot", () => {
     vi.clearAllMocks();
     process.env.SESSION_SECRET = "snapshot-test-secret";
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
+    authMock.hasHostSessionCookie.mockResolvedValue(false);
   });
 
   it("403s when the caller is neither the owning host nor a player in the room", async () => {
@@ -271,6 +273,42 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(body.myParticipations).toHaveLength(1);
     expect(body.questionScrambles["q-live"]).toEqual(scrambleFor("q-live", PLAYER_ID));
     expect(body.roomMagicReactions).toEqual([]);
+  });
+
+  it("PLAYER mode: skips Supabase host authentication when no host session cookie exists", async () => {
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const res = await callRoute();
+
+    expect(res.status).toBe(200);
+    expect(authMock.getAuthedHost).not.toHaveBeenCalled();
+  });
+
+  it("coalesces concurrent room-wide loads while keeping player responses independent", async () => {
+    const admin = makeAdmin();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+
+    const [first, second] = await Promise.all([callRoute(), callRoute()]);
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+
+    const callsFor = (table: string) =>
+      admin.from.mock.calls.filter(([calledTable]) => calledTable === table).length;
+    for (const sharedTable of [
+      "nights",
+      "games",
+      "categories",
+      "questions",
+      "reveals",
+      "game_scores",
+    ]) {
+      expect(callsFor(sharedTable), sharedTable).toBe(1);
+    }
+    // Identity and personal history remain per-request and are never shared.
+    expect(callsFor("players")).toBe(3);
+    expect(callsFor("answers")).toBe(2);
+    expect(callsFor("game_participations")).toBe(2);
   });
 
   it("PLAYER mode: exposes only its own scrambled answer and never another player's live choice", async () => {
@@ -336,6 +374,7 @@ describe("GET /api/room/[code]/snapshot", () => {
   });
 
   it("HOST mode: owning host gets room state with the same gating", async () => {
+    authMock.hasHostSessionCookie.mockResolvedValue(true);
     authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
     authMock.getDeviceId.mockResolvedValue(null);
     const res = await callRoute();
@@ -374,6 +413,7 @@ describe("GET /api/room/[code]/snapshot", () => {
   });
 
   it("HOST mode: does not echo any player's browser device identity", async () => {
+    authMock.hasHostSessionCookie.mockResolvedValue(true);
     authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
     authMock.getDeviceId.mockResolvedValue(null);
     const res = await callRoute();
@@ -396,6 +436,7 @@ describe("GET /api/room/[code]/snapshot", () => {
   });
 
   it("HOST mode: still receives the LIVE question's answers (lock counts work)", async () => {
+    authMock.hasHostSessionCookie.mockResolvedValue(true);
     authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
     authMock.getDeviceId.mockResolvedValue(null);
     const res = await callRoute();
@@ -470,6 +511,7 @@ describe("GET /api/room/[code]/snapshot", () => {
 
   it("RESILIENT HOST: receives only exact-play canonical answers with aggregate operations", async () => {
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({ resilient: true }));
+    authMock.hasHostSessionCookie.mockResolvedValue(true);
     authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
     authMock.getDeviceId.mockResolvedValue(null);
 
@@ -532,6 +574,7 @@ describe("GET /api/room/[code]/snapshot", () => {
   });
 
   it("a signed-in host who does NOT own the night falls through to player auth", async () => {
+    authMock.hasHostSessionCookie.mockResolvedValue(true);
     authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: "other-host" } });
     authMock.getDeviceId.mockResolvedValue(null);
     const res = await callRoute();

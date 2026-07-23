@@ -392,7 +392,7 @@ describe("useRoom player audience", () => {
     expect(result.current.lastBroadcast).not.toHaveProperty("playerId");
   });
 
-  it("ignores an older failed refresh after a newer signed snapshot succeeds", async () => {
+  it("runs a queued signed refresh after an active refresh fails", async () => {
     let rejectOlder!: (reason?: unknown) => void;
     h.fetchSnapshot
       .mockResolvedValueOnce(playerPayload("initial"))
@@ -413,16 +413,15 @@ describe("useRoom player audience", () => {
       h.broadcastHandlers.get("reveal")?.({ payload: {} });
       h.broadcastHandlers.get("undo")?.({ payload: {} });
     });
-    await waitFor(() =>
-      expect(result.current.night?.venue_name).toBe("newer success"),
-    );
-    expect(getReachability()).toBe("ok");
 
     await act(async () => {
       rejectOlder(new Error("stale network failure"));
       await Promise.resolve();
     });
 
+    await waitFor(() =>
+      expect(result.current.night?.venue_name).toBe("newer success"),
+    );
     expect(getReachability()).toBe("ok");
     expect(result.current.night?.venue_name).toBe("newer success");
   });
