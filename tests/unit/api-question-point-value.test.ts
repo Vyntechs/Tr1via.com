@@ -40,7 +40,14 @@ function makeCtx() {
  * - `.from().select().eq().single()` (empty-update refetch) resolves it too.
  */
 function makeSupa(
-  rpcResult: { error: unknown } = { error: null },
+  rpcResult: { data: Record<string, unknown> | null; error: unknown } = {
+    data: {
+      id: QUESTION_ID,
+      category_id: CATEGORY_ID,
+      point_value: 200,
+    },
+    error: null,
+  },
 ) {
   const calls = {
     rpc: vi.fn().mockResolvedValue(rpcResult),
@@ -83,7 +90,7 @@ beforeEach(() => {
 });
 
 describe("PATCH /api/questions/[id] — point-value slotting", () => {
-  it("routes a point-value assignment through the atomic swap RPC, not the main UPDATE", async () => {
+  it("saves content and point placement through one atomic authoring RPC", async () => {
     const { supaClient, calls } = makeSupa();
     adminMock.getSupabaseAdmin.mockReturnValue(supaClient);
     const { PATCH } = await import("@/app/api/questions/[id]/route");
@@ -99,17 +106,23 @@ describe("PATCH /api/questions/[id] — point-value slotting", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(calls.rpc).toHaveBeenCalledWith("swap_point_value", {
+    expect(calls.rpc).toHaveBeenCalledTimes(1);
+    expect(calls.rpc).toHaveBeenCalledWith("apply_question_authoring_patch", {
       p_question_id: QUESTION_ID,
-      p_point_value: 200,
+      p_patch: {
+        prompt: "Which aircraft first broke the sound barrier?",
+        options: ["Bell X-1", "F-86 Sabre", "P-80", "D-558"],
+        correct_index: 0,
+        point_value: 200,
+        source: "host-edit",
+      },
     });
-    // The RPC owns point_value; the main UPDATE must NOT also set it.
-    expect(calls.updatePayload).toBeDefined();
-    expect(calls.updatePayload).not.toHaveProperty("point_value");
+    expect(supaClient.from).not.toHaveBeenCalled();
   });
 
   it("translates a unique-slot violation into a host-readable message (never the raw constraint)", async () => {
     const { supaClient } = makeSupa({
+      data: null,
       error: {
         code: "23505",
         message:
@@ -138,14 +151,16 @@ describe("PATCH /api/questions/[id] — point-value slotting", () => {
     const res = await PATCH(makeRequest({ isPicked: false }), makeCtx());
 
     expect(res.status).toBe(200);
-    expect(calls.rpc).not.toHaveBeenCalled();
-    expect(calls.updatePayload).toMatchObject({
-      is_picked: false,
-      point_value: null,
+    expect(calls.rpc).toHaveBeenCalledWith("apply_question_authoring_patch", {
+      p_question_id: QUESTION_ID,
+      p_patch: {
+        is_picked: false,
+        point_value: null,
+      },
     });
   });
 
-  it("does not call the swap RPC for a content-only edit", async () => {
+  it("routes a content-only edit through the fenced authoring RPC", async () => {
     const { supaClient, calls } = makeSupa();
     adminMock.getSupabaseAdmin.mockReturnValue(supaClient);
     const { PATCH } = await import("@/app/api/questions/[id]/route");
@@ -156,7 +171,12 @@ describe("PATCH /api/questions/[id] — point-value slotting", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(calls.rpc).not.toHaveBeenCalled();
-    expect(calls.updatePayload).toMatchObject({ source: "host-edit" });
+    expect(calls.rpc).toHaveBeenCalledWith("apply_question_authoring_patch", {
+      p_question_id: QUESTION_ID,
+      p_patch: {
+        prompt: "A sufficiently long replacement prompt.",
+        source: "host-edit",
+      },
+    });
   });
 });

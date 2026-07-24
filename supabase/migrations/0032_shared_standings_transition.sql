@@ -23,10 +23,28 @@ language plpgsql
 security definer
 set search_path = pg_catalog, public
 as $$
+declare
+  v_finished_at timestamptz;
 begin
   perform pg_catalog.pg_advisory_xact_lock(
     pg_catalog.hashtextextended(p_game_id::text || ':' || p_question_id::text, 0)
   );
+
+  select q.finished_at
+    into v_finished_at
+    from public.questions q
+    join public.categories c on c.id = q.category_id
+   where q.id = p_question_id
+     and c.game_id = p_game_id
+   for update of q;
+
+  if not found then
+    raise exception 'question % does not belong to game %', p_question_id, p_game_id;
+  end if;
+
+  if v_finished_at is null or v_finished_at is distinct from p_resolved_at then
+    raise exception 'question resolution is stale';
+  end if;
 
   if exists (
     select 1
@@ -34,7 +52,7 @@ begin
      where r.game_id = p_game_id
        and r.question_id = p_question_id
        and r.event = 'advance'
-       and r.metadata->>'resolved_at' = p_resolved_at::text
+       and r.metadata->>'resolved_at' = v_finished_at::text
   ) then
     return false;
   end if;
@@ -47,7 +65,7 @@ begin
     p_occurred_at,
     pg_catalog.jsonb_build_object(
       'view', 'standings-board',
-      'resolved_at', p_resolved_at::text
+      'resolved_at', v_finished_at::text
     )
   );
 

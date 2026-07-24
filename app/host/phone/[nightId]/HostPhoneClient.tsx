@@ -958,7 +958,6 @@ export function HostPhoneClient({
             if (!controlGame || busy) return;
             setSelection({ questionId, gameId: controlGame.id, contextKey });
             navigate("board");
-            void reveal(questionId);
           }}
         />
         {controlCategories.length === 0 && (

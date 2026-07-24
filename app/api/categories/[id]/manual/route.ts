@@ -72,21 +72,7 @@ export async function POST(
   if (!parsed.success) return badRequest(parsed.error);
   const { questions } = parsed.data;
 
-  const admin = getSupabaseAdmin();
-
-  // Step 1: wipe prior questions in this category. Manual entry is a
-  // clean slate.
-  const { error: deleteError } = await admin
-    .from("questions")
-    .delete()
-    .eq("category_id", categoryId);
-  if (deleteError) {
-    return serverError(
-      `failed to clear existing questions: ${deleteError.message}`,
-    );
-  }
-
-  // Step 2: build the insert rows. Position-in-array drives difficulty
+  // Position-in-array drives difficulty
   // AND point_value — easiest first, hardest last.
   const insertRows: QuestionInsert[] = questions.map((q, idx) => {
     const row: QuestionInsert = {
@@ -118,24 +104,30 @@ export async function POST(
     return row;
   });
 
-  const { data: inserted, error: insertError } = await admin
-    .from("questions")
-    .insert(insertRows)
-    .select("id, point_value, difficulty, prompt");
-  if (insertError || !inserted) {
-    return serverError(
-      `failed to insert manual questions: ${insertError?.message ?? "unknown"}`,
-    );
+  // Delete, insert all seven, and mark ready in one database transaction.
+  // The RPC locks the canonical game row before touching the category, so
+  // Start either waits for the complete manual board or wins and leaves the
+  // existing board untouched.
+  const admin = getSupabaseAdmin();
+  const { data, error } = await (admin.rpc as unknown as (
+    name: "replace_category_with_manual_questions",
+    args: {
+      p_category_id: string;
+      p_questions: QuestionInsert[];
+    },
+  ) => PromiseLike<{
+    data: { questions: Array<Record<string, unknown>> } | null;
+    error: { code?: string; message?: string } | null;
+  }>)("replace_category_with_manual_questions", {
+    p_category_id: categoryId,
+    p_questions: insertRows,
+  });
+  if (error?.code === "55000" || error?.message?.includes("game starts")) {
+    return conflict("The game already started. Your saved questions were not changed.");
+  }
+  if (error || !data || !Array.isArray(data.questions)) {
+    return serverError("failed to save manual questions");
   }
 
-  // Step 3: flip the category to 'ready'.
-  const { error: stateError } = await admin
-    .from("categories")
-    .update({ state: "ready" })
-    .eq("id", categoryId);
-  if (stateError) {
-    return serverError(`failed to mark ready: ${stateError.message}`);
-  }
-
-  return ok({ questions: inserted });
+  return ok({ questions: data.questions });
 }

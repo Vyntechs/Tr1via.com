@@ -344,3 +344,28 @@ Reason: Correct per-device behavior can still create a venue-wide thundering her
 Trigger: A host assigns a saved question to a board value.
 Rule: Atomically select that exact question and remove or swap the prior occupant.
 Reason: Point value alone must never imply a different question will play.
+
+### protect-classic-host-confirmation
+Trigger: A repair silently changes private question selection into immediate public reveal.
+Rule: Preserve select, preview, and explicit Show Question unless Brandon approves a different Classic flow.
+Reason: A rewritten test can lock in a regression just as confidently as the intended behavior.
+
+### audit-leaderboards-per-surface
+Trigger: A review says the complete leaderboard is missing because the TV only shows finalists.
+Rule: Verify host, TV, and player standings separately before declaring leaderboard availability or absence.
+Reason: A complete host list and a limited audience presentation are different product contracts.
+
+### verify-incident-engine-before-load-theory
+Trigger: A reviewer attributes a venue freeze to traffic emitted only by a different answer engine.
+Rule: Query the incident engine and its durable answer records before accepting any load root cause.
+Reason: A convincing scaling theory is irrelevant when production never executed that path.
+
+### privileged-reveal-rechecks-board-eligibility
+Trigger: A privileged live RPC accepts a client-supplied question identifier.
+Rule: Enforce ready category, picked question, and assigned slot inside the database before any public mutation.
+Reason: Route ownership cannot stop stale or forged requests from exposing private authoring content.
+
+### generation-finalization-locks-before-selection
+Trigger: Parallel generation workers convert private candidates into public board selections.
+Rule: Serialize on the canonical game row before touching selected category or question rows.
+Reason: Candidate work may run concurrently; publishing final slots must share Start’s lock order.
