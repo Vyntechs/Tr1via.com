@@ -32,7 +32,12 @@ const h = vi.hoisted(() => {
     removeChannel: vi.fn(),
   };
 
-  return { client, fetchSnapshot, handlers };
+  return {
+    client,
+    fetchSnapshot,
+    handlers,
+    timerOnZero: null as null | (() => void),
+  };
 });
 
 vi.mock("next/navigation", () => ({
@@ -69,7 +74,10 @@ vi.mock("@/lib/hooks/useDeviceSession", () => ({
 }));
 
 vi.mock("@/lib/hooks/useTimer", () => ({
-  useTimer: () => ({ displaySeconds: 12 }),
+  useTimer: (options: { onZero?: () => void }) => {
+    h.timerOnZero = options.onZero ?? null;
+    return { displaySeconds: 12 };
+  },
 }));
 
 vi.mock("@/lib/hooks/useLockCount", () => ({
@@ -185,6 +193,7 @@ describe("player answer signed snapshot refresh", () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     window.localStorage.clear();
     __resetReachabilityForTests();
+    h.timerOnZero = null;
   });
 
   afterEach(() => {
@@ -283,6 +292,26 @@ describe("player answer signed snapshot refresh", () => {
 
     expect(maxActive).toBe(1);
     expect(h.client.channel).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles the signed score snapshot after this phone's timer resolves", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      new Response("{}", { status: String(input).endsWith("/resolve") ? 200 : 204 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+
+    await act(async () => h.timerOnZero?.());
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+      "/api/questions/question-1/resolve",
+      expect.objectContaining({ method: "POST" }),
+    ));
+    await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(2));
   });
 
   it("keeps Game 1 standings visible while Game 2 awaits its first question", async () => {

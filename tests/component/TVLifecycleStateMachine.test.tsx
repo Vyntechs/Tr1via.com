@@ -112,6 +112,65 @@ describe("TVStateMachine lifecycle boundaries", () => {
     expect(screen.getByTestId("tv-reveal")).toBeVisible();
   });
 
+  it("shows the shared standings board after the host advances a resolved question", () => {
+    const current = lifecycleSnapshot({
+      games: [
+        { id: "g1", gameNo: 1, state: "live", startedAt: "2026-07-20T00:00:00Z", endedAt: null, categoryCount: 1, questionCount: 1 },
+      ],
+      currentGameId: "g1",
+      targetQuestionId: "q1",
+      categories: [
+        { id: "c1", gameId: "g1", name: "History", topic: "History", position: 0, color: null, state: "ready" },
+      ],
+      questions: [lifecycleSnapshot().questions[0]!],
+      reveals: [
+        { id: "a1", gameId: "g1", questionId: "q1", event: "advance", occurredAt: "2026-07-20T00:32:00Z", metadata: null },
+        { id: "r1", gameId: "g1", questionId: "q1", event: "resolve", occurredAt: "2026-07-20T00:31:00Z", metadata: null },
+      ],
+    });
+
+    render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine snapshot={current} themeKey="april" />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId("tv-grid")).toBeVisible();
+    expect(screen.getByText("Jordan")).toBeVisible();
+    expect(screen.getByText("6,100")).toBeVisible();
+    expect(screen.queryByTestId("tv-reveal")).not.toBeInTheDocument();
+  });
+
+  it("recovers the shared standings board from a durable advance without a legacy resolve row", () => {
+    const resolvedQuestion = {
+      ...lifecycleSnapshot().questions[0]!,
+      finishedAt: "2026-07-20T00:31:00Z",
+    };
+    const current = lifecycleSnapshot({
+      games: [
+        { id: "g1", gameNo: 1, state: "live", startedAt: "2026-07-20T00:00:00Z", endedAt: null, categoryCount: 1, questionCount: 1 },
+      ],
+      currentGameId: "g1",
+      targetQuestionId: "q1",
+      categories: [
+        { id: "c1", gameId: "g1", name: "History", topic: "History", position: 0, color: null, state: "ready" },
+      ],
+      questions: [resolvedQuestion],
+      reveals: [
+        { id: "a1", gameId: "g1", questionId: "q1", event: "advance", occurredAt: "2026-07-20T00:32:00Z", metadata: null },
+      ],
+    });
+
+    render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine snapshot={current} themeKey="april" />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId("tv-grid")).toBeVisible();
+    expect(screen.queryByTestId("tv-reveal")).not.toBeInTheDocument();
+  });
+
   it("labels the live Game 2 first-question gap honestly instead of promising a future launch", () => {
     render(
       <ThemeProvider themeKey="april">

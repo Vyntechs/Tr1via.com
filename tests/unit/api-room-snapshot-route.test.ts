@@ -284,14 +284,16 @@ describe("GET /api/room/[code]/snapshot", () => {
     expect(authMock.getAuthedHost).not.toHaveBeenCalled();
   });
 
-  it("coalesces concurrent room-wide loads while keeping player responses independent", async () => {
+  it("coalesces 40 concurrent room-wide loads while keeping every player response independent", async () => {
     const admin = makeAdmin();
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
     authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
 
-    const [first, second] = await Promise.all([callRoute(), callRoute()]);
-    expect(first.status).toBe(200);
-    expect(second.status).toBe(200);
+    const responses = await Promise.all(
+      Array.from({ length: 40 }, () => callRoute()),
+    );
+    expect(responses).toHaveLength(40);
+    expect(responses.every((response) => response.status === 200)).toBe(true);
 
     const callsFor = (table: string) =>
       admin.from.mock.calls.filter(([calledTable]) => calledTable === table).length;
@@ -306,9 +308,9 @@ describe("GET /api/room/[code]/snapshot", () => {
       expect(callsFor(sharedTable), sharedTable).toBe(1);
     }
     // Identity and personal history remain per-request and are never shared.
-    expect(callsFor("players")).toBe(3);
-    expect(callsFor("answers")).toBe(2);
-    expect(callsFor("game_participations")).toBe(2);
+    expect(callsFor("players")).toBe(41);
+    expect(callsFor("answers")).toBe(40);
+    expect(callsFor("game_participations")).toBe(40);
   });
 
   it("PLAYER mode: exposes only its own scrambled answer and never another player's live choice", async () => {

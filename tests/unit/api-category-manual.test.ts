@@ -78,49 +78,25 @@ function seven() {
  */
 function makeAdmin() {
   const calls = {
-    delete: [] as Array<{ categoryId: string }>,
-    insert: null as unknown as Array<Record<string, unknown>>,
-    categoryStateUpdate: null as unknown as { state: string },
+    rpc: vi.fn(),
   };
-  const inserted = (rows: Array<Record<string, unknown>>) =>
-    rows.map((row, i) => ({
+  calls.rpc.mockImplementation(
+    async (
+      _name: string,
+      args: { p_questions: Array<Record<string, unknown>> },
+    ) => ({
+      data: {
+        questions: args.p_questions.map((row, i) => ({
       id: `new-q-${i}`,
       ...row,
-    }));
-  const client = {
-    from: vi.fn((table: string) => {
-      if (table === "questions") {
-        return {
-          delete: vi.fn(() => ({
-            eq: vi.fn((_col: string, value: string) => {
-              calls.delete.push({ categoryId: value });
-              return Promise.resolve({ error: null });
-            }),
-          })),
-          insert: vi.fn((rows: Array<Record<string, unknown>>) => {
-            calls.insert = rows;
-            return {
-              select: vi.fn(() => ({
-                // Returns the inserted rows with generated ids.
-                then: (resolve: (v: unknown) => unknown) =>
-                  resolve({ data: inserted(rows), error: null }),
-              })),
-            };
-          }),
-        };
-      }
-      if (table === "categories") {
-        return {
-          update: vi.fn((patch: Record<string, unknown>) => {
-            calls.categoryStateUpdate = patch as { state: string };
-            return {
-              eq: vi.fn(() => Promise.resolve({ error: null })),
-            };
-          }),
-        };
-      }
-      throw new Error(`unexpected table ${table}`);
+        })),
+      },
+      error: null,
     }),
+  );
+  const client = {
+    from: vi.fn(),
+    rpc: calls.rpc,
   };
   return { client, calls };
 }
@@ -261,17 +237,19 @@ describe("POST /api/categories/[id]/manual", () => {
     const res = await POST(makeRequest({ questions: seven() }), makeCtx());
     expect(res.status).toBe(200);
 
-    // First, the category's existing questions get wiped.
-    expect(calls.delete.length).toBe(1);
-    expect(calls.delete[0]?.categoryId).toBe(CATEGORY_ID);
-
-    // Then exactly 7 new rows are inserted.
-    expect(Array.isArray(calls.insert)).toBe(true);
-    expect(calls.insert).toHaveLength(7);
+    expect(client.from).not.toHaveBeenCalled();
+    expect(calls.rpc).toHaveBeenCalledTimes(1);
+    expect(calls.rpc).toHaveBeenCalledWith(
+      "replace_category_with_manual_questions",
+      expect.objectContaining({ p_category_id: CATEGORY_ID }),
+    );
+    const insertRows = calls.rpc.mock.calls[0]?.[1]
+      .p_questions as Array<Record<string, unknown>>;
+    expect(insertRows).toHaveLength(7);
 
     // Each row carries the expected canonical fields, in the entered order.
     const points = [100, 200, 300, 400, 500, 600, 700];
-    calls.insert.forEach((row, idx) => {
+    insertRows.forEach((row, idx) => {
       expect(row.category_id).toBe(CATEGORY_ID);
       expect(row.source).toBe("host-edit");
       expect(row.is_picked).toBe(true);
@@ -283,9 +261,6 @@ describe("POST /api/categories/[id]/manual", () => {
       expect(typeof row.prompt).toBe("string");
       expect(row.correct_index).toBe(0);
     });
-
-    // Finally, the category flips to 'ready'.
-    expect(calls.categoryStateUpdate?.state).toBe("ready");
   });
 
   it("propagates the optional imageUrl when present", async () => {
@@ -307,10 +282,12 @@ describe("POST /api/categories/[id]/manual", () => {
     );
     const res = await POST(makeRequest({ questions: qs }), makeCtx());
     expect(res.status).toBe(200);
-    expect(calls.insert[0]?.image_url).toBe("https://example.com/p.jpg");
-    expect(calls.insert[0]?.image_source).toBe("upload");
-    expect(calls.insert[3]?.image_url).toBe("https://example.com/p2.png");
+    const insertRows = calls.rpc.mock.calls[0]?.[1]
+      .p_questions as Array<Record<string, unknown>>;
+    expect(insertRows[0]?.image_url).toBe("https://example.com/p.jpg");
+    expect(insertRows[0]?.image_source).toBe("upload");
+    expect(insertRows[3]?.image_url).toBe("https://example.com/p2.png");
     // Rows without an image stay null.
-    expect(calls.insert[1]?.image_url).toBeNull();
+    expect(insertRows[1]?.image_url).toBeNull();
   });
 });

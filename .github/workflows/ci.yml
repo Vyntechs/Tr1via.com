@@ -26,5 +26,8 @@ jobs:
       - name: Run unit and integration tests
         run: npm test
 
+      - name: Run deterministic 40-player traffic and recovery guards
+        run: npx vitest run -c tests/concurrency/vitest.venue-scale.config.ts
+
       - name: Build
         run: npm run build

@@ -131,6 +131,27 @@ describe("useTVRoom snapshot request lifecycle", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("refetches immediately when the host publishes standings", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Answer reveal")))
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Standings board")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+    await waitFor(() => expect(result.current.snapshot?.night.venueName).toBe("Answer reveal"));
+
+    act(() => {
+      h.broadcast("ABCDEF", "advance", {
+        questionId: "question-1",
+        serverNow: "2026-07-19T00:00:01.000Z",
+      });
+    });
+
+    await waitFor(() => expect(result.current.snapshot?.night.venueName).toBe("Standings board"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps a newer same-room response when an older request finishes last", async () => {
     const older = deferred<Response>();
     const newer = deferred<Response>();

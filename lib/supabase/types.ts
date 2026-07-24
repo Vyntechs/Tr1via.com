@@ -1966,13 +1966,13 @@ export type AnswerUpdate = Omit<TablesUpdate<"answers">, "scramble" | "chosen_in
 }
 
 export type RevealRow = Omit<Tables<"reveals">, "event"> & {
-  event: "reveal" | "undo" | "end-early" | "resolve"
+  event: "reveal" | "undo" | "end-early" | "resolve" | "advance"
 }
 export type RevealInsert = Omit<TablesInsert<"reveals">, "event"> & {
-  event: "reveal" | "undo" | "end-early" | "resolve"
+  event: "reveal" | "undo" | "end-early" | "resolve" | "advance"
 }
 export type RevealUpdate = Omit<TablesUpdate<"reveals">, "event"> & {
-  event?: "reveal" | "undo" | "end-early" | "resolve"
+  event?: "reveal" | "undo" | "end-early" | "resolve" | "advance"
 }
 
 export type RoomMagicReactionRow = Tables<"room_magic_reactions">

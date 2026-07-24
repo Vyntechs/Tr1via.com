@@ -128,7 +128,7 @@ export interface TVReveal {
   id: string;
   gameId: string;
   questionId: string;
-  event: "reveal" | "undo" | "end-early" | "resolve";
+  event: "reveal" | "undo" | "end-early" | "resolve" | "advance";
   occurredAt: string;
   metadata: Record<string, unknown> | null;
 }
@@ -150,7 +150,7 @@ export interface TVSnapshot {
 }
 
 export interface TVBroadcast {
-  event: "reveal" | "undo" | "resolve" | "end-early" | "roster-changed";
+  event: "reveal" | "undo" | "resolve" | "advance" | "end-early" | "roster-changed";
   /** Question id for reveal/undo/resolve/end-early; empty string for
    *  roster-changed. */
   questionId: string;
@@ -328,6 +328,19 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
             serverNow: String(p.serverNow),
             correctIndex:
               typeof p.correctIndex === "number" ? p.correctIndex : undefined,
+          },
+        });
+        void fetchSnapshot(code);
+      })
+      .on("broadcast", { event: "advance" }, (msg) => {
+        if (!isActiveRoom()) return;
+        const p = msg.payload as Record<string, unknown>;
+        setLastBroadcast({
+          roomCode: code,
+          value: {
+            event: "advance",
+            questionId: String(p.questionId),
+            serverNow: String(p.serverNow),
           },
         });
         void fetchSnapshot(code);

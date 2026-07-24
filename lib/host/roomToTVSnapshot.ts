@@ -34,6 +34,7 @@ import type {
   QuestionRow,
   RevealRow,
 } from "@/lib/supabase/types";
+import { rankScores } from "@/lib/game/rankScores";
 import type { RoomSnapshot } from "@/lib/hooks/useRoom";
 import type {
   TVAnswer,
@@ -150,7 +151,7 @@ export function roomToTVSnapshot(
     ? allScores.filter((score) => score.game_id === visibleScoreGameId)
     : scores;
 
-  const tvScores: TVScore[] = scoreRows
+  const unsortedTVScores: TVScore[] = scoreRows
     .filter(
       (s): s is GameScoreRow & { player_id: string; display_name: string } =>
         s.player_id !== null && s.display_name !== null,
@@ -167,8 +168,8 @@ export function roomToTVSnapshot(
             fastest_correct_ms: s.fastest_correct_ms,
           }]
         : [];
-    })
-    .sort((a, b) => b.score - a.score);
+    });
+  const tvScores = rankScores(unsortedTVScores).map(({ row }) => row);
 
   // Only surface answer rows that belong to the target question. The host's
   // subscription guarantees this in practice, but we defend so a stale row
@@ -206,19 +207,27 @@ export function roomToTVSnapshot(
       revealGameIdFor(room, room.lastResolvedQuestion) ??
       room.currentGame?.id ??
       "";
+    if (
+      room.currentReveal?.event === "advance" &&
+      room.currentReveal.question_id === room.lastResolvedQuestion.id
+    ) {
+      reveals.push(revealRowToTVReveal(room.currentReveal));
+    }
     reveals.push({
-      id: room.currentReveal?.id ?? `synthetic:${room.lastResolvedQuestion.id}`,
-      gameId:
-        room.currentReveal?.game_id ??
-        baseGameId,
+      id: room.currentReveal?.event === "resolve"
+        ? room.currentReveal.id
+        : `synthetic:${room.lastResolvedQuestion.id}`,
+      gameId: baseGameId,
       questionId: room.lastResolvedQuestion.id,
       event: "resolve",
       occurredAt:
-        room.currentReveal?.occurred_at ??
+        (room.currentReveal?.event === "resolve" ? room.currentReveal.occurred_at : null) ??
         room.lastResolvedQuestion.finished_at ??
         new Date().toISOString(),
       metadata:
-        (room.currentReveal?.metadata as Record<string, unknown> | null) ??
+        (room.currentReveal?.event === "resolve"
+          ? room.currentReveal.metadata as Record<string, unknown> | null
+          : null) ??
         null,
     });
   } else if (room.currentReveal) {

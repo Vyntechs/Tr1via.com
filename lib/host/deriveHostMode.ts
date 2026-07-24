@@ -161,7 +161,16 @@ export function deriveHostMode(
     snapshot.reveals.find(
       (r) => r.event === "resolve" && r.gameId === currentGame.id,
     ) ?? null;
-  if (lastResolve && !hostAdvanced) {
+  const durableAdvance = lastResolve
+    ? snapshot.reveals.find(
+        (r) =>
+          r.event === "advance" &&
+          r.gameId === lastResolve.gameId &&
+          r.questionId === lastResolve.questionId &&
+          Date.parse(r.occurredAt) >= Date.parse(lastResolve.occurredAt),
+      ) ?? null
+    : null;
+  if (lastResolve && !hostAdvanced && !durableAdvance) {
     return { ...ctx, mode: "reveal-sticky" };
   }
 

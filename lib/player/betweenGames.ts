@@ -1,4 +1,5 @@
 import type { GameScoreRow, GameRow, CategoryRow, QuestionRow } from "@/lib/supabase/types";
+import { rankScores } from "@/lib/game/rankScores";
 
 export interface StandingRow {
   /** 1-based rank within the game. */
@@ -30,11 +31,11 @@ export function buildGame1Standings(
   meId: string,
   limit = 5,
 ): Game1Standings {
-  const ranked: StandingRow[] = scores.map((s, i) => ({
-    rank: i + 1,
-    name: s.display_name ?? "",
-    score: s.score ?? 0,
-    isYou: s.player_id === meId,
+  const ranked: StandingRow[] = rankScores(scores).map(({ row, rank }) => ({
+    rank,
+    name: row.display_name ?? "",
+    score: row.score ?? 0,
+    isYou: row.player_id === meId,
   }));
   const top = ranked.slice(0, limit);
   const meIndex = ranked.findIndex((r) => r.isYou);

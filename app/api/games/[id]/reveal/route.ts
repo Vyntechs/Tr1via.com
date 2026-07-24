@@ -119,12 +119,15 @@ export async function POST(
   // Stamp played_at first. If the broadcast fails, the durable state is
   // still correct — phones will pick up the reveal via Postgres Changes.
   const revealedAt = new Date().toISOString();
-  const { error: stampError } = await admin
+  const { data: stampedQuestion, error: stampError } = await admin
     .from("questions")
     .update({ played_at: revealedAt, finished_at: null })
     .eq("id", parsed.data.questionId)
-    .is("played_at", null); // CAS guard against a double-reveal race
+    .is("played_at", null)
+    .select("id")
+    .maybeSingle(); // CAS guard against a double-reveal race
   if (stampError) return serverError(stampError.message);
+  if (!stampedQuestion) return conflict("question already revealed");
 
   // Log the reveal event.
   const { error: revealError } = await admin

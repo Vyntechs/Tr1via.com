@@ -37,6 +37,7 @@ export type RoomEventName =
   | "reveal"
   | "undo"
   | "resolve"
+  | "advance"
   | "end-early"
   | "game-started"
   | "game-ended"

@@ -18,7 +18,7 @@ describe("TVScoreboardMarquee — sort + chip rendering", () => {
     expect(rendered).toEqual(["SARA", "MARK", "ALEX", "JULES"]);
   });
 
-  it("uses join order as the tiebreaker when scores are equal", () => {
+  it("uses the same alphabetical display order as every standings surface when scores tie", () => {
     const tied: MarqueeChip[] = [
       { playerId: "a", name: "A", color: "#fff", score: 100, joinIndex: 2 },
       { playerId: "b", name: "B", color: "#fff", score: 100, joinIndex: 0 },
@@ -28,7 +28,7 @@ describe("TVScoreboardMarquee — sort + chip rendering", () => {
     const rendered = screen.getAllByTestId("marquee-chip").map(
       (el) => within(el).getByText(/A|B|C/).textContent
     );
-    expect(rendered).toEqual(["B", "C", "A"]);
+    expect(rendered).toEqual(["A", "B", "C"]);
   });
 
   it("truncates long names to 12 chars + ellipsis", () => {

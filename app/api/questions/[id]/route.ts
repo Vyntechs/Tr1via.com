@@ -19,7 +19,6 @@ import {
   unauthorized,
 } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import type { QuestionInsert } from "@/lib/supabase/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -52,7 +51,7 @@ export async function PATCH(
   const patch = parsed.data;
   const admin = getSupabaseAdmin();
 
-  const update: Partial<QuestionInsert> = {};
+  const rpcPatch: Record<string, unknown> = {};
   // Only mark source as 'host-edit' when content fields change.
   // A pick-only toggle (isPicked) must not flip the source flag.
   const isContentEdit =
@@ -61,60 +60,39 @@ export async function PATCH(
     patch.correctIndex !== undefined ||
     patch.difficulty !== undefined ||
     patch.factBlurb !== undefined;
-  if (isContentEdit) update.source = "host-edit";
-  if (patch.prompt !== undefined) update.prompt = patch.prompt;
+  if (isContentEdit) rpcPatch.source = "host-edit";
+  if (patch.prompt !== undefined) rpcPatch.prompt = patch.prompt;
   if (patch.options !== undefined)
-    update.options = patch.options as [string, string, string, string];
+    rpcPatch.options = patch.options as [string, string, string, string];
   if (patch.correctIndex !== undefined)
-    update.correct_index = patch.correctIndex;
-  if (patch.difficulty !== undefined) update.difficulty = patch.difficulty;
-  if (patch.factBlurb !== undefined) update.fact_blurb = patch.factBlurb;
-  if (patch.isPicked !== undefined) update.is_picked = patch.isPicked;
+    rpcPatch.correct_index = patch.correctIndex;
+  if (patch.difficulty !== undefined) rpcPatch.difficulty = patch.difficulty;
+  if (patch.factBlurb !== undefined) rpcPatch.fact_blurb = patch.factBlurb;
+  if (patch.isPicked !== undefined) rpcPatch.is_picked = patch.isPicked;
 
   // Un-picking frees the board slot. Without this an un-picked row keeps its
   // point_value and silently occupies the slot — the stale orphan that makes
   // a later save collide on the unique (category_id, point_value) index.
-  if (patch.isPicked === false) update.point_value = null;
-  // Clearing the slot explicitly never collides — let the main update do it.
-  if (patch.pointValue === null) update.point_value = null;
+  if (patch.isPicked === false) rpcPatch.point_value = null;
+  else if (patch.pointValue !== undefined)
+    rpcPatch.point_value = patch.pointValue;
 
-  // Assigning a point value goes through the atomic swap_point_value RPC
-  // (migration 0012), never the main UPDATE below. The unique index is
-  // DEFERRABLE INITIALLY DEFERRED, so the vacate-then-place must happen in a
-  // single transaction; the RPC also frees whatever currently holds the slot
-  // (picked or not) so a stale row can't collide.
-  if (patch.pointValue !== undefined && patch.pointValue !== null) {
-    const { error: swapError } = await admin.rpc("swap_point_value", {
-      p_question_id: questionId,
-      p_point_value: patch.pointValue,
-    });
-    if (swapError) return slotUpdateError(swapError);
-  }
+  // Content and slot state are one transaction. Besides preventing a partial
+  // save, the database function locks the canonical game row; Start either
+  // waits for this whole patch or wins and makes this patch fail untouched.
+  const result = await (admin.rpc as unknown as (
+    name: "apply_question_authoring_patch",
+    args: { p_question_id: string; p_patch: Record<string, unknown> },
+  ) => PromiseLike<{
+    data: Record<string, unknown> | null;
+    error: { code?: string; message?: string } | null;
+  }>)("apply_question_authoring_patch", {
+    p_question_id: questionId,
+    p_patch: rpcPatch,
+  });
+  if (result.error || !result.data) return slotUpdateError(result.error);
 
-  // The main UPDATE carries every field EXCEPT a non-null point_value (the
-  // RPC already landed that). It may be empty when the host only re-slotted
-  // a question — in that case re-read the row to return the current state.
-  let updated;
-  if (Object.keys(update).length > 0) {
-    const result = await admin
-      .from("questions")
-      .update(update)
-      .eq("id", questionId)
-      .select("*")
-      .single();
-    if (result.error || !result.data) return slotUpdateError(result.error);
-    updated = result.data;
-  } else {
-    const result = await admin
-      .from("questions")
-      .select("*")
-      .eq("id", questionId)
-      .single();
-    if (result.error || !result.data) return slotUpdateError(result.error);
-    updated = result.data;
-  }
-
-  return ok({ question: updated });
+  return ok({ question: result.data });
 }
 
 // A point-value collision should never reach the host as a raw Postgres

@@ -343,7 +343,7 @@ describe("HostPhoneClient reveal flow", () => {
     vi.stubGlobal("fetch", h.fetch);
   });
 
-  it("shows the shared backup board without privately previewing a question until selection", async () => {
+  it("privately stages the exact question from the shared backup board before showing it", async () => {
     const fallbackQuestion = {
       ...pickedQuestion,
       id: "fallback-q",
@@ -366,7 +366,15 @@ describe("HostPhoneClient reveal flow", () => {
     expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
     expect(screen.queryByText(fallbackQuestion.prompt)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Salsa for 100 points" }));
-    expect(await screen.findByText(fallbackQuestion.prompt)).toBeVisible();
+    expect(screen.getByText(fallbackQuestion.prompt)).toBeVisible();
+    expect(screen.getByText("Private on Heather’s phone · Not on TV")).toBeVisible();
+    expect(h.fetch.mock.calls.some(([url]) => url === "/api/games/g1/reveal")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/reveal",
+      expect.objectContaining({ body: JSON.stringify({ questionId: "fallback-q" }) }),
+    ));
 
     const liveGame = game("g1", 1, "live");
     const liveQuestion = { ...pickedQuestion, played_at: "2026-07-08T00:01:30Z" };
@@ -486,7 +494,7 @@ describe("HostPhoneClient reveal flow", () => {
     );
   });
 
-  it("reveals the exact selected question after Game 1 has started", async () => {
+  it("reveals the exact selected question only after explicit confirmation", async () => {
     render(
       <HostPhoneClient
         nightId="night-1"
@@ -498,93 +506,15 @@ describe("HostPhoneClient reveal flow", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Salsa for 200 points" }));
     expect(screen.getByText(secondPickedQuestion.prompt)).toBeVisible();
-    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
+    expect(h.fetch).not.toHaveBeenCalled();
 
+    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
     await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1));
     expect(h.fetch.mock.calls[0][0]).toBe("/api/games/g1/reveal");
     expect(h.fetch.mock.calls[0][1]).toMatchObject({
       method: "POST",
       body: JSON.stringify({ questionId: "q2" }),
     });
-  });
-
-  it("starts a ready resilient game with authoritative control metadata before revealing", async () => {
-    const live = game("g1", 1, "live");
-    h.room = {
-      ...room(),
-      night: resilientNight(),
-      games: [live],
-      currentGame: live,
-    };
-    vi.spyOn(globalThis.crypto, "randomUUID")
-      .mockReturnValueOnce(COMMAND_ID)
-      .mockReturnValueOnce(SECOND_COMMAND_ID);
-    h.fetch.mockImplementation(async (input: RequestInfo | URL) => new Response(
-      JSON.stringify(String(input).endsWith("/start")
-        ? {
-            code: "applied",
-            applied: true,
-            eventKind: "game_started",
-            runId: RUN_ID,
-            gameId: "g1",
-            roomRevision: 5,
-            controlRevision: 5,
-          }
-        : {
-            code: "applied",
-            applied: true,
-            eventKind: "play_opened",
-            runId: RUN_ID,
-            gameId: "g1",
-            playId: PLAY_ID,
-            roomRevision: 6,
-            controlRevision: 6,
-          }),
-      { status: 200 },
-    ));
-
-    render(
-      <HostPhoneClient
-        nightId="night-1"
-        roomCode="ABC123"
-        hostName="Heather Moore"
-        themeKey="house"
-      />,
-    );
-
-    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
-    live.state = "ready";
-    live.started_at = null;
-    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
-
-    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
-      "/api/games/g1/start",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          runId: RUN_ID,
-          commandId: COMMAND_ID,
-          expectedControlRevision: 4,
-        }),
-      },
-    ));
-    expect(h.fetch.mock.calls.findIndex(([url]) => url === "/api/games/g1/start")).toBeLessThan(
-      h.fetch.mock.calls.findIndex(([url]) => url === "/api/games/g1/reveal"),
-    );
-    expect(h.fetch).toHaveBeenCalledWith(
-      "/api/games/g1/reveal",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          questionId: "q1",
-          runId: RUN_ID,
-          commandId: SECOND_COMMAND_ID,
-          expectedControlRevision: 5,
-        }),
-      },
-    );
   });
 
   it("sends exact resilient bodies with a fresh command for reveal, end early, and undo", async () => {
@@ -731,7 +661,29 @@ describe("HostPhoneClient reveal flow", () => {
     expect(h.refresh).toHaveBeenCalledTimes(1);
   });
 
-  it("returns from private preview to the board without revealing", async () => {
+  it("keeps a board selection private until Show question is pressed", async () => {
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    expect(screen.getByText("Private on Heather’s phone · Not on TV")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Show question" })).toBeVisible();
+    expect(h.fetch.mock.calls.some(([url]) => url === "/api/games/g1/reveal")).toBe(false);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/reveal",
+      expect.objectContaining({ body: JSON.stringify({ questionId: "q1" }) }),
+    ));
+  });
+
+  it("returns a mis-tap to the board without publishing anything", async () => {
     render(
       <HostPhoneClient
         nightId="night-1"
@@ -745,9 +697,37 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.getByText(pickedQuestion.prompt)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "Back to board" }));
 
-    expect(screen.getByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
     expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
-    expect(h.fetch).not.toHaveBeenCalled();
+    expect(h.fetch.mock.calls.some(([url]) => url === "/api/games/g1/reveal")).toBe(false);
+  });
+
+  it("publishes a privately staged question at most once when Show question is tapped repeatedly", async () => {
+    const pendingReveal: { resolve?: (response: Response) => void } = {};
+    h.fetch.mockImplementation(
+      async () =>
+        await new Promise<Response>((resolve) => {
+          pendingReveal.resolve = resolve;
+        }),
+    );
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    const showQuestion = screen.getByRole("button", { name: "Show question" });
+    fireEvent.click(showQuestion);
+    fireEvent.click(showQuestion);
+
+    expect(h.fetch).toHaveBeenCalledTimes(1);
+    pendingReveal.resolve?.(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
+    expect(h.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("marks the preview private and shows answer, host note, and image readiness", async () => {
@@ -772,6 +752,7 @@ describe("HostPhoneClient reveal flow", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
     expect(screen.getByText("Private on Heather’s phone · Not on TV")).toBeVisible();
+    expect(h.fetch.mock.calls.some(([url]) => url === "/api/games/g1/reveal")).toBe(false);
     expect(screen.getByText("Correct")).toBeVisible();
     expect(screen.getByText(previewQuestion.fact_blurb)).toBeVisible();
     expect(screen.getByRole("img", { name: "Question image preview" })).toHaveAttribute(
@@ -1142,7 +1123,7 @@ describe("HostPhoneClient reveal flow", () => {
 
     expect(await screen.findByText("Game 1 complete")).toBeVisible();
     expect(screen.getByRole("heading", { name: "Game 2 is ready" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Return to board" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show standings & board" })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Start Game 2" }));
     await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
       "/api/games/g2/start",
@@ -1265,7 +1246,7 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.queryByRole("button", { name: "End game" })).not.toBeInTheDocument();
   });
 
-  it("shows the current game's answer result, then returns to an unselected board on request", async () => {
+  it("shows the current game's answer result, then publishes standings before returning to the board", async () => {
     const liveGame = game("g1", 1, "live");
     const liveQuestion = {
       ...pickedQuestion,
@@ -1320,9 +1301,18 @@ describe("HostPhoneClient reveal flow", () => {
     );
 
     expect(await screen.findByText("1 Salsa on 2")).toBeVisible();
-    const returnToBoard = screen.getByRole("button", { name: "Return to board" });
+    const returnToBoard = screen.getByRole("button", { name: "Show standings & board" });
     expect(returnToBoard).toHaveStyle({ minHeight: "48px" });
     fireEvent.click(returnToBoard);
+    await waitFor(() => {
+      expect(h.fetch).toHaveBeenCalledWith(
+        "/api/games/g1/advance",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ questionId: pickedQuestion.id }),
+        }),
+      );
+    });
     expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
     expect(screen.queryByText(secondPickedQuestion.prompt)).not.toBeInTheDocument();
   });
@@ -1351,7 +1341,7 @@ describe("HostPhoneClient reveal flow", () => {
     );
 
     expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Return to board" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show standings & board" })).not.toBeInTheDocument();
     expect(screen.queryByText("1 Salsa on 2")).not.toBeInTheDocument();
   });
 
@@ -1570,7 +1560,13 @@ describe("HostPhoneClient reveal flow", () => {
     expect(await screen.findByRole("grid", { name: "Question board" })).toBeVisible();
     expect(screen.queryByText(pickedQuestion.prompt)).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Salsa for 100 points" }));
-    expect(await screen.findByText(pickedQuestion.prompt)).toBeVisible();
+    expect(screen.getByText("Private on Heather’s phone · Not on TV")).toBeVisible();
+    expect(h.fetch.mock.calls.some(([url]) => url === "/api/games/g1/reveal")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "Show question" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/reveal",
+      expect.objectContaining({ body: JSON.stringify({ questionId: "q1" }) }),
+    ));
   });
 
   it("uses the truthful preflight as the only Game 1 start surface", async () => {

@@ -14,6 +14,10 @@ const MIGRATIONS_DIR = path.resolve(
 );
 const SCHEMA_MIGRATION = path.join(MIGRATIONS_DIR, "0022_live_answer_engine_schema.sql");
 const FUNCTIONS_MIGRATION = path.join(MIGRATIONS_DIR, "0023_live_answer_engine_functions.sql");
+const REVEAL_BOARD_GUARD_MIGRATION = path.join(
+  MIGRATIONS_DIR,
+  "0033_resilient_reveal_board_guard.sql",
+);
 const hasSchemaMigration = existsSync(SCHEMA_MIGRATION);
 const hasFunctionsMigration = existsSync(FUNCTIONS_MIGRATION);
 
@@ -110,6 +114,9 @@ async function freshDb(): Promise<PGlite> {
 
   for (const migration of [SCHEMA_MIGRATION, FUNCTIONS_MIGRATION]) {
     if (existsSync(migration)) await db.exec(readFileSync(migration, "utf8"));
+  }
+  if (existsSync(REVEAL_BOARD_GUARD_MIGRATION)) {
+    await db.exec(readFileSync(REVEAL_BOARD_GUARD_MIGRATION, "utf8"));
   }
   return db;
 }
@@ -983,6 +990,90 @@ describe("authoritative live answer engine schema", () => {
           [LIVE.night, crypto.randomUUID()],
         );
         expect(missing.rows[0]?.result).toEqual({ missing: true });
+      } finally {
+        await db.close();
+      }
+    });
+
+    test("rejects private candidates and non-ready categories without publishing live state", async () => {
+      const db = await freshDb();
+      try {
+        await seedLiveFixture(db);
+        const opened = await openRun(db);
+        await startGame(db, opened.runId as string);
+
+        const assertNothingPublished = async () => {
+          const state = await db.query<{
+            room_revision: number;
+            control_revision: number;
+            plays: number;
+            play_events: number;
+            played_at: string | null;
+          }>(
+            `select n.room_revision,
+                    n.control_revision,
+                    (select count(*)::integer
+                       from public.question_plays qp
+                      where qp.night_id = n.id) as plays,
+                    (select count(*)::integer
+                       from public.live_room_events e
+                      where e.night_id = n.id
+                        and e.kind = 'play_opened') as play_events,
+                    (select q.played_at
+                       from public.questions q
+                      where q.id = $2) as played_at
+               from public.nights n
+              where n.id = $1`,
+            [LIVE.night, LIVE.question],
+          );
+          expect(state.rows[0]).toEqual({
+            room_revision: 2,
+            control_revision: 2,
+            plays: 0,
+            play_events: 0,
+            played_at: null,
+          });
+        };
+
+        await db.query(
+          `update public.questions
+              set is_picked = false,
+                  point_value = null
+            where id = $1`,
+          [LIVE.question],
+        );
+        const privateCandidate = await rpc(
+          db,
+          "select public.open_question_play($1, $2, $3, $4, 2::bigint) as result",
+          [LIVE.game, LIVE.question, opened.runId, crypto.randomUUID()],
+        );
+        expect(privateCandidate).toMatchObject({
+          code: "invalid_state",
+          applied: false,
+        });
+        await assertNothingPublished();
+
+        await db.query(
+          `update public.questions
+              set is_picked = true,
+                  point_value = 500
+            where id = $1`,
+          [LIVE.question],
+        );
+        await db.query(
+          "update public.categories set state = 'review' where id = $1",
+          [LIVE.category],
+        );
+        const nonReadyCategory = await rpc(
+          db,
+          "select public.open_question_play($1, $2, $3, $4, 2::bigint) as result",
+          [LIVE.game, LIVE.question, opened.runId, crypto.randomUUID()],
+        );
+        expect(nonReadyCategory).toMatchObject({
+          code: "invalid_state",
+          applied: false,
+        });
+        await assertNothingPublished();
       } finally {
         await db.close();
       }

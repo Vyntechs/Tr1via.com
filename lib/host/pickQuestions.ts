@@ -42,9 +42,8 @@ export function selectSpreadQuestionIds(
 /**
  * Assign point values to exactly 7 picked questions and flip the category to
  * 'ready'. Caller must have already verified ownership + that the category is
- * in 'review'/'ready'. Same write sequence as the /pick route (clear-first,
- * per-row set, then mark ready) to stay safe against the
- * (category_id, point_value) unique index.
+ * in 'review'/'ready'. The database persists the clear, seven assignments,
+ * and ready state as one fenced transaction.
  */
 export async function prepareQuestionAssignmentsForCategory(
   categoryId: string,
@@ -89,37 +88,24 @@ export async function pickQuestionsForCategory(
   if (!prepared.ok) return prepared;
   const assignments = prepared.picked;
 
-  const { error: clearError } = await admin
-    .from("questions")
-    .update({ is_picked: false, point_value: null })
-    .eq("category_id", categoryId);
-  if (clearError) {
-    return { ok: false, error: `failed to clear picks: ${clearError.message}` };
-  }
-
-  for (const { id, pointValue } of assignments) {
-    const { error } = await admin
-      .from("questions")
-      .update({
-        is_picked: true,
-        point_value: pointValue as 100 | 200 | 300 | 400 | 500 | 600 | 700,
-      })
-      .eq("id", id);
-    if (error) {
-      await admin
-        .from("questions")
-        .update({ is_picked: false, point_value: null })
-        .eq("category_id", categoryId);
-      return { ok: false, error: `failed to pick question ${id}: ${error.message}` };
-    }
-  }
-
-  const { error: stateError } = await admin
-    .from("categories")
-    .update({ state: "ready" })
-    .eq("id", categoryId);
-  if (stateError) {
-    return { ok: false, error: `failed to mark ready: ${stateError.message}` };
+  const { error } = await (admin.rpc as unknown as (
+    name: "apply_category_picks",
+    args: {
+      p_category_id: string;
+      p_assignments: Array<{ id: string; pointValue: number }>;
+    },
+  ) => PromiseLike<{
+    data: unknown;
+    error: { message?: string } | null;
+  }>)("apply_category_picks", {
+    p_category_id: categoryId,
+    p_assignments: assignments,
+  });
+  if (error) {
+    return {
+      ok: false,
+      error: error.message ?? "failed to save picked questions",
+    };
   }
 
   return { ok: true, picked: assignments };

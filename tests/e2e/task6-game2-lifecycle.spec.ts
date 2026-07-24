@@ -183,9 +183,9 @@ test.describe("Game 2 lifecycle — intermission to recap", () => {
     }
 
     await expect(phone3.getByTestId(TID.playerJoinGame2.root)).toBeVisible();
-    await expect(hostPhone.getByRole("button", { name: "Return to board" }))
+    await expect(hostPhone.getByRole("button", { name: "Show standings & board" }))
       .toBeVisible({ timeout: 15_000 });
-    await hostPhone.getByRole("button", { name: "Return to board" }).click();
+    await hostPhone.getByRole("button", { name: "Show standings & board" }).click();
     await expect(hostPhone.getByRole("heading", { name: "Final scores are ready" }))
       .toBeVisible({ timeout: 15_000 });
     await hostPhone.getByRole("button", { name: "Present winners" }).click();

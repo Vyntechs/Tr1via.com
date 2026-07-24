@@ -54,7 +54,6 @@ import {
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useReachability } from "@/lib/realtime/reachability";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
-import { useLockCount } from "@/lib/hooks/useLockCount";
 import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
 import { sumAwardedForGame } from "@/lib/player/revealTotal";
 import { useTimer } from "@/lib/hooks/useTimer";
@@ -64,6 +63,7 @@ import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { useSurfaceObservation } from "@/lib/hooks/useGameDelivery";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
+import { rankScores } from "@/lib/game/rankScores";
 import { playerColorHex } from "@/lib/player/playerColor";
 import {
   selectBetweenGamesView,
@@ -264,8 +264,10 @@ function RoomBody({
   useEffect(() => {
     if (!snapshot.night?.closed_at) return;
     if (!me || !finalGame) return;
-    const winnerId = snapshot.scores?.[0]?.player_id ?? null;
-    const path = winnerId === me.id ? "won" : "recap";
+    const ranked = rankScores(snapshot.scores ?? EMPTY_SCORES);
+    const path = ranked.some(({ row, rank }) => rank === 1 && row.player_id === me.id)
+      ? "won"
+      : "recap";
     router.replace(`/room/${roomCode}/${path}`);
   }, [snapshot.night?.closed_at, snapshot.scores, me, finalGame, roomCode, router]);
 
@@ -416,8 +418,7 @@ function RoomStateMachine({
   // player isn't in the view (missing participation row). `null` propagates
   // down to the reveal components, which render "in the mix" instead of "#0".
   const myRank = useMemo<number | null>(() => {
-    const idx = scores.findIndex((s) => s.player_id === me.id);
-    return idx >= 0 ? idx + 1 : null;
+    return rankScores(scores).find(({ row }) => row.player_id === me.id)?.rank ?? null;
   }, [scores, me.id]);
 
   // Bolt ceremony: fires when the server confirms the player's answer.
@@ -428,6 +429,9 @@ function RoomStateMachine({
   // a lightning bolt on the 4th would be off-theme.
   const [boltActive, setBoltActive] = useState(false);
   const requestSnapshotRefresh = snapshot.requestRefresh;
+  const handleResolveSettled = useCallback(() => {
+    void requestSnapshotRefresh?.();
+  }, [requestSnapshotRefresh]);
   const handleServerConfirm = useCallback(() => {
     requestSnapshotRefresh?.();
     if (lockInCeremonyFor(themeKey).ceremony !== "lightning") return;
@@ -493,7 +497,7 @@ function RoomStateMachine({
   if (playerFinale && finalGameForRecap) {
     const finalScores = allScores.filter((score) => score.game_id === finalGameForRecap.id);
     const myFinalScore = finalScores.find((score) => score.player_id === me.id) ?? null;
-    const finalRankIndex = finalScores.findIndex((score) => score.player_id === me.id);
+    const finalRank = rankScores(finalScores).find(({ row }) => row.player_id === me.id)?.rank ?? null;
     const finalQuestionIds = new Set(
       [...questionGameMap.entries()]
         .filter(([, gameId]) => gameId === finalGameForRecap.id)
@@ -502,8 +506,8 @@ function RoomStateMachine({
     const finalAnswers = myAnswers.filter((answer) => finalQuestionIds.has(answer.question_id));
     inner = (
       <PlayerFinaleView
-        won={finalScores[0]?.player_id === me.id}
-        rank={finalRankIndex >= 0 ? finalRankIndex + 1 : null}
+        won={rankScores(finalScores).some(({ row, rank }) => rank === 1 && row.player_id === me.id)}
+        rank={finalRank}
         score={myFinalScore?.score ?? null}
         correct={myFinalScore?.correct_count ?? null}
         answered={myFinalScore?.answered_count ?? null}
@@ -560,6 +564,7 @@ function RoomStateMachine({
             standings={buildGame1Standings(scores, me.id)}
             totalPlayers={scores.length > 0 ? scores.length : snapshot.players.length}
             roomMagicEnabled={roomMagicEnabled}
+            onResolveSettled={handleResolveSettled}
           />
         );
       } else {
@@ -575,6 +580,7 @@ function RoomStateMachine({
             onServerConfirm={handleServerConfirm}
             themeKey={themeKey}
             serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
+            onResolveSettled={handleResolveSettled}
           />
         );
       }
@@ -844,6 +850,7 @@ function QuestionView({
   game: _game,
   categories,
   onServerConfirm,
+  onResolveSettled,
   themeKey,
   serverScramble,
 }: {
@@ -857,6 +864,9 @@ function QuestionView({
   /** Called the moment the server confirms the answer. Used to fire
    *  the bolt ceremony from the parent, which survives this unmount. */
   onServerConfirm: () => void;
+  /** Reconcile the signed player snapshot after resolve settles so score and
+   *  standing update even when this phone misses the realtime broadcast. */
+  onResolveSettled: () => void;
   themeKey?: ThemeKey;
   serverScramble?: [number, number, number, number];
 }) {
@@ -894,8 +904,10 @@ function QuestionView({
     void fetch(`/api/questions/${question.id}/resolve`, {
       method: "POST",
       credentials: "same-origin",
-    }).catch((e) => console.warn("resolve failed", e));
-  }, [question.id]);
+    })
+      .catch((e) => console.warn("resolve failed", e))
+      .finally(() => onResolveSettled());
+  }, [onResolveSettled, question.id]);
 
   // Reset the latch when the question changes.
   useEffect(() => {
@@ -999,6 +1011,7 @@ function LockedView({
   standings,
   totalPlayers,
   roomMagicEnabled,
+  onResolveSettled,
 }: {
   question: QuestionRow;
   category: CategoryRow;
@@ -1012,6 +1025,7 @@ function LockedView({
   /** Players who can answer this question — denominator for the live bar. */
   totalPlayers: number;
   roomMagicEnabled: boolean;
+  onResolveSettled: () => void;
 }) {
   // Reuse the same scramble — same player + question = same permutation.
   const scramble = useMemo(
@@ -1044,8 +1058,10 @@ function LockedView({
     void fetch(`/api/questions/${question.id}/resolve`, {
       method: "POST",
       credentials: "same-origin",
-    }).catch((e) => console.warn("resolve failed (locked)", e));
-  }, [question.id]);
+    })
+      .catch((e) => console.warn("resolve failed (locked)", e))
+      .finally(() => onResolveSettled());
+  }, [onResolveSettled, question.id]);
   useEffect(() => {
     resolveCalled.current = false;
   }, [question.id]);
@@ -1057,10 +1073,6 @@ function LockedView({
 
   const questionNumber = computeQuestionNumber(question, categories);
 
-  // Live "X of Y locked in" — poll the canonical locks list while this screen
-  // is mounted (the player has locked and is watching the room catch up).
-  const lockedCount = useLockCount({ gameId: game.id, active: true });
-
   return (
     <PlayerLocked
       category={category.name}
@@ -1070,7 +1082,6 @@ function LockedView({
       seconds={displaySeconds}
       msToLock={myAnswer.ms_to_lock}
       questionNumber={questionNumber}
-      lockedCount={lockedCount}
       totalPlayers={totalPlayers}
       standings={standings}
       roomMagicEnabled={roomMagicEnabled}
@@ -1371,8 +1382,7 @@ function PlayerBetweenGamesWired({
   const game1Scores = scores.filter((score) => score.game_id === game1Id);
 
   const finalRank = useMemo<number | null>(() => {
-    const idx = game1Scores.findIndex((s) => s.player_id === me.id);
-    return idx >= 0 ? idx + 1 : null;
+    return rankScores(game1Scores).find(({ row }) => row.player_id === me.id)?.rank ?? null;
   }, [game1Scores, me.id]);
 
   // Full ranked standings for the "waiting" (joined) look — reuses the same

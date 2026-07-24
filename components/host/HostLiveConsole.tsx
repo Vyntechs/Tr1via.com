@@ -76,6 +76,8 @@ export interface HostLiveConsoleProps {
   onEndEarly?: () => void;
   /** Undo the most recent reveal (only within 2s). */
   onUndo?: () => void;
+  /** Publish the shared standings/board frame after an answer resolves. */
+  onAdvance?: (questionId: string) => Promise<boolean>;
   /** Open the adjust-points modal. */
   onAdjustPoints?: () => void;
   /** Host removes a player mid-night. When undefined the × button hides. */
@@ -152,6 +154,7 @@ function HostLiveConsoleInner({
   onRevealCell,
   onEndEarly,
   onUndo,
+  onAdvance,
   onAdjustPoints,
   onRemovePlayer,
   onAddPlayer,
@@ -214,6 +217,16 @@ function HostLiveConsoleInner({
   function handleRevealCell(questionId: string) {
     setHostAdvanced(false);
     onRevealCell?.(questionId);
+  }
+
+  async function handlePickNext() {
+    const resolvedQuestionId = modeCtx.mode === "reveal-sticky"
+      ? tvSnapshot?.reveals.find(
+          (event) => event.event === "resolve" && event.gameId === modeCtx.currentGameId,
+        )?.questionId ?? null
+      : null;
+    if (!resolvedQuestionId || !onAdvance) return;
+    if (await onAdvance(resolvedQuestionId)) setHostAdvanced(true);
   }
 
   return (
@@ -283,7 +296,7 @@ function HostLiveConsoleInner({
           onEndEarly={onEndEarly}
           onUndo={onUndo}
           onAdjustPoints={onAdjustPoints}
-          onPickNext={() => setHostAdvanced(true)}
+          onPickNext={onAdvance ? () => void handlePickNext() : undefined}
           onEndGame={onEndGame}
           onCloseNight={onCloseNight}
           onOpenPlayers={() => setPlayersOpen(true)}

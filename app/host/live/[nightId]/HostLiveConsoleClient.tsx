@@ -313,7 +313,7 @@ function DesktopHostLiveConsoleClient({
             flag: p.app_switch_total_seconds >= 30,
           } satisfies HostLivePlayer;
         })
-        .sort((a, b) => b.score - a.score),
+        .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name, undefined, { sensitivity: "base" })),
     [room.players, scoreByPlayer, lockedPlayerIds],
   );
 
@@ -421,6 +421,25 @@ function DesktopHostLiveConsoleClient({
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Undo failed.");
+    }
+  }
+  async function handleAdvance(questionId: string): Promise<boolean> {
+    if (!currentGame) return false;
+    setError(null);
+    try {
+      const response = await fetch(`/api/games/${currentGame.id}/advance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId }),
+      });
+      if (!response.ok) {
+        const body = (await response.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? "could not show standings");
+      }
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not show standings.");
+      return false;
     }
   }
   async function handleEndEarly({
@@ -595,6 +614,7 @@ function DesktopHostLiveConsoleClient({
         onRevealCell={(qid) => void handleReveal(qid)}
         onEndEarly={() => void handleEndEarly()}
         onUndo={() => void handleUndo()}
+        onAdvance={handleAdvance}
         onAdjustPoints={() => {
           const first = players[0];
           if (first) setAdjusting(first);

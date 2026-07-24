@@ -22,6 +22,13 @@ const PHOTO_QUERY_PATH = path.join(
 const photoQuerySql = existsSync(PHOTO_QUERY_PATH)
   ? readFileSync(PHOTO_QUERY_PATH, "utf8")
   : "";
+const BOARD_SLOT_FIX_PATH = path.join(
+  MIGRATIONS_DIR,
+  "0031_atomic_board_slot_selection.sql",
+);
+const boardSlotFixSql = existsSync(BOARD_SLOT_FIX_PATH)
+  ? readFileSync(BOARD_SLOT_FIX_PATH, "utf8")
+  : "";
 
 interface FunctionSecurity {
   owner: string;
@@ -82,6 +89,7 @@ describe("generation attempt transactional fencing", () => {
     securityBeforePhotoQuery = await readFunctionSecurity();
     await db.exec(photoQuerySql);
     securityAfterPhotoQuery = await readFunctionSecurity();
+    await db.exec(boardSlotFixSql);
 
     const one = async <T>(sql: string, params: unknown[] = []) =>
       (await db!.query<T>(sql, params)).rows[0]!;
@@ -133,6 +141,23 @@ describe("generation attempt transactional fencing", () => {
     expect(securityAfterPhotoQuery?.config).toContain(
       "search_path=pg_catalog, public",
     );
+  });
+
+  test("serializes auto-pick completion on the game before selected-row writes", async () => {
+    expect(db).not.toBeNull();
+    if (!db) return;
+
+    const functionDefinition = await db.query<{ definition: string }>(
+      `select pg_get_functiondef(
+         'public.complete_question_generation(uuid,smallint,jsonb,jsonb,text,smallint,smallint,smallint)'::regprocedure
+       ) as definition`,
+    );
+    const definition = functionDefinition.rows[0]?.definition.toLowerCase() ?? "";
+    const gameLock = definition.indexOf("_lock_board_authoring_game");
+    const firstQuestionMutation = definition.indexOf("update public.questions");
+
+    expect(gameLock).toBeGreaterThan(-1);
+    expect(firstQuestionMutation).toBeGreaterThan(gameLock);
   });
 
   test("a certified batch commits only for the current attempt", async () => {

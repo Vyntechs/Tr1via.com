@@ -11,6 +11,7 @@ import { useRoom } from "@/lib/hooks/useRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
 import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
+import { rankScores } from "@/lib/game/rankScores";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
@@ -380,7 +381,6 @@ export function HostPhoneClient({
   async function reveal(questionId: string) {
     if (
       !controlGame ||
-      questionId !== stagedQuestion?.id ||
       !unplayedControlQuestions.some((question) => question.id === questionId)
     ) return;
     setBusy(true);
@@ -421,6 +421,27 @@ export function HostPhoneClient({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reveal failed.");
       if (isResilient) room.requestRefresh?.();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function showStandings(questionId: string, resolvedResultKey: string) {
+    if (!room.currentGame || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch(`/api/games/${room.currentGame.id}/advance`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionId }),
+      });
+      await requireOk(response, "could not show standings");
+      setDismissedResultKey(resolvedResultKey);
+      setSelection(null);
+      setNavigation(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not show standings.");
     } finally {
       setBusy(false);
     }
@@ -874,11 +895,7 @@ export function HostPhoneClient({
             ? authoritativeLive.play.eligibleCount
             : legacyEligibleCount
         }
-        onReturnToBoard={() => {
-          setDismissedResultKey(resultKey);
-          setSelection(null);
-          setNavigation(null);
-        }}
+        onReturnToBoard={() => void showStandings(room.lastResolvedQuestion!.id, resultKey)}
       />
     );
   } else if (stage.stage === "intermission") {
@@ -938,7 +955,7 @@ export function HostPhoneClient({
           questions={controlQuestions}
           selectedQuestionId={null}
           onSelect={(questionId) => {
-            if (!controlGame) return;
+            if (!controlGame || busy) return;
             setSelection({ questionId, gameId: controlGame.id, contextKey });
             navigate("board");
           }}
@@ -1102,9 +1119,9 @@ function isHostPreflight(value: unknown): value is HostPreflight {
 }
 
 function toHostBetweenStandings(scores: GameScoreRow[]) {
-  return scores.flatMap((row) =>
+  return rankScores(scores).flatMap(({ row, rank }) =>
     row.player_id && row.display_name
-      ? [{ playerId: row.player_id, name: row.display_name, score: row.score ?? 0 }]
+      ? [{ playerId: row.player_id, name: row.display_name, score: row.score ?? 0, rank }]
       : [],
   );
 }
