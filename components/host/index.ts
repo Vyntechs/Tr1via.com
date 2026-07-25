@@ -1,7 +1,5 @@
 // Barrel export for host screens. Import from "@/components/host".
 
-export { HostPhoneUpcoming } from "./HostPhoneUpcoming";
-export type { HostPhoneUpcomingProps } from "./HostPhoneUpcoming";
 export { HostCommandCenter } from "./HostCommandCenter";
 export type { HostCommandCenterProps, HostSection } from "./HostCommandCenter";
 export { HostGameStatus } from "./HostGameStatus";

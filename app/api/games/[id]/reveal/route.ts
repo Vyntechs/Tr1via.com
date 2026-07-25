@@ -116,6 +116,34 @@ export async function POST(
   if (!question.is_picked) return conflict("question is not on the board");
   if (question.played_at) return conflict("question already revealed");
 
+  // Enforce "at most one unfinished question per game" (the resilient engine
+  // does the equivalent in open_question_play). One-tap reveal removed the
+  // client-side staging that used to make a rapid second tap on a *different*
+  // board cell unreachable, so a host tapping two cells in the brief window
+  // between the reveal response and the realtime broadcast could otherwise put
+  // two questions live at once. For a single host's sequential taps the first
+  // reveal has already committed played_at before this check runs.
+  const { data: gameCategories } = await admin
+    .from("categories")
+    .select("id")
+    .eq("game_id", gameId);
+  const gameCategoryIds = ((gameCategories ?? []) as Array<{ id: string }>).map(
+    (row) => row.id,
+  );
+  if (gameCategoryIds.length > 0) {
+    const { data: otherLive } = await admin
+      .from("questions")
+      .select("id")
+      .in("category_id", gameCategoryIds)
+      .not("played_at", "is", null)
+      .is("finished_at", null)
+      .neq("id", parsed.data.questionId)
+      .limit(1);
+    if (otherLive && otherLive.length > 0) {
+      return conflict("another question is already live in this game");
+    }
+  }
+
   // Stamp played_at first. If the broadcast fails, the durable state is
   // still correct — phones will pick up the reveal via Postgres Changes.
   const revealedAt = new Date().toISOString();
