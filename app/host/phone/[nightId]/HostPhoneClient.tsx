@@ -408,6 +408,17 @@ export function HostPhoneClient({
       } else {
         await requireOk(res, "reveal failed");
       }
+      // Optimistically mark the revealed cell Played so the board disables it
+      // immediately. The realtime broadcast that sets room.currentQuestion can
+      // lag the HTTP response, and one-tap reveal must not let a rapid second
+      // tap on the same cell fire a duplicate before the board catches up.
+      setDirectAllQuestions((prev) =>
+        prev.map((entry) =>
+          entry.id === questionId
+            ? { ...entry, played_at: entry.played_at ?? new Date().toISOString() }
+            : entry,
+        ),
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reveal failed.");
       if (isResilient) room.requestRefresh?.();

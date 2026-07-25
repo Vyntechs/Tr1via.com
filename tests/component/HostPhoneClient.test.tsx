@@ -672,6 +672,29 @@ describe("HostPhoneClient reveal flow", () => {
     expect(screen.queryByRole("button", { name: "Back to board" })).not.toBeInTheDocument();
   });
 
+  it("disables the tapped cell immediately after a successful reveal, before the broadcast", async () => {
+    render(
+      <HostPhoneClient
+        nightId="night-1"
+        roomCode="ABC123"
+        hostName="Heather Moore"
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
+      "/api/games/g1/reveal",
+      expect.objectContaining({ body: JSON.stringify({ questionId: "q1" }) }),
+    ));
+
+    // room.currentQuestion has NOT converged yet (no broadcast in this test),
+    // but the tapped cell is already optimistically marked Played so a rapid
+    // second tap on the same cell can't fire a duplicate reveal.
+    const playedCell = await screen.findByRole("button", { name: "Salsa for 100 points · Played" });
+    expect(playedCell).toBeDisabled();
+  });
+
   it("reveals at most once when a board cell is tapped repeatedly", async () => {
     const pendingReveal: { resolve?: (response: Response) => void } = {};
     h.fetch.mockImplementation(
