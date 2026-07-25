@@ -321,6 +321,18 @@ function RoomStateMachine({
   // Live game (or pre-game). Used to decide which screen to show.
   const game1 = snapshot.games.find((g) => g.game_no === 1) ?? null;
   const game2 = snapshot.games.find((g) => g.game_no === 2) ?? null;
+  // Every night auto-seeds an empty game_no:2 shell. A Game 2 is only real if
+  // it was actually started (live/done — the server refuses to start an empty
+  // game) or has a ready category built for it. Otherwise the room behaves as a
+  // single-game night (no phantom "Join Game 2", straight to the finale).
+  const game2HasContent = useMemo(
+    () =>
+      !!game2 &&
+      (game2.state === "live" ||
+        game2.state === "done" ||
+        snapshot.categories.some((c) => c.game_id === game2.id && c.state === "ready")),
+    [game2, snapshot.categories],
+  );
   const currentGame = snapshot.currentGame;
   const currentQuestion = snapshot.currentQuestion;
   const roomMagicEnabled = Boolean(snapshot.night?.room_magic_enabled);
@@ -481,6 +493,7 @@ function RoomStateMachine({
     game1State: game1?.state ?? null,
     game2State: game2?.state ?? null,
     inGame2,
+    game2HasContent,
   });
   const waitingForGame2FirstQuestion = isWaitingForGame2FirstQuestion({
     game1State: game1?.state ?? null,
@@ -492,8 +505,10 @@ function RoomStateMachine({
   const playerFinale = isPlayerFinale({
     game1State: game1?.state ?? null,
     game2State: game2?.state ?? null,
+    game2HasContent,
   });
-  const finalGameForRecap = game2 ?? game1;
+  // An empty Game 2 shell is not the final game — recap Game 1's scores.
+  const finalGameForRecap = game2HasContent ? (game2 ?? game1) : game1;
   if (playerFinale && finalGameForRecap) {
     const finalScores = allScores.filter((score) => score.game_id === finalGameForRecap.id);
     const myFinalScore = finalScores.find((score) => score.player_id === me.id) ?? null;

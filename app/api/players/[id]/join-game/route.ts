@@ -48,6 +48,23 @@ export async function POST(
   if (!game) return notFound("game not found");
   if (game.state === "done") return forbidden("game is over");
 
+  // Every night auto-seeds an empty game_no:2 shell. Before it's started, only
+  // let a player opt in once it has ready content — otherwise the "Join Game 2"
+  // button on a phantom Game 2 would strand them on a game that never starts. A
+  // live game was already started (the server refuses to start an empty game),
+  // so latecomers may still join it.
+  if (game.state === "draft" || game.state === "ready") {
+    const { data: readyCategories } = await admin
+      .from("categories")
+      .select("id")
+      .eq("game_id", game.id)
+      .eq("state", "ready")
+      .limit(1);
+    if (!readyCategories || readyCategories.length === 0) {
+      return forbidden("game is not ready yet");
+    }
+  }
+
   // Insert participation, swallowing the duplicate-key error so callers
   // can call this whether or not they're already in.
   const { error: insertError } = await admin

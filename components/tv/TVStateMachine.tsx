@@ -107,17 +107,28 @@ export function TVStateMachine({
   const game2 = games.find((g) => g.gameNo === 2) ?? null;
   const currentGame = games.find((g) => g.id === snapshot.currentGameId) ?? null;
 
+  // Every night auto-seeds an empty game_no:2 shell. A Game 2 is only real if
+  // it was actually started (live/done — the server refuses to start an empty
+  // game) or has a ready category built for it. An empty shell behaves as "no
+  // Game 2" so the venue TV never advertises a phantom intermission.
+  const game2IsReal =
+    !!game2 &&
+    (game2.state === "live" ||
+      game2.state === "done" ||
+      snapshot.categories.some((c) => c.gameId === game2.id && c.state === "ready"));
+
   const nightClosed = snapshot.night.closedAt !== null;
   const isFinale =
     nightClosed ||
     (game2?.state === "done") ||
-    // Edge case: only game 1 exists and it's done → still treat as finale.
-    (game1?.state === "done" && !game2);
+    // Only game 1 has real content (no game 2, or an empty seeded shell) and
+    // game 1 is done → treat as a single-game finale.
+    (game1?.state === "done" && !game2IsReal);
 
   const intermission =
     game1?.state === "done" &&
-    !!game2 &&
-    game2.state !== "done" &&
+    game2IsReal &&
+    game2?.state !== "done" &&
     !isFinale;
 
   // Live question handling. A "current" question is one whose row exists
