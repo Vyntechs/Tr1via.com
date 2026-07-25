@@ -15,10 +15,8 @@ import { rankScores } from "@/lib/game/rankScores";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
-  HostAnswerResult,
   HostBetweenGames,
   HostVenueMonitor,
-  HostPhoneUpcoming,
   HostPhoneLive,
   HostScores,
 } from "@/components/host";
@@ -42,14 +40,19 @@ const UNDO_WINDOW_MS = 2_000;
 export interface HostPhoneClientProps {
   nightId: string;
   roomCode: string;
-  hostName: string;
+  /**
+   * Retained for API parity with the laptop client and route callers. No
+   * longer rendered on the phone host: the private per-host question preview
+   * (the only surface that showed the host's name) was removed when the phone
+   * moved to one-tap reveal parity with the laptop.
+   */
+  hostName?: string;
   themeKey?: ThemeKey;
 }
 
 export function HostPhoneClient({
   nightId,
   roomCode,
-  hostName,
   themeKey,
 }: HostPhoneClientProps) {
   const room = useRoom({ roomCode, audience: "host" });
@@ -118,16 +121,10 @@ export function HostPhoneClient({
     },
     [answerTargetId, backupMode, directAnswers, fallbackPayload, isResilient, room.liveAnswers],
   );
-  const [selection, setSelection] = useState<{
-    questionId: string;
-    gameId: string;
-    contextKey: string;
-  } | null>(null);
   const [navigation, setNavigation] = useState<{
     section: HostSection;
     contextKey: string;
   } | null>(null);
-  const [dismissedResultKey, setDismissedResultKey] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmingEnd, setConfirmingEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -355,12 +352,6 @@ export function HostPhoneClient({
     room.lastBroadcast?.questionId ?? "no-question",
     room.lastBroadcast?.serverNow ?? "no-revision",
   ].join(":");
-  const stagedQuestion =
-    selection &&
-    selection.gameId === controlGame?.id &&
-    selection.contextKey === contextKey
-    ? unplayedControlQuestions.find((question) => question.id === selection.questionId) ?? null
-    : null;
   const activeSection = navigation?.contextKey === contextKey
     ? navigation.section
     : "board";
@@ -417,31 +408,9 @@ export function HostPhoneClient({
       } else {
         await requireOk(res, "reveal failed");
       }
-      setSelection(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reveal failed.");
       if (isResilient) room.requestRefresh?.();
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function showStandings(questionId: string, resolvedResultKey: string) {
-    if (!room.currentGame || busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await fetch(`/api/games/${room.currentGame.id}/advance`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionId }),
-      });
-      await requireOk(response, "could not show standings");
-      setDismissedResultKey(resolvedResultKey);
-      setSelection(null);
-      setNavigation(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not show standings.");
     } finally {
       setBusy(false);
     }
@@ -532,7 +501,6 @@ export function HostPhoneClient({
       } else {
         await requireOk(res, "undo failed");
       }
-      setSelection(null);
       setNavigation(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Undo failed.");
@@ -684,15 +652,6 @@ export function HostPhoneClient({
     backupMode && fallbackPayload
       ? directEligibilityKey
       : directScoreSnapshot?.eligibilityKey ?? null;
-  const legacyEligibleCount = useMemo(() => {
-    if (!directEligibilityKey || eligibilityReadyKey !== directEligibilityKey) return null;
-    const active = new Set(room.players.map((player) => player.id));
-    return new Set(
-      scores
-        .map((row) => row.player_id)
-        .filter((playerId): playerId is string => Boolean(playerId && active.has(playerId))),
-    ).size;
-  }, [directEligibilityKey, eligibilityReadyKey, room.players, scores]);
   const allLockedDecision = useMemo(() => {
     if (isResilient) {
       const play = authoritativeLive?.play;
@@ -738,22 +697,17 @@ export function HostPhoneClient({
     controlQuestions.length > 0 &&
     controlQuestions.every((question) => question.finished_at !== null),
   );
-  const resolvedGame = resolvedQuestionGameForAnswers;
-  const resultKey = resolvedBelongsToCurrentLiveGame && room.lastResolvedQuestion && resolvedGame
-    ? `${resolvedGame.id}:${room.lastResolvedQuestion.id}:${room.lastResolvedQuestion.finished_at ?? "resolved"}`
-    : null;
-  const resultDismissed = resultKey !== null && dismissedResultKey === resultKey;
   const stage = deriveHostStage({
     game1: game1?.state ?? null,
     game2: game2?.state ?? null,
     currentGame: room.currentGame?.game_no ?? null,
     livePlay: room.currentQuestion?.id ?? null,
-    lastResolve:
-      room.lastResolvedQuestion && resolvedGame && !resultDismissed
-        ? { id: room.lastResolvedQuestion.id, game: resolvedGame.game_no }
-        : null,
+    // The phone host has no separate answer-result screen: on resolve it drops
+    // straight back to the board (Theme A, part 3 — frictionless auto-return).
+    // Never entering the answer-result stage keeps the room's answer up until
+    // the next reveal — the phone deliberately does not publish an advance.
+    lastResolve: null,
     nightClosed: Boolean(room.night?.closed_at),
-    stagedQuestion: stagedQuestion?.id ?? null,
     finalGameExhausted,
   });
   const deliveryRunId = authoritativeLive?.runId ?? null;
@@ -837,7 +791,6 @@ export function HostPhoneClient({
 
   const roundControls =
     isGame1Preflight ||
-    stage.stage === "answer-result" ||
     stage.stage === "intermission" ||
     stage.stage === "finale"
       ? undefined
@@ -882,22 +835,6 @@ export function HostPhoneClient({
         isEnding={busy}
       />
     );
-  } else if (stage.stage === "answer-result" && room.lastResolvedQuestion && resultKey) {
-    boardContent = (
-      <HostAnswerResult
-        themeKey={themeKey}
-        question={room.lastResolvedQuestion}
-        answers={answers}
-        players={room.players}
-        eligibleCount={
-          isResilient &&
-          authoritativeLive?.play?.questionId === room.lastResolvedQuestion.id
-            ? authoritativeLive.play.eligibleCount
-            : legacyEligibleCount
-        }
-        onReturnToBoard={() => void showStandings(room.lastResolvedQuestion!.id, resultKey)}
-      />
-    );
   } else if (stage.stage === "intermission") {
     boardContent = (
       <HostBetweenGames
@@ -926,27 +863,6 @@ export function HostPhoneClient({
         busy={busy}
       />
     );
-  } else if (stagedQuestion) {
-    const stagedCategory = controlCategories.find(
-      (category) => category.id === stagedQuestion.category_id,
-    );
-    boardContent = (
-      <HostPhoneUpcoming
-        themeKey={themeKey}
-        hostName={hostName}
-        categoryName={stagedCategory?.name ?? "Category"}
-        pointValue={stagedQuestion.point_value ?? stagedQuestion.difficulty * 100}
-        prompt={stagedQuestion.prompt}
-        options={stagedQuestion.options}
-        correctIndex={stagedQuestion.correct_index}
-        factBlurb={stagedQuestion.fact_blurb}
-        imageUrl={stagedQuestion.image_url}
-        imageAttribution={stagedQuestion.image_attribution}
-        onReveal={() => void reveal(stagedQuestion.id)}
-        onBack={() => setSelection(null)}
-        isRevealing={busy}
-      />
-    );
   } else {
     boardContent = (
       <div style={{ padding: "2px 0 12px" }}>
@@ -955,9 +871,11 @@ export function HostPhoneClient({
           questions={controlQuestions}
           selectedQuestionId={null}
           onSelect={(questionId) => {
+            // One tap on a board cell publishes immediately — exact parity with
+            // the laptop's one-tap reveal. No private staging/preview page and
+            // no separate "Show question" tap. `busy` single-flights the POST.
             if (!controlGame || busy) return;
-            setSelection({ questionId, gameId: controlGame.id, contextKey });
-            navigate("board");
+            void reveal(questionId);
           }}
         />
         {controlCategories.length === 0 && (

@@ -10,7 +10,6 @@ import { Suspense, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import { ThemeProvider, Wordmark, Eyebrow } from "@/components/system";
 import {
-  HostPhoneUpcoming,
   HostPhoneLive,
   HostDashboard,
   HostSetupCategories,
@@ -41,10 +40,9 @@ const LAPTOP_SCREENS: ScreenEntry[] = [
 ];
 
 const PHONE_SCREENS: ScreenEntry[] = [
-  { key: "phone-upcoming", title: "06 · Phone · upcoming", Component: HostPhoneUpcoming },
-  { key: "phone-live",     title: "07 · Phone · live",     Component: HostPhoneLive },
-  { key: "phone-result",   title: "08 · Phone · answer result", Component: AnswerResultProof },
-  { key: "phone-scores",   title: "09 · Phone · scores", Component: ScoresProof },
+  { key: "phone-live",     title: "06 · Phone · live",     Component: HostPhoneLive },
+  { key: "phone-result",   title: "07 · Phone · answer result", Component: AnswerResultProof },
+  { key: "phone-scores",   title: "08 · Phone · scores", Component: ScoresProof },
 ];
 
 const PROOF_QUESTION: QuestionRow = {
