@@ -45,13 +45,23 @@ export function buildGame1Standings(
 
 export type BetweenGamesView = "join" | "waiting" | null;
 
-/** Finale becomes visible only after the last configured game is durably done. */
+/**
+ * Finale becomes visible only after the last configured game is durably done.
+ *
+ * Every night auto-seeds an empty `game_no:2` shell, so "game 2 exists" is not
+ * the same as "game 2 was built." `game2HasContent` (defaults true for callers
+ * that already know it's real) lets a contentless Game 2 be treated as a
+ * single-game night, so the room reaches the finale instead of waiting forever
+ * on a phantom Game 2.
+ */
 export function isPlayerFinale(args: {
   game1State: string | null;
   game2State: string | null;
+  game2HasContent?: boolean;
 }): boolean {
-  if (args.game2State !== null) return args.game2State === "done";
-  return args.game1State === "done";
+  const { game1State, game2State, game2HasContent = true } = args;
+  if (game2State !== null && game2HasContent) return game2State === "done";
+  return game1State === "done";
 }
 
 /**
@@ -67,9 +77,12 @@ export function selectBetweenGamesView(args: {
   game1State: string | null;
   game2State: string | null;
   inGame2: boolean;
+  /** False when the seeded Game 2 has no ready content — treat it as absent so
+   *  the player never sees a phantom Join/waiting screen. Defaults true. */
+  game2HasContent?: boolean;
 }): BetweenGamesView {
-  const { game1State, game2State, inGame2 } = args;
-  if (game1State !== "done" || game2State === null) return null;
+  const { game1State, game2State, inGame2, game2HasContent = true } = args;
+  if (game1State !== "done" || game2State === null || !game2HasContent) return null;
   if (game2State === "done") return null;
   if (!inGame2) return "join";
   if (game2State === "draft" || game2State === "ready") return "waiting";

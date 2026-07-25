@@ -208,6 +208,32 @@ describe("TVStateMachine lifecycle boundaries", () => {
     expect(screen.queryByText("GAME 2 STARTED · FIRST QUESTION NEXT")).not.toBeInTheDocument();
   });
 
+  it("treats an empty auto-seeded Game 2 as a single-game finale, never a phantom intermission", () => {
+    // Every night seeds a game_no:2 shell. When Game 1 finishes and Game 2 has
+    // no ready content, the venue TV must show the finale — not advertise a
+    // "Game 2 coming" intermission that will never arrive.
+    const emptyGame2 = lifecycleSnapshot({
+      currentGameId: "g1",
+      games: [
+        { id: "g1", gameNo: 1, state: "done", startedAt: "2026-07-20T00:00:00Z", endedAt: "2026-07-20T01:00:00Z", categoryCount: 1, questionCount: 1 },
+        { id: "g2", gameNo: 2, state: "draft", startedAt: null, endedAt: null, categoryCount: 0, questionCount: 0 },
+      ],
+      categories: [
+        { id: "c1", gameId: "g1", name: "History", topic: "History", position: 0, color: null, state: "ready" },
+      ],
+      targetQuestionId: null,
+    });
+
+    render(
+      <ThemeProvider themeKey="house">
+        <TVStateMachine snapshot={emptyGame2} themeKey="house" />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId("tv-finale-winner")).toBeVisible();
+    expect(screen.queryByTestId("tv-intermission")).not.toBeInTheDocument();
+  });
+
   it("shows the venue finale only after the final game is durably done", () => {
     const live = lifecycleSnapshot();
     const view = render(

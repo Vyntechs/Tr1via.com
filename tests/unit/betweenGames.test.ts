@@ -87,6 +87,24 @@ describe("selectBetweenGamesView", () => {
   it("returns null when there is no game 2", () => {
     expect(selectBetweenGamesView({ game1State: "done", game2State: null, inGame2: false })).toBeNull();
   });
+
+  it("treats an empty (contentless) game 2 as no game 2 — never advertises a phantom Join", () => {
+    // Every night auto-seeds a game_no:2 shell; without ready content it must
+    // not surface a Join/waiting screen. The player should fall through to the
+    // finale/recap instead of being stranded on a phantom Game 2.
+    expect(
+      selectBetweenGamesView({ game1State: "done", game2State: "ready", inGame2: false, game2HasContent: false }),
+    ).toBeNull();
+    expect(
+      selectBetweenGamesView({ game1State: "done", game2State: "draft", inGame2: true, game2HasContent: false }),
+    ).toBeNull();
+  });
+
+  it("still surfaces the between-games screen for a real (content-ful) game 2", () => {
+    expect(
+      selectBetweenGamesView({ game1State: "done", game2State: "ready", inGame2: false, game2HasContent: true }),
+    ).toBe("join");
+  });
 });
 
 describe("isWaitingForGame2FirstQuestion", () => {
@@ -180,5 +198,15 @@ describe("isPlayerFinale", () => {
   it("supports a single-game night without inventing Game 2", () => {
     expect(isPlayerFinale({ game1State: "done", game2State: null })).toBe(true);
     expect(isPlayerFinale({ game1State: "live", game2State: null })).toBe(false);
+  });
+
+  it("reaches the finale when the seeded Game 2 has no content (treats it as single-game)", () => {
+    expect(
+      isPlayerFinale({ game1State: "done", game2State: "draft", game2HasContent: false }),
+    ).toBe(true);
+    // A real, content-ful Game 2 still gates the finale on Game 2's completion.
+    expect(
+      isPlayerFinale({ game1State: "done", game2State: "draft", game2HasContent: true }),
+    ).toBe(false);
   });
 });

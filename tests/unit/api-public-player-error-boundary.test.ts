@@ -132,7 +132,9 @@ describe("public and signed-player route error boundary", () => {
     adminMock.getSupabaseAdmin.mockReturnValue({
       from: vi.fn((table: string) => {
         if (table === "games") {
-          return query({ data: { id: GAME_ID, state: "ready" }, error: null });
+          // A live game 2 (latecomer join) skips the empty-shell content guard
+          // and exercises the participation insert path this test is about.
+          return query({ data: { id: GAME_ID, state: "live" }, error: null });
         }
         if (table === "game_participations") {
           return { insert: vi.fn(async () => ({ data: null, error })) };
