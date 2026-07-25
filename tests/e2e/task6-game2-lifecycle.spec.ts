@@ -183,9 +183,8 @@ test.describe("Game 2 lifecycle — intermission to recap", () => {
     }
 
     await expect(phone3.getByTestId(TID.playerJoinGame2.root)).toBeVisible();
-    await expect(hostPhone.getByRole("button", { name: "Show standings & board" }))
-      .toBeVisible({ timeout: 15_000 });
-    await hostPhone.getByRole("button", { name: "Show standings & board" }).click();
+    // Theme A part 3: the phone host has no "Show standings & board" step — the
+    // resolved final question drops straight to the finale (present winners).
     await expect(hostPhone.getByRole("heading", { name: "Final scores are ready" }))
       .toBeVisible({ timeout: 15_000 });
     await hostPhone.getByRole("button", { name: "Present winners" }).click();
