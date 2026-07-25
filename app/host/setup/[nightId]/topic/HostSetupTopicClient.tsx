@@ -9,7 +9,29 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { HostGenTopicEntry, type DifficultyTarget } from "@/components/host/gen";
+import { fetchWithRetry } from "@/lib/realtime/fetchWithRetry";
 import type { ThemeKey } from "@/lib/theme/tokens";
+
+// Shown when the request can't reach the server after retries — actionable, and
+// never the raw WebKit "Load failed". The create is idempotent, so retrying is
+// safe and won't duplicate the topic.
+const NETWORK_MESSAGE =
+  "Couldn't reach the server. Check your connection and tap Pull 20 questions again.";
+
+// POST that rides out a transient network drop (cellular / venue WiFi). Rethrows
+// a friendly, actionable message when the network is exhausted; a completed HTTP
+// response is returned for the caller to inspect (never retried).
+async function postWithRetry(url: string, payload: unknown): Promise<Response> {
+  try {
+    return await fetchWithRetry(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    throw new Error(NETWORK_MESSAGE);
+  }
+}
 
 export interface HostSetupTopicClientProps {
   nightId: string;
@@ -41,16 +63,13 @@ export function HostSetupTopicClient({
     setSubmitting(true);
     setError(null);
     try {
-      // 1. Create the category row.
-      const catRes = await fetch("/api/categories", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          gameId,
-          name: input.topic,
-          topic: input.topic,
-          position,
-        }),
+      // 1. Create the category row. Idempotent get-or-create, so a retried
+      // request after a dropped connection reuses the same slot.
+      const catRes = await postWithRetry("/api/categories", {
+        gameId,
+        name: input.topic,
+        topic: input.topic,
+        position,
       });
       if (!catRes.ok) {
         const body = (await catRes.json().catch(() => ({}))) as { error?: string };
@@ -58,14 +77,11 @@ export function HostSetupTopicClient({
       }
       const { category } = (await catRes.json()) as { category: { id: string } };
 
-      // 2. Kick off generation.
-      const genRes = await fetch(`/api/categories/${category.id}/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          flavor: input.flavor.length > 0 ? input.flavor : undefined,
-          difficulty: input.difficulty,
-        }),
+      // 2. Kick off generation. Idempotent on the server (claims/resumes the
+      // existing job), so a retry never double-generates.
+      const genRes = await postWithRetry(`/api/categories/${category.id}/generate`, {
+        flavor: input.flavor.length > 0 ? input.flavor : undefined,
+        difficulty: input.difficulty,
       });
       if (!genRes.ok && genRes.status !== 202) {
         const body = (await genRes.json().catch(() => ({}))) as { error?: string };

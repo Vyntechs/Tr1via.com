@@ -44,6 +44,24 @@ export async function POST(req: NextRequest) {
   }
 
   const admin = getSupabaseAdmin();
+
+  // Idempotent get-or-create. The topic → generate flow fires this over
+  // possibly-lossy networks (cellular / venue WiFi), and the client retries a
+  // dropped request. A retry that lands after the first attempt already
+  // committed must NOT create a second category in the same slot — reuse the
+  // exact prior match (same game, position, and topic) instead.
+  const { data: existingRows } = await admin
+    .from("categories")
+    .select("id, name, topic, position, state")
+    .eq("game_id", gameId)
+    .eq("position", position)
+    .eq("topic", topic)
+    .limit(1);
+  const existing = ((existingRows ?? []) as Array<{ id: string }>)[0];
+  if (existing) {
+    return ok({ category: existing }, 200);
+  }
+
   const { data, error } = await admin
     .from("categories")
     .insert({
