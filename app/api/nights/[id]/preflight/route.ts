@@ -99,6 +99,15 @@ export async function GET(
       ? "This trivia night is closed."
       : contentReason ?? (tv === "missing" ? "The venue TV surface is unavailable." : null);
 
+    // `canStart` above is the STRICT full-board verifier (all categories ready,
+    // every question picked) — kept for the readiness checklist. But the actual
+    // server rule (app/api/games/[id]/start) only needs ONE ready category, and
+    // that's what the laptop console uses. `canStartMinimal` mirrors that real
+    // rule so the phone can start a partial/test board exactly like the laptop —
+    // instead of the phone being falsely blocked below a full board.
+    const readyCategoryCount = categories.filter((c) => c.state === "ready").length;
+    const canStartMinimal = controls === "ready" && readyCategoryCount >= 1;
+
     return ok({
       checks: {
         content,
@@ -109,6 +118,7 @@ export async function GET(
         controls,
       },
       canStart: startReason === null,
+      canStartMinimal,
       startReason,
       checkedAt: new Date().toISOString(),
       elapsedMs: Math.max(0, Date.now() - startedAt),
