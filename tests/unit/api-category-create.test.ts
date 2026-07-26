@@ -23,7 +23,13 @@ const validBody = { gameId: GAME_ID, name: "Marvel MCU", topic: "Marvel MCU", po
 
 // A dropped-then-retried "Pull questions" must not create a second category at
 // the same slot. The create route is get-or-create on (game_id, position, topic).
-function createAdmin({ existing }: { existing: boolean }) {
+function createAdmin({
+  existing,
+  selectError = false,
+}: {
+  existing: boolean;
+  selectError?: boolean;
+}) {
   const insert = vi.fn(() => ({
     select: vi.fn(() => ({
       single: vi.fn(async () => ({
@@ -36,6 +42,9 @@ function createAdmin({ existing }: { existing: boolean }) {
   const existingRows = existing
     ? [{ id: EXISTING_ID, name: "Marvel MCU", topic: "Marvel MCU", position: 1, state: "draft" }]
     : [];
+  const lookupResult = selectError
+    ? { data: null, error: { message: "db read failed" } }
+    : { data: existingRows, error: null };
 
   const admin = {
     from: vi.fn((table: string) => {
@@ -43,9 +52,9 @@ function createAdmin({ existing }: { existing: boolean }) {
       const lookup: Record<string, unknown> = {};
       for (const method of ["select", "eq", "limit"]) lookup[method] = vi.fn(() => lookup);
       lookup.then = (
-        resolve: (value: { data: unknown[]; error: null }) => unknown,
+        resolve: (value: typeof lookupResult) => unknown,
         reject: (reason: unknown) => unknown,
-      ) => Promise.resolve({ data: existingRows, error: null }).then(resolve, reject);
+      ) => Promise.resolve(lookupResult).then(resolve, reject);
       return { ...lookup, insert };
     }),
   };
@@ -72,6 +81,20 @@ describe("POST /api/categories — idempotent get-or-create", () => {
     expect(response.status).toBe(200);
     const body = (await response.json()) as { category: { id: string } };
     expect(body.category.id).toBe(EXISTING_ID);
+    expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("fails closed (does not insert) when the idempotency lookup itself errors", async () => {
+    // A transient DB/read failure on the get-or-create SELECT must NOT fall
+    // through to a plain insert — that would duplicate the slot on a retry,
+    // the exact thing the idempotency guard exists to prevent.
+    const { admin, insert } = createAdmin({ existing: false, selectError: true });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/categories/route");
+    const response = await POST(createRequest(validBody));
+
+    expect(response.status).toBe(500);
     expect(insert).not.toHaveBeenCalled();
   });
 

@@ -50,13 +50,19 @@ export async function POST(req: NextRequest) {
   // dropped request. A retry that lands after the first attempt already
   // committed must NOT create a second category in the same slot — reuse the
   // exact prior match (same game, position, and topic) instead.
-  const { data: existingRows } = await admin
+  const { data: existingRows, error: lookupError } = await admin
     .from("categories")
     .select("id, name, topic, position, state")
     .eq("game_id", gameId)
     .eq("position", position)
     .eq("topic", topic)
     .limit(1);
+  // Fail closed: if the idempotency lookup itself errors, do NOT fall through to
+  // a plain insert — that would duplicate the slot on a retry, the exact race
+  // this guard prevents. Surface the error so the client retries the whole call.
+  if (lookupError) {
+    return serverError(lookupError.message ?? "could not check for an existing category");
+  }
   const existing = ((existingRows ?? []) as Array<{ id: string }>)[0];
   if (existing) {
     return ok({ category: existing }, 200);
