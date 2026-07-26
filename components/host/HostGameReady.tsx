@@ -14,6 +14,10 @@ export interface HostPreflight {
     controls: "ready" | "unavailable";
   };
   canStart: boolean;
+  // The real server start rule: at least one ready category and the night open.
+  // Gates the Start button so the phone matches the laptop; `canStart` above
+  // stays as the strict full-board readiness indicator.
+  canStartMinimal: boolean;
   startReason: string | null;
   checkedAt: string;
   elapsedMs: number;
@@ -187,9 +191,14 @@ export function HostGameReady({
         </section>
       </div>
 
-      {current.startReason && (
+      {!current.canStartMinimal && current.startReason && (
         <p id="game-ready-blocker" role="alert" style={{ margin: "12px 0 0", color: t.wrong, fontSize: 12, fontWeight: 750 }}>
           {current.startReason}
+        </p>
+      )}
+      {current.canStartMinimal && !current.canStart && (
+        <p role="status" style={{ margin: "12px 0 0", color: t.inkMid, fontSize: 12, fontWeight: 650 }}>
+          The board isn’t fully built yet — you can start now, or add more first.
         </p>
       )}
       {refreshMessage && (
@@ -213,11 +222,11 @@ export function HostGameReady({
         <button
           type="button"
           onClick={onStart}
-          disabled={!current.canStart || checking || isStarting}
-          aria-describedby={!current.canStart && current.startReason ? "game-ready-blocker" : undefined}
+          disabled={!current.canStartMinimal || checking || isStarting}
+          aria-describedby={!current.canStartMinimal && current.startReason ? "game-ready-blocker" : undefined}
           style={{
             ...buttonStyle(t.accent, readableForeground(t.accent), t.accent),
-            opacity: !current.canStart || checking || isStarting ? 0.48 : 1,
+            opacity: !current.canStartMinimal || checking || isStarting ? 0.48 : 1,
           }}
         >
           {isStarting ? "Starting Game 1…" : "Start Game 1"}

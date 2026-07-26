@@ -15,6 +15,7 @@ function preflight(overrides: Partial<HostPreflight> = {}): HostPreflight {
       controls: "ready",
     },
     canStart: true,
+    canStartMinimal: true,
     startReason: null,
     checkedAt: "2026-07-20T12:00:00.000Z",
     elapsedMs: 42,
@@ -102,14 +103,17 @@ describe("HostGameReady", () => {
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 
-  it("disables start with a specific reason when content is invalid", () => {
+  it("allows starting a partial board (matches the laptop) with a non-blocking note", () => {
     renderReady({
       preflight: preflight({
         checks: {
           ...preflight().checks,
           content: "invalid",
         },
+        // Full board not built, but at least one ready category → startable,
+        // exactly like the laptop console. Must NOT block the host.
         canStart: false,
+        canStartMinimal: true,
         startReason: "Game 1 needs 7 picked questions before it can start.",
         content: {
           ...preflight().content,
@@ -118,8 +122,27 @@ describe("HostGameReady", () => {
       }),
     });
 
+    expect(screen.getByRole("button", { name: "Start Game 1" })).toBeEnabled();
+    expect(
+      screen.getByText("The board isn’t fully built yet — you can start now, or add more first."),
+    ).toBeVisible();
+  });
+
+  it("blocks start only when nothing is startable (no ready category)", () => {
+    renderReady({
+      preflight: preflight({
+        checks: { ...preflight().checks, content: "invalid" },
+        canStart: false,
+        canStartMinimal: false,
+        startReason: "Game 1 has no questions yet — generate a category before starting.",
+        content: { ...preflight().content, reason: "Game 1 has no questions yet." },
+      }),
+    });
+
     expect(screen.getByRole("button", { name: "Start Game 1" })).toBeDisabled();
-    expect(screen.getByText("Game 1 needs 7 picked questions before it can start.")).toBeVisible();
+    expect(
+      screen.getByText("Game 1 has no questions yet — generate a category before starting."),
+    ).toBeVisible();
   });
 
   it("uses the closed-night reason instead of mislabeling the TV", () => {
@@ -127,6 +150,7 @@ describe("HostGameReady", () => {
       preflight: preflight({
         checks: { ...preflight().checks, controls: "unavailable" },
         canStart: false,
+        canStartMinimal: false,
         startReason: "This trivia night is closed.",
       }),
     });

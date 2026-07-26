@@ -1029,6 +1029,7 @@ function isHostPreflight(value: unknown): value is HostPreflight {
     checks?.network === "control-path-healthy" &&
     (checks?.controls === "ready" || checks?.controls === "unavailable") &&
     typeof candidate.canStart === "boolean" &&
+    typeof candidate.canStartMinimal === "boolean" &&
     (typeof candidate.startReason === "string" || candidate.startReason === null) &&
     typeof candidate.checkedAt === "string" &&
     Number.isFinite(Date.parse(candidate.checkedAt)) &&
