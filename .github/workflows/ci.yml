@@ -29,5 +29,8 @@ jobs:
       - name: Run deterministic 40-player traffic and recovery guards
         run: npx vitest run -c tests/concurrency/vitest.venue-scale.config.ts
 
+      - name: Prove the venue-load harness catches a storm (healthy PASS, storm FAIL)
+        run: npm run venue:load:selftest
+
       - name: Build
         run: npm run build
