@@ -215,6 +215,45 @@ describe("GET /api/nights/[id]/preflight", () => {
     expect(body.canStart).toBe(false);
   });
 
+  it("lets the phone start a partial board (1 ready category) like the laptop", async () => {
+    // Full board not built (no picked questions) → strict canStart is false,
+    // but the real server rule (>=1 ready category) is met → canStartMinimal
+    // true, so the phone's Start button is enabled exactly like the laptop.
+    const admin = adminWith({ questions: [] });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { GET } = await import("@/app/api/nights/[id]/preflight/route");
+
+    const body = await (await GET(request(), context())).json();
+
+    expect(body.canStart).toBe(false);
+    expect(body.canStartMinimal).toBe(true);
+  });
+
+  it("cannot start when no category is ready", async () => {
+    const admin = adminWith({ categories: [category("cat-1", "draft")], questions: [] });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { GET } = await import("@/app/api/nights/[id]/preflight/route");
+
+    const body = await (await GET(request(), context())).json();
+
+    expect(body.canStartMinimal).toBe(false);
+  });
+
+  it("cannot start (even minimally) when the night is closed", async () => {
+    const admin = adminWith();
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    authMock.requireOwnedNight.mockResolvedValue({
+      ok: true,
+      host: { id: "host-1" },
+      night: { id: NIGHT_ID, room_code: "ABC123", closed_at: "2026-07-20T13:00:00.000Z" },
+    });
+    const { GET } = await import("@/app/api/nights/[id]/preflight/route");
+
+    const body = await (await GET(request(), context())).json();
+
+    expect(body.canStartMinimal).toBe(false);
+  });
+
   it("blocks an explicitly unavailable TV surface but not an unobserved one", async () => {
     const admin = adminWith();
     adminMock.getSupabaseAdmin.mockReturnValue(admin);

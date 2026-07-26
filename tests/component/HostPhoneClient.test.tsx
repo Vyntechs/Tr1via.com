@@ -301,6 +301,7 @@ function preflightResponse(overrides: Record<string, unknown> = {}) {
       controls: "ready",
     },
     canStart: true,
+    canStartMinimal: true,
     startReason: null,
     checkedAt: "2026-07-20T12:00:00.000Z",
     elapsedMs: 37,
