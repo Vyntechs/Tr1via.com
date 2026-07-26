@@ -94,13 +94,30 @@ its **first 30-player test**. CI has vitest + build + a small concurrency check 
     server in-process and proves the harness passes the first and FAILS the second.
     **Ran it: healthy p95 ~60ms PASS, storm p95 ~2.5s FAIL, exit 0.** Wired into CI.
 
-## Still open (needs Brandon's go)
+## ✅ Real end-to-end run — DONE (2026-07-26), PASS
 
-1. **Real end-to-end run** against the actual app at 30 players. Blocked here: this
-   worktree has **no `app/api/_test` seed routes** and **no running Supabase stack** (no
-   `supabase` CLI cached, no `.env.local`). Options: (a) stand up the local stack +
-   restore/seed a room, or (b) run `venue:load` against a **Vercel preview deploy** before
-   each show. Recommend (b) as the routine pre-show gate.
+Stood up an isolated **local** stack (`supabase start` → 33 migrations), seeded a live
+room via SQL (host → open night `PQRS23` → live game → 6 ready categories × 7 questions
++ 30 players), booted the app (`npm run dev`), and ran the harness with the **real
+player handshake** (each virtual player mints a signed device cookie + joins, so the
+snapshot route authorizes it):
+
+```
+node scripts/venue-load.mjs --base-url http://localhost:3000 \
+  --code PQRS23 --night-id 3333…3333 --players 30 --seconds 20 --reads-only
+```
+
+**Result: 30 players · 384 live-room polls · p50 21ms · p95 33ms · max 50ms · 0 errors ·
+0 frozen requests → PASS.** The between-question snapshot load — the exact path the
+coalesce fix (`7889b8a`) targeted — holds flat at a full room. Zero prod touch (local
+stack, isolated). Seed SQL: `scratchpad/seed-loadroom.sql`. Harness gained `--reads-only`
++ `--night-id` + real onboarding.
+
+Caveat: local ≠ Vercel serverless + prod Auth (the exact tier that stormed), so the
+**pre-show gate should still run `venue:load` against a Vercel preview** for prod-faithful
+numbers. But the app/DB code paths are now proven clean under a 30-player room.
+
+## Still open (needs Brandon's go)
 2. **The advisor WARNs** (duplicate RLS policies on hot tables, per-row `auth.uid()`,
    unindexed `answers.player_id`) — one small reviewed migration. Founder-gated, never
    near a show.

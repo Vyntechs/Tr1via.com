@@ -30,10 +30,12 @@ const SLO = { p95Ms: 1000, maxStalls: 0, errorRatePct: 1 };
 
 // ---- args -----------------------------------------------------------------
 function parseArgs(argv) {
-  const a = { baseUrl: "http://localhost:3000", code: "", players: 30, seconds: 20, selfTest: false };
+  const a = { baseUrl: "http://localhost:3000", code: "", nightId: "", players: 30, seconds: 20, selfTest: false, readsOnly: false };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === "--self-test") a.selfTest = true;
+    else if (k === "--reads-only") a.readsOnly = true; // only the snapshot poll (between-question load)
+    else if (k === "--night-id") a.nightId = argv[++i]; // enables real join handshake
     else if (k === "--base-url") a.baseUrl = argv[++i];
     else if (k === "--code") a.code = argv[++i];
     else if (k === "--players") a.players = Number(argv[++i]);
@@ -116,17 +118,42 @@ async function timedFetch(endpoint, url, init) {
 // ---- the real player hot-loop ---------------------------------------------
 // Each virtual player, for `seconds`, polls the room snapshot on a jittered
 // ~1.5s cadence (the live poll), heartbeats every ~5s, and answers occasionally.
-async function runPlayer({ baseUrl, code, seconds, playerIx, samples }) {
+// Real onboarding: mint a signed device cookie, then join the night — so this
+// virtual player is an authorized room member (the snapshot route requires it).
+// Returns the Cookie header to attach to every subsequent request, or "" if the
+// handshake wasn't requested/available.
+async function onboard(baseUrl, nightId, playerIx) {
+  if (!nightId) return "";
+  const initRes = await fetch(`${baseUrl}/api/session/init`, { method: "POST" });
+  const setCookies = initRes.headers.getSetCookie?.() ?? [];
+  const deviceCookie = setCookies
+    .map((c) => c.split(";")[0])
+    .find((c) => c.startsWith("tr1via_device="));
+  await initRes.text().catch(() => {});
+  if (!deviceCookie) return "";
+  await fetch(`${baseUrl}/api/players`, {
+    method: "POST",
+    headers: { "content-type": "application/json", cookie: deviceCookie },
+    body: JSON.stringify({ nightId, displayName: `LoadPlayer ${playerIx}` }),
+  }).then((r) => r.text()).catch(() => {});
+  return deviceCookie;
+}
+
+async function runPlayer({ baseUrl, code, nightId, seconds, playerIx, samples, readsOnly }) {
   const deadline = performance.now() + seconds * 1000;
   const snapUrl = `${baseUrl}/api/room/${code}/snapshot`;
   const heartbeatUrl = `${baseUrl}/api/players/vp-${playerIx}/heartbeat`;
   const answersUrl = `${baseUrl}/api/answers`;
+  // One-time handshake (not counted in the steady-state samples).
+  const cookie = await onboard(baseUrl, nightId, playerIx);
+  const auth = cookie ? { cookie } : {};
   let tick = 0;
   // De-sync players so they don't all fire in the same instant (real clients jitter).
   await sleep(Math.random() * 1500);
   while (performance.now() < deadline) {
     tick++;
-    samples.push(await timedFetch("GET /room/:code/snapshot", snapUrl, { method: "GET" }));
+    samples.push(await timedFetch("GET /room/:code/snapshot", snapUrl, { method: "GET", headers: { ...auth } }));
+    if (readsOnly) { await sleep(1500 * (0.75 + Math.random() * 0.5)); continue; }
     if (tick % 3 === 0) {
       samples.push(
         await timedFetch("POST /players/:id/heartbeat", heartbeatUrl, { method: "POST" }),
@@ -149,12 +176,12 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-async function loadTest({ baseUrl, code, players, seconds }) {
+async function loadTest({ baseUrl, code, nightId, players, seconds, readsOnly }) {
   const samples = [];
   const started = performance.now();
   await Promise.all(
     Array.from({ length: players }, (_, i) =>
-      runPlayer({ baseUrl, code, seconds, playerIx: i, samples }),
+      runPlayer({ baseUrl, code, nightId, seconds, playerIx: i, samples, readsOnly }),
     ),
   );
   const wallSeconds = (performance.now() - started) / 1000;
