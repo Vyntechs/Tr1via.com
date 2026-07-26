@@ -43,10 +43,15 @@ introduced per-request load that only detonates once the room is full.
    bad night Brandon lived through was *before* they took effect. So the next
    Wednesday is the **first real 30-player test** of whether they hold. Mechanism
    is proven + patched; "holds under load" is NOT yet proven.
-2. **Residual DB-level smells (confirmed live via Supabase performance advisor,
-   project `citweuctcnuxmqjxcbiz`, 2026-07-26):** none *caused* the storm, but they
-   keep the DB closer to its knees at scale and slow recovery. All low-risk,
-   mechanical — but each is a migration = **founder-gated**:
+2. **Residual DB-level smells — MEASURED via the Supabase MCP (read-only, prod
+   `citweuctcnuxmqjxcbiz`, 2026-07-26), verdict: LOW impact, NOT the bottleneck.**
+   Real data: `answers` = 14,173 rows (grows every night), `players` carries **4**
+   permissive policies/row, and the dedicated FK index on `answers.player_id` is
+   confirmed missing. BUT the hot "this player's answers" lookup runs in **1.8 ms**
+   via an existing composite index (`answers_question_id_player_id_key`), not a seq
+   scan. So the database is healthy at current scale — the storm was the app/
+   middleware layer, not Postgres. The advisor items below are hygiene (worth one
+   cleanup migration, founder-gated), not the cause and not urgent:
    - **30× `multiple_permissive_policies` (WARN)** on the hot tables `answers`,
      `categories`, `games`, `nights`, `players`, `questions` — Postgres evaluates
      *two* permissive policies per row per query on the busiest live tables.
