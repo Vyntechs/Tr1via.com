@@ -8,12 +8,16 @@ export interface PlayerStandingsNeighborhoodProps {
   rows: StandingRow[];
   meRank: number | null;
   total: number;
+  /** Optional control rendered in the footer beside the "next question" pulse
+   *  — e.g. a "View board" affordance so the player never depends on the TV. */
+  action?: React.ReactNode;
 }
 
 export function PlayerStandingsNeighborhood({
   rows,
   meRank,
   total,
+  action,
 }: PlayerStandingsNeighborhoodProps) {
   const { t } = useTheme();
   return (
