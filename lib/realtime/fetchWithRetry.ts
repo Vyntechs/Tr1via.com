@@ -66,6 +66,81 @@ export async function fetchJsonWithRetry<T>(
   throw lastError ?? new Error("fetchJsonWithRetry: exhausted with no error");
 }
 
+export interface FetchRetryOptions {
+  /** Max attempts (including the first). Default 3. */
+  attempts?: number;
+  /** Per-attempt timeout in ms. Default 8000 (mutations on cellular/venue WiFi). */
+  perAttemptTimeoutMs?: number;
+  /** External abort — rejects the whole call when fired. */
+  signal?: AbortSignal;
+  /** Injectable fetch (tests). Defaults to global fetch. */
+  fetchImpl?: typeof fetch;
+  /** Injectable RNG for deterministic jitter (tests). Defaults to Math.random. */
+  rand?: () => number;
+}
+
+/**
+ * Mutation-safe resilient fetch (POST/PUT/etc). Retries ONLY transient network
+ * failures (the fetch rejects — e.g. WebKit "Load failed") and per-attempt
+ * timeouts. It NEVER retries a completed HTTP response, even a 5xx: a returned
+ * status is a real server answer, and re-sending a non-idempotent mutation on
+ * it risks double-applying. Returns the Response for the caller to inspect
+ * (`.ok` / `.status`, including 202). Callers that retry a create must make the
+ * create idempotent (a retry can still fire when the server committed but the
+ * response was lost on the wire).
+ */
+export async function fetchWithRetry(
+  url: string,
+  init: RequestInit = {},
+  options: FetchRetryOptions = {},
+): Promise<Response> {
+  const {
+    attempts = 3,
+    perAttemptTimeoutMs = 8000,
+    signal,
+    fetchImpl = fetch,
+    rand = Math.random,
+  } = options;
+
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (signal?.aborted) throw new AbortedError();
+    try {
+      return await attemptResponseOnce(url, init, perAttemptTimeoutMs, signal, fetchImpl);
+    } catch (err) {
+      lastError = err;
+      if (attempt === attempts - 1 || signal?.aborted) break;
+      const delay = jitteredDelayMs(FETCH_RETRY_BASE_DELAYS_MS, attempt, rand());
+      await sleep(delay, signal);
+    }
+  }
+  throw lastError ?? new Error("fetchWithRetry: exhausted with no error");
+}
+
+async function attemptResponseOnce(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+  externalSignal: AbortSignal | undefined,
+  fetchImpl: typeof fetch,
+): Promise<Response> {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  externalSignal?.addEventListener("abort", onAbort, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    // A completed HTTP response — OK or not — is returned as-is; only a rejected
+    // fetch (network error) or the abort/timeout below counts as retryable.
+    return await Promise.race([
+      fetchImpl(url, { ...init, signal: controller.signal }),
+      rejectOnAbort(controller.signal),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    externalSignal?.removeEventListener("abort", onAbort);
+  }
+}
+
 async function attemptOnce<T>(
   url: string,
   timeoutMs: number,
