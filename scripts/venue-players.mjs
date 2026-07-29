@@ -509,7 +509,8 @@ if (args.selfTest) {
   }
   const shared = newShared(rt);
   const started = performance.now();
-  const ticker = args.quiet ? null : setInterval(() => {
+  // TTY-only: piped output has no cursor to carriage-return over.
+  const ticker = (args.quiet || !process.stdout.isTTY) ? null : setInterval(() => {
     const total = [...shared.lockedIn.values()].reduce((a, b) => a + b, 0);
     const pushed = [...(shared.push.get("reveal") ?? new Map()).values()].reduce((a, l) => a + l.length, 0);
     process.stdout.write(`\r  ${stats.joinedNight}/${args.players} in the room · ${stats.subscribed} live · ${pushed} pushes · ${total} lock-ins   `);
