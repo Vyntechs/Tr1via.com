@@ -369,3 +369,18 @@ Reason: Route ownership cannot stop stale or forged requests from exposing priva
 Trigger: Parallel generation workers convert private candidates into public board selections.
 Rule: Serialize on the canonical game row before touching selected category or question rows.
 Reason: Candidate work may run concurrently; publishing final slots must share Start’s lock order.
+
+### serial-e2e-one-invocation-at-a-time
+Trigger: Running tests/e2e specs while another playwright invocation is already running.
+Rule: Launch exactly one `npx playwright test` at a time; the suite is serial and shares one dev server + DB.
+Reason: Concurrent runs race login/seed state and fail in setup, which reads as a false product bug.
+
+### serial-mode-skips-later-tests
+Trigger: A playwright run reports "1 failed, 1 did not run" for two regression tests.
+Rule: In `mode: "serial"`, run each regression test alone via `-g` to get its own verdict.
+Reason: A first failure skips the rest, so the second bug stays unproven while looking covered.
+
+### prove-red-tests-by-the-on-screen-symptom
+Trigger: A regression test fails at its product assertion line, seemingly confirming the written root cause.
+Rule: Read the failure's page snapshot and confirm the symptom matches the diagnosis before fixing.
+Reason: A test can go red at the right line for a different bug, sending the fix at the wrong code path.

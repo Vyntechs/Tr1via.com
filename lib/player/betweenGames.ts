@@ -93,6 +93,15 @@ export function selectBetweenGamesView(args: {
  * Game 2 can be live for a few seconds before the host chooses its first
  * question. During that exact gap, keep the intentional waiting screen—even
  * if a reconnect still carries Game 1's last question in memory.
+ *
+ * `currentQuestionGameId` is a LIVE-NOW signal: it goes null the instant a
+ * question resolves. On its own it re-opens this gate after every Game-2
+ * reveal, yanking an opted-in player back to the pre-game waiting screen for
+ * the rest of the game (no reveals, no standings — HIGH bug, regression test
+ * `tests/e2e/mixed-device-host.spec.ts -g "a player who opted into Game 2"`).
+ * `game2FirstQuestionPlayed` is the DURABLE counterpart — once any Game-2
+ * question has actually been played, the gap this gate exists for is over, so
+ * latch it shut permanently.
  */
 export function isWaitingForGame2FirstQuestion(args: {
   game1State: string | null;
@@ -100,7 +109,11 @@ export function isWaitingForGame2FirstQuestion(args: {
   inGame2: boolean;
   game2Id: string | null;
   currentQuestionGameId: string | null;
+  /** True once ANY Game-2 question has durably been played (`played_at` set).
+   *  Defaults false so callers that can't derive it keep the old behavior. */
+  game2FirstQuestionPlayed?: boolean;
 }): boolean {
+  if (args.game2FirstQuestionPlayed) return false;
   return (
     args.game1State === "done" &&
     args.game2State === "live" &&
