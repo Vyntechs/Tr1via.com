@@ -495,12 +495,21 @@ function RoomStateMachine({
     inGame2,
     game2HasContent,
   });
+  // Durable "Game 2 has actually begun" signal. currentCategory below is
+  // live-only (null the instant a question resolves), so without this the
+  // waiting screen re-opens after every Game-2 reveal and traps the player.
+  const game2FirstQuestionPlayed =
+    game2 !== null &&
+    allQuestions.some(
+      (q) => questionGameMap.get(q.id) === game2.id && q.played_at !== null,
+    );
   const waitingForGame2FirstQuestion = isWaitingForGame2FirstQuestion({
     game1State: game1?.state ?? null,
     game2State: game2?.state ?? null,
     inGame2,
     game2Id: game2?.id ?? null,
     currentQuestionGameId: currentCategory?.game_id ?? null,
+    game2FirstQuestionPlayed,
   });
   const playerFinale = isPlayerFinale({
     game1State: game1?.state ?? null,

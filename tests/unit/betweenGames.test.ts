@@ -131,6 +131,36 @@ describe("isWaitingForGame2FirstQuestion", () => {
       isWaitingForGame2FirstQuestion({ ...base, currentQuestionGameId: "g2" }),
     ).toBe(false);
   });
+
+  // HIGH regression: currentQuestionGameId is live-only and goes null the
+  // instant a Game-2 question resolves. Without the durable latch the gate
+  // re-opens and the opted-in player is thrown back to the waiting screen for
+  // the rest of Game 2 (no reveals, no standings, ever again).
+  it("stays closed after Game 2's first question resolves and the live id goes null", () => {
+    expect(
+      isWaitingForGame2FirstQuestion({
+        ...base,
+        currentQuestionGameId: null,
+        game2FirstQuestionPlayed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("stays closed for every later Game-2 question, not just the first", () => {
+    expect(
+      isWaitingForGame2FirstQuestion({
+        ...base,
+        currentQuestionGameId: "g1", // stale carry-over from a reconnect
+        game2FirstQuestionPlayed: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("still holds the waiting screen in the real pre-first-question gap", () => {
+    expect(
+      isWaitingForGame2FirstQuestion({ ...base, game2FirstQuestionPlayed: false }),
+    ).toBe(true);
+  });
 });
 
 const games = [
