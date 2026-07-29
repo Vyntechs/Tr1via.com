@@ -736,6 +736,21 @@ function TVRevealView({
         name: a.player_name,
         time: `${(a.ms_to_lock / 1000).toFixed(1)}s`,
       }));
+    // TVRevealStumper carries demo defaults so the /dev preview harness renders
+    // without props. Passing `undefined` here re-triggers those defaults, which
+    // is how the venue TV ended up printing a canned "this was a 700, 70-point
+    // bonus" line and a stock honey fact on a real question. Always pass an
+    // explicit value — "" reads as absent and renders nothing.
+    const points = question.pointValue ?? null;
+    const fastestCorrectMs = correctAnswers.length
+      ? Math.min(...correctAnswers.map((a) => a.ms_to_lock))
+      : null;
+    // Mirrors lib/game/score.ts: correct AND under 5 full seconds → +10%, floored.
+    const earnedSpeedBonus = fastestCorrectMs !== null && fastestCorrectMs < 5000;
+    const pointBlurb = points
+      ? `Hard questions are worth more on purpose. This was a ${points}.` +
+        (earnedSpeedBonus ? ` A ${Math.floor(points * 0.1)}-point speed bonus went to the fastest correct answer, under 5 seconds.` : "")
+      : "Hard questions are worth more on purpose.";
     return (
       <TVRevealStumper
         headerEyebrow={headerEyebrow}
@@ -743,10 +758,11 @@ function TVRevealView({
         question={question.prompt}
         correctNumber={correctNumber}
         correctText={correctText}
-        fact={question.factBlurb ?? undefined}
+        fact={question.factBlurb ?? ""}
         gotIt={correctAnswers.length}
         ofTotal={snapshot.players.length}
         whoNailedIt={nailed}
+        pointBlurb={pointBlurb}
       />
     );
   }
