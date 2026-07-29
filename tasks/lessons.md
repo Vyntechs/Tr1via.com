@@ -384,3 +384,8 @@ Reason: A first failure skips the rest, so the second bug stays unproven while l
 Trigger: A regression test fails at its product assertion line, seemingly confirming the written root cause.
 Rule: Read the failure's page snapshot and confirm the symptom matches the diagnosis before fixing.
 Reason: A test can go red at the right line for a different bug, sending the fix at the wrong code path.
+
+### host-reads-need-a-polling-floor
+Trigger: A host-console number (lock count, scores) renders 0 while the DB has real rows.
+Rule: Never let a host read depend on a realtime subscription alone — poll as a floor, and never write [] on a failed read.
+Reason: `answers` is ungranted to anon for anti-cheat; Realtime evaluates postgres_changes under the subscriber's role, so a non-JWT socket silently gets nothing and the stale zero looks legitimate.
