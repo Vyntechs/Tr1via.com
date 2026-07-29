@@ -287,7 +287,10 @@ function TVGridInner({
                   const top = r.rank === 1;
                   return (
                     <div
-                      key={r.rank}
+                      // Ties share a rank, so rank alone is not unique — React
+                      // then reuses/duplicates rows and the venue TV renders a
+                      // player twice. Name disambiguates within a standings list.
+                      key={`${r.rank}-${r.name}`}
                       data-testid={`tv-grid-standing-${r.rank}`}
                       style={{
                         display: "grid",
