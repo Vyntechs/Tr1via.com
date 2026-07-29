@@ -55,6 +55,26 @@ import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
 
 const UNDO_WINDOW_MS = 2_000;
 
+// The host's two auxiliary reads — the live question's `answers` and the game's
+// `game_scores` — used to load once and then rely entirely on a
+// `postgres_changes` subscription for every later value. That is a single point
+// of failure with no floor under it, and it failed on a real venue run
+// (2026-07-29): the console sat on "0 OF 32 LOCKED IN" through a question 15
+// people answered, printed "Nobody nailed this one" on a reveal 5 people got
+// right, and then announced the WRONG Game 1 winners — three names at 0 points
+// while the database (and the venue TV, which is server-rendered) had the real
+// standings. A manual page reload fixed it instantly, which is the tell: the
+// one-shot load is fine, the stream of updates after it is what goes missing.
+//
+// `answers` is deliberately ungranted to `anon` (anti-cheat, migration 0014) and
+// Realtime evaluates postgres_changes under the subscriber's role, so any socket
+// not carrying the host's JWT silently receives nothing. Rather than weaken that
+// grant — the anti-cheat posture is correct — give both reads the same polled
+// floor every other panel on this page already has via useRoom. The
+// subscription stays as the fast path; the poll is what makes a dropped stream
+// cost one tick instead of the whole night.
+const AUX_POLL_MS = 2_000;
+
 export interface HostLiveConsoleClientProps {
   nightId: string;
   roomCode: string;
@@ -179,16 +199,24 @@ function DesktopHostLiveConsoleClient({
       if (markStaleFirst && !cancelled) {
         setDirectScoresReadyForGameId(null);
       }
-      const { data } = await supa
+      const { data, error } = await supa
         .from("game_scores")
         .select("*")
         .eq("game_id", currentGameId)
         .order("score", { ascending: false });
       if (cancelled) return;
+      // A failed read is NOT "everybody has zero points". Swallowing the error
+      // and writing [] is how the winners screen announced three players at 0.
+      // Keep the last good standings; the next poll corrects them.
+      if (error) {
+        console.error("[host] game_scores read failed:", error.message);
+        return;
+      }
       setScores(((data as GameScoreRow[] | null) ?? []));
       setDirectScoresReadyForGameId(eligibilityKey);
     }
     void load();
+    const poll = setInterval(() => void load(), AUX_POLL_MS);
     const channel = supa
       .channel(`host-scores:${currentGameId}`)
       .on(
@@ -214,6 +242,7 @@ function DesktopHostLiveConsoleClient({
       .subscribe();
     return () => {
       cancelled = true;
+      clearInterval(poll);
       void supa.removeChannel(channel);
     };
   }, [activePlayerIdSignature, room.currentGame?.id]);
@@ -239,14 +268,21 @@ function DesktopHostLiveConsoleClient({
     const supa = getSupabaseBrowser();
     let cancelled = false;
     async function load() {
-      const { data } = await supa
+      const { data, error } = await supa
         .from("answers")
         .select("*")
         .eq("question_id", targetId);
       if (cancelled) return;
+      // A failed read is NOT "nobody locked in". Writing [] here is what painted
+      // "0 OF 32 LOCKED IN" over a question 15 people had answered.
+      if (error) {
+        console.error("[host] answers read failed:", error.message);
+        return;
+      }
       setAnswers(((data as AnswerRow[] | null) ?? []));
     }
     void load();
+    const poll = setInterval(() => void load(), AUX_POLL_MS);
     const channel = supa
       .channel(`host-answers:${targetId}`)
       .on(
@@ -262,6 +298,7 @@ function DesktopHostLiveConsoleClient({
       .subscribe();
     return () => {
       cancelled = true;
+      clearInterval(poll);
       void supa.removeChannel(channel);
     };
   }, [answerTargetId]);
