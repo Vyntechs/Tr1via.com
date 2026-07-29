@@ -37,6 +37,35 @@
 import http from "node:http";
 import { performance } from "node:perf_hooks";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+
+// Optional: real Realtime websockets, one per virtual player — the same
+// subscription a phone opens. Loaded lazily so --self-test needs nothing.
+let createClient = null;
+try {
+  ({ createClient } = await import("@supabase/supabase-js"));
+} catch {
+  /* realtime simply stays off */
+}
+
+/** Read NEXT_PUBLIC_SUPABASE_* from the environment, falling back to .env.local. */
+function supabaseCreds(explicitUrl, explicitKey) {
+  let url = explicitUrl || process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+  let key = explicitKey || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+  if (!url || !key) {
+    try {
+      const env = readFileSync(new URL("../.env.local", import.meta.url), "utf8");
+      for (const line of env.split("\n")) {
+        const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+        if (!m) continue;
+        const v = m[2].replace(/^["']|["']$/g, "");
+        if (!url && m[1] === "NEXT_PUBLIC_SUPABASE_URL") url = v;
+        if (!key && m[1] === "NEXT_PUBLIC_SUPABASE_ANON_KEY") key = v;
+      }
+    } catch { /* no .env.local — run poll-only */ }
+  }
+  return { url, key };
+}
 
 const POLL_MS = 1500; // matches the real player poll cadence
 const HEARTBEAT_EVERY_TICKS = 3; // ~4.5s, like a real phone
@@ -67,16 +96,22 @@ function parseArgs(argv) {
     seconds: 1800,
     selfTest: false,
     quiet: false,
+    realtime: true,
+    supabaseUrl: "",
+    supabaseKey: "",
   };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === "--self-test") a.selfTest = true;
     else if (k === "--quiet") a.quiet = true;
+    else if (k === "--no-realtime") a.realtime = false;
     else if (k === "--base-url") a.baseUrl = argv[++i];
     else if (k === "--night-id") a.nightId = argv[++i];
     else if (k === "--code") a.code = argv[++i];
     else if (k === "--players") a.players = Number(argv[++i]);
     else if (k === "--seconds") a.seconds = Number(argv[++i]);
+    else if (k === "--supabase-url") a.supabaseUrl = argv[++i];
+    else if (k === "--supabase-key") a.supabaseKey = argv[++i];
   }
   return a;
 }
@@ -143,6 +178,44 @@ async function runPlayer({ baseUrl, nightId, code, seconds, ix, stats, shared })
   if (!playerId) { stats.failedOnboard++; return; }
   stats.joinedNight++;
 
+  // 2b) Open the SAME realtime subscription a phone opens. This is the path
+  //     the "one press, three surfaces" promise actually rides on — without
+  //     it we are only measuring polling, which is the slow fallback.
+  let channel = null;
+  if (shared.rt) {
+    try {
+      const client = createClient(shared.rt.url, shared.rt.key, {
+        auth: { persistSession: false, autoRefreshToken: false },
+        realtime: { params: { eventsPerSecond: 20 } },
+      });
+      const note = (event) => (msg) => {
+        const p = msg?.payload ?? {};
+        if (!p.questionId) return;
+        const bucket = shared.push.get(event) ?? new Map();
+        const list = bucket.get(p.questionId) ?? [];
+        list.push({ ix, atMs: Date.now(), serverNowMs: p.serverNow ? new Date(p.serverNow).getTime() : null });
+        bucket.set(p.questionId, list);
+        shared.push.set(event, bucket);
+      };
+      channel = client.channel(`room:${code}`);
+      for (const ev of ["reveal", "resolve", "undo", "advance"]) {
+        channel.on("broadcast", { event: ev }, note(ev));
+      }
+      await new Promise((resolve) => {
+        let settled = false;
+        channel.subscribe((status) => {
+          if (settled) return;
+          if (status === "SUBSCRIBED") { settled = true; stats.subscribed++; resolve(); }
+          else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") { settled = true; stats.subscribeFailed++; resolve(); }
+        });
+        setTimeout(() => { if (!settled) { settled = true; stats.subscribeFailed++; resolve(); } }, 8000);
+      });
+      shared.channels.push({ channel, client });
+    } catch {
+      stats.subscribeFailed++;
+    }
+  }
+
   const snapUrl = `${baseUrl}/api/room/${code}/snapshot`;
   const heartbeatUrl = `${baseUrl}/api/players/${playerId}/heartbeat`;
   const answeredQuestions = new Set();
@@ -208,12 +281,25 @@ async function runPlayer({ baseUrl, nightId, code, seconds, ix, stats, shared })
           answeredQuestions.add(q.id);
           if (res.ok) {
             stats.answers++;
+            stats.answeredPerQuestion.set(q.id, (stats.answeredPerQuestion.get(q.id) ?? 0) + 1);
             shared.lockedIn.set(q.id, (shared.lockedIn.get(q.id) ?? 0) + 1);
           } else {
             stats.answerErrors++;
             stats.answerErrorStatuses.set(res.status, (stats.answerErrorStatuses.get(res.status) ?? 0) + 1);
           }
         }
+      }
+
+      // 5) CORRECTNESS AT SCALE — did this player actually receive their own
+      //    result after the question resolved? A player who answered and then
+      //    never sees a verdict is the Game-2-blind class of bug, and it only
+      //    shows up if you check every player, not just the one in your hand.
+      for (const ans of s.myAnswers ?? []) {
+        const qid = ans.questionId ?? ans.question_id;
+        const settled = (ans.isCorrect ?? ans.is_correct) !== null && (ans.isCorrect ?? ans.is_correct) !== undefined;
+        if (!qid || !settled) continue;
+        const seen = shared.resultSeen.get(qid) ?? new Map();
+        if (!seen.has(ix)) { seen.set(ix, Date.now()); shared.resultSeen.set(qid, seen); }
       }
 
       // Stop early once the night is genuinely over.
@@ -234,7 +320,7 @@ function percentile(sorted, p) {
   return sorted[Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))];
 }
 
-function report(args, stats, wallSeconds) {
+function report(args, stats, wallSeconds, shared = null) {
   const byEndpoint = new Map();
   for (const s of stats.samples) {
     if (!byEndpoint.has(s.endpoint)) byEndpoint.set(s.endpoint, []);
@@ -270,9 +356,49 @@ function report(args, stats, wallSeconds) {
   if (stats.noScramble) console.log(`  missing scramble .......... ${stats.noScramble}`);
   console.log(`  overall p95 ............... ${Math.round(percentile(all, 95))}ms`);
   console.log(`  frozen requests (≥5s) ..... ${stalls}`);
-  console.log(`  errors .................... ${errors}\n`);
+  console.log(`  errors .................... ${errors}`);
+  if (shared) console.log(`  realtime subscribed ....... ${stats.subscribed}/${args.players}${stats.subscribeFailed ? ` (${stats.subscribeFailed} failed)` : ""}`);
+  console.log("");
 
-  const pass = stats.joinedNight === args.players && stalls === 0 && stats.answerErrors === 0;
+  // ── THE PROMISE: one press → every phone ────────────────────────────────
+  // This is the number the product is sold on. Not "the server replied fast",
+  // but "how long until the 30th phone actually had it, and did any miss it".
+  let promiseOk = true;
+  if (shared) {
+    const reveals = shared.push.get("reveal") ?? new Map();
+    if (reveals.size === 0 && stats.subscribed > 0) {
+      console.log("  ONE PRESS → EVERY PHONE: no reveal broadcast observed (was a question revealed during the run?)\n");
+    } else if (reveals.size > 0) {
+      console.log("  ONE PRESS → EVERY PHONE   (realtime push, per revealed question)");
+      console.log(`  ${pad("question", 12)}${padL("phones", 9)}${padL("first", 9)}${padL("last", 9)}${padL("spread", 9)}${padL("missed", 8)}`);
+      console.log(`  ${"-".repeat(58)}`);
+      for (const [qid, list] of reveals) {
+        const lat = list.filter((r) => r.serverNowMs).map((r) => r.atMs - r.serverNowMs).sort((a, b) => a - b);
+        const times = list.map((r) => r.atMs).sort((a, b) => a - b);
+        const missed = args.players - list.length;
+        if (missed > 0) promiseOk = false;
+        console.log(
+          `  ${pad(qid.slice(0, 8), 12)}${padL(`${list.length}/${args.players}`, 9)}` +
+          `${padL((lat.length ? lat[0] : 0) + "ms", 9)}${padL((lat.length ? lat[lat.length - 1] : 0) + "ms", 9)}` +
+          `${padL((times[times.length - 1] - times[0]) + "ms", 9)}${padL(missed, 8)}`,
+        );
+      }
+      console.log("");
+    }
+
+    // ── Did every player who answered actually get their verdict? ──────────
+    if (shared.resultSeen.size > 0) {
+      console.log("  EVERY PLAYER SAW THEIR RESULT   (after resolve)");
+      for (const [qid, seen] of shared.resultSeen) {
+        const blind = stats.answeredPerQuestion.get(qid) ? stats.answeredPerQuestion.get(qid) - seen.size : 0;
+        if (blind > 0) promiseOk = false;
+        console.log(`  ${pad(qid.slice(0, 8), 12)}${padL(`${seen.size} saw their result`, 26)}${padL(blind > 0 ? `${blind} LEFT BLIND` : "none blind", 18)}`);
+      }
+      console.log("");
+    }
+  }
+
+  const pass = stats.joinedNight === args.players && stalls === 0 && stats.answerErrors === 0 && promiseOk;
   console.log(pass
     ? "  ✅ every virtual player joined, played, and locked in cleanly.\n"
     : "  ⚠️  see the counters above — something did not behave like a real player.\n");
@@ -330,7 +456,7 @@ async function selfTest() {
 
   const args = { baseUrl: `http://127.0.0.1:${port}`, nightId: randomUUID(), code: "SELFTEST", players: 12, seconds: 22 };
   const stats = newStats();
-  const shared = { stop: false, lockedIn: new Map() };
+  const shared = newShared(null); // self-test proves the player brain, not realtime
   const started = performance.now();
   await Promise.all(Array.from({ length: args.players }, (_, ix) =>
     runPlayer({ ...args, ix, stats, shared })));
@@ -350,7 +476,19 @@ function newStats() {
   return {
     samples: [], joinedNight: 0, gameJoins: 0, answers: 0,
     answerErrors: 0, answerErrorStatuses: new Map(), failedOnboard: 0, noScramble: 0,
+    subscribed: 0, subscribeFailed: 0, answeredPerQuestion: new Map(),
   };
+}
+
+/** Shared cross-player state: realtime receipts, lock-in counts, teardown. */
+function newShared(rt) {
+  return { stop: false, lockedIn: new Map(), push: new Map(), resultSeen: new Map(), channels: [], rt };
+}
+
+async function teardown(shared) {
+  for (const { channel, client } of shared.channels) {
+    try { await client.removeChannel(channel); } catch {}
+  }
 }
 
 // ---- main -----------------------------------------------------------------
@@ -363,15 +501,23 @@ if (args.selfTest) {
     process.exit(2);
   }
   const stats = newStats();
-  const shared = { stop: false, lockedIn: new Map() };
+  let rt = null;
+  if (args.realtime && createClient) {
+    const { url, key } = supabaseCreds(args.supabaseUrl, args.supabaseKey);
+    if (url && key) rt = { url, key };
+    else console.warn("  note: no Supabase url/key found — running poll-only (realtime gap NOT covered)");
+  }
+  const shared = newShared(rt);
   const started = performance.now();
   const ticker = args.quiet ? null : setInterval(() => {
     const total = [...shared.lockedIn.values()].reduce((a, b) => a + b, 0);
-    process.stdout.write(`\r  ${stats.joinedNight}/${args.players} in the room · ${total} lock-ins · ${stats.samples.length} requests   `);
+    const pushed = [...(shared.push.get("reveal") ?? new Map()).values()].reduce((a, l) => a + l.length, 0);
+    process.stdout.write(`\r  ${stats.joinedNight}/${args.players} in the room · ${stats.subscribed} live · ${pushed} pushes · ${total} lock-ins   `);
   }, 1000);
   await Promise.all(Array.from({ length: args.players }, (_, ix) =>
     runPlayer({ ...args, ix, stats, shared })));
   if (ticker) { clearInterval(ticker); process.stdout.write("\r" + " ".repeat(78) + "\r"); }
-  const pass = report(args, stats, (performance.now() - started) / 1000);
+  const pass = report(args, stats, (performance.now() - started) / 1000, shared);
+  await teardown(shared);
   process.exit(pass ? 0 : 1);
 }
