@@ -26,6 +26,14 @@ export interface HostGenEditValues {
   prompt: string;
   options: [string, string, string, string];
   correctIndex: 0 | 1 | 2 | 3;
+  /** The one-liner the host reads aloud after the reveal. Empty string
+   *  means "no fun fact" and clears any existing one.
+   *
+   *  This field used to be absent from the edit panel entirely, so a blurb
+   *  written for the question that previously occupied this row survived
+   *  every edit — invisibly. The host then read it out as fact. It is
+   *  editable here for exactly that reason: she has to be able to SEE it. */
+  factBlurb: string;
   /** Host-placed slot on the board (100..700) or null to let the
    *  lock-time auto-assign choose. The `difficulty` field is still on
    *  the underlying row but no longer host-facing — Claude's rating
@@ -64,8 +72,14 @@ const DEMO_INITIAL: HostGenEditValues = {
   prompt: "Ratatouille is set in which city?",
   options: ["Paris", "Lyon", "Marseille", "Nice"],
   correctIndex: 0,
+  factBlurb:
+    "Pixar's animators ate at Thomas Keller's French Laundry to study how a real kitchen moves.",
   pointValue: 200,
 };
+
+/** Longest blurb the PATCH route will accept (schemas.ts). Enforced here too
+ *  so the host sees the ceiling instead of a save failure. */
+const FACT_BLURB_MAX = 280;
 
 export function HostGenEdit(props: HostGenEditProps) {
   const { themeKey, ...rest } = props;
@@ -96,6 +110,11 @@ function HostGenEditInner({
   const [prompt, setPrompt] = useState(initial.prompt);
   const [options, setOptions] = useState<[string, string, string, string]>(initial.options);
   const [correctIndex, setCorrectIndex] = useState<0 | 1 | 2 | 3>(initial.correctIndex);
+  const [factBlurb, setFactBlurb] = useState(initial.factBlurb);
+  // Blocked in the UI rather than left to the route's 400 — the host is
+  // mid-build with 20 questions to get through; a save that just fails is
+  // the worst way to learn about a length cap.
+  const blurbTooLong = factBlurb.trim().length > FACT_BLURB_MAX;
   const [pointValue, setPointValue] = useState<HostGenEditValues["pointValue"]>(
     initial.pointValue,
   );
@@ -109,11 +128,11 @@ function HostGenEditInner({
   }
 
   function handleSave() {
-    onSave?.({ prompt, options, correctIndex, pointValue });
+    onSave?.({ prompt, options, correctIndex, factBlurb, pointValue });
   }
 
   function handleSwapImage() {
-    onSwapImage?.({ prompt, options, correctIndex, pointValue });
+    onSwapImage?.({ prompt, options, correctIndex, factBlurb, pointValue });
   }
 
   return (
@@ -228,6 +247,40 @@ function HostGenEditInner({
             </div>
           </div>
 
+          <div>
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+              <Eyebrow color={t.inkMid} size={11}>FUN FACT · YOU READ THIS AFTER THE ANSWER</Eyebrow>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontFamily: "var(--font-mono)",
+                  letterSpacing: "0.04em",
+                  color: factBlurb.trim().length > FACT_BLURB_MAX ? t.wrong : t.inkMute,
+                }}
+              >
+                {factBlurb.trim().length}/{FACT_BLURB_MAX}
+              </span>
+            </div>
+            <textarea
+              value={factBlurb}
+              onChange={(e) => setFactBlurb(e.target.value)}
+              rows={2}
+              placeholder="Optional — leave this empty and nothing is shown."
+              style={{
+                marginTop: 8, width: "100%", padding: "12px 14px", borderRadius: 10,
+                border: `1px solid ${factBlurb.trim().length > FACT_BLURB_MAX ? t.wrong : t.line}`,
+                background: t.surface,
+                fontSize: 13, color: t.ink, fontWeight: 500, lineHeight: 1.5,
+                fontFamily: "var(--font-sans)",
+                resize: "vertical", outline: "none",
+              }}
+            />
+            <div style={{ marginTop: 6, fontSize: 11, color: t.inkMute, lineHeight: 1.45 }}>
+              Rewrite the question above and this does <em>not</em> change with it — check it still
+              matches before you lock the category.
+            </div>
+          </div>
+
           <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "180px 1fr", gap: 16, alignItems: "flex-start" }}>
             <div>
               <Eyebrow color={t.inkMute} size={9}>IMAGE · AUTO-MATCHED</Eyebrow>
@@ -322,16 +375,20 @@ function HostGenEditInner({
             <button
               type="button"
               onClick={handleSave}
-              disabled={isSaving}
+              disabled={isSaving || blurbTooLong}
               style={{
                 flex: 2, padding: "12px 0", minHeight: mobile ? 52 : undefined, borderRadius: 10, border: "none",
                 background: t.accent, color: "#FFF",
                 fontSize: 13, fontWeight: 700, fontFamily: "var(--font-sans)",
-                cursor: isSaving ? "default" : "pointer",
-                opacity: isSaving ? 0.7 : 1,
+                cursor: isSaving || blurbTooLong ? "default" : "pointer",
+                opacity: isSaving || blurbTooLong ? 0.7 : 1,
               }}
             >
-              {isSaving ? "Saving…" : "Save · this question"}
+              {isSaving
+                ? "Saving…"
+                : blurbTooLong
+                  ? "Fun fact is too long"
+                  : "Save · this question"}
             </button>
           </div>
         </div>

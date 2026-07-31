@@ -678,6 +678,10 @@ export function HostSetupPickClient({
           prompt: values.prompt,
           options: values.options,
           correctIndex: values.correctIndex,
+          // Empty → null, which CLEARS the row's blurb. Omitting the key
+          // instead would leave the previous question's fun fact attached to
+          // freshly rewritten text — the 2026-07-29 bug this fixes.
+          factBlurb: values.factBlurb.trim() || null,
           pointValue: values.pointValue,
         }),
       });
@@ -1092,6 +1096,7 @@ export function HostSetupPickClient({
               prompt: editingQuestion.prompt,
               options: editingQuestion.options,
               correctIndex: editingQuestion.correct_index,
+              factBlurb: editingQuestion.fact_blurb ?? "",
               pointValue: editingQuestion.point_value,
             }}
             imageSeed={editingQuestion.image_url ?? categoryTopic}

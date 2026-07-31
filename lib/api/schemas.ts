@@ -300,7 +300,12 @@ export const PatchQuestionBodySchema = z
     options: QuestionOptionsTupleSchema.optional(),
     correctIndex: CorrectIndexSchema.optional(),
     difficulty: z.number().int().min(1).max(7).optional(),
-    factBlurb: z.string().trim().min(1).max(280).optional(),
+    /** `null` clears the blurb outright. The host needs that: a blurb left
+     *  over from the question that used to occupy this row is worse than no
+     *  blurb at all — she reads it aloud as fact. See the 2026-07-29 show,
+     *  where "The square root of 900 is:" carried a 5-12-13 Pythagorean
+     *  blurb because the edit path never touched fact_blurb. */
+    factBlurb: z.string().trim().min(1).max(280).nullable().optional(),
     /** Host-placed slot on the board. `null` clears any host override
      *  (lock-time auto-assign refills it). When another question in the
      *  same category already holds that slot — picked or not — the PATCH

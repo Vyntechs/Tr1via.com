@@ -389,3 +389,8 @@ Reason: A test can go red at the right line for a different bug, sending the fix
 Trigger: A host-console number (lock count, scores) renders 0 while the DB has real rows.
 Rule: Never let a host read depend on a realtime subscription alone — poll as a floor, and never write [] on a failed read.
 Reason: `answers` is ungranted to anon for anti-cheat; Realtime evaluates postgres_changes under the subscriber's role, so a non-JWT socket silently gets nothing and the stale zero looks legitimate.
+
+### edit-forms-must-expose-every-field-they-invalidate
+Trigger: An edit form saves a subset of a row's fields while other fields describe the ones being changed.
+Rule: Show every dependent field in the same form — an omitted one silently keeps stale data the user can't see.
+Reason: The question editor never showed `fact_blurb`, so a rewritten question kept the old fun fact and the host read it aloud as fact on a live show.

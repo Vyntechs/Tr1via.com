@@ -180,3 +180,71 @@ describe("PATCH /api/questions/[id] — point-value slotting", () => {
     });
   });
 });
+
+// Issue #173. The edit panel never sent factBlurb, so a rewritten question kept
+// the previous occupant's fun fact and the host read it aloud as fact. The
+// route always accepted the field; these pin the contract the UI now relies on
+// — in particular that `null` CLEARS, because an empty box has to mean "say
+// nothing" rather than "leave the wrong one there".
+describe("PATCH /api/questions/[id] — fun fact (fact_blurb)", () => {
+  it("forwards an edited blurb alongside the rewritten question", async () => {
+    const { supaClient, calls } = makeSupa();
+    adminMock.getSupabaseAdmin.mockReturnValue(supaClient);
+    const { PATCH } = await import("@/app/api/questions/[id]/route");
+
+    const res = await PATCH(
+      makeRequest({
+        prompt: "The square root of 900 is:",
+        factBlurb: "30 x 30 = 900.",
+      }),
+      makeCtx(),
+    );
+
+    expect(res.status).toBe(200);
+    expect(calls.rpc).toHaveBeenCalledWith("apply_question_authoring_patch", {
+      p_question_id: QUESTION_ID,
+      p_patch: {
+        prompt: "The square root of 900 is:",
+        fact_blurb: "30 x 30 = 900.",
+        source: "host-edit",
+      },
+    });
+  });
+
+  it("clears the blurb when sent null — an empty box must not leave a stale fact", async () => {
+    const { supaClient, calls } = makeSupa();
+    adminMock.getSupabaseAdmin.mockReturnValue(supaClient);
+    const { PATCH } = await import("@/app/api/questions/[id]/route");
+
+    const res = await PATCH(makeRequest({ factBlurb: null }), makeCtx());
+
+    expect(res.status).toBe(200);
+    // The key must be PRESENT and null. Omitting it is what caused the bug:
+    // the RPC only overwrites fact_blurb when the key exists in the patch.
+    const patch = calls.rpc.mock.calls[0]![1].p_patch as Record<string, unknown>;
+    expect("fact_blurb" in patch).toBe(true);
+    expect(patch.fact_blurb).toBeNull();
+  });
+
+  it("rejects a blurb past the 280-char cap rather than truncating it", async () => {
+    const { supaClient, calls } = makeSupa();
+    adminMock.getSupabaseAdmin.mockReturnValue(supaClient);
+    const { PATCH } = await import("@/app/api/questions/[id]/route");
+
+    const res = await PATCH(makeRequest({ factBlurb: "x".repeat(281) }), makeCtx());
+
+    expect(res.status).toBe(400);
+    expect(calls.rpc).not.toHaveBeenCalled();
+  });
+
+  it("leaves the blurb untouched when the host edits only the prompt", async () => {
+    const { supaClient, calls } = makeSupa();
+    adminMock.getSupabaseAdmin.mockReturnValue(supaClient);
+    const { PATCH } = await import("@/app/api/questions/[id]/route");
+
+    await PATCH(makeRequest({ prompt: "A sufficiently long replacement prompt." }), makeCtx());
+
+    const patch = calls.rpc.mock.calls[0]![1].p_patch as Record<string, unknown>;
+    expect("fact_blurb" in patch).toBe(false);
+  });
+});
