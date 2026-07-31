@@ -11,6 +11,13 @@
 //   answer cards. Range: 16px floor (long 160-char prompts) → 28px ceiling
 //   (short 21-char prompts). Tested against the prod prompt distribution
 //   (p95=126 chars, max=163 chars).
+//
+// Reachability guarantee (issue #171):
+//   This screen used to be scroll-locked. On a short Android phone with long
+//   option strings the 4th answer fell below the fold and NOTHING could bring
+//   it back — the player simply could not answer. `scroll="auto"` keeps the
+//   no-scroll feel wherever the four cards fit (nothing to scroll) and hands
+//   back a scroll escape hatch on the phones where they don't.
 
 "use client";
 
@@ -112,7 +119,7 @@ export function PlayerQuestion({
   const { frameRef, textRef, fontSize } = useAutoFitText();
 
   return (
-    <PhoneScreen data-testid="player-question" scroll="locked">
+    <PhoneScreen data-testid="player-question" scroll="auto">
       {/* Category banner — full bleed across top */}
       <div
         style={{
@@ -209,7 +216,18 @@ export function PlayerQuestion({
         <Eyebrow color={t.inkMute} size={9}>+10% &lt; 5s</Eyebrow>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          // Never let the four cards be squeezed to make room for anything
+          // above them. The prompt block absorbs the squeeze (it auto-fits,
+          // then clips); the answers keep their real height so the scroll
+          // container's overflow is honest and every card stays reachable.
+          flexShrink: 0,
+        }}
+      >
         {slots.map((slot, i) => (
           <AnswerCard
             key={slot}
