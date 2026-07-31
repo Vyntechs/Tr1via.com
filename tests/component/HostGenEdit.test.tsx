@@ -184,6 +184,40 @@ describe("HostGenEdit", () => {
       );
     });
 
+    it("Rewrite to match forwards the in-progress values so the parent saves before generating", () => {
+      // Same hazard as the swap-image hand-off: the server rewrites from the
+      // question as stored, so unsaved text here would produce a fact for the
+      // OLD wording — the very bug being fixed.
+      const onRewriteFact = vi.fn();
+      const { container } = render(
+        <HostGenEdit themeKey="house" topic="Test" initial={INITIAL} onRewriteFact={onRewriteFact} />,
+      );
+      fireEvent.change(textareas(container).prompt, {
+        target: { value: "The square root of 900 is:" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /rewrite to match/i }));
+      expect((onRewriteFact.mock.calls[0]![0] as HostGenEditValues).prompt).toBe(
+        "The square root of 900 is:",
+      );
+    });
+
+    it("disables Rewrite while one is already running", () => {
+      const onRewriteFact = vi.fn();
+      render(
+        <HostGenEdit
+          themeKey="house"
+          topic="Test"
+          initial={INITIAL}
+          onRewriteFact={onRewriteFact}
+          isRewritingFact
+        />,
+      );
+      const btn = screen.getByRole("button", { name: /rewriting/i });
+      expect(btn).toBeDisabled();
+      fireEvent.click(btn);
+      expect(onRewriteFact).not.toHaveBeenCalled();
+    });
+
     it("blocks save past the 280-char cap the route enforces, instead of failing the write", () => {
       const onSave = vi.fn();
       const { container } = render(

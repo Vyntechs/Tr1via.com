@@ -64,8 +64,18 @@ export interface HostGenEditProps {
    * correct-mark/point edits silently vanish when the swap modal takes over.
    */
   onSwapImage?: (values: HostGenEditValues) => void;
+  /**
+   * Called when the host taps "Rewrite to match". Like `onSwapImage`, it
+   * receives the in-progress values because the parent must persist them
+   * before asking the server to rewrite — the server reads the question from
+   * the database, so unsaved text here would produce a fact for the OLD
+   * wording.
+   */
+  onRewriteFact?: (values: HostGenEditValues) => void;
   /** True while the PATCH is in flight. */
   isSaving?: boolean;
+  /** True while Claude is rewriting the fun fact. */
+  isRewritingFact?: boolean;
 }
 
 const DEMO_INITIAL: HostGenEditValues = {
@@ -102,7 +112,9 @@ function HostGenEditInner({
   onSave,
   onClose,
   onSwapImage,
+  onRewriteFact,
   isSaving = false,
+  isRewritingFact = false,
 }: Omit<HostGenEditProps, "themeKey">) {
   const { t } = useTheme();
   const mobile = useMediaQuery("(max-width: 860px)");
@@ -133,6 +145,10 @@ function HostGenEditInner({
 
   function handleSwapImage() {
     onSwapImage?.({ prompt, options, correctIndex, factBlurb, pointValue });
+  }
+
+  function handleRewriteFact() {
+    onRewriteFact?.({ prompt, options, correctIndex, factBlurb, pointValue });
   }
 
   return (
@@ -250,16 +266,32 @@ function HostGenEditInner({
           <div>
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
               <Eyebrow color={t.inkMid} size={11}>FUN FACT · YOU READ THIS AFTER THE ANSWER</Eyebrow>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontFamily: "var(--font-mono)",
-                  letterSpacing: "0.04em",
-                  color: factBlurb.trim().length > FACT_BLURB_MAX ? t.wrong : t.inkMute,
-                }}
-              >
-                {factBlurb.trim().length}/{FACT_BLURB_MAX}
-              </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontFamily: "var(--font-mono)",
+                    letterSpacing: "0.04em",
+                    color: factBlurb.trim().length > FACT_BLURB_MAX ? t.wrong : t.inkMute,
+                  }}
+                >
+                  {factBlurb.trim().length}/{FACT_BLURB_MAX}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRewriteFact}
+                  disabled={isSaving || isRewritingFact}
+                  style={{
+                    padding: "4px 10px", borderRadius: 6,
+                    border: `1px solid ${t.line}`, background: "transparent",
+                    color: isSaving || isRewritingFact ? t.inkMute : t.ink,
+                    fontSize: 11, fontWeight: 600, fontFamily: "var(--font-sans)",
+                    cursor: isSaving || isRewritingFact ? "default" : "pointer",
+                  }}
+                >
+                  {isRewritingFact ? "Rewriting…" : "Rewrite to match"}
+                </button>
+              </div>
             </div>
             <textarea
               value={factBlurb}
@@ -276,8 +308,8 @@ function HostGenEditInner({
               }}
             />
             <div style={{ marginTop: 6, fontSize: 11, color: t.inkMute, lineHeight: 1.45 }}>
-              Rewrite the question above and this does <em>not</em> change with it — check it still
-              matches before you lock the category.
+              Change the question and this rewrites itself to match when you save. Type your own
+              here and yours is kept.
             </div>
           </div>
 
