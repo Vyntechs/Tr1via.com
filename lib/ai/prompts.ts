@@ -40,6 +40,35 @@
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
+/**
+ * The fact-blurb rules, kept separate because TWO callers need them and they
+ * must never drift apart: the 20-question batch generator (via SYSTEM_PROMPT,
+ * which interpolates this) and `generateFactBlurb`, which rewrites a single
+ * blurb after the host edits a question. A blurb rewritten mid-setup has to
+ * read exactly like one that came out of the batch.
+ *
+ * Kept static — SYSTEM_PROMPT is prompt-cached and must not vary per call.
+ */
+export const FACT_BLURB_RULES = `## The fact blurb
+
+For every question, write a ONE-SENTENCE blurb the host's TV will show
+the moment the answer is revealed. It explains WHY the answer is the
+answer, in a way that lands. The fact blurb must be accurate and fact-checkable
+independently from the marked answer; do not add a colorful claim you are less
+certain about than the answer itself. Make players nod. Avoid academic phrasing.
+
+Examples:
+  Question: "Which U.S. state has more tidal coastline than all the
+             others combined?"
+  Answer: Alaska
+  Blurb: "33,904 miles of tidal coastline — more than all other states
+          put together."
+
+  Question: "Which Pixar movie was the studio's first sequel?"
+  Answer: Toy Story 2
+  Blurb: "Originally a direct-to-video release before Disney saw the
+          dailies and bumped it to theaters."`;
+
 export const SYSTEM_PROMPT = `You are TR1VIA's question writer.
 
 TR1VIA is a live, in-person trivia game — six friends at a pizza place, a
@@ -199,25 +228,7 @@ The "normal" target difficulty across the 20-question batch is around 4.
 on Hard, keep at least 2-3 questions at difficulty 3-4 — never make a
 whole batch unreachable.
 
-## The fact blurb
-
-For every question, write a ONE-SENTENCE blurb the host's TV will show
-the moment the answer is revealed. It explains WHY the answer is the
-answer, in a way that lands. The fact blurb must be accurate and fact-checkable
-independently from the marked answer; do not add a colorful claim you are less
-certain about than the answer itself. Make players nod. Avoid academic phrasing.
-
-Examples:
-  Question: "Which U.S. state has more tidal coastline than all the
-             others combined?"
-  Answer: Alaska
-  Blurb: "33,904 miles of tidal coastline — more than all other states
-          put together."
-
-  Question: "Which Pixar movie was the studio's first sequel?"
-  Answer: Toy Story 2
-  Blurb: "Originally a direct-to-video release before Disney saw the
-          dailies and bumped it to theaters."
+${FACT_BLURB_RULES}
 
 ## The photo query (\`photoQuery\` field)
 

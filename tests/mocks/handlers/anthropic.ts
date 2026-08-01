@@ -24,11 +24,25 @@ import { PIXAR_20, PIXAR_RETRY_5 } from "../fixtures/questions";
 
 let callCount = 0;
 
+/** Deliberately identifiable: if this string shows up on a TV reveal during a
+ *  mocked run, the fun fact came from the mock and not from a model. */
+export const MOCK_FACT_BLURB =
+  "Mocked fun fact — rewritten to match the edited question.";
+
 interface MessagesBody {
   messages?: Array<{
     role?: string;
     content?: string | Array<{ type?: string; text?: string }>;
   }>;
+  tool_choice?: { type?: string; name?: string };
+  tools?: Array<{ name?: string }>;
+}
+
+/** The rewriter forces `tool_choice: {type:"tool", name:"emit_fact_blurb"}`,
+ *  so the forced tool name is the cleanest discriminator. */
+function isFactBlurbRequest(body: MessagesBody | null): boolean {
+  if (body?.tool_choice?.name === "emit_fact_blurb") return true;
+  return !!body?.tools?.some((t) => t.name === "emit_fact_blurb");
 }
 
 function extractUserText(body: MessagesBody | null): string {
@@ -54,6 +68,37 @@ export const anthropicHandlers = [
       body = (await request.json()) as MessagesBody;
     } catch {
       body = null;
+    }
+
+    // The fun-fact rewriter (lib/ai/generate-fact-blurb.ts) hits the same
+    // endpoint but forces a different tool. Without this branch it would fall
+    // through to the emit_questions response below, find no emit_fact_blurb
+    // block, and return null — which the route correctly treats as "clear the
+    // fact". That is the FAILURE path, so every mocked run would quietly
+    // exercise the wrong half of issue #173. Answer in its own shape instead.
+    if (isFactBlurbRequest(body)) {
+      return HttpResponse.json({
+        id: "msg_test_fact_blurb",
+        type: "message",
+        role: "assistant",
+        model: "claude-sonnet-4-6",
+        content: [
+          {
+            type: "tool_use",
+            id: "toolu_test_fact_blurb",
+            name: "emit_fact_blurb",
+            input: { blurb: MOCK_FACT_BLURB },
+          },
+        ],
+        stop_reason: "tool_use",
+        stop_sequence: null,
+        usage: {
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          input_tokens: 40,
+          output_tokens: 20,
+        },
+      });
     }
 
     callCount++;

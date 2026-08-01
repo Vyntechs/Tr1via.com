@@ -43,6 +43,7 @@ import {
   explainGenerationFailure,
 } from "@/lib/host/generationFailureMessages";
 import { mergePickedAfterRefetch } from "@/lib/host/mergePickedAfterRefetch";
+import { shouldRewriteFactBlurb } from "@/lib/host/factBlurbStaleness";
 import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
   explainLockFailure,
@@ -163,6 +164,7 @@ export function HostSetupPickClient({
   const [flavor, setFlavor] = useState<string[]>([]);
   const [locking, setLocking] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [rewritingFact, setRewritingFact] = useState(false);
   const [savingPhoto, setSavingPhoto] = useState(false);
   const [uploadState, setUploadState] = useState<"idle" | "uploading">("idle");
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -678,6 +680,10 @@ export function HostSetupPickClient({
           prompt: values.prompt,
           options: values.options,
           correctIndex: values.correctIndex,
+          // Empty → null, which CLEARS the row's blurb. Omitting the key
+          // instead would leave the previous question's fun fact attached to
+          // freshly rewritten text — the 2026-07-29 bug this fixes.
+          factBlurb: values.factBlurb.trim() || null,
           pointValue: values.pointValue,
         }),
       });
@@ -704,10 +710,67 @@ export function HostSetupPickClient({
     }
   }
 
+  /** Ask the server to rewrite the fun fact for the question as it now reads,
+   *  then fold the saved row back into local state so the host sees it. */
+  async function rewriteFactBlurb(questionId: string): Promise<boolean> {
+    setRewritingFact(true);
+    try {
+      const res = await fetch(`/api/questions/${questionId}/fact-blurb`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        // Non-fatal by design: her edit is already saved and the stale fact
+        // already cleared, so the question simply has no fun fact. Say so
+        // plainly rather than failing the save she already completed.
+        setError(
+          "Saved — but the fun fact couldn't be rewritten. Type one yourself, or try Rewrite again.",
+        );
+        return false;
+      }
+      const { question } = (await res.json()) as { question: QuestionRow };
+      setQuestions((prev) =>
+        prev.map((q) => (q.id === question.id ? question : q)),
+      );
+      return true;
+    } catch {
+      setError(
+        "Saved — but the fun fact couldn't be rewritten. Type one yourself, or try Rewrite again.",
+      );
+      return false;
+    } finally {
+      setRewritingFact(false);
+    }
+  }
+
   async function handleSaveEdit(values: HostGenEditValues) {
     if (modal.kind !== "edit") return;
-    const saved = await persistEdit(values, modal.questionId);
-    if (saved) setModal({ kind: "none" });
+    const questionId = modal.questionId;
+    const before = questions.find((q) => q.id === questionId);
+
+    // The host should never have to retype the fun fact just because she
+    // rewrote the question. If she left the fact alone and the question now
+    // asks something different, the old fact is wrong — so we CLEAR it as
+    // part of this save (a wrong fact read aloud is the bug; an empty one is
+    // merely quiet) and then have Claude write one that matches.
+    const shouldRewriteFact =
+      !!before &&
+      shouldRewriteFactBlurb({
+        next: { ...values, options: values.options },
+        before: {
+          prompt: before.prompt,
+          options: (before.options ?? []) as string[],
+          correctIndex: before.correct_index,
+          factBlurb: before.fact_blurb,
+        },
+      });
+
+    const saved = await persistEdit(
+      shouldRewriteFact ? { ...values, factBlurb: "" } : values,
+      questionId,
+    );
+    if (!saved) return;
+    setModal({ kind: "none" });
+    if (shouldRewriteFact) await rewriteFactBlurb(questionId);
   }
 
   async function handleSaveEditAndOpenSwap(values: HostGenEditValues) {
@@ -715,6 +778,18 @@ export function HostSetupPickClient({
     const questionId = modal.questionId;
     const saved = await persistEdit(values, questionId);
     if (saved) setModal({ kind: "swap", questionId });
+  }
+
+  /** "Rewrite to match" inside the edit panel. Saves first — the route reads
+   *  the question from the database, so unsaved text in the form would
+   *  otherwise produce a fact for the OLD wording. Same reason
+   *  `onSwapImage` persists before handing off. */
+  async function handleRewriteFact(values: HostGenEditValues) {
+    if (modal.kind !== "edit") return;
+    const questionId = modal.questionId;
+    const saved = await persistEdit(values, questionId);
+    if (!saved) return;
+    await rewriteFactBlurb(questionId);
   }
 
   // ── photo swap (GET /api/questions/[id]/photos + PATCH photo) ───────
@@ -1092,13 +1167,21 @@ export function HostSetupPickClient({
               prompt: editingQuestion.prompt,
               options: editingQuestion.options,
               correctIndex: editingQuestion.correct_index,
+              factBlurb: editingQuestion.fact_blurb ?? "",
               pointValue: editingQuestion.point_value,
             }}
+            // Remount when the stored fun fact changes so the textarea
+            // re-seeds from the row a rewrite just saved. Everything else in
+            // the form was persisted immediately before that call, so nothing
+            // is lost by re-seeding.
+            key={`${editingQuestion.id}:${editingQuestion.fact_blurb ?? ""}`}
             imageSeed={editingQuestion.image_url ?? categoryTopic}
             onSave={handleSaveEdit}
             onClose={() => setModal({ kind: "none" })}
             onSwapImage={handleSaveEditAndOpenSwap}
+            onRewriteFact={handleRewriteFact}
             isSaving={savingEdit}
+            isRewritingFact={rewritingFact}
           />
         </ModalOverlay>
       )}

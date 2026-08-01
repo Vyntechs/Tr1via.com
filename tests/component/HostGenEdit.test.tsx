@@ -14,8 +14,15 @@ const INITIAL: HostGenEditValues = {
   prompt: "Initial question — replace me",
   options: ["alpha", "bravo", "charlie", "delta"],
   correctIndex: 0,
+  factBlurb: "A fun fact belonging to the ORIGINAL question.",
   pointValue: 200,
 };
+
+/** The panel renders the prompt first and the fun fact second. */
+function textareas(container: HTMLElement) {
+  const all = container.querySelectorAll("textarea");
+  return { prompt: all[0] as HTMLTextAreaElement, fact: all[1] as HTMLTextAreaElement };
+}
 
 afterEach(() => cleanup());
 
@@ -118,5 +125,110 @@ describe("HostGenEdit", () => {
     expect(swap).toBeDisabled();
     fireEvent.click(swap);
     expect(onSwapImage).not.toHaveBeenCalled();
+  });
+
+  // ── the fun fact (issue #173) ──────────────────────────────────────────
+  //
+  // Heather, 2026-07-29: "anytime she edited a question or entered her own,
+  // the little fun fact she reads after the answer never updates." It didn't
+  // — the panel had no such field, so the blurb written for whatever question
+  // previously occupied the row survived every edit, invisibly, and she read
+  // it out as fact. Live consequence: "The square root of 900 is:" carried a
+  // 5-12-13 Pythagorean-triple blurb.
+  describe("fun fact", () => {
+    it("shows the existing blurb so a stale one is visible before the show", () => {
+      const { container } = render(
+        <HostGenEdit themeKey="house" topic="Test" initial={INITIAL} />,
+      );
+      expect(textareas(container).fact.value).toBe(
+        "A fun fact belonging to the ORIGINAL question.",
+      );
+    });
+
+    it("sends the edited blurb on save", () => {
+      const onSave = vi.fn();
+      const { container } = render(
+        <HostGenEdit themeKey="house" topic="Test" initial={INITIAL} onSave={onSave} />,
+      );
+
+      const { prompt, fact } = textareas(container);
+      fireEvent.change(prompt, { target: { value: "The square root of 900 is:" } });
+      fireEvent.change(fact, { target: { value: "30 x 30 = 900." } });
+
+      fireEvent.click(screen.getByRole("button", { name: /save · this question/i }));
+      expect(onSave.mock.calls[0]![0]).toMatchObject({
+        prompt: "The square root of 900 is:",
+        factBlurb: "30 x 30 = 900.",
+      });
+    });
+
+    it("lets the host empty the blurb — silence beats a wrong fact read aloud", () => {
+      const onSave = vi.fn();
+      const { container } = render(
+        <HostGenEdit themeKey="house" topic="Test" initial={INITIAL} onSave={onSave} />,
+      );
+      fireEvent.change(textareas(container).fact, { target: { value: "" } });
+      fireEvent.click(screen.getByRole("button", { name: /save · this question/i }));
+      expect((onSave.mock.calls[0]![0] as HostGenEditValues).factBlurb).toBe("");
+    });
+
+    it("carries the blurb through the image-swap hand-off like every other field", () => {
+      const onSwapImage = vi.fn();
+      const { container } = render(
+        <HostGenEdit themeKey="house" topic="Test" initial={INITIAL} onSwapImage={onSwapImage} />,
+      );
+      fireEvent.change(textareas(container).fact, { target: { value: "Edited then swapped." } });
+      fireEvent.click(screen.getByRole("button", { name: /swap image/i }));
+      expect((onSwapImage.mock.calls[0]![0] as HostGenEditValues).factBlurb).toBe(
+        "Edited then swapped.",
+      );
+    });
+
+    it("Rewrite to match forwards the in-progress values so the parent saves before generating", () => {
+      // Same hazard as the swap-image hand-off: the server rewrites from the
+      // question as stored, so unsaved text here would produce a fact for the
+      // OLD wording — the very bug being fixed.
+      const onRewriteFact = vi.fn();
+      const { container } = render(
+        <HostGenEdit themeKey="house" topic="Test" initial={INITIAL} onRewriteFact={onRewriteFact} />,
+      );
+      fireEvent.change(textareas(container).prompt, {
+        target: { value: "The square root of 900 is:" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: /rewrite to match/i }));
+      expect((onRewriteFact.mock.calls[0]![0] as HostGenEditValues).prompt).toBe(
+        "The square root of 900 is:",
+      );
+    });
+
+    it("disables Rewrite while one is already running", () => {
+      const onRewriteFact = vi.fn();
+      render(
+        <HostGenEdit
+          themeKey="house"
+          topic="Test"
+          initial={INITIAL}
+          onRewriteFact={onRewriteFact}
+          isRewritingFact
+        />,
+      );
+      const btn = screen.getByRole("button", { name: /rewriting/i });
+      expect(btn).toBeDisabled();
+      fireEvent.click(btn);
+      expect(onRewriteFact).not.toHaveBeenCalled();
+    });
+
+    it("blocks save past the 280-char cap the route enforces, instead of failing the write", () => {
+      const onSave = vi.fn();
+      const { container } = render(
+        <HostGenEdit themeKey="house" topic="Test" initial={INITIAL} onSave={onSave} />,
+      );
+      fireEvent.change(textareas(container).fact, { target: { value: "x".repeat(281) } });
+
+      const save = screen.getByRole("button", { name: /too long/i });
+      expect(save).toBeDisabled();
+      fireEvent.click(save);
+      expect(onSave).not.toHaveBeenCalled();
+    });
   });
 });
