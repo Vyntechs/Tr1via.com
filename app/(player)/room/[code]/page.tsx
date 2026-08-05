@@ -22,11 +22,17 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from "react";
 import { useParams, useRouter } from "next/navigation";
+
+/** useLayoutEffect on the client, useEffect on the server — React warns if a
+ *  layout effect is scheduled during SSR, and nothing here needs to run there. */
+const useIsomorphicLayoutEffect =
+  typeof window === "undefined" ? useEffect : useLayoutEffect;
 import {
   ThemeProvider,
   Display,
@@ -200,8 +206,23 @@ function PlayerRoomInner({ roomCode }: { roomCode: string }) {
 
   // Seed the first paint from the /join → /room hand-off so the room shows the
   // night's real theme immediately instead of flashing resolveTheme's month/
-  // default fallback while useRoom fetches the night row. Read once on mount.
-  const [seededTheme] = useState<ThemeKey | null>(() => readThemeSeed(roomCode));
+  // default fallback while useRoom fetches the night row.
+  //
+  // This is deliberately NOT a useState initializer. sessionStorage does not
+  // exist on the server, so an initializer returns null during SSR and the real
+  // key on the client — the server would paint the month's theme and the client
+  // the seeded one, which is a hydration mismatch. React then throws
+  // "Hydration failed" on every player's phone and regenerates the whole tree.
+  // Invisible while August was dark and close to the house palette; a dark-to-
+  // light jolt now that August is a paper theme.
+  //
+  // A layout effect keeps both halves of the original intent: the first client
+  // frame matches the server exactly, and the seed is applied before the
+  // browser paints, so there is still no visible flash.
+  const [seededTheme, setSeededTheme] = useState<ThemeKey | null>(null);
+  useIsomorphicLayoutEffect(() => {
+    setSeededTheme(readThemeSeed(roomCode));
+  }, [roomCode]);
 
   const resolvedTheme: ThemeKey = resolveTheme(
     snapshot.night,
