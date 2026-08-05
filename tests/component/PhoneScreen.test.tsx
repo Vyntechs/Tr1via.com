@@ -28,8 +28,11 @@ describe("PhoneScreen adaptive height", () => {
 
   it("keeps bottom controls above a phone safe area", () => {
     const phone = renderScreen();
+    // Additive, not max(): with `viewport-fit=cover` on the player group the
+    // inset is system furniture drawn ON TOP of the screen, so it has to be
+    // reserved on top of the normal 26px, not instead of it (issue #171).
     expect(phone.style.paddingBottom).toBe(
-      "max(26px, env(safe-area-inset-bottom))",
+      "calc(26px + env(safe-area-inset-bottom))",
     );
   });
 
