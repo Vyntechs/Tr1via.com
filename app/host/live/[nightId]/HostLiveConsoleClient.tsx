@@ -44,6 +44,7 @@ import type {
 } from "@/lib/supabase/types";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
+import { isAlreadyResolved } from "@/lib/host/endEarlyOutcome";
 import { WELCOME_OVERLAY_DURATION_MS, PyrotechnicsBeatConductor } from "@/components/system";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { playWelcomeChime } from "@/lib/audio/welcomeChime";
@@ -499,6 +500,14 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         if (requireAllLocked && res.status === 409) {
           return false;
+        }
+        // The timer beat the tap. The console still showed "Show answer now"
+        // because its snapshot hadn't caught the auto-resolve yet, so the host
+        // pressed a button for something that had already happened. The answer
+        // is on screen either way — that is the outcome she asked for, not a
+        // failure, and a red banner mid-show reads as "something broke".
+        if (res.status === 409 && isAlreadyResolved(body.error)) {
+          return true;
         }
         throw new Error(body.error ?? "end-early failed");
       }

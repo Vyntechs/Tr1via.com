@@ -34,6 +34,7 @@ import type { HostLiveProjection } from "@/lib/live-answer/contracts";
 import { useGameDelivery } from "@/lib/hooks/useGameDelivery";
 import type { HostDeliveryReceipt } from "@/components/host/HostGameStatus";
 import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
+import { isAlreadyResolved } from "@/lib/host/endEarlyOutcome";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -465,6 +466,13 @@ export function HostPhoneClient({
         });
       } else if (!res.ok && requireAllLocked && res.status === 409) {
         return false;
+      } else if (!res.ok && res.status === 409) {
+        // The timer resolved it a beat before the tap landed. The answer is
+        // already up, which is what the host wanted — see isAlreadyResolved.
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!isAlreadyResolved(body.error)) {
+          throw new Error(body.error ?? "end-early failed");
+        }
       } else {
         await requireOk(res, "end-early failed");
       }
