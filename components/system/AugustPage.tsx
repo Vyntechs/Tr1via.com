@@ -28,10 +28,19 @@
 // answer, a verdict, the timer, or the host's lock-in counts. Anything not
 // verified against a real render is simply not placed — an unknown screen
 // gets the page and the leaves and no hand at all.
+//
+// Reduced motion drops the moving parts and keeps the page. The global CSS
+// catch-all collapses every animation to 0.001ms, which does NOT freeze a
+// particle where it looks right — with no fill-mode the keyframed opacity
+// stops applying and each ember snaps back to full brightness, glued to the
+// bottom edge, while the leaves finish off-screen and vanish. So the two
+// animated layers skip render entirely, exactly as ParticleField does. What
+// remains is the page itself, which is the part that carries the month.
 
 "use client";
 
 import { useMemo, type CSSProperties } from "react";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 
 /** Which screen of the night this is. Drives the marginalia and how many
  *  pressed leaves have accumulated. Omit it and no marginalia is drawn. */
@@ -183,7 +192,10 @@ function FallingLeaves({
   }, [intensity, scale, seed]);
 
   return (
-    <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
+    <div
+      data-testid="august-leaves"
+      style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
+    >
       {leaves.map((l) => (
         // The falling wrapper is the FULL height of the surface, so the
         // percentage travel in tr1via-leaf-fall is measured against the
@@ -708,6 +720,7 @@ export function AugustPage({
   page,
   substrate = true,
 }: AugustPageProps) {
+  const reduced = usePrefersReducedMotion();
   if (!intensity) return null;
   return (
     <div
@@ -724,12 +737,16 @@ export function AugustPage({
           <Marginalia page={page} />
         </div>
       )}
-      <FallingLeaves intensity={intensity} seed={seed} scale={compact ? 0.58 : 1} />
+      {!reduced && (
+        <FallingLeaves intensity={intensity} seed={seed} scale={compact ? 0.58 : 1} />
+      )}
       {/* Last, so the sparks read above the leaves the way they would in the
           air between you and the fire. */}
-      <div data-testid="august-embers" style={{ position: "absolute", inset: 0 }}>
-        <Embers intensity={intensity} seed={seed} compact={compact} />
-      </div>
+      {!reduced && (
+        <div data-testid="august-embers" style={{ position: "absolute", inset: 0 }}>
+          <Embers intensity={intensity} seed={seed} compact={compact} />
+        </div>
+      )}
     </div>
   );
 }
