@@ -82,3 +82,49 @@ describe("August · the notebook page", () => {
     expect(screen.queryByTestId("august-page")).toBeNull();
   });
 });
+
+describe("August · the bonfire", () => {
+  // The host's note after the first live night: it needed the campfire the
+  // month is actually about. The answer is embers rising against leaves
+  // falling — not an orange repaint, which would spend fall's palette and
+  // dull a venue TV. Both halves of that opposition have to survive.
+  it("sends embers up on every surface that gets the page", () => {
+    render(<Weather themeKey="august" />);
+    expect(screen.getByTestId("august-embers")).toBeInTheDocument();
+  });
+
+  it("keeps the embers on a phone, where the page is the whole atmosphere", () => {
+    render(<Weather themeKey="august" compact />);
+    expect(screen.getByTestId("august-embers")).toBeInTheDocument();
+  });
+
+  it("keeps embers on a surface that paints its own background", () => {
+    // Sparks are in the air between the viewer and the fire; they carry even
+    // where the paper itself must not be painted.
+    render(<Weather themeKey="august" substrate={false} />);
+    expect(screen.getByTestId("august-embers")).toBeInTheDocument();
+    expect(screen.queryByTestId("august-substrate")).toBeNull();
+  });
+
+  it("gives no other month embers", () => {
+    for (const key of ["july", "september", "october", "november"] as const) {
+      const { unmount } = render(<Weather themeKey={key} />);
+      expect(screen.queryByTestId("august-embers")).toBeNull();
+      unmount();
+    }
+  });
+
+  it("keeps the warmed paper clear of fall's grounds and accents", () => {
+    // The paper went warmer and a shade deeper at the host's request. It must
+    // still not land on any month that owns the real autumn.
+    const august = TR1VIA_THEMES.august;
+    expect(august.paper.toUpperCase()).toBe("#EADEBE");
+    for (const key of ["september", "october", "november"] as const) {
+      const fall = TR1VIA_THEMES[key];
+      expect(august.paper.toUpperCase()).not.toBe(fall.paper.toUpperCase());
+      expect(august.accent.toUpperCase()).not.toBe(fall.accent.toUpperCase());
+      expect(august.accent.toUpperCase()).not.toBe(fall.pop.toUpperCase());
+      expect(august.pop.toUpperCase()).not.toBe(fall.pop.toUpperCase());
+    }
+  });
+});

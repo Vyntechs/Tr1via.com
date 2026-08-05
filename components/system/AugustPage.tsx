@@ -13,6 +13,11 @@
 //                      accumulate as the night goes: one at the lobby, five
 //                      by the finale.
 //
+// A fire burns just off the bottom edge: the light is low and warm and it
+// breathes, the page has singed at its border, and embers climb while the
+// leaves come down. That opposition — leaves falling, sparks rising — is the
+// campfire, and it costs nine small dots rather than an orange repaint.
+//
 // The leaves are half green and half turned. That is the entire reason this
 // reads as August and not October — the world stays summer, and only the
 // leaves say fall. September/October/November keep their own full-autumn
@@ -221,6 +226,79 @@ function FallingLeaves({
   );
 }
 
+// ─── The fire ────────────────────────────────────────────────────────────
+// The host's note after the first live night: it needed the campfire the
+// month is actually about. The answer is not to repaint the page orange —
+// that would spend fall's palette and dull a venue TV. It is to put the page
+// NEXT TO a fire: the light comes from low and warm and breathes, the edges
+// have started to singe, and embers climb while the leaves come down.
+//
+// Leaves fall, embers rise. That opposition is the whole tell, and it costs
+// nine small dots.
+
+function Embers({ intensity, seed, compact }: { intensity: number; seed: number; compact: boolean }) {
+  const embers = useMemo(() => {
+    const r = rng(seed * 31 + 7);
+    const n = Math.max(4, Math.round((compact ? 6 : 13) * intensity));
+    return Array.from({ length: n }, (_, i) => {
+      const rise = 7 + r() * 7;
+      return {
+        i,
+        // Clustered toward the corners, the way sparks leave a fire that is
+        // off to one side rather than dead centre.
+        left: i % 2 === 0 ? 4 + r() * 34 : 62 + r() * 34,
+        // Sized to be seen from ten feet on a venue TV. A 2px dot reads as
+        // dust on a paper texture; the host's whole first note about this
+        // month was that ambient detail was disappearing into the page.
+        size: (compact ? 2.4 : 4) + r() * (compact ? 2.2 : 4.5),
+        rise,
+        delay: -r() * rise,
+        drift: (r() * 2 - 1) * (compact ? 26 : 54),
+        warm: r() > 0.45,
+      };
+    });
+  }, [compact, intensity, seed]);
+
+  return (
+    <div style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}>
+      {embers.map((e) => (
+        <div
+          key={e.i}
+          style={
+            {
+              position: "absolute",
+              left: `${e.left}%`,
+              bottom: -6,
+              height: "100%",
+              width: 0,
+              animation: `tr1via-ember-rise ${e.rise}s linear ${e.delay}s infinite`,
+              ["--drift" as string]: `${e.drift}px`,
+            } as CSSProperties
+          }
+        >
+          <div
+            style={{
+              // Pinned to the bottom of the full-height wrapper. The wrapper
+              // is what animates, so its -104% travel measures against the
+              // screen; a spark left as a plain child would sit at the TOP of
+              // that wrapper and leave the frame before it was ever seen.
+              position: "absolute",
+              bottom: 0,
+              width: e.size,
+              height: e.size,
+              borderRadius: "50%",
+              background: e.warm ? "#FFC85A" : "#FF7A22",
+              boxShadow: `0 0 ${e.size * 4}px ${e.size * 1.6}px ${
+                e.warm ? "rgba(255,176,58,.75)" : "rgba(246,102,22,.62)"
+              }, 0 0 ${e.size * 9}px ${e.size * 2.4}px rgba(255,140,40,.28)`,
+            }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ─── The page ────────────────────────────────────────────────────────────
 
 const layer = (style: CSSProperties): CSSProperties => ({
@@ -302,21 +380,36 @@ function PageFurniture({ compact }: { compact: boolean }) {
   const c = AUGUST_LEAF_COLORS;
   return (
     <>
-      {/* A sheet of paper in late-afternoon light. */}
+      {/* A sheet of paper in the last of the daylight — the sun is nearly
+          down, so the sheet is warm rather than bright. */}
       <div
         style={layer({
           background:
-            "radial-gradient(58% 52% at 84% 6%, rgba(255,226,150,.5), transparent 62%)," +
-            "linear-gradient(196deg, rgba(255,244,214,.7) 0%, rgba(232,222,190,.35) 62%, rgba(206,198,166,.4) 100%)",
+            "radial-gradient(58% 50% at 84% 4%, rgba(255,222,146,.42), transparent 62%)," +
+            "linear-gradient(196deg, rgba(255,240,206,.55) 0%, rgba(226,212,174,.34) 60%, rgba(190,174,136,.42) 100%)",
+        })}
+      />
+      {/* And the fire, just off the bottom edge. It breathes; it never
+          flickers. A venue TV holds a question for thirty seconds and nothing
+          ambient is allowed to pull an eye off it. */}
+      <div
+        style={layer({
+          background:
+            "radial-gradient(66% 42% at 20% 110%, rgba(255,146,40,.34), transparent 68%)," +
+            "radial-gradient(44% 30% at 80% 108%, rgba(255,104,22,.2), transparent 72%)",
+          animation: "tr1via-firelight 7.5s ease-in-out infinite",
         })}
       />
       <Ruling compact={compact} />
-      {/* Going the way August paper goes — warm and a little foxed at the
-          edges, nothing on the reading area. */}
+      {/* Paper that has spent an evening near a fire: browned at the border,
+          properly scorched along the bottom where it sat closest. The reading
+          area is untouched — the whole point of a singe is that it stops at
+          the edge. */}
       <div
         style={layer({
           background:
-            "radial-gradient(120% 100% at 50% 50%, transparent 52%, rgba(174,142,72,.14) 88%, rgba(150,116,54,.24) 100%)",
+            "radial-gradient(118% 98% at 50% 46%, transparent 46%, rgba(158,104,44,.2) 80%, rgba(104,58,22,.4) 100%)," +
+            "linear-gradient(to top, rgba(86,44,16,.2) 0%, rgba(120,68,26,.07) 5%, transparent 12%)",
         })}
       />
 
@@ -632,6 +725,11 @@ export function AugustPage({
         </div>
       )}
       <FallingLeaves intensity={intensity} seed={seed} scale={compact ? 0.58 : 1} />
+      {/* Last, so the sparks read above the leaves the way they would in the
+          air between you and the fire. */}
+      <div data-testid="august-embers" style={{ position: "absolute", inset: 0 }}>
+        <Embers intensity={intensity} seed={seed} compact={compact} />
+      </div>
     </div>
   );
 }
