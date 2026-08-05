@@ -169,6 +169,7 @@ function TVFinaleWinnerInner({
         themeKey={themeKey}
         intensity={finaleIntensity}
         lightningTriggerCount={lightningTriggerCount}
+        page="finale"
       />
       {/* Soft radial glow center-stage */}
       <div

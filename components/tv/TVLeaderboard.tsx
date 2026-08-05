@@ -80,7 +80,7 @@ function TVLeaderboardInner({
   const right = rows.slice(5, 10);
 
   return (
-    <TVStage data-testid="tv-leaderboard">
+    <TVStage page="leaderboard" data-testid="tv-leaderboard">
       <TVHeader left={headerLeft} right={headerRight} />
 
       <div

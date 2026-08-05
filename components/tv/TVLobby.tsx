@@ -112,7 +112,7 @@ function TVLobbyInner({
   const headlineColor = headlinePlayerId ? playerColorHex(headlinePlayerId) : t.accent;
 
   return (
-    <TVStage data-testid="tv-lobby">
+    <TVStage page="lobby" data-testid="tv-lobby">
       <TVHeader
         left={`${venueName} · ${scheduledDate}`}
         right={gameStatusLine}

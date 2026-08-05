@@ -117,7 +117,7 @@ export function PlayerWinnerCard({
       {/* Heightened weather behind the card for finale energy. PhoneScreen
           already renders weather at intensity 0.5; we add an extra layer that
           ramps up (build) to dial up the moment without rebuilding the shell. */}
-      <Weather themeKey={themeKey} intensity={finaleIntensity} />
+      <Weather themeKey={themeKey} intensity={finaleIntensity} compact substrate={false} />
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", height: "100%" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 6 }}>
           <Eyebrow color={t.accent} size={10}>YOU WON</Eyebrow>

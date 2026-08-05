@@ -114,7 +114,7 @@ function TVGridInner({
   const board = cells ?? [];
 
   return (
-    <TVStage data-testid="tv-grid">
+    <TVStage page="board" data-testid="tv-grid">
       <TVHeader left={gameStatusLine} right={rightHeaderLine} />
 
       <div

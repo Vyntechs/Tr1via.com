@@ -6,6 +6,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
+import type { AugustPageName } from "@/components/system/AugustPage";
 import { Weather } from "@/components/system/Weather";
 
 export interface TVStageProps {
@@ -17,6 +18,10 @@ export interface TVStageProps {
   /** Bump to fire a beat-triggered May lightning strike. Only meaningful
    *  on storm-themed nights; ignored by other themes. */
   lightningTriggerCount?: number;
+  /** Which screen of the night this is. Only the August notebook theme reads
+   *  it — it decides which marginalia is drawn in that screen's empty page.
+   *  Omit it and no marginalia is drawn, which is safe anywhere. */
+  page?: AugustPageName;
   style?: CSSProperties;
   /** Forwarded data-testid for E2E tests. Applied to the outer container so
    *  Playwright can target any TV screen by its top-level id. */
@@ -31,6 +36,7 @@ export function TVStage({
   weather = true,
   weatherIntensity = 1,
   lightningTriggerCount = 0,
+  page,
   style,
   "data-testid": dataTestId,
   "data-reading-surface": dataReadingSurface,
@@ -58,6 +64,11 @@ export function TVStage({
           themeKey={themeKey}
           intensity={weatherIntensity}
           lightningTriggerCount={lightningTriggerCount}
+          page={page}
+          // A stage that paints its own background means it — the reveal
+          // paints its own surface, and a theme has no business repainting
+          // over it.
+          substrate={!bg || bg === t.paper}
         />
       )}
       <div

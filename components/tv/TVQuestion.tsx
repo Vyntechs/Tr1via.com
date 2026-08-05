@@ -137,7 +137,7 @@ function TVQuestionInner({
   const progress = denominator > 0 ? Math.min(1, lockedIn / denominator) : 0;
 
   return (
-    <TVStage data-testid="tv-question">
+    <TVStage page="question" data-testid="tv-question">
       <TVHouseLights
         roomMagicEnabled={roomMagicEnabled}
         lockedCount={houseLightsLockedIn}

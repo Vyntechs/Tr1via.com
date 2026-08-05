@@ -53,7 +53,7 @@ export function LaptopShell({ children, weather = false }: LaptopShellProps) {
           aria-hidden
           style={{ position: "absolute", inset: 0, opacity: 0.5, pointerEvents: "none", zIndex: 0 }}
         >
-          <Weather themeKey={themeKey} intensity={0.5} />
+          <Weather themeKey={themeKey} intensity={0.5} compact={compact} />
         </div>
       )}
       <div style={{ flex: 1, overflow: compact ? "visible" : "hidden", display: "flex", flexDirection: "column", position: "relative", zIndex: 1 }}>

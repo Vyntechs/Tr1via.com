@@ -103,7 +103,7 @@ function TVIntermissionInner({
   const rows = podium ?? [];
 
   return (
-    <TVStage data-testid="tv-intermission">
+    <TVStage page="intermission" data-testid="tv-intermission">
       <TVHeader left={headerLeft} right={headerRight} />
 
       <div

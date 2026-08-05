@@ -56,7 +56,7 @@ function LockInBaseInner({
   const { t } = useTheme();
   const cc = categoryColor("Geography", t.accent);
   return (
-    <TVStage>
+    <TVStage page="question">
       <TVHeader accent={cc} left="GAME 1 · LIVE" right="EVERY PHONE: SCRAMBLED · YOUR # IS YOURS" />
 
       {/* Category banner */}
