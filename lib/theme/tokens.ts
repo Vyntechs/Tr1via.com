@@ -50,7 +50,7 @@ export const TR1VIA_THEMES: Record<ThemeKey, ThemeDef> = {
   // handoff into fall, so the world stays summer and only the leaves say
   // fall. The old dark "Late Sun" spent September's #C84A2C and October's
   // #F08C2A a month early — see components/system/AugustPage.tsx.
-  august:    { name: "August · Still Summer", mode: "light", paper: "#F0EAD4", ink: "#1D2616", accent: "#DE7F1E", pop: "#4A8B46", correct: "#3B7A2C", wrong: "#A92E22" },
+  august:    { name: "August · Still Summer", mode: "light", paper: "#EADEBE", ink: "#1D2616", accent: "#D2711A", pop: "#47844A", correct: "#37742A", wrong: "#A42B20" },
   september: { name: "September · Fall",     mode: "dark",  paper: "#1A0F08", ink: "#F2DEAE", accent: "#C84A2C", pop: "#E8A02A", correct: "#C8E25E", wrong: "#E58A7A" },
   october:   { name: "October · Halloween",  mode: "dark",  paper: "#120A06", ink: "#F4E6C4", accent: "#F08C2A", pop: "#A94ACC", correct: "#C8E25E", wrong: "#E55A4F" },
   november:  { name: "November · Thanks",    mode: "dark",  paper: "#1E1208", ink: "#F2DEAE", accent: "#C25E22", pop: "#7E8C2A", correct: "#C8E25E", wrong: "#E58A7A" },

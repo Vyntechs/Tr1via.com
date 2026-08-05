@@ -146,12 +146,12 @@
 }
 
 :root[data-theme="august"] {
-  --paper: #F0EAD4;
+  --paper: #EADEBE;
   --ink: #1D2616;
-  --accent: #DE7F1E;
-  --pop: #4A8B46;
-  --correct: #3B7A2C;
-  --wrong: #A92E22;
+  --accent: #D2711A;
+  --pop: #47844A;
+  --correct: #37742A;
+  --wrong: #A42B20;
   --surface: rgba(27,19,12,.04);
   --surface-h: rgba(27,19,12,.08);
   --ink-mid: rgba(27,19,12,.62);
