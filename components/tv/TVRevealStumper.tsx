@@ -82,7 +82,7 @@ function TVRevealStumperInner({
   const cc = categoryColor(category, t.accent);
 
   return (
-    <TVStage bg={t.paper} data-testid="tv-reveal">
+    <TVStage bg={t.paper} page="reveal" data-testid="tv-reveal">
       <TVHeader accent={cc} left={headerEyebrow} right="REVEAL" />
 
       <div

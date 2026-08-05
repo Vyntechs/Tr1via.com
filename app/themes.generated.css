@@ -146,19 +146,19 @@
 }
 
 :root[data-theme="august"] {
-  --paper: #1F1208;
-  --ink: #F2E2B8;
-  --accent: #F08C2A;
-  --pop: #C84A2C;
-  --correct: #C8E25E;
-  --wrong: #E58A7A;
-  --surface: rgba(255,255,255,.04);
-  --surface-h: rgba(255,255,255,.08);
-  --ink-mid: rgba(244,230,196,.62);
-  --ink-mute: rgba(244,230,196,.36);
-  --line: rgba(244,230,196,.14);
-  --line-soft: rgba(244,230,196,.07);
-  color-scheme: dark;
+  --paper: #F0EAD4;
+  --ink: #1D2616;
+  --accent: #DE7F1E;
+  --pop: #4A8B46;
+  --correct: #3B7A2C;
+  --wrong: #A92E22;
+  --surface: rgba(27,19,12,.04);
+  --surface-h: rgba(27,19,12,.08);
+  --ink-mid: rgba(27,19,12,.62);
+  --ink-mute: rgba(27,19,12,.36);
+  --line: rgba(27,19,12,.13);
+  --line-soft: rgba(27,19,12,.06);
+  color-scheme: light;
 }
 
 :root[data-theme="september"] {

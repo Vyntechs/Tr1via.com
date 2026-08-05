@@ -7,6 +7,7 @@
 // Discipline: subtle, always under ~8% opacity for ambient particles.
 // Pointer-events: none — never competes with foreground interaction.
 
+import { AugustPage, type AugustPageName } from "./AugustPage";
 import { ParticleField } from "./ParticleField";
 import { Lightning } from "./Lightning";
 import { JuneSky } from "./JuneSky";
@@ -23,6 +24,16 @@ export interface WeatherProps {
    *  storm theme only — ignored by other themes). Used by section-complete
    *  + finale to fire a dramatic close strike. */
   lightningTriggerCount?: number;
+  /** Which screen of the night this is. Only August reads it — it decides
+   *  the marginalia on the notebook page. Omit for none, which is safe on
+   *  any screen. Ignored by every other theme. */
+  page?: AugustPageName;
+  /** Phone-sized surface. Only August reads it (smaller leaves, tighter
+   *  ruling, no marginalia). Ignored by every other theme. */
+  compact?: boolean;
+  /** False when the surface paints its own background and the theme must not
+   *  repaint it. Only August reads it. Ignored by every other theme. */
+  substrate?: boolean;
 }
 
 export function Weather({
@@ -30,6 +41,9 @@ export function Weather({
   intensity = 1,
   seed = 1,
   lightningTriggerCount = 0,
+  page,
+  compact = false,
+  substrate = true,
 }: WeatherProps) {
   if (!intensity) return null;
   const t = TR1VIA_THEMES[themeKey];
@@ -97,7 +111,19 @@ export function Weather({
       return <JuneSky intensity={intensity} />;
     case "july":
       return <Pyrotechnics intensity={intensity} />;
+    // August gets its own layer, not the shared fall drift: the whole point
+    // of the month is that the page is a structural change, and the leaves
+    // are big and half-green rather than turned specks.
     case "august":
+      return (
+        <AugustPage
+          intensity={intensity}
+          seed={seed}
+          compact={compact}
+          page={page}
+          substrate={substrate}
+        />
+      );
     case "september":
     case "november":
       return (
@@ -205,7 +231,7 @@ export function weatherLabel(themeKey: ThemeKey): string {
     may: "distant lightning",
     june: "endless evening",
     july: "firework bursts",
-    august: "drifting leaves",
+    august: "a notebook page, half-turned leaves",
     september: "drifting leaves",
     october: "pumpkin glow",
     november: "autumn drift",

@@ -53,7 +53,7 @@ export function PlayerRevealCorrectSequence({
       }}
     >
       {/* Phase-1 engine on a dark sky; the salvo beat ignites the burst in sync. */}
-      <Weather themeKey={themeKey} intensity={2.2} />
+      <Weather themeKey={themeKey} intensity={2.2} compact substrate={false} />
     </div>
   );
 }

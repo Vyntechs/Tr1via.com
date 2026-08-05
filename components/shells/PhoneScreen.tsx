@@ -75,7 +75,9 @@ export function PhoneScreen({
         ...style,
       }}
     >
-      {weather && !fill && <Weather themeKey={themeKey} intensity={weatherIntensity} />}
+      {weather && !fill && (
+        <Weather themeKey={themeKey} intensity={weatherIntensity} compact />
+      )}
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
         {children}
       </div>

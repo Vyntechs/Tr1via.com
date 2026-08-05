@@ -52,5 +52,5 @@ export function CardWeather({ themeKey, seed }: { themeKey: ThemeKey; seed: numb
       />
     );
   }
-  return <Weather themeKey={themeKey} intensity={0.5} seed={seed} />;
+  return <Weather themeKey={themeKey} intensity={0.5} seed={seed} compact />;
 }

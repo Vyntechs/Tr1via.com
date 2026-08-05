@@ -76,6 +76,17 @@ body {
 @keyframes tr1via-shimmer      { 0% { background-position:-200% 0; } 100% { background-position:200% 0; } }
 @keyframes tr1via-drift-down   { 0% { transform:translate3d(0,0,0) rotate(0deg); }
                                  100% { transform:translate3d(var(--drift, 0px), 130vh, 0) rotate(var(--spin, 0deg)); } }
+/* August leaves. Three nested elements so fall, sway and tumble compose
+   without fighting: the outer wrapper is full-surface height, so the 112%
+   travel is measured against the screen and not against the leaf. */
+@keyframes tr1via-leaf-fall    { 0% { transform:translate3d(0,0,0); }
+                                 100% { transform:translate3d(0,112%,0); } }
+@keyframes tr1via-leaf-sway    { 0% { transform:translate3d(calc(var(--sway, 0px) * -1),0,0); }
+                                 100% { transform:translate3d(var(--sway, 0px),0,0); } }
+/* Tumbling on a tilted axis, so a leaf turns over the way a real one does
+   rather than spinning flat like a pinwheel. */
+@keyframes tr1via-leaf-tumble  { 0% { transform:rotate3d(1, 2.2, 0.35, 0deg); }
+                                 100% { transform:rotate3d(1, 2.2, 0.35, calc(var(--dir, 1) * 360deg)); } }
 @keyframes tr1via-lightning    { 0%,100% { opacity:0; }
                                  2.5% { opacity:0.9; } 3.5% { opacity:0.1; } 4% { opacity:0.7; } 5% { opacity:0; }
                                  45% { opacity:0; } 46% { opacity:0.5; } 47% { opacity:0; } }
