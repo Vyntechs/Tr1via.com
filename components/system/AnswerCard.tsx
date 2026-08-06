@@ -115,18 +115,7 @@ export function AnswerCard({
         border: `1.5px solid ${cardBorder}`,
         borderRadius: 14,
         overflow: "hidden",
-        // A fixed 64px floor was four cards' worth of height the phone did
-        // not always have. On a small Android — short viewport, and the
-        // larger display scaling a lot of people run — the question screen's
-        // fixed chrome plus 4×64 overflowed, and because a timed question
-        // deliberately cannot scroll, the bottom answers were clipped and
-        // untappable. Players could not answer at all on a long question.
-        //
-        // Scaling with the viewport instead of a breakpoint means every
-        // phone gets the largest card that still leaves all four reachable,
-        // and it degrades continuously rather than snapping at one width.
-        // svh, not vh, so Android's retracting URL bar is accounted for.
-        minHeight: "clamp(44px, 8.5svh, 64px)",
+        minHeight: 64,
         opacity,
         transform: `scale(${scale})`,
         transition: "all .35s cubic-bezier(.2,.7,.3,1)",

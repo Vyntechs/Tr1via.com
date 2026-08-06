@@ -202,13 +202,3 @@ body {
     scroll-behavior: auto !important;
   }
 }
-
-/* The question screen's footnote is reassurance, not instruction. On a phone
-   too short to hold the whole screen — small Android, or any device with
-   larger display scaling — it is the one thing that can go so all four
-   answer cards stay on screen and tappable. A timed question deliberately
-   cannot scroll, so anything that overflows is unreachable, not merely
-   below. Answers win. */
-@media (max-height: 700px) {
-  .tr1via-question-footnote { display: none; }
-}

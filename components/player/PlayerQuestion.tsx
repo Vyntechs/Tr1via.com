@@ -211,17 +211,8 @@ export function PlayerQuestion({
 
       {/* The four answers are the interaction. Nothing above them may take
           their space: flexShrink 0 means the question text gives ground
-          first (it already auto-fits and can shrink to nothing), so on a
-          phone too short for everything, the player still gets four
-          tappable cards instead of two and a half. */}
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: "clamp(6px, 1svh, 8px)",
-          flexShrink: 0,
-        }}
-      >
+          first — it already auto-fits and can shrink to nothing. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
         {slots.map((slot, i) => (
           <AnswerCard
             key={slot}
@@ -236,11 +227,6 @@ export function PlayerQuestion({
         ))}
       </div>
 
-      {/* Reassurance, not instruction — so it is the first thing to go when
-          the phone is short. It sits below the answers, and this screen
-          cannot scroll, so on a small Android it was being clipped anyway;
-          better to drop it deliberately than to have it push a card out of
-          reach on its way to being cut off. */}
       <div
         data-testid="player-question-footnote"
         style={{
@@ -249,9 +235,7 @@ export function PlayerQuestion({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          flexShrink: 0,
         }}
-        className="tr1via-question-footnote"
       >
         <Eyebrow color={t.inkMute} size={9}>EVERYONE&apos;S #&apos;S ARE SCRAMBLED · YOURS IS YOURS</Eyebrow>
         <Eyebrow color={t.inkMute} size={9}>KEYBOARD: 1·2·3·4</Eyebrow>
