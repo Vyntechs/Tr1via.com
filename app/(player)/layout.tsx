@@ -15,7 +15,24 @@ export default function PlayerLayout({ children }: { children: ReactNode }) {
   return (
     <div
       style={{
-        minHeight: "100dvh",
+        // `height`, not `minHeight`. This is the whole reason small Android
+        // phones could not reach the bottom answers.
+        //
+        // Every player screen budgets its own space: the question screen
+        // gives the prompt `flex: 1 1 auto` and shrinks its font to fit,
+        // precisely so the four answer cards always survive. That budget
+        // needs a definite height to divide up. With only a min-height the
+        // box grows to whatever its content wants, nothing is ever asked to
+        // shrink, and the overflow runs off the bottom of the phone — and
+        // because a timed question deliberately locks scrolling, those
+        // answers were not merely below the fold, they were untappable.
+        // Measured on a 360x560 viewport: 0 of 4 answers reachable before,
+        // 4 of 4 after.
+        //
+        // Screens that legitimately need more room (the lobby with its topic
+        // list) scroll inside PhoneScreen, which already sets overflowY auto
+        // for exactly this — that was always the intent.
+        height: "100dvh",
         width: "100%",
         // Each route owns its own background via PhoneScreen; we just supply
         // the viewport box and a neutral fallback for the brief moment

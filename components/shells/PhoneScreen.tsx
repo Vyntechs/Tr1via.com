@@ -7,9 +7,83 @@
 
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
 import { Weather } from "@/components/system/Weather";
+import { PHONE_LOGICAL_HEIGHT, fitPhoneStage } from "@/lib/player/fitPhoneStage";
+
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+/**
+ * Compose a scroll-locked screen on a fitted stage.
+ *
+ * `scroll="locked"` means this screen cannot scroll — a question under a timer
+ * must never move under the player's thumb. That makes overflow fatal rather
+ * than untidy: anything past the bottom edge is not below the fold, it is
+ * untappable. A player on a small Android could not reach the third and fourth
+ * answer cards at all.
+ *
+ * So a locked screen is composed against a fixed logical height and the whole
+ * finished composition is scaled to the device, exactly as the venue TV does
+ * with `fitTVCanvas`. Type and controls shrink together and keep their
+ * relationships; nothing reflows, nothing is cropped, and no viewport is short
+ * enough to push a control off a stage that is fitted to the viewport.
+ *
+ * Unlocked screens are untouched: they scroll, so overflow is merely more page.
+ */
+function FittedStage({ children }: { children: ReactNode }) {
+  const frameRef = useRef<HTMLDivElement | null>(null);
+  const [box, setBox] = useState({ width: 0, height: 0 });
+
+  useIsomorphicLayoutEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const update = (width: number, height: number) =>
+      setBox((cur) =>
+        Math.abs(cur.width - width) < 0.5 && Math.abs(cur.height - height) < 0.5
+          ? cur
+          : { width, height },
+      );
+    const rect = frame.getBoundingClientRect();
+    update(rect.width, rect.height);
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (r) update(r.width, r.height);
+    });
+    ro.observe(frame);
+    return () => ro.disconnect();
+  }, []);
+
+  const fit = fitPhoneStage(box.width, box.height);
+
+  return (
+    <div
+      ref={frameRef}
+      data-testid="phone-stage-frame"
+      style={{ position: "relative", flex: 1, minHeight: 0, overflow: "hidden" }}
+    >
+      <div
+        data-testid="phone-stage"
+        data-phone-stage-scale={fit.scale.toFixed(4)}
+        style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          width: fit.width,
+          height: fit.height,
+          transform: `scale(${fit.scale})`,
+          transformOrigin: "top left",
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
+export { PHONE_LOGICAL_HEIGHT };
 
 export interface PhoneScreenProps {
   children: ReactNode;
@@ -78,9 +152,15 @@ export function PhoneScreen({
       {weather && !fill && (
         <Weather themeKey={themeKey} intensity={weatherIntensity} compact />
       )}
-      <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-        {children}
-      </div>
+      {scroll === "locked" ? (
+        <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          <FittedStage>{children}</FittedStage>
+        </div>
+      ) : (
+        <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
+          {children}
+        </div>
+      )}
     </div>
   );
 }

@@ -209,7 +209,10 @@ export function PlayerQuestion({
         <Eyebrow color={t.inkMute} size={9}>+10% &lt; 5s</Eyebrow>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* The four answers are the interaction. Nothing above them may take
+          their space: flexShrink 0 means the question text gives ground
+          first — it already auto-fits and can shrink to nothing. */}
+      <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0 }}>
         {slots.map((slot, i) => (
           <AnswerCard
             key={slot}
@@ -225,6 +228,7 @@ export function PlayerQuestion({
       </div>
 
       <div
+        data-testid="player-question-footnote"
         style={{
           marginTop: "auto",
           paddingTop: 14,
