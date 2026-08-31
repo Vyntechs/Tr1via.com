@@ -57,14 +57,14 @@ describe("PATCH /api/questions/[id]/photo clear", () => {
     expect(updates).toEqual([{
       image_url: null,
       image_attribution: null,
-      image_source: null,
+      image_source: "none",
     }]);
     await expect(response.json()).resolves.toMatchObject({
       question: {
         id: QUESTION_ID,
         image_url: null,
         image_attribution: null,
-        image_source: null,
+        image_source: "none",
       },
     });
   });

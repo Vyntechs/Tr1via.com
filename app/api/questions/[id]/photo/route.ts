@@ -52,7 +52,7 @@ export async function PATCH(
   const admin = getSupabaseAdmin();
   const isClear = patch.url === undefined;
   const update = isClear
-    ? { image_url: null, image_attribution: null, image_source: null }
+    ? { image_url: null, image_attribution: null, image_source: "none" }
     : {
         image_url: patch.url,
         image_attribution: patch.attribution ?? null,

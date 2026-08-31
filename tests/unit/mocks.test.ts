@@ -4,16 +4,23 @@
 // entry) because most unit tests don't need it. Instead this spec opens
 // its own server lifecycle so the mocks are only active for these tests.
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 
 import { mockServer, resetAnthropicMock } from "../mocks/server";
 
 describe("MSW mocks", () => {
   beforeAll(() => {
-    mockServer.listen({ onUnhandledRequest: "bypass" });
+    globalThis.__TR1VIA_PROVIDER_MSW_ACTIVE__ = true;
+    mockServer.listen({ onUnhandledRequest: "error" });
+  });
+  beforeEach(() => {
+    globalThis.__TR1VIA_PROVIDER_MSW_ACTIVE__ = true;
+    process.env.ANTHROPIC_API_KEY = "fake-msw-anthropic-key";
+    process.env.PEXELS_API_KEY = "fake-msw-pexels-key";
   });
   afterAll(() => {
     mockServer.close();
+    globalThis.__TR1VIA_PROVIDER_MSW_ACTIVE__ = false;
   });
 
   it("intercepts Anthropic and returns 20 questions in emit_questions tool_use shape", async () => {

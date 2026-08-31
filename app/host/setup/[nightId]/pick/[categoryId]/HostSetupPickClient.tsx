@@ -174,6 +174,11 @@ export function HostSetupPickClient({
   const [photoCandidates, setPhotoCandidates] = useState<HostGenPhotoCandidate[]>([]);
   const [photoLookupError, setPhotoLookupError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A point-slot PATCH is not fully reconciled until the authoritative rows
+  // have replaced local picks. Keep this outside the modal lifecycle so a
+  // host who closes the editor cannot lock stale pre-swap assignments.
+  const boardSyncRequiredRef = useRef(false);
+  const [boardSyncRequired, setBoardSyncRequired] = useState(false);
   // Last sign of life from the background job — a `progress` heartbeat or an
   // inserted/updated question. Feeds useGenerationStatus so the safety timer is
   // measured from real activity (the write+verify run legitimately takes
@@ -221,10 +226,11 @@ export function HostSetupPickClient({
     setQuestions(rows);
     // Ordinary generation refetches merge in-progress local picks. A
     // slot-changing edit is different: swap_point_value may have displaced a
-    // second row, so its authoritative refetch replaces pick state from DB.
+    // second row, so only its authoritative refetch may change pick state.
+    // This also keeps the recovery Lock reachable instead of merging to 8.
     if (reconciliation === "canonical") {
       setPickedIds(canonicalPickedAfterRefetch(rows));
-    } else {
+    } else if (!boardSyncRequiredRef.current) {
       setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
     }
     // If the host had an edit/swap/upload panel open for a question that was
@@ -237,6 +243,12 @@ export function HostSetupPickClient({
     }
     return rows;
   }, [categoryId]);
+
+  const reconcileBoardAuthoritatively = useCallback(async () => {
+    await refetchQuestions("canonical");
+    boardSyncRequiredRef.current = false;
+    setBoardSyncRequired(false);
+  }, [refetchQuestions]);
 
   const refetchAuditSummary = useCallback(async () => {
     const supa = getSupabaseBrowser();
@@ -550,6 +562,28 @@ export function HostSetupPickClient({
   async function handleLock(
     assignments: Array<{ id: string; pointValue: number }>,
   ) {
+    // Recovery is deliberately a separate click. The assignments passed to
+    // this invocation were computed from the stale render, so they must never
+    // be reused even after the canonical read succeeds.
+    if (boardSyncRequiredRef.current) {
+      setLocking(true);
+      setError(null);
+      try {
+        await reconcileBoardAuthoritatively();
+        setError(
+          "Your board was refreshed from the saved edit. Review it, then press Lock again.",
+        );
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "The board could not refresh. Try Lock again when you are connected.",
+        );
+      } finally {
+        setLocking(false);
+      }
+      return;
+    }
     if (
       pickedIds.size !== 7 ||
       assignments.length !== 7 ||
@@ -687,13 +721,18 @@ export function HostSetupPickClient({
   ): Promise<QuestionRow | null> {
     setSavingEdit(true);
     setError(null);
-    // Snapshot the slot before the save: if it changes, the server's
-    // swap_point_value RPC may have displaced whatever row held the target
-    // slot (a second row we never saw change), so we must refetch to keep the
-    // board preview from drifting (two cards rendered at the same value).
-    const previousPointValue =
-      questions.find((q) => q.id === questionId)?.point_value ?? null;
     try {
+      // A Save retry is also a recovery boundary. Do not send another PATCH
+      // until the previous successful slot mutation has been reconciled.
+      if (boardSyncRequiredRef.current) {
+        await reconcileBoardAuthoritatively();
+      }
+      // Snapshot the slot before the save: if it changes, the server's
+      // swap_point_value RPC may have displaced whatever row held the target
+      // slot (a second row we never saw change), so we must refetch to keep the
+      // board preview from drifting (two cards rendered at the same value).
+      const previousPointValue =
+        questions.find((q) => q.id === questionId)?.point_value ?? null;
       const res = await fetch(`/api/questions/${questionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -720,7 +759,9 @@ export function HostSetupPickClient({
       const { question } = (await res.json()) as { question: QuestionRow };
       setQuestions((prev) => prev.map((q) => (q.id === question.id ? question : q)));
       if (pointValueChanged(previousPointValue, question.point_value)) {
-        await refetchQuestions("canonical");
+        boardSyncRequiredRef.current = true;
+        setBoardSyncRequired(true);
+        await reconcileBoardAuthoritatively();
       }
       return question;
     } catch (err) {
@@ -1281,6 +1322,28 @@ export function HostSetupPickClient({
             onErrorRetry={() => setUploadError(null)}
           />
         </ModalOverlay>
+      )}
+
+      {boardSyncRequired && (
+        <div
+          role="status"
+          data-testid="host-board-sync-required"
+          style={{
+            position: "fixed",
+            left: 20,
+            bottom: 20,
+            zIndex: 60,
+            padding: "10px 14px",
+            borderRadius: 10,
+            background: "rgba(123,82,20,.96)",
+            color: "#FFF",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          Saved edit needs a board refresh before Lock.
+        </div>
       )}
 
       {error && (

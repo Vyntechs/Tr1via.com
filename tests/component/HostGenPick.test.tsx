@@ -459,6 +459,107 @@ describe("HostSetupPickClient authoritative slot-edit reconciliation", () => {
     expect(screen.getAllByText("Edited C")).toHaveLength(2);
     expect(screen.getAllByText("Displaced D")).toHaveLength(1);
   });
+
+  it("uses the first Lock click only to recover a board whose post-edit canonical read failed", async () => {
+    const rows = slotSwapQuestionRows();
+    const lockBodies: Array<Record<string, unknown>> = [];
+    let canonicalReads = 0;
+    let initialReadDone = false;
+    supa = createSupabaseMock({
+      questions: rows,
+      report: null,
+      questionsQuery: async () => {
+        if (!rows.find((row) => row.id === "q7")?.is_picked) {
+          initialReadDone = true;
+          return { data: rows, error: null };
+        }
+        canonicalReads += 1;
+        if (canonicalReads === 1) {
+          return { data: null, error: { message: "offline" } };
+        }
+        return { data: rows, error: null };
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/questions/q7") && init?.method === "PATCH") {
+          const editedC = rows.find((row) => row.id === "q7")!;
+          const displacedD = rows.find((row) => row.id === "q4")!;
+          editedC.is_picked = true;
+          editedC.point_value = 500;
+          displacedD.is_picked = false;
+          displacedD.point_value = null;
+          return new Response(JSON.stringify({ question: editedC }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/api/categories/cat-1/pick")) {
+          lockBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return new Response(JSON.stringify({ picked: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Texas Breweries"
+        categoryTopic="texas breweries"
+        initialState="review"
+        initialQuestions={rows}
+        themeKey="house"
+      />,
+    );
+
+    await waitFor(() => expect(initialReadDone).toBe(true));
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[7]!);
+    fireEvent.click(screen.getByRole("button", { name: "500" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /save · this question/i }),
+    );
+
+    expect(
+      await screen.findByText(/edit was saved, but the board could not refresh/i),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Close question editor"));
+
+    // An ordinary generation refetch may land before the host recovers. It
+    // must not merge the canonical replacement into the stale seven and make
+    // the Lock control unreachable with an eight-question local set.
+    await act(async () => {
+      await supa.broadcast("question_added", { attempt: 1 });
+    });
+    await waitFor(() => expect(canonicalReads).toBe(2));
+
+    fireEvent.click(screen.getByRole("button", { name: /lock the category/i }));
+    await waitFor(() => expect(canonicalReads).toBe(3));
+    expect(lockBodies).toHaveLength(0);
+    expect(screen.getAllByText("Edited C")).toHaveLength(2);
+    expect(screen.getAllByText("Displaced D")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /lock the category/i }));
+    await waitFor(() => expect(lockBodies).toHaveLength(1));
+    expect(lockBodies[0]).toEqual({
+      assignments: [
+        { id: "q0", pointValue: 100 },
+        { id: "q1", pointValue: 200 },
+        { id: "q2", pointValue: 300 },
+        { id: "q3", pointValue: 400 },
+        { id: "q7", pointValue: 500 },
+        { id: "q5", pointValue: 600 },
+        { id: "q6", pointValue: 700 },
+      ],
+    });
+  });
 });
 
 describe("HostSetupPickClient deliberate no-image choice", () => {
@@ -520,7 +621,7 @@ describe("HostSetupPickClient deliberate no-image choice", () => {
               id: "q0",
               image_url: null,
               image_attribution: null,
-              image_source: null,
+              image_source: "none",
             },
           }),
           { status: 200, headers: { "Content-Type": "application/json" } },
@@ -584,7 +685,10 @@ function createSupabaseMock(input: {
   report: Record<string, unknown> | null;
   categoryState?: "draft" | "generating" | "review" | "ready";
   job?: { attempt: number; phase: string };
-  questionsQuery?: () => Promise<{ data: QuestionRow[]; error: null }>;
+  questionsQuery?: () => Promise<{
+    data: QuestionRow[] | null;
+    error: { message: string } | null;
+  }>;
 }) {
   const handlers = new Map<
     string,
@@ -637,7 +741,10 @@ function createGenerationJobQuery(job: { attempt: number; phase: string }) {
 
 function createQuestionsQuery(
   questions: QuestionRow[],
-  query?: () => Promise<{ data: QuestionRow[]; error: null }>,
+  query?: () => Promise<{
+    data: QuestionRow[] | null;
+    error: { message: string } | null;
+  }>,
 ) {
   return {
     select: vi.fn(() => ({

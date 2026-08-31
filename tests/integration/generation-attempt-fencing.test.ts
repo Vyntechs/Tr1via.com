@@ -29,6 +29,13 @@ const BOARD_SLOT_FIX_PATH = path.join(
 const boardSlotFixSql = existsSync(BOARD_SLOT_FIX_PATH)
   ? readFileSync(BOARD_SLOT_FIX_PATH, "utf8")
   : "";
+const HOST_IMAGE_AUTHORITY_PATH = path.join(
+  MIGRATIONS_DIR,
+  "20260831135541_host_image_authority.sql",
+);
+const hostImageAuthoritySql = existsSync(HOST_IMAGE_AUTHORITY_PATH)
+  ? readFileSync(HOST_IMAGE_AUTHORITY_PATH, "utf8")
+  : "";
 
 interface FunctionSecurity {
   owner: string;
@@ -90,6 +97,7 @@ describe("generation attempt transactional fencing", () => {
     await db.exec(photoQuerySql);
     securityAfterPhotoQuery = await readFunctionSecurity();
     await db.exec(boardSlotFixSql);
+    await db.exec(hostImageAuthoritySql);
 
     const one = async <T>(sql: string, params: unknown[] = []) =>
       (await db!.query<T>(sql, params)).rows[0]!;
@@ -141,6 +149,130 @@ describe("generation attempt transactional fencing", () => {
     expect(securityAfterPhotoQuery?.config).toContain(
       "search_path=pg_catalog, public",
     );
+  });
+
+  test("the host-image authority replacement remains service-role-only", async () => {
+    expect(hostImageAuthoritySql).not.toBe("");
+    expect(db).not.toBeNull();
+    if (!db) return;
+
+    const security = await db.query<FunctionSecurity>(`
+      select
+        pg_get_userbyid(p.proowner) as owner,
+        p.prosecdef as security_definer,
+        p.proconfig as config,
+        has_function_privilege('anon', p.oid, 'EXECUTE') as anon_can_execute,
+        has_function_privilege('authenticated', p.oid, 'EXECUTE') as authenticated_can_execute,
+        has_function_privilege('service_role', p.oid, 'EXECUTE') as service_role_can_execute
+      from pg_proc p
+      where p.oid = 'public.commit_generation_photo(uuid,smallint,uuid,text,text,text)'::regprocedure
+    `);
+
+    expect(security.rows[0]).toMatchObject({
+      security_definer: true,
+      anon_can_execute: false,
+      authenticated_can_execute: false,
+      service_role_can_execute: true,
+    });
+    expect(security.rows[0]?.config).toContain("search_path=pg_catalog, public");
+  });
+
+  test("host image choices win either ordering while untouched rows accept auto photos", async () => {
+    expect(db).not.toBeNull();
+    if (!db) return;
+
+    const category = await db.query<{ id: string }>(
+      `insert into categories (game_id, name, topic, position, state)
+       values ($1, 'Image authority', 'Image ordering', 1, 'generating')
+       returning id`,
+      [gameId],
+    );
+    const imageCategoryId = category.rows[0]!.id;
+    await db.query(
+      `insert into question_generation_jobs (
+        category_id, game_id, night_id, host_id, phase, attempt
+      ) values ($1, $2, $3, $4, 'images', 1)`,
+      [imageCategoryId, gameId, nightId, hostId],
+    );
+
+    const ids = {
+      untouched: crypto.randomUUID(),
+      uploadFirst: crypto.randomUUID(),
+      noneFirst: crypto.randomUUID(),
+      autoFirst: crypto.randomUUID(),
+    };
+    for (const [prompt, id] of Object.entries(ids)) {
+      await db.query(
+        `insert into questions (
+          id, category_id, prompt, options, correct_index, difficulty
+        ) values ($1, $2, $3, '["A","B","C","D"]'::jsonb, 0, 4)`,
+        [id, imageCategoryId, prompt],
+      );
+    }
+    await db.query(
+      `update questions
+       set image_url = 'https://storage.example/upload.jpg', image_source = 'upload'
+       where id = $1`,
+      [ids.uploadFirst],
+    );
+    await db.query(
+      `update questions set image_url = null, image_source = 'none' where id = $1`,
+      [ids.noneFirst],
+    );
+
+    const commitAuto = async (questionId: string, url: string) =>
+      (
+        await db!.query<{ result: { applied: boolean; code: string } }>(
+          `select commit_generation_photo(
+            $1, 1::smallint, $2, $3, 'Pexels attribution', 'pexels'
+          ) as result`,
+          [imageCategoryId, questionId, url],
+        )
+      ).rows[0]!.result;
+
+    await expect(
+      commitAuto(ids.untouched, "https://images.pexels.com/untouched.jpg"),
+    ).resolves.toEqual({ applied: true, code: "applied" });
+    await expect(
+      commitAuto(ids.uploadFirst, "https://images.pexels.com/late-upload.jpg"),
+    ).resolves.toEqual({ applied: false, code: "host_override" });
+    await expect(
+      commitAuto(ids.noneFirst, "https://images.pexels.com/late-none.jpg"),
+    ).resolves.toEqual({ applied: false, code: "host_override" });
+    await expect(
+      commitAuto(ids.autoFirst, "https://images.pexels.com/first.jpg"),
+    ).resolves.toEqual({ applied: true, code: "applied" });
+    await db.query(
+      `update questions
+       set image_url = 'https://storage.example/latest.jpg', image_source = 'upload'
+       where id = $1`,
+      [ids.autoFirst],
+    );
+
+    const images = await db.query<{
+      id: string;
+      image_url: string | null;
+      image_source: string | null;
+    }>(
+      `select id, image_url, image_source
+       from questions where category_id = $1`,
+      [imageCategoryId],
+    );
+    expect(Object.fromEntries(images.rows.map((row) => [row.id, row]))).toMatchObject({
+      [ids.untouched]: {
+        image_url: "https://images.pexels.com/untouched.jpg",
+        image_source: "pexels",
+      },
+      [ids.uploadFirst]: {
+        image_url: "https://storage.example/upload.jpg",
+        image_source: "upload",
+      },
+      [ids.noneFirst]: { image_url: null, image_source: "none" },
+      [ids.autoFirst]: {
+        image_url: "https://storage.example/latest.jpg",
+        image_source: "upload",
+      },
+    });
   });
 
   test("serializes auto-pick completion on the game before selected-row writes", async () => {
