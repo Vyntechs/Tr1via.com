@@ -61,7 +61,10 @@
 // names the step, the game, the question, and DB state at the failure.
 
 import { createClient } from "@supabase/supabase-js";
-import { genTimeoutFromEnv } from "./prod-smoke-config.mjs";
+import {
+  canonicalPickAssignments,
+  genTimeoutFromEnv,
+} from "./prod-smoke-config.mjs";
 
 const BASE = process.env.SMOKE_BASE_URL ?? "https://tr1via.com";
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
@@ -431,10 +434,12 @@ async function setupCategory(gameId, topic, position) {
     throw new Error(`(${topic}) only ${candidates.length} questions after ${GEN_TIMEOUT_MS}ms`);
   }
 
-  // pick first 7 — server assigns 100..700 point values + flips state to 'ready'
+  // Lock the first seven in their selected order with exact 100..700 slots.
+  // The server validates and persists these assignments without reordering.
+  const assignments = canonicalPickAssignments(candidates);
   const pickRes = await call(founderJar, `/api/categories/${categoryId}/pick`, {
     method: "POST",
-    body: JSON.stringify({ questionIds: candidates.slice(0, 7).map((q) => q.id) }),
+    body: JSON.stringify({ assignments }),
   });
   if (!pickRes.ok) throw new Error(`pick (${topic}): ${pickRes.status} ${await pickRes.text()}`);
 

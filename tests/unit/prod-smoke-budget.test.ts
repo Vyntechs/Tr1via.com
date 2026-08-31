@@ -2,11 +2,29 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 import {
+  canonicalPickAssignments,
   DEFAULT_GEN_TIMEOUT_MS,
   genTimeoutFromEnv,
 } from "../../scripts/prod-smoke-config.mjs";
 
 describe("prod smoke generation budget", () => {
+  it("locks the first seven candidates with exact canonical assignments", () => {
+    const candidates = Array.from({ length: 9 }, (_, index) => ({
+      id: `candidate-${index + 1}`,
+    }));
+
+    expect(canonicalPickAssignments(candidates)).toEqual(
+      candidates.slice(0, 7).map((candidate, index) => ({
+        id: candidate.id,
+        pointValue: (index + 1) * 100,
+      })),
+    );
+
+    const fullFlow = readFileSync("scripts/full-flow-prod.mjs", "utf8");
+    expect(fullFlow).toContain("canonicalPickAssignments(candidates)");
+    expect(fullFlow).not.toMatch(/JSON\.stringify\(\{ questionIds:/);
+  });
+
   it("waits longer than the observed 90 second generation edge by default", () => {
     expect(DEFAULT_GEN_TIMEOUT_MS).toBe(240_000);
     expect(genTimeoutFromEnv({ NODE_ENV: "test" })).toBe(
@@ -22,9 +40,8 @@ describe("prod smoke generation budget", () => {
     )?.[0];
 
     expect(workflow).toMatch(/timeout-minutes:\s*15/);
-    expect(fullFlow).toContain(
-      'import { genTimeoutFromEnv } from "./prod-smoke-config.mjs";',
-    );
+    expect(fullFlow).toContain("canonicalPickAssignments,");
+    expect(fullFlow).toContain("genTimeoutFromEnv,");
     expect(fullFlow).toContain("const GEN_TIMEOUT_MS = genTimeoutFromEnv();");
     expect(fullFlowStep).toContain("timeout-minutes: 12");
     expect(fullFlowStep).toContain("CATEGORIES_PER_GAME: 1");
