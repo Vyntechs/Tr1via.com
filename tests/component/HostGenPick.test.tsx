@@ -638,6 +638,73 @@ describe("HostSetupPickClient deliberate no-image choice", () => {
         'img[src="https://storage.example/old-image.png"]',
       ),
     ).toBeNull();
+
+    await act(async () => {
+      await supa.broadcast("photo_attached", {
+        attempt: 1,
+        questionId: "q0",
+        imageUrl: "https://images.pexels.com/late-auto.jpg",
+      });
+    });
+    expect(
+      document.querySelector(
+        'img[src="https://images.pexels.com/late-auto.jpg"]',
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps a known upload while an untouched row accepts an automatic photo broadcast", async () => {
+    const rows = questionRows();
+    rows[0] = {
+      ...rows[0],
+      image_url: "https://storage.example/host-upload.png",
+      image_source: "upload",
+    };
+    supa = createSupabaseMock({ questions: rows, report: null });
+
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Texas Breweries"
+        categoryTopic="texas breweries"
+        initialState="review"
+        initialQuestions={rows}
+        themeKey="house"
+      />,
+    );
+    await waitFor(() => {
+      expect(supa.from).toHaveBeenCalledWith("questions");
+    });
+
+    await act(async () => {
+      await supa.broadcast("photo_attached", {
+        attempt: 1,
+        questionId: "q0",
+        imageUrl: "https://images.pexels.com/late-overwrite.jpg",
+      });
+      await supa.broadcast("photo_attached", {
+        attempt: 1,
+        questionId: "q1",
+        imageUrl: "https://images.pexels.com/untouched-auto.jpg",
+      });
+    });
+
+    expect(
+      document.querySelector(
+        'img[src="https://storage.example/host-upload.png"]',
+      ),
+    ).not.toBeNull();
+    expect(
+      document.querySelector(
+        'img[src="https://images.pexels.com/late-overwrite.jpg"]',
+      ),
+    ).toBeNull();
+    expect(
+      document.querySelector(
+        'img[src="https://images.pexels.com/untouched-auto.jpg"]',
+      ),
+    ).not.toBeNull();
   });
 });
 

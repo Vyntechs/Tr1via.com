@@ -322,6 +322,7 @@ export function HostSetupPickClient({
           attempt?: number;
           questionId?: string;
           imageUrl?: string;
+          attribution?: string | null;
         };
         if (
           typeof payload.attempt === "number" &&
@@ -333,11 +334,26 @@ export function HostSetupPickClient({
         setLastActivityAt(Date.now());
         if (!payload.questionId) return;
         setQuestions((prev) =>
-          prev.map((q) =>
-            q.id === payload.questionId
-              ? { ...q, image_url: payload.imageUrl ?? q.image_url }
-              : q,
-          ),
+          prev.map((q) => {
+            // This event is emitted only for automatic generation photos.
+            // Mirror the database authority rule: a late event may hydrate an
+            // untouched row, but never repaint a host upload, manual choice,
+            // or deliberate no-image sentinel already known by the client.
+            if (
+              q.id !== payload.questionId ||
+              q.image_url !== null ||
+              q.image_source !== null ||
+              !payload.imageUrl
+            ) {
+              return q;
+            }
+            return {
+              ...q,
+              image_url: payload.imageUrl,
+              image_attribution: payload.attribution ?? null,
+              image_source: "pexels",
+            };
+          }),
         );
       })
       .on("broadcast", { event: "done" }, async (msg) => {
