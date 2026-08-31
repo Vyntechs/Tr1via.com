@@ -50,7 +50,9 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-stadium-bowl")).toBeInTheDocument();
     expect(screen.getByTestId("september-stadium-field")).toBeInTheDocument();
     expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
-    expect(screen.getByTestId("september-stadium-bleachers")).toBeInTheDocument();
+    expect(screen.getByTestId("september-stadium-silhouette")).toBeInTheDocument();
+    expect(screen.queryByTestId("september-stadium-bleachers")).toBeNull();
+    expect(screen.queryByTestId("september-stadium-perspective-lines")).toBeNull();
     expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
   });
 
@@ -74,7 +76,7 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-front-compact-edge")).toBeInTheDocument();
     expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "compact");
     expect(screen.queryByTestId("september-stadium-lamp-head")).toBeNull();
-    expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
+    expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
     expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
   });
 
@@ -87,8 +89,7 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-front")).toHaveAttribute("data-front-phase", "balanced");
     expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "results-safe");
     expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
-    expect(screen.queryByTestId("september-stadium-bleachers")).toBeNull();
-    expect(screen.queryByTestId("september-stadium-perspective-lines")).toBeNull();
+    expect(screen.getByTestId("september-stadium-silhouette")).toBeInTheDocument();
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
     intermission.unmount();
 

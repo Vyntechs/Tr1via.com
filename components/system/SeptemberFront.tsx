@@ -192,11 +192,14 @@ function DistantStadium({
               <LampHead x={350} y={68} scale={0.58} />
             </g>
             <g data-testid="september-stadium-bowl">
-              <path d="M-12 380V306Q86 282 155 277H225Q294 282 392 306V380Z" fill="#071014" opacity=".9" />
-              <path data-testid="september-stadium-press-box" d="M144 278V256H236V278Z" fill="#0A171B" stroke="#F3E4C3" strokeOpacity=".5" strokeWidth="1.2" />
-              <path d="M18 304Q190 263 362 304M8 319Q190 282 372 319" fill="none" stroke="#F3E4C3" strokeOpacity=".34" strokeWidth="1.3" />
+              <path
+                data-testid="september-stadium-press-box"
+                d="M18 286V280H132V272H144V254H236V272H248V280H362V286Z"
+                fill="#102B2B"
+                opacity=".54"
+              />
             </g>
-            <path data-testid="september-stadium-field" d="M0 348H380V380H0Z" fill="#102B2B" opacity=".88" />
+            <path data-testid="september-stadium-field" d="M18 288H362" fill="none" stroke="#72B8B0" strokeOpacity=".28" strokeWidth="1.2" />
           </>
         ) : compact ? (
           <>
@@ -205,10 +208,8 @@ function DistantStadium({
               <path d="M4 730 14 706 4 682 14 658 4 634M376 730 366 706 376 682 366 658 376 634" strokeWidth="1" />
             </g>
             <g data-testid="september-stadium-bowl">
-              <path d="M-20 760V738Q94 716 160 710H220Q286 716 400 738V760Z" fill="#071014" opacity=".84" />
-              <path d="M8 730Q190 696 372 730M2 744Q190 714 378 744" fill="none" stroke="#F3E4C3" strokeOpacity=".24" strokeWidth="1.2" />
+              <path d="M0 754H380V760H0Z" fill="#102B2B" opacity=".18" />
             </g>
-            <path data-testid="september-stadium-field" d="M0 742H380V760H0Z" fill="#102B2B" opacity=".82" />
           </>
         ) : quiet ? (
           <>
@@ -219,7 +220,7 @@ function DistantStadium({
               <LampHead x={1218} y={190} scale={0.78} />
             </g>
             <g data-testid="september-stadium-bowl">
-              <path d="M-30 720V676Q300 650 560 660H720Q980 650 1310 676V720Z" fill="#071014" opacity=".78" />
+              <path d="M0 650H1280V658H0Z" fill="#102B2B" opacity=".3" />
             </g>
           </>
         ) : (
@@ -231,22 +232,17 @@ function DistantStadium({
               <LampHead x={1190} y={148} />
             </g>
             <g data-testid="september-stadium-bowl">
-              <path d="M-40 720V642Q180 610 355 580T560 548V522H720V548Q845 562 925 580T1320 642V720Z" fill="#071014" opacity=".86" />
-              {!resultsSafe && (
-                <g data-testid="september-stadium-bleachers" fill="none" stroke="#F3E4C3" strokeOpacity=".25" strokeWidth="1.5">
-                  <path d="M80 638Q640 520 1200 638" />
-                  <path d="M40 654Q640 548 1240 654" />
-                  <path d="M20 672Q640 576 1260 672" />
-                  <path d="M0 690Q640 604 1280 690" />
-                </g>
-              )}
+              <path
+                data-testid="september-stadium-silhouette"
+                d={resultsSafe
+                  ? "M0 650H1280V658H0Z"
+                  : "M0 657V648H420V640H560V620H720V640H860V648H1280V657Z"}
+                fill="#102B2B"
+                opacity={resultsSafe ? ".3" : ".48"}
+              />
             </g>
             <g data-testid="september-stadium-field">
-              <path d="M0 660H1280V720H0Z" fill="#102B2B" opacity=".84" />
-              <path d="M0 660H1280" stroke="#F3E4C3" strokeOpacity=".42" strokeWidth="2" />
-              {!resultsSafe && (
-                <path data-testid="september-stadium-perspective-lines" d="M90 720 410 660M1190 720 870 660" stroke="#72B8B0" strokeOpacity=".28" strokeWidth="2" />
-              )}
+              <path d="M0 658H1280" stroke="#72B8B0" strokeOpacity=".26" strokeWidth="2" />
             </g>
           </>
         )}
@@ -255,31 +251,25 @@ function DistantStadium({
   );
 }
 
-function FridayNightHashes({ compact }: { compact: boolean }) {
-  const marks = compact
-    ? [[12, 38], [55, 78], [302, 325], [342, 368]]
-    : [
-        [28, 66], [112, 150], [196, 234], [280, 318], [364, 402], [448, 486],
-        [794, 832], [878, 916], [962, 1000], [1046, 1084], [1130, 1168], [1214, 1252],
-      ];
-  const viewWidth = compact ? 380 : 1280;
-  const viewHeight = compact ? 760 : 720;
-  const firstY = compact ? 724 : 676;
-  const secondY = compact ? 746 : 704;
+function FridayNightHashes() {
+  const marks = [
+    [28, 66], [112, 150], [196, 234], [280, 318], [364, 402], [448, 486],
+    [794, 832], [878, 916], [962, 1000], [1046, 1084], [1130, 1168], [1214, 1252],
+  ];
 
   return (
     <svg
       data-testid="september-friday-night-hashes"
-      viewBox={`0 0 ${viewWidth} ${viewHeight}`}
+      viewBox="0 0 1280 720"
       preserveAspectRatio="none"
       aria-hidden="true"
-      style={layer({ opacity: compact ? 0.52 : 0.58 })}
+      style={layer({ opacity: 0.5 })}
     >
-      <g stroke="#F3E4C3" strokeLinecap="round" strokeWidth={compact ? 1.4 : 2} opacity=".62">
+      <g stroke="#F3E4C3" strokeLinecap="round" strokeWidth="2" opacity=".54">
         {marks.map(([start, end]) => (
           <g key={`${start}-${end}`}>
-            <path d={`M${start} ${firstY}H${end}`} />
-            <path d={`M${start + 7} ${secondY}H${end - 5}`} />
+            <path d={`M${start} 630H${end}`} />
+            <path d={`M${start + 7} 646H${end - 5}`} />
           </g>
         ))}
       </g>
@@ -363,7 +353,7 @@ export function SeptemberFront({
       />
 
       <DistantStadium compact={compact} card={card} finale={clear} quiet={quiet} resultsSafe={resultsSafe} />
-      {!quiet && !resultsSafe && !card && <FridayNightHashes compact={compact} />}
+      {!quiet && !resultsSafe && !card && !compact && <FridayNightHashes />}
       {compact ? <CompactPressureEdge /> : <Contours quiet={quiet} />}
 
       {showMotion && (
