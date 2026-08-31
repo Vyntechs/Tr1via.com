@@ -1,8 +1,9 @@
 // Per-month weather. Each themeKey gets a distinct ambient visual:
 // drifting snow for January, heart confetti for February, falling clovers
 // for March, spring rain for April, distant lightning for May, endless
-// evening sky for June, firework bursts for July, drifting leaves for fall months,
-// pumpkin glow for October, snow+pine for December.
+// evening sky for June, firework bursts for July, a notebook page for August,
+// the first cool front for September, autumn drift for November, pumpkin glow
+// for October, and snow+pine for December.
 //
 // Discipline: subtle, always under ~8% opacity for ambient particles.
 // Pointer-events: none — never competes with foreground interaction.
@@ -12,6 +13,7 @@ import { ParticleField } from "./ParticleField";
 import { Lightning } from "./Lightning";
 import { JuneSky } from "./JuneSky";
 import { Pyrotechnics } from "./Pyrotechnics";
+import { SeptemberFront } from "./SeptemberFront";
 import { Snowflake, Heart, Clover, Leaf, Pumpkin, Pine, Rain } from "./motifs";
 import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 
@@ -28,12 +30,14 @@ export interface WeatherProps {
    *  the marginalia on the notebook page. Omit for none, which is safe on
    *  any screen. Ignored by every other theme. */
   page?: AugustPageName;
-  /** Phone-sized surface. Only August reads it (smaller leaves, tighter
-   *  ruling, no marginalia). Ignored by every other theme. */
+  /** Phone-sized surface. August and September simplify their atmosphere for
+   *  the smaller reading surface. Ignored by every other theme. */
   compact?: boolean;
   /** False when the surface paints its own background and the theme must not
-   *  repaint it. Only August reads it. Ignored by every other theme. */
+   *  repaint it. Read by August and September; ignored by every other theme. */
   substrate?: boolean;
+  /** Card-safe composition for the theme gallery. September reads this. */
+  surface?: "game" | "card";
 }
 
 export function Weather({
@@ -44,6 +48,7 @@ export function Weather({
   page,
   compact = false,
   substrate = true,
+  surface = "game",
 }: WeatherProps) {
   if (!intensity) return null;
   const t = TR1VIA_THEMES[themeKey];
@@ -125,6 +130,15 @@ export function Weather({
         />
       );
     case "september":
+      return (
+        <SeptemberFront
+          intensity={intensity}
+          compact={compact}
+          substrate={substrate}
+          page={page}
+          surface={surface}
+        />
+      );
     case "november":
       return (
         <ParticleField
@@ -232,7 +246,7 @@ export function weatherLabel(themeKey: ThemeKey): string {
     june: "endless evening",
     july: "firework bursts",
     august: "a notebook page, half-turned leaves",
-    september: "drifting leaves",
+    september: "the heat breaks by kickoff",
     october: "pumpkin glow",
     november: "autumn drift",
     december: "snow + pine",

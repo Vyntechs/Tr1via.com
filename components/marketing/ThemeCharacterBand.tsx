@@ -19,7 +19,7 @@ export const ROOM_MAGIC_PREVIEWS: Record<MonthlyThemeKey, RoomMagicPreview> = {
   june: { effect: "Summer flare", reaction: "yes", cue: "gold wash" },
   july: { effect: "Firework pop", reaction: "boom", cue: "sky burst" },
   august: { effect: "Late-sun glow", reaction: "nice", cue: "amber lift" },
-  september: { effect: "Leaf sweep", reaction: "wow", cue: "copper drift" },
+  september: { effect: "Cool-front kickoff", reaction: "relief", cue: "teal air, clay heat, and field chalk" },
   october: { effect: "Lantern blink", reaction: "spooky", cue: "shadow flicker" },
   november: { effect: "Table glow", reaction: "yes", cue: "harvest warmth" },
   december: { effect: "Pine sparkle", reaction: "cheer", cue: "winter twinkle" },

@@ -151,6 +151,15 @@ body {
   100% { opacity: 0;   transform: translateX(-50%) translateY(0)    scaleY(1.05); }
 }
 
+/* September "First Cool Front" — one slow breath of cooler air crossing the
+   retreating Texas heat. It never completes or accelerates, so it cannot read
+   as game progress. Compact, question, and reduced-motion surfaces omit it. */
+@keyframes tr1via-september-front-drift {
+  0%   { transform: translate3d(-1.5%, 1%, 0) rotate(-7deg); opacity: .52; }
+  52%  { transform: translate3d(.5%, -.3%, 0) rotate(-6.5deg); opacity: .72; }
+  100% { transform: translate3d(1.5%, -1%, 0) rotate(-7.25deg); opacity: .58; }
+}
+
 /* Theme showcase ("the color year") — the gallery cards on /trivia-night and
    /themes. Entrance reuses tr1via-rise, staggered by each card's --i; the live
    ambient weather inside each card animates itself (ParticleField) and is

@@ -241,8 +241,8 @@ function SeasonalLogoMotif({
     case "september":
       return (
         <g {...data}>
-          <path d="M60 11C48 12 39 19 39 35c16-1 22-10 21-24Z" fill={accent} fillOpacity="0.22" stroke={pop} strokeWidth="2" strokeLinejoin="round" />
-          <path d="M41 33c6-7 11-13 17-20" stroke={accent} strokeWidth="2" strokeLinecap="round" />
+          <path d="M22 20C35 10 49 12 64 7" stroke={pop} strokeWidth="2.2" strokeLinecap="round" />
+          <path d="M15 36c17-11 31-6 48-17" stroke={accent} strokeWidth="2.1" strokeLinecap="round" />
         </g>
       );
     case "october":
