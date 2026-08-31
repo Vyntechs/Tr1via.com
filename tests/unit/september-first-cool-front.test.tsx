@@ -43,8 +43,14 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-front-air-masses")).toBeInTheDocument();
     expect(screen.getByTestId("september-front-contours")).toBeInTheDocument();
     expect(screen.getByTestId("september-distant-stadium")).toBeInTheDocument();
+    expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "full");
     expect(screen.getByTestId("september-stadium-horizon-glow")).toBeInTheDocument();
     expect(screen.getByTestId("september-stadium-light-haze")).toBeInTheDocument();
+    expect(screen.getByTestId("september-stadium-lights")).toBeInTheDocument();
+    expect(screen.getByTestId("september-stadium-bowl")).toBeInTheDocument();
+    expect(screen.getByTestId("september-stadium-field")).toBeInTheDocument();
+    expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
+    expect(screen.getByTestId("september-stadium-bleachers")).toBeInTheDocument();
     expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
   });
 
@@ -53,7 +59,10 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-front")).toHaveAttribute("data-atmosphere", "quiet");
     expect(screen.getByTestId("september-front-air-masses")).toBeInTheDocument();
     expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
-    expect(screen.queryByTestId("september-distant-stadium")).toBeNull();
+    expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "quiet");
+    expect(screen.getByTestId("september-stadium-lights")).toBeInTheDocument();
+    expect(screen.getByTestId("september-stadium-bowl")).toBeInTheDocument();
+    expect(screen.queryByTestId("september-stadium-field")).toBeNull();
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
   });
 
@@ -63,7 +72,8 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-front")).toHaveAttribute("data-intensity", "2.2");
     expect(screen.queryByTestId("september-front-contours")).toBeNull();
     expect(screen.getByTestId("september-front-compact-edge")).toBeInTheDocument();
-    expect(screen.getByTestId("september-distant-stadium")).toBeInTheDocument();
+    expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "compact");
+    expect(screen.queryByTestId("september-stadium-lamp-head")).toBeNull();
     expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
     expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
   });
@@ -75,10 +85,23 @@ describe("September atmosphere and control contract", () => {
 
     const intermission = render(<SeptemberFront page="intermission" />);
     expect(screen.getByTestId("september-front")).toHaveAttribute("data-front-phase", "balanced");
+    expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "results-safe");
+    expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
+    expect(screen.queryByTestId("september-stadium-bleachers")).toBeNull();
+    expect(screen.queryByTestId("september-stadium-perspective-lines")).toBeNull();
+    expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
     intermission.unmount();
 
     render(<SeptemberFront page="finale" intensity={2.2} />);
     expect(screen.getByTestId("september-front")).toHaveAttribute("data-front-phase", "clear");
+  });
+
+  it("gives the theme gallery a static, unmistakable stadium without player-control geometry", () => {
+    render(<Weather themeKey="september" compact surface="card" />);
+    expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "card");
+    expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
+    expect(screen.getByTestId("september-stadium-press-box")).toBeInTheDocument();
+    expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
   });
 
   it("yields completely when weather is off or the surface owns its background", () => {

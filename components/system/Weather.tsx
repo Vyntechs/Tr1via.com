@@ -36,6 +36,8 @@ export interface WeatherProps {
   /** False when the surface paints its own background and the theme must not
    *  repaint it. Read by August and September; ignored by every other theme. */
   substrate?: boolean;
+  /** Card-safe composition for the theme gallery. September reads this. */
+  surface?: "game" | "card";
 }
 
 export function Weather({
@@ -46,6 +48,7 @@ export function Weather({
   page,
   compact = false,
   substrate = true,
+  surface = "game",
 }: WeatherProps) {
   if (!intensity) return null;
   const t = TR1VIA_THEMES[themeKey];
@@ -133,6 +136,7 @@ export function Weather({
           compact={compact}
           substrate={substrate}
           page={page}
+          surface={surface}
         />
       );
     case "november":
