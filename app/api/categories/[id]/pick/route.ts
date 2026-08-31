@@ -1,11 +1,10 @@
 // POST /api/categories/[id]/pick
 //
-// The host has reviewed the 20 candidates and picked 7. We assign each one
-// of the canonical board point values (100..700) via
-// `lib/game/difficulty.ts → assignPointValues()`, then atomically update
-// the picked rows + unpick the rest, then mark the category 'ready'.
+// The host sends the exact seven id-to-slot assignments displayed in YOUR
+// BOARD. We validate membership, then atomically persist those assignments
+// without deriving a second ordering on the server.
 //
-// Body: { questionIds: [7 distinct uuids] }
+// Body: { assignments: [{ id, pointValue }, ...] }
 //
 // Host-only.
 
@@ -54,12 +53,9 @@ export async function POST(
   }
   const parsed = PickCategoryBodySchema.safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
-  const { questionIds } = parsed.data;
+  const { assignments } = parsed.data;
 
-  // The point-value assignment + atomic clear/set/mark-ready write path lives
-  // in lib/host/pickQuestions so the founder "build a full game" auto-pick
-  // runs the exact same logic as a human pick.
-  const result = await pickQuestionsForCategory(categoryId, questionIds);
+  const result = await pickQuestionsForCategory(categoryId, assignments);
   if (!result.ok) return badRequest(result.error);
   return ok({ picked: result.picked });
 }

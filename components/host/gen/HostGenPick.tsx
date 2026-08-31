@@ -109,8 +109,8 @@ export interface HostGenPickProps {
   /** True while the rename PATCH is in flight. Disables the input and
    *  shows a "Saving…" microcopy. */
   isRenaming?: boolean;
-  /** Called when the host taps "Lock the category" with 7 picked. */
-  onLock?: () => void;
+  /** Called with the exact seven id-to-slot assignments currently displayed. */
+  onLock?: (assignments: Array<{ id: string; pointValue: number }>) => void;
   /** Called when the host taps "Another 20" / a flavor button. */
   onRegenerate?: (input: {
     difficulty: DifficultyTarget;
@@ -550,7 +550,7 @@ function PickSidebar({
   /** Persist a drag-to-reorder. When omitted (or <2 filled slots) the board
    *  renders static — no drag handles. */
   onReorder?: (assignments: Array<{ id: string; pointValue: number }>) => void;
-  onLock?: () => void;
+  onLock?: (assignments: Array<{ id: string; pointValue: number }>) => void;
   isLocking: boolean;
   mobile: boolean;
 }) {
@@ -594,7 +594,11 @@ function PickSidebar({
     if (assignments) onReorder?.(assignments);
   }
 
-  const ready = picked.length === 7;
+  const lockAssignments = slots.flatMap((pointValue) => {
+    const question = byTier[pointValue];
+    return question ? [{ id: question.id, pointValue }] : [];
+  });
+  const ready = picked.length === 7 && lockAssignments.length === 7;
 
   const rows = slots.map((v) => {
     const filled = byTier[v];
@@ -644,7 +648,7 @@ function PickSidebar({
       <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
         <button
           type="button"
-          onClick={onLock}
+          onClick={() => onLock?.(lockAssignments)}
           disabled={!ready || isLocking}
           style={{
             background: ready ? t.accent : t.surface,

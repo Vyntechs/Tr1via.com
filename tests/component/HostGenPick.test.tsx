@@ -18,7 +18,14 @@
 // test fails.
 
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { act, render, screen, cleanup, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  waitFor,
+} from "@testing-library/react";
 import {
   HostGenPick,
   type HostGenPickQuestion,
@@ -344,6 +351,195 @@ describe("HostSetupPickClient audit summary recovery", () => {
   });
 });
 
+describe("HostSetupPickClient authoritative slot-edit reconciliation", () => {
+  it("replaces displaced D with edited C, locks C at 500, and reloads the same board", async () => {
+    const rows = slotSwapQuestionRows();
+    const lockBodies: Array<Record<string, unknown>> = [];
+    let finishCanonical:
+      | ((value: { data: QuestionRow[]; error: null }) => void)
+      | undefined;
+    let canonicalHeld = false;
+    supa = createSupabaseMock({
+      questions: rows,
+      report: null,
+      questionsQuery: () => {
+        // The component performs an ordinary mount-time refetch. Only hold
+        // the post-PATCH query, identifiable after the mocked transaction has
+        // marked C picked, so the assertion targets canonical reconciliation.
+        if (
+          !rows.find((row) => row.id === "q7")?.is_picked ||
+          canonicalHeld
+        ) {
+          return Promise.resolve({ data: rows, error: null });
+        }
+        canonicalHeld = true;
+        return new Promise((resolve) => {
+          finishCanonical = resolve;
+        });
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/api/questions/q7") && init?.method === "PATCH") {
+          const editedC = rows.find((row) => row.id === "q7")!;
+          const displacedD = rows.find((row) => row.id === "q4")!;
+          editedC.is_picked = true;
+          editedC.point_value = 500;
+          displacedD.is_picked = false;
+          displacedD.point_value = null;
+          return new Response(JSON.stringify({ question: editedC }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        if (url.endsWith("/api/categories/cat-1/pick")) {
+          lockBodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+          return new Response(JSON.stringify({ picked: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    const renderClient = () =>
+      render(
+        <HostSetupPickClient
+          nightId="night-1"
+          categoryId="cat-1"
+          categoryName="Texas Breweries"
+          categoryTopic="texas breweries"
+          initialState="review"
+          initialQuestions={rows}
+          themeKey="house"
+        />,
+      );
+
+    renderClient();
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[7]!);
+    fireEvent.click(screen.getByRole("button", { name: "500" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /save · this question/i }),
+    );
+
+    await waitFor(() => expect(finishCanonical).toBeTypeOf("function"));
+    expect(screen.getByRole("button", { name: /saving/i })).toBeInTheDocument();
+    expect(screen.getByLabelText("Close question editor")).toBeInTheDocument();
+    await act(async () => {
+      finishCanonical?.({ data: rows, error: null });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByLabelText("Close question editor"))
+        .not.toBeInTheDocument();
+    });
+    expect(screen.getAllByText("Edited C")).toHaveLength(2);
+    expect(screen.getAllByText("Displaced D")).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: /lock the category/i }));
+    await waitFor(() => expect(lockBodies).toHaveLength(1));
+    expect(lockBodies[0]).toEqual({
+      assignments: [
+        { id: "q0", pointValue: 100 },
+        { id: "q1", pointValue: 200 },
+        { id: "q2", pointValue: 300 },
+        { id: "q3", pointValue: 400 },
+        { id: "q7", pointValue: 500 },
+        { id: "q5", pointValue: 600 },
+        { id: "q6", pointValue: 700 },
+      ],
+    });
+
+    cleanup();
+    supa = createSupabaseMock({ questions: rows, report: null });
+    renderClient();
+    expect(screen.getAllByText("Edited C")).toHaveLength(2);
+    expect(screen.getAllByText("Displaced D")).toHaveLength(1);
+  });
+});
+
+describe("HostSetupPickClient deliberate no-image choice", () => {
+  it("awaits the clear route and reconciles the returned null image row", async () => {
+    const rows = questionRows();
+    rows[0] = {
+      ...rows[0],
+      image_url: "https://storage.example/old-image.png",
+      image_source: "upload",
+    };
+    supa = createSupabaseMock({ questions: rows, report: null });
+    let finishClear: ((response: Response) => void) | undefined;
+    const clearBodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith("/photos")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ photos: [] }), {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }),
+          );
+        }
+        if (url.endsWith("/photo") && init?.method === "PATCH") {
+          clearBodies.push(String(init.body));
+          return new Promise<Response>((resolve) => {
+            finishClear = resolve;
+          });
+        }
+        throw new Error(`unexpected fetch: ${url}`);
+      }),
+    );
+
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Texas Breweries"
+        categoryTopic="texas breweries"
+        initialState="review"
+        initialQuestions={rows}
+        themeKey="house"
+      />,
+    );
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Image" })[0]!);
+    const noImage = await screen.findByRole("button", { name: /no image/i });
+    fireEvent.click(noImage);
+    expect(noImage).toBeDisabled();
+    expect(clearBodies).toEqual(["{}"]);
+
+    await act(async () => {
+      finishClear?.(
+        new Response(
+          JSON.stringify({
+            question: {
+              id: "q0",
+              image_url: null,
+              image_attribution: null,
+              image_source: null,
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: /no image/i }))
+        .not.toBeInTheDocument();
+    });
+    expect(
+      document.querySelector(
+        'img[src="https://storage.example/old-image.png"]',
+      ),
+    ).toBeNull();
+  });
+});
+
 function questionRows(): QuestionRow[] {
   return clumpQuestions(3).map((q) => ({
     id: q.id,
@@ -366,11 +562,29 @@ function questionRows(): QuestionRow[] {
   })) as QuestionRow[];
 }
 
+function slotSwapQuestionRows(): QuestionRow[] {
+  const rows = questionRows().map((row, index) => ({
+    ...row,
+    is_picked: true,
+    point_value: (index + 1) * 100,
+  })) as QuestionRow[];
+  rows[4] = { ...rows[4], prompt: "Displaced D" };
+  rows.push({
+    ...rows[0],
+    id: "q7",
+    prompt: "Edited C",
+    is_picked: false,
+    point_value: null,
+  });
+  return rows;
+}
+
 function createSupabaseMock(input: {
   questions: QuestionRow[];
   report: Record<string, unknown> | null;
   categoryState?: "draft" | "generating" | "review" | "ready";
   job?: { attempt: number; phase: string };
+  questionsQuery?: () => Promise<{ data: QuestionRow[]; error: null }>;
 }) {
   const handlers = new Map<
     string,
@@ -397,7 +611,9 @@ function createSupabaseMock(input: {
       await handlers.get(event)?.({ payload });
     },
     from: vi.fn((table: string) => {
-      if (table === "questions") return createQuestionsQuery(input.questions);
+      if (table === "questions") {
+        return createQuestionsQuery(input.questions, input.questionsQuery);
+      }
       if (table === "question_generation_reports") {
         return createReportQuery(input.report);
       }
@@ -419,10 +635,13 @@ function createGenerationJobQuery(job: { attempt: number; phase: string }) {
   };
 }
 
-function createQuestionsQuery(questions: QuestionRow[]) {
+function createQuestionsQuery(
+  questions: QuestionRow[],
+  query?: () => Promise<{ data: QuestionRow[]; error: null }>,
+) {
   return {
     select: vi.fn(() => ({
-      eq: vi.fn(async () => ({ data: questions })),
+      eq: vi.fn(() => query?.() ?? Promise.resolve({ data: questions, error: null })),
     })),
   };
 }

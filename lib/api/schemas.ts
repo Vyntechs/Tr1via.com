@@ -207,18 +207,6 @@ export const GenerateCategoryBodySchema = z
   })
   .strict();
 
-/** POST /api/categories/[id]/pick body — exactly 7 distinct question ids. */
-export const PickCategoryBodySchema = z
-  .object({
-    questionIds: z
-      .array(UuidSchema)
-      .length(7)
-      .refine((ids) => new Set(ids).size === 7, {
-        message: "questionIds must contain 7 distinct ids",
-      }),
-  })
-  .strict();
-
 /** A non-null board slot value (100..700). */
 const PointSlotSchema = z.union([
   z.literal(100),
@@ -229,6 +217,34 @@ const PointSlotSchema = z.union([
   z.literal(600),
   z.literal(700),
 ]);
+
+/**
+ * POST /api/categories/[id]/pick body — the exact seven assignments shown
+ * on the host's board. Both identity and slot are authoritative: the server
+ * validates them but never derives a second ordering.
+ */
+export const PickCategoryBodySchema = z
+  .object({
+    assignments: z
+      .array(
+        z
+          .object({ id: UuidSchema, pointValue: PointSlotSchema })
+          .strict(),
+      )
+      .length(7)
+      .refine(
+        (assignments) =>
+          new Set(assignments.map((assignment) => assignment.id)).size === 7,
+        { message: "assignments must contain 7 distinct ids" },
+      )
+      .refine(
+        (assignments) =>
+          new Set(assignments.map((assignment) => assignment.pointValue))
+            .size === 7,
+        { message: "assignments must contain every canonical slot once" },
+      ),
+  })
+  .strict();
 
 /**
  * POST /api/categories/[id]/reorder body — the new board order after a

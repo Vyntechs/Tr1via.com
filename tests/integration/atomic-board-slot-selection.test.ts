@@ -469,8 +469,8 @@ describe("atomic board-slot selection", () => {
     const fixture = await seedAuthoringCategory("ATOMIC4");
     const candidate = await db.query<{ id: string }>(
       `insert into questions
-        (category_id, difficulty, prompt, options, correct_index, source, is_picked, point_value)
-       values ($1, 7, 'Replacement', '["A","B","C","D"]'::jsonb, 0, 'host-edit', false, null)
+        (category_id, difficulty, prompt, options, correct_index, source, is_picked, point_value, image_url)
+       values ($1, 7, 'Heather approved replacement', '["Hops & Grain","Austin Beerworks","Independence Brewing","Twisted X Brewing"]'::jsonb, 2, 'host-edit', false, null, 'https://images.example/heather-approved.jpg')
        returning id`,
       [fixture.categoryId],
     );
@@ -487,10 +487,14 @@ describe("atomic board-slot selection", () => {
 
     const picked = await db.query<{
       id: string;
+      prompt: string;
+      options: string[];
+      correct_index: number;
       is_picked: boolean;
       point_value: number | null;
+      image_url: string | null;
     }>(
-      "select id, is_picked, point_value from questions where category_id = $1",
+      "select id, prompt, options, correct_index, is_picked, point_value, image_url from questions where category_id = $1",
       [fixture.categoryId],
     );
     const byId = new Map(picked.rows.map((row) => [row.id, row]));
@@ -499,9 +503,20 @@ describe("atomic board-slot selection", () => {
       point_value: null,
     });
     expect(byId.get(candidate.rows[0].id)).toMatchObject({
+      id: candidate.rows[0].id,
+      prompt: "Heather approved replacement",
+      options: [
+        "Hops & Grain",
+        "Austin Beerworks",
+        "Independence Brewing",
+        "Twisted X Brewing",
+      ],
+      correct_index: 2,
       is_picked: true,
       point_value: 700,
+      image_url: "https://images.example/heather-approved.jpg",
     });
+    expect(byId.get(fixture.questionIds[0])?.image_url).toBeNull();
     expect(picked.rows.filter((row) => row.is_picked)).toHaveLength(7);
   });
 

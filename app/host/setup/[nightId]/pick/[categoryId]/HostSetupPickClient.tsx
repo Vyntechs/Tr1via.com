@@ -42,7 +42,10 @@ import {
   deriveInitialGenerationMessage,
   explainGenerationFailure,
 } from "@/lib/host/generationFailureMessages";
-import { mergePickedAfterRefetch } from "@/lib/host/mergePickedAfterRefetch";
+import {
+  canonicalPickedAfterRefetch,
+  mergePickedAfterRefetch,
+} from "@/lib/host/mergePickedAfterRefetch";
 import { shouldRewriteFactBlurb } from "@/lib/host/factBlurbStaleness";
 import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
@@ -196,31 +199,43 @@ export function HostSetupPickClient({
   const autoResumedAttemptsRef = useRef(new Set<number>());
   const currentGenerationAttemptRef = useRef(0);
 
-  const refetchQuestions = useCallback(async () => {
+  const refetchQuestions = useCallback(async (
+    reconciliation: "merge" | "canonical" = "merge",
+  ): Promise<QuestionRow[] | null> => {
     // Query Supabase directly via the browser client (RLS allows the host
     // to read questions under their own category).
     const supa = getSupabaseBrowser();
-    const { data } = await supa.from("questions").select("*").eq("category_id", categoryId);
-    if (data) {
-      const rows = data as QuestionRow[];
-      setQuestions(rows);
-      // Picks live in client state until lock — never overwrite the host's
-      // selections with what's in the DB. The merge keeps every client
-      // pick whose row still exists, unions any DB-confirmed is_picked
-      // rows, and drops orphans. See lib/host/mergePickedAfterRefetch.
-      // The previous "blindly replace from DB" version silently wiped the
-      // host's in-progress picks every time `question_added` fired during
-      // an "↻ Another 20" — that was bug A.
-      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
-      // If the host had an edit/swap/upload panel open for a question that was
-      // just deleted by the reroll, close the modal and surface a recoverable
-      // message — otherwise she'd hit Save and get a confusing 404.
-      const openModal = modalRef.current;
-      if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
-        setModal({ kind: "none" });
-        setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
+    const { data, error: refetchError } = await supa
+      .from("questions")
+      .select("*")
+      .eq("category_id", categoryId);
+    if (refetchError || !data) {
+      if (reconciliation === "canonical") {
+        throw new Error(
+          "Your edit was saved, but the board could not refresh. Keep this panel open and try again before locking.",
+        );
       }
+      return null;
     }
+    const rows = data as QuestionRow[];
+    setQuestions(rows);
+    // Ordinary generation refetches merge in-progress local picks. A
+    // slot-changing edit is different: swap_point_value may have displaced a
+    // second row, so its authoritative refetch replaces pick state from DB.
+    if (reconciliation === "canonical") {
+      setPickedIds(canonicalPickedAfterRefetch(rows));
+    } else {
+      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
+    }
+    // If the host had an edit/swap/upload panel open for a question that was
+    // just deleted by the reroll, close the modal and surface a recoverable
+    // message — otherwise she'd hit Save and get a confusing 404.
+    const openModal = modalRef.current;
+    if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
+      setModal({ kind: "none" });
+      setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
+    }
+    return rows;
   }, [categoryId]);
 
   const refetchAuditSummary = useCallback(async () => {
@@ -532,15 +547,21 @@ export function HostSetupPickClient({
   }
 
   // ── lock category (POST /api/categories/[id]/pick) ───────────────────
-  async function handleLock() {
-    if (pickedIds.size !== 7) return;
+  async function handleLock(
+    assignments: Array<{ id: string; pointValue: number }>,
+  ) {
+    if (
+      pickedIds.size !== 7 ||
+      assignments.length !== 7 ||
+      assignments.some((assignment) => !pickedIds.has(assignment.id))
+    ) return;
     setLocking(true);
     setError(null);
     try {
       const res = await fetch(`/api/categories/${categoryId}/pick`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionIds: Array.from(pickedIds) }),
+        body: JSON.stringify({ assignments }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -699,7 +720,7 @@ export function HostSetupPickClient({
       const { question } = (await res.json()) as { question: QuestionRow };
       setQuestions((prev) => prev.map((q) => (q.id === question.id ? question : q)));
       if (pointValueChanged(previousPointValue, question.point_value)) {
-        void refetchQuestions();
+        await refetchQuestions("canonical");
       }
       return question;
     } catch (err) {
@@ -886,6 +907,40 @@ export function HostSetupPickClient({
       setModal({ kind: "none" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not swap photo.");
+    } finally {
+      setSavingPhoto(false);
+    }
+  }
+
+  async function handleClearPhoto() {
+    if (modal.kind !== "swap") return;
+    const questionId = modal.questionId;
+    setSavingPhoto(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/questions/${questionId}/photo`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        if (res.status === 404) {
+          setModal({ kind: "none" });
+          void refetchQuestions();
+        }
+        throw new Error(explainPhotoSaveFailure(res.status));
+      }
+      const { question } = (await res.json()) as {
+        question: Partial<QuestionRow>;
+      };
+      setQuestions((prev) =>
+        prev.map((row) =>
+          row.id === questionId ? { ...row, ...question } : row,
+        ),
+      );
+      setModal({ kind: "none" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove photo.");
     } finally {
       setSavingPhoto(false);
     }
@@ -1196,6 +1251,7 @@ export function HostSetupPickClient({
             currentImageUrl={swapQuestion.image_url}
             candidates={photoCandidates}
             onChoose={handleChoosePhoto}
+            onClear={handleClearPhoto}
             onOpenUpload={() => {
               setUploadError(null);
               setModal({ kind: "upload", questionId: swapQuestion.id });

@@ -14,13 +14,14 @@
 //
 // Storage:
 //   bucket  = "question-images"
-//   key     = "{nightId}/{questionId}.{ext}"
+//   key     = a content-versioned path beneath the night and question
 //   public  = yes (the bucket is configured public-read in
 //             supabase/migrations/0004_storage.sql)
 //
 // The question's `image_url`, `image_attribution=null`, and
 // `image_source='upload'` are set on success.
 
+import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 
 import { requireOwnedQuestion } from "@/lib/api/auth";
@@ -90,14 +91,17 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const key = `${night.id}/${question.id}.${detected.ext}`;
+  // Public image URLs can be cached, so a replacement must never overwrite
+  // the bytes at an existing URL. The question row points at the latest
+  // immutable object version.
+  const key = `${night.id}/${question.id}/${randomUUID()}.${detected.ext}`;
   const admin = getSupabaseAdmin();
 
   const { error: uploadError } = await admin.storage
     .from(BUCKET)
     .upload(key, bytes, {
       contentType: detected.mime,
-      upsert: true,
+      upsert: false,
       cacheControl: "3600",
     });
   if (uploadError) {

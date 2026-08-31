@@ -84,19 +84,25 @@ function qb(
 }
 
 const Q_UNPLAYED = {
-  id: "q-unplayed", category_id: "C1", point_value: 300, prompt: "P1",
-  options: ["a", "b", "c", "d"], correct_index: 2, image_url: null,
+  id: "q-unplayed", category_id: "C1", point_value: 300,
+  prompt: "Approved unplayed prompt",
+  options: ["One", "Two", "Three", "Four"], correct_index: 2,
+  image_url: "https://images.example/approved-unplayed.jpg",
   fact_blurb: null, played_at: null, finished_at: null, is_picked: true,
 };
 const Q_LIVE = {
-  id: "q-live", category_id: "C1", point_value: 400, prompt: "P2",
-  options: ["a", "b", "c", "d"], correct_index: 1, image_url: null,
+  id: "q-live", category_id: "C1", point_value: 400,
+  prompt: "Approved deliberate-no-image live prompt",
+  options: ["Alpha", "Bravo", "Charlie", "Delta"], correct_index: 1,
+  image_url: null,
   fact_blurb: null, played_at: "2026-06-07T00:00:00Z", finished_at: null,
   is_picked: true,
 };
 const Q_RESOLVED = {
-  id: "q-resolved", category_id: "C1", point_value: 500, prompt: "P3",
-  options: ["a", "b", "c", "d"], correct_index: 3, image_url: null,
+  id: "q-resolved", category_id: "C1", point_value: 500,
+  prompt: "Approved resolved prompt",
+  options: ["Spring", "Summer", "Autumn", "Winter"], correct_index: 3,
+  image_url: "https://images.example/approved-resolved.jpg",
   fact_blurb: null, played_at: "2026-06-07T00:00:00Z",
   finished_at: "2026-06-07T00:00:20Z", is_picked: true,
 };
@@ -334,6 +340,27 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
 
     const byId = (id: string) =>
       body.questions.find((q: { id: string }) => q.id === id);
+    expect(byId("q-unplayed")).toMatchObject({
+      id: "q-unplayed",
+      prompt: "Approved unplayed prompt",
+      options: ["One", "Two", "Three", "Four"],
+      pointValue: 300,
+      imageUrl: "https://images.example/approved-unplayed.jpg",
+    });
+    expect(byId("q-live")).toMatchObject({
+      id: "q-live",
+      prompt: "Approved deliberate-no-image live prompt",
+      options: ["Alpha", "Bravo", "Charlie", "Delta"],
+      pointValue: 400,
+      imageUrl: null,
+    });
+    expect(byId("q-resolved")).toMatchObject({
+      id: "q-resolved",
+      prompt: "Approved resolved prompt",
+      options: ["Spring", "Summer", "Autumn", "Winter"],
+      pointValue: 500,
+      imageUrl: "https://images.example/approved-resolved.jpg",
+    });
     expect(byId("q-unplayed").correctIndex).toBeNull();
     expect(byId("q-live").correctIndex).toBeNull();
     expect(byId("q-resolved").correctIndex).toBe(3);
