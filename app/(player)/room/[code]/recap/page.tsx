@@ -12,7 +12,7 @@ import { PlayerRecap, type PlayerRecapStat } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { isValidRoomCode, parseRoomCode, formatRoomCode } from "@/lib/game/room-code";
-import { type ThemeKey } from "@/lib/theme/tokens";
+import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import type { AnswerRow, CategoryRow, GameScoreRow, GameRow } from "@/lib/supabase/types";
 import { categoryColor } from "@/lib/theme/categories";
@@ -198,25 +198,7 @@ function formatNightDate(iso: string | null): string {
 // ThemeProvider until below); the stat colors only need primitive accents
 // from the theme map. Cheap lookup avoids a context dependency for the
 // computation done above the provider.
-function themeFallbackTokens(themeKey: ThemeKey): { accent: string; pop: string; correct: string } {
-  // Import lazily by mirroring the tokens we need; ThemeProvider will
-  // re-render with the right colors once the page lands.
-  // Keeping inline keeps this file self-contained.
-  const map: Record<ThemeKey, { accent: string; pop: string; correct: string }> = {
-    house:     { accent: "#FF6A3D", pop: "#4ECDC4", correct: "#C8E25E" },
-    daylight:  { accent: "#D9421F", pop: "#1E7A6E", correct: "#3F6B1F" },
-    january:   { accent: "#5AA8E0", pop: "#E8C46A", correct: "#B7D88C" },
-    february:  { accent: "#FF4673", pop: "#FFD93D", correct: "#C8E25E" },
-    march:     { accent: "#3FAE56", pop: "#F2C94C", correct: "#C8E25E" },
-    april:     { accent: "#7A4FCC", pop: "#E64A8C", correct: "#3F8030" },
-    may:       { accent: "#E8C46A", pop: "#94A5BC", correct: "#A8D88C" },
-    june:      { accent: "#E04A6B", pop: "#F2A02D", correct: "#3F8030" },
-    july:      { accent: "#E63946", pop: "#FFD93D", correct: "#C8E25E" },
-    august:    { accent: "#F08C2A", pop: "#C84A2C", correct: "#C8E25E" },
-    september: { accent: "#C84A2C", pop: "#E8A02A", correct: "#C8E25E" },
-    october:   { accent: "#F08C2A", pop: "#A94ACC", correct: "#C8E25E" },
-    november:  { accent: "#C25E22", pop: "#7E8C2A", correct: "#C8E25E" },
-    december:  { accent: "#E63946", pop: "#F2C94C", correct: "#C8E25E" },
-  };
-  return map[themeKey];
+export function themeFallbackTokens(themeKey: ThemeKey): { accent: string; pop: string; correct: string } {
+  const { accent, pop, correct } = TR1VIA_THEMES[themeKey];
+  return { accent, pop, correct };
 }

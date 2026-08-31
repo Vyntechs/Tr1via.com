@@ -32,6 +32,14 @@ describe("seasonal TR1VIA logo", () => {
     expect(container.querySelector('[data-logo-motif="june"]')).toBeTruthy();
   });
 
+  it("uses airflow strokes, not a leaf, for September", () => {
+    const { container } = render(<Wordmark seasonalKey="september" />);
+    const motif = container.querySelector('[data-logo-motif="september"]');
+    expect(motif).not.toBeNull();
+    expect(motif?.querySelectorAll("path")).toHaveLength(2);
+    expect(motif?.querySelector("path[fill]")).toBeNull();
+  });
+
   it("can render the plain mark when a surface needs it", () => {
     const { container } = render(<Wordmark seasonal={false} seasonalKey="july" />);
     expect(container.querySelector('[data-logo-skin="none"]')).toBeTruthy();

@@ -34,6 +34,9 @@ describe("ThemeCharacterBand", () => {
     expect(band.textContent).not.toMatch(/\bTV\b/);
     expect(band.textContent).not.toMatch(/venue screen/i);
     expect(band.textContent).not.toMatch(/screen blooms/i);
+    expect(band.textContent).toMatch(/cool-front kickoff/i);
+    expect(band.textContent).toMatch(/teal air, clay heat, and field chalk/i);
+    expect(band.textContent).not.toMatch(/leaf|copper drift/i);
   });
 
   it("explains Room Magic to a first-time visitor", () => {

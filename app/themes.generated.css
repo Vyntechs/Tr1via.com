@@ -162,10 +162,10 @@
 }
 
 :root[data-theme="september"] {
-  --paper: #1A0F08;
-  --ink: #F2DEAE;
-  --accent: #C84A2C;
-  --pop: #E8A02A;
+  --paper: #132126;
+  --ink: #F3E4C3;
+  --accent: #D65A32;
+  --pop: #72B8B0;
   --correct: #C8E25E;
   --wrong: #E58A7A;
   --surface: rgba(255,255,255,.04);
