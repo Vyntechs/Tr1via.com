@@ -37,4 +37,17 @@ describe("PhoneScreen adaptive height", () => {
     const phone = renderScreen("locked");
     expect(phone).toHaveStyle({ overflowY: "hidden", overflowX: "hidden" });
   });
+
+  it("forwards timed-reading state to state-aware compact weather", () => {
+    render(
+      <ThemeProvider themeKey="september">
+        <PhoneScreen data-testid="september-phone" weatherPage="question">
+          Question
+        </PhoneScreen>
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId("september-front")).toHaveAttribute("data-atmosphere", "quiet");
+    expect(screen.queryByTestId("september-stadium-goal-post")).toBeNull();
+  });
 });

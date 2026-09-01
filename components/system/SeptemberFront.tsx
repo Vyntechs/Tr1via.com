@@ -119,6 +119,24 @@ function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number })
   );
 }
 
+function StadiumLightBeams({ compact, quiet = false }: { compact: boolean; quiet?: boolean }) {
+  return (
+    <g data-testid="september-stadium-light-beams" fill="#FFF4D5" opacity={quiet ? ".52" : "1"}>
+      {compact ? (
+        <>
+          <path d="M0 104 160 640H52Z" opacity=".075" />
+          <path d="M380 104 220 640H328Z" opacity=".07" />
+        </>
+      ) : (
+        <>
+          <path d="M18 178 470 668H128Z" opacity=".055" />
+          <path d="M1262 178 810 668H1152Z" opacity=".052" />
+        </>
+      )}
+    </g>
+  );
+}
+
 function DistantStadium({
   compact,
   card,
@@ -140,8 +158,9 @@ function DistantStadium({
       "radial-gradient(ellipse 22% 25% at 100% 22%, rgba(214,90,50,.45), transparent 66%)," +
       "radial-gradient(ellipse 70% 18% at 50% 78%, rgba(114,184,176,.24), transparent 68%)"
     : compact
-    ? "radial-gradient(ellipse 22% 18% at 0% 78%, rgba(243,228,195,.4), transparent 64%)," +
-      "radial-gradient(ellipse 22% 18% at 100% 78%, rgba(214,90,50,.34), transparent 64%)"
+    ? "radial-gradient(ellipse 38% 24% at 0% 14%, rgba(243,228,195,.48), transparent 65%)," +
+      "radial-gradient(ellipse 38% 24% at 100% 14%, rgba(214,90,50,.42), transparent 65%)," +
+      "radial-gradient(ellipse 80% 20% at 50% 94%, rgba(114,184,176,.2), transparent 70%)"
     : quiet
       ? "radial-gradient(ellipse 22% 34% at 5% 27%, rgba(243,228,195,.28), transparent 64%)," +
         "radial-gradient(ellipse 22% 34% at 95% 27%, rgba(214,90,50,.24), transparent 64%)"
@@ -159,7 +178,7 @@ function DistantStadium({
         style={layer({
           background: glow,
           mixBlendMode: "screen",
-          opacity: finale ? 0.94 : card ? 0.88 : compact ? 0.62 : quiet ? 0.54 : 0.82,
+          opacity: finale ? 0.94 : card ? 0.88 : compact ? 0.86 : quiet ? 0.54 : 0.88,
         })}
       />
       <div
@@ -182,7 +201,7 @@ function DistantStadium({
         viewBox={`0 0 ${viewWidth} ${viewHeight}`}
         preserveAspectRatio="none"
         aria-hidden="true"
-        style={layer({ opacity: card ? 0.9 : compact ? 0.72 : quiet ? 0.58 : 0.92 })}
+        style={layer({ opacity: card ? 0.9 : compact ? (quiet ? 0.78 : 0.9) : quiet ? 0.58 : 0.96 })}
       >
         {card ? (
           <>
@@ -204,13 +223,27 @@ function DistantStadium({
           </>
         ) : compact ? (
           <>
-            <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity=".44">
-              <path d="M4 742V610M14 742V610M366 742V610M376 742V610" strokeWidth="1.4" />
-              <path d="M4 730 14 706 4 682 14 658 4 634M376 730 366 706 376 682 366 658 376 634" strokeWidth="1" />
+            <StadiumLightBeams compact quiet={quiet} />
+            <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity={quiet ? ".5" : ".68"}>
+              <path d="M8 742V132M18 742V132M362 742V132M372 742V132" strokeWidth="1.7" />
+              <path d="M8 706 18 660 8 614 18 568 8 522 18 476 8 430 18 384 8 338 18 292 8 246 18 200M372 706 362 660 372 614 362 568 372 522 362 476 372 430 362 384 372 338 362 292 372 246 362 200" strokeWidth="1" />
+              <LampHead x={-16} y={76} scale={0.68} />
+              <LampHead x={326} y={76} scale={0.68} />
             </g>
-            <g data-testid="september-stadium-bowl">
-              <path d="M0 754H380V760H0Z" fill="#102B2B" opacity=".18" />
-            </g>
+            {quiet ? (
+              <g data-testid="september-stadium-bowl">
+                <path d="M0 728H380" fill="none" stroke="#72B8B0" strokeOpacity=".2" strokeWidth="1" />
+              </g>
+            ) : (
+              <>
+                <g data-testid="september-stadium-bowl">
+                  <path data-testid="september-stadium-bleachers" d="M0 726V714H70V707H128V700H252V707H310V714H380V726Z" fill="#102B2B" opacity=".48" />
+                  <path data-testid="september-stadium-press-box" d="M145 700V682H235V700Z" fill="#071014" opacity=".6" />
+                </g>
+                <path data-testid="september-stadium-goal-post" d="M190 724V658M162 658V686M218 658V686M162 674H218" fill="none" stroke="#D7A84D" strokeOpacity=".52" strokeWidth="2.4" />
+                <path data-testid="september-stadium-field" d="M0 728H380" fill="none" stroke="#72B8B0" strokeOpacity=".4" strokeWidth="1.5" />
+              </>
+            )}
           </>
         ) : quiet ? (
           <>
@@ -226,6 +259,7 @@ function DistantStadium({
           </>
         ) : (
           <>
+            <StadiumLightBeams compact={false} />
             <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity=".6">
               <path d="M34 650V206M54 650V206M1226 650V206M1246 650V206" strokeWidth="2.4" />
               <path d="M34 605 54 560 34 515 54 470 34 425 54 380 34 335 54 290M1246 605 1226 560 1246 515 1226 470 1246 425 1226 380 1246 335 1226 290" strokeWidth="1.6" />
@@ -237,11 +271,20 @@ function DistantStadium({
                 data-testid="september-stadium-silhouette"
                 d={resultsSafe
                   ? "M0 650H1280V658H0Z"
-                  : "M0 657V648H420V640H560V620H720V640H860V648H1280V657Z"}
+                  : "M0 657V648H180V638H410V628H545V616H735V628H870V638H1100V648H1280V657Z"}
                 fill="#102B2B"
-                opacity={resultsSafe ? ".3" : ".48"}
+                opacity={resultsSafe ? ".3" : ".62"}
               />
+              {!resultsSafe && (
+                <>
+                  <path data-testid="september-stadium-bleachers" d="M80 638H420M126 628H456M860 638H1200M824 628H1154" fill="none" stroke="#F3E4C3" strokeOpacity=".14" strokeWidth="2" />
+                  <path data-testid="september-stadium-press-box" d="M545 616V586H735V616Z" fill="#071014" opacity=".7" />
+                </>
+              )}
             </g>
+            {!resultsSafe && (
+              <path data-testid="september-stadium-goal-post" d="M640 654V564M596 564V600M684 564V600M596 582H684" fill="none" stroke="#D7A84D" strokeOpacity=".46" strokeWidth="3" />
+            )}
             <g data-testid="september-stadium-field">
               <path d="M0 658H1280" stroke="#72B8B0" strokeOpacity=".26" strokeWidth="2" />
             </g>

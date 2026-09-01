@@ -9,7 +9,7 @@
 
 import type { CSSProperties, ReactNode } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
-import { Weather } from "@/components/system/Weather";
+import { Weather, type WeatherProps } from "@/components/system/Weather";
 
 export interface PhoneScreenProps {
   children: ReactNode;
@@ -21,6 +21,8 @@ export interface PhoneScreenProps {
   weather?: boolean;
   /** Weather intensity 0-2.2 (>1 for the finale). */
   weatherIntensity?: number;
+  /** Lets state-aware monthly weather quiet itself on timed reading screens. */
+  weatherPage?: WeatherProps["page"];
   /** Dense states scroll on short phones; timed question input stays locked. */
   scroll?: "auto" | "locked";
   style?: CSSProperties;
@@ -35,6 +37,7 @@ export function PhoneScreen({
   fillColor,
   weather = true,
   weatherIntensity = 0.5,
+  weatherPage,
   scroll = "auto",
   style,
   "data-testid": dataTestId,
@@ -76,7 +79,7 @@ export function PhoneScreen({
       }}
     >
       {weather && !fill && (
-        <Weather themeKey={themeKey} intensity={weatherIntensity} compact />
+        <Weather themeKey={themeKey} intensity={weatherIntensity} compact page={weatherPage} />
       )}
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
         {children}
