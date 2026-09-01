@@ -46,6 +46,10 @@ describe("explainPhotoSaveFailure (B3: raw photo-swap error)", () => {
     expect(explainPhotoSaveFailure(404)).toBe(QUESTION_REPLACED_MESSAGE);
   });
 
+  it("maps a stale CAS to a review-before-retry instruction", () => {
+    expect(explainPhotoSaveFailure(409)).toMatch(/saved first.*review/i);
+  });
+
   it("maps any other failure to a friendly retry (status-only, no raw string can leak)", () => {
     const out = explainPhotoSaveFailure(400);
     expect(out).toMatch(/try another image|skip it/i);
@@ -60,6 +64,10 @@ describe("explainUploadFailure (B4: stale-id upload)", () => {
     expect(explainUploadFailure("question not found", 404)).toBe(
       QUESTION_REPLACED_MESSAGE,
     );
+  });
+
+  it("maps a stale upload CAS to a review-before-retry instruction", () => {
+    expect(explainUploadFailure(undefined, 409)).toMatch(/saved first.*review/i);
   });
 
   it("still maps the storage cases it always handled", () => {

@@ -948,10 +948,10 @@ export function HostSetupPickClient({
         }),
       });
       if (!res.ok) {
-        // The question may have been rerolled away while this panel was open
-        // (→ 404). Close the panel and resync so the host picks from the new
-        // batch; never surface the route's raw "failed to update photo: <pg>".
-        if (res.status === 404) {
+        // A 404 means the question was rerolled away; a 409 means another
+        // image choice won the CAS. Close and resync either way so the host
+        // reviews the authoritative row before trying another change.
+        if (res.status === 404 || res.status === 409) {
           setModal({ kind: "none" });
           void refetchQuestions();
         }
@@ -981,7 +981,7 @@ export function HostSetupPickClient({
         body: JSON.stringify({}),
       });
       if (!res.ok) {
-        if (res.status === 404) {
+        if (res.status === 404 || res.status === 409) {
           setModal({ kind: "none" });
           void refetchQuestions();
         }
@@ -1031,10 +1031,9 @@ export function HostSetupPickClient({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        // Rerolled away mid-upload (→ 404): the upload panel's own error slot
-        // would vanish with the question, so close it and surface the recovery
-        // message on the top-level toast instead.
-        if (res.status === 404) {
+        // A reroll (404) or a newer image choice (409) requires a resync. The
+        // upload panel is closing, so surface recovery on the top-level toast.
+        if (res.status === 404 || res.status === 409) {
           setModal({ kind: "none" });
           void refetchQuestions();
           setError(explainUploadFailure(body.error, res.status));
