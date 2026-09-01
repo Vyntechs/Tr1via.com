@@ -26,3 +26,10 @@ export function mergePickedAfterRefetch(
   }
   return out;
 }
+
+/** Replace local pick state after a transaction that can displace a pick. */
+export function canonicalPickedAfterRefetch(
+  rows: ReadonlyArray<MergePickedRow>,
+): Set<string> {
+  return new Set(rows.filter((row) => row.is_picked).map((row) => row.id));
+}

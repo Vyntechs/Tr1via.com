@@ -36,7 +36,7 @@ describe("category generation resume claim wiring", () => {
     expect(route).toContain("imageUrl: row.image_url");
     expect(route).toContain("seedCategoryImageUrls(");
     expect(route).toContain("excludeImageUrls: usedImageUrls");
-    expect(route).toContain("recordCategoryImageUrl(usedImageUrls, photo.imageUrl)");
+    expect(route).toContain("recordCategoryImageUrl(usedImageUrls, imageUrl)");
   });
 
   it("finishes playable partial sets with their actual certified count", () => {

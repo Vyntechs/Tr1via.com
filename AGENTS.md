@@ -79,6 +79,7 @@ LLM models (from `lib/ai/`): generation `DEFAULT_MODEL = "claude-sonnet-4-6"`; v
 - **Unit/component/integration**: `npm test` (Vitest). Includes `tests/integration/**` real-Postgres tests via **pglite** (in-process WASM — no Docker/CLI). `@` aliases the repo root; `server-only` is stubbed under Vitest.
 - **E2E (local)**: `npm run test:e2e` — `playwright.config.ts` runs `tests/e2e/`, `fullyParallel: false` (multi-context sync tests share one dev server), auto-starts `npm run dev` with `TEST_AUTH_ENABLED=1 TEST_SECRET=local-test-secret MOCK_EXTERNAL=1`.
 - **E2E (prod smoke)**: `npx playwright test -c playwright-prod.config.ts` — hits `https://tr1via.com` (override `SMOKE_BASE_URL`), only `prod-ui-smoke.spec.ts`, no local server.
+- **Provider-cost safety**: normal unit, component, integration, and local E2E suites are provider-free. Use injected fakes or representative MSW fixtures. Paid provider-contract or production-generation smoke is separate, minimal, manual, explicitly gated by `workflow_dispatch` + `run_paid_generation`, and never part of default regression.
 - `scripts/` holds prod validation + model-benchmark utilities (`.mjs`).
 
 ## Gotchas

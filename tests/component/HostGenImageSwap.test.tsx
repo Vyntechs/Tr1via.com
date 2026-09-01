@@ -5,8 +5,8 @@
 // instead of `src`, so every tile fell back to the striped gradient and
 // the host saw 12 placeholders instead of 12 real photos.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { render, cleanup } from "@testing-library/react";
+import { describe, it, expect, afterEach, vi } from "vitest";
+import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import {
   HostGenImageSwap,
   type HostGenPhotoCandidate,
@@ -22,6 +22,21 @@ const REAL_PEXELS: HostGenPhotoCandidate[] = [
 ];
 
 describe("HostGenImageSwap", () => {
+  it("offers an explicit no-image choice and waits on the parent's clear handler", () => {
+    const onClear = vi.fn();
+    render(
+      <HostGenImageSwap
+        themeKey="house"
+        currentImageUrl="https://example.com/current.jpg"
+        candidates={REAL_PEXELS}
+        onClear={onClear}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /no image/i }));
+    expect(onClear).toHaveBeenCalledTimes(1);
+  });
+
   it("renders an <img> per candidate with the Pexels URL as src (not seed)", () => {
     const { container } = render(
       <HostGenImageSwap

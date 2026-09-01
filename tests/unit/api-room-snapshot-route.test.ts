@@ -75,14 +75,18 @@ function qb(rows: Record<string, unknown>[], error: { message: string } | null =
 }
 
 const Q_LIVE = {
-  id: "q-live", category_id: "C2", point_value: 400, prompt: "P2",
-  options: ["a", "b", "c", "d"], correct_index: 1, image_url: null,
+  id: "q-live", category_id: "C2", point_value: 400,
+  prompt: "Heather-approved live prompt",
+  options: ["Copper", "Slate", "Limestone", "Granite"], correct_index: 1,
+  image_url: "https://images.example/heather-approved-live.jpg",
   fact_blurb: null, played_at: "2026-06-07T00:00:00Z", finished_at: null,
   is_picked: true,
 };
 const Q_RESOLVED = {
-  id: "q-resolved", category_id: "C1", point_value: 500, prompt: "P3",
-  options: ["a", "b", "c", "d"], correct_index: 3, image_url: null,
+  id: "q-resolved", category_id: "C1", point_value: 500,
+  prompt: "Heather-approved resolved prompt",
+  options: ["North", "South", "East", "West"], correct_index: 3,
+  image_url: null,
   fact_blurb: null, played_at: "2026-06-07T00:00:00Z",
   finished_at: "2026-06-07T00:00:20Z", is_picked: true,
 };
@@ -249,8 +253,22 @@ describe("GET /api/room/[code]/snapshot", () => {
     const body = await res.json();
 
     expect(body.currentQuestion.id).toBe("q-live");
+    expect(body.currentQuestion).toMatchObject({
+      id: "q-live",
+      prompt: "Heather-approved live prompt",
+      options: ["Copper", "Slate", "Limestone", "Granite"],
+      pointValue: 400,
+      imageUrl: "https://images.example/heather-approved-live.jpg",
+    });
     expect(body.currentQuestion).not.toHaveProperty("correctIndex");
     expect(body.lastResolvedQuestion.id).toBe("q-resolved");
+    expect(body.lastResolvedQuestion).toMatchObject({
+      id: "q-resolved",
+      prompt: "Heather-approved resolved prompt",
+      options: ["North", "South", "East", "West"],
+      pointValue: 500,
+      imageUrl: null,
+    });
     expect(body.lastResolvedQuestion.correctIndex).toBe(3);
 
     // Board withholds the live answer index entirely.

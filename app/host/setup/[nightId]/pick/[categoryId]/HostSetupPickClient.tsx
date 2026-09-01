@@ -42,7 +42,10 @@ import {
   deriveInitialGenerationMessage,
   explainGenerationFailure,
 } from "@/lib/host/generationFailureMessages";
-import { mergePickedAfterRefetch } from "@/lib/host/mergePickedAfterRefetch";
+import {
+  canonicalPickedAfterRefetch,
+  mergePickedAfterRefetch,
+} from "@/lib/host/mergePickedAfterRefetch";
 import { shouldRewriteFactBlurb } from "@/lib/host/factBlurbStaleness";
 import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
@@ -171,6 +174,11 @@ export function HostSetupPickClient({
   const [photoCandidates, setPhotoCandidates] = useState<HostGenPhotoCandidate[]>([]);
   const [photoLookupError, setPhotoLookupError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A point-slot PATCH is not fully reconciled until the authoritative rows
+  // have replaced local picks. Keep this outside the modal lifecycle so a
+  // host who closes the editor cannot lock stale pre-swap assignments.
+  const boardSyncRequiredRef = useRef(false);
+  const [boardSyncRequired, setBoardSyncRequired] = useState(false);
   // Last sign of life from the background job — a `progress` heartbeat or an
   // inserted/updated question. Feeds useGenerationStatus so the safety timer is
   // measured from real activity (the write+verify run legitimately takes
@@ -196,32 +204,51 @@ export function HostSetupPickClient({
   const autoResumedAttemptsRef = useRef(new Set<number>());
   const currentGenerationAttemptRef = useRef(0);
 
-  const refetchQuestions = useCallback(async () => {
+  const refetchQuestions = useCallback(async (
+    reconciliation: "merge" | "canonical" = "merge",
+  ): Promise<QuestionRow[] | null> => {
     // Query Supabase directly via the browser client (RLS allows the host
     // to read questions under their own category).
     const supa = getSupabaseBrowser();
-    const { data } = await supa.from("questions").select("*").eq("category_id", categoryId);
-    if (data) {
-      const rows = data as QuestionRow[];
-      setQuestions(rows);
-      // Picks live in client state until lock — never overwrite the host's
-      // selections with what's in the DB. The merge keeps every client
-      // pick whose row still exists, unions any DB-confirmed is_picked
-      // rows, and drops orphans. See lib/host/mergePickedAfterRefetch.
-      // The previous "blindly replace from DB" version silently wiped the
-      // host's in-progress picks every time `question_added` fired during
-      // an "↻ Another 20" — that was bug A.
-      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
-      // If the host had an edit/swap/upload panel open for a question that was
-      // just deleted by the reroll, close the modal and surface a recoverable
-      // message — otherwise she'd hit Save and get a confusing 404.
-      const openModal = modalRef.current;
-      if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
-        setModal({ kind: "none" });
-        setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
+    const { data, error: refetchError } = await supa
+      .from("questions")
+      .select("*")
+      .eq("category_id", categoryId);
+    if (refetchError || !data) {
+      if (reconciliation === "canonical") {
+        throw new Error(
+          "Your edit was saved, but the board could not refresh. Keep this panel open and try again before locking.",
+        );
       }
+      return null;
     }
+    const rows = data as QuestionRow[];
+    setQuestions(rows);
+    // Ordinary generation refetches merge in-progress local picks. A
+    // slot-changing edit is different: swap_point_value may have displaced a
+    // second row, so only its authoritative refetch may change pick state.
+    // This also keeps the recovery Lock reachable instead of merging to 8.
+    if (reconciliation === "canonical") {
+      setPickedIds(canonicalPickedAfterRefetch(rows));
+    } else if (!boardSyncRequiredRef.current) {
+      setPickedIds((prev) => mergePickedAfterRefetch(prev, rows));
+    }
+    // If the host had an edit/swap/upload panel open for a question that was
+    // just deleted by the reroll, close the modal and surface a recoverable
+    // message — otherwise she'd hit Save and get a confusing 404.
+    const openModal = modalRef.current;
+    if (openModal.kind !== "none" && !rows.some((r) => r.id === openModal.questionId)) {
+      setModal({ kind: "none" });
+      setError("That question was replaced by a regeneration. Close and pick a fresh one from the new batch.");
+    }
+    return rows;
   }, [categoryId]);
+
+  const reconcileBoardAuthoritatively = useCallback(async () => {
+    await refetchQuestions("canonical");
+    boardSyncRequiredRef.current = false;
+    setBoardSyncRequired(false);
+  }, [refetchQuestions]);
 
   const refetchAuditSummary = useCallback(async () => {
     const supa = getSupabaseBrowser();
@@ -295,6 +322,7 @@ export function HostSetupPickClient({
           attempt?: number;
           questionId?: string;
           imageUrl?: string;
+          attribution?: string | null;
         };
         if (
           typeof payload.attempt === "number" &&
@@ -306,11 +334,26 @@ export function HostSetupPickClient({
         setLastActivityAt(Date.now());
         if (!payload.questionId) return;
         setQuestions((prev) =>
-          prev.map((q) =>
-            q.id === payload.questionId
-              ? { ...q, image_url: payload.imageUrl ?? q.image_url }
-              : q,
-          ),
+          prev.map((q) => {
+            // This event is emitted only for automatic generation photos.
+            // Mirror the database authority rule: a late event may hydrate an
+            // untouched row, but never repaint a host upload, manual choice,
+            // or deliberate no-image sentinel already known by the client.
+            if (
+              q.id !== payload.questionId ||
+              q.image_url !== null ||
+              q.image_source !== null ||
+              !payload.imageUrl
+            ) {
+              return q;
+            }
+            return {
+              ...q,
+              image_url: payload.imageUrl,
+              image_attribution: payload.attribution ?? null,
+              image_source: "pexels",
+            };
+          }),
         );
       })
       .on("broadcast", { event: "done" }, async (msg) => {
@@ -532,15 +575,43 @@ export function HostSetupPickClient({
   }
 
   // ── lock category (POST /api/categories/[id]/pick) ───────────────────
-  async function handleLock() {
-    if (pickedIds.size !== 7) return;
+  async function handleLock(
+    assignments: Array<{ id: string; pointValue: number }>,
+  ) {
+    // Recovery is deliberately a separate click. The assignments passed to
+    // this invocation were computed from the stale render, so they must never
+    // be reused even after the canonical read succeeds.
+    if (boardSyncRequiredRef.current) {
+      setLocking(true);
+      setError(null);
+      try {
+        await reconcileBoardAuthoritatively();
+        setError(
+          "Your board was refreshed from the saved edit. Review it, then press Lock again.",
+        );
+      } catch (err) {
+        setError(
+          err instanceof Error
+            ? err.message
+            : "The board could not refresh. Try Lock again when you are connected.",
+        );
+      } finally {
+        setLocking(false);
+      }
+      return;
+    }
+    if (
+      pickedIds.size !== 7 ||
+      assignments.length !== 7 ||
+      assignments.some((assignment) => !pickedIds.has(assignment.id))
+    ) return;
     setLocking(true);
     setError(null);
     try {
       const res = await fetch(`/api/categories/${categoryId}/pick`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ questionIds: Array.from(pickedIds) }),
+        body: JSON.stringify({ assignments }),
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -666,13 +737,18 @@ export function HostSetupPickClient({
   ): Promise<QuestionRow | null> {
     setSavingEdit(true);
     setError(null);
-    // Snapshot the slot before the save: if it changes, the server's
-    // swap_point_value RPC may have displaced whatever row held the target
-    // slot (a second row we never saw change), so we must refetch to keep the
-    // board preview from drifting (two cards rendered at the same value).
-    const previousPointValue =
-      questions.find((q) => q.id === questionId)?.point_value ?? null;
     try {
+      // A Save retry is also a recovery boundary. Do not send another PATCH
+      // until the previous successful slot mutation has been reconciled.
+      if (boardSyncRequiredRef.current) {
+        await reconcileBoardAuthoritatively();
+      }
+      // Snapshot the slot before the save: if it changes, the server's
+      // swap_point_value RPC may have displaced whatever row held the target
+      // slot (a second row we never saw change), so we must refetch to keep the
+      // board preview from drifting (two cards rendered at the same value).
+      const previousPointValue =
+        questions.find((q) => q.id === questionId)?.point_value ?? null;
       const res = await fetch(`/api/questions/${questionId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -699,7 +775,9 @@ export function HostSetupPickClient({
       const { question } = (await res.json()) as { question: QuestionRow };
       setQuestions((prev) => prev.map((q) => (q.id === question.id ? question : q)));
       if (pointValueChanged(previousPointValue, question.point_value)) {
-        void refetchQuestions();
+        boardSyncRequiredRef.current = true;
+        setBoardSyncRequired(true);
+        await reconcileBoardAuthoritatively();
       }
       return question;
     } catch (err) {
@@ -870,10 +948,10 @@ export function HostSetupPickClient({
         }),
       });
       if (!res.ok) {
-        // The question may have been rerolled away while this panel was open
-        // (→ 404). Close the panel and resync so the host picks from the new
-        // batch; never surface the route's raw "failed to update photo: <pg>".
-        if (res.status === 404) {
+        // A 404 means the question was rerolled away; a 409 means another
+        // image choice won the CAS. Close and resync either way so the host
+        // reviews the authoritative row before trying another change.
+        if (res.status === 404 || res.status === 409) {
           setModal({ kind: "none" });
           void refetchQuestions();
         }
@@ -886,6 +964,40 @@ export function HostSetupPickClient({
       setModal({ kind: "none" });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not swap photo.");
+    } finally {
+      setSavingPhoto(false);
+    }
+  }
+
+  async function handleClearPhoto() {
+    if (modal.kind !== "swap") return;
+    const questionId = modal.questionId;
+    setSavingPhoto(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/questions/${questionId}/photo`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        if (res.status === 404 || res.status === 409) {
+          setModal({ kind: "none" });
+          void refetchQuestions();
+        }
+        throw new Error(explainPhotoSaveFailure(res.status));
+      }
+      const { question } = (await res.json()) as {
+        question: Partial<QuestionRow>;
+      };
+      setQuestions((prev) =>
+        prev.map((row) =>
+          row.id === questionId ? { ...row, ...question } : row,
+        ),
+      );
+      setModal({ kind: "none" });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove photo.");
     } finally {
       setSavingPhoto(false);
     }
@@ -919,10 +1031,9 @@ export function HostSetupPickClient({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        // Rerolled away mid-upload (→ 404): the upload panel's own error slot
-        // would vanish with the question, so close it and surface the recovery
-        // message on the top-level toast instead.
-        if (res.status === 404) {
+        // A reroll (404) or a newer image choice (409) requires a resync. The
+        // upload panel is closing, so surface recovery on the top-level toast.
+        if (res.status === 404 || res.status === 409) {
           setModal({ kind: "none" });
           void refetchQuestions();
           setError(explainUploadFailure(body.error, res.status));
@@ -1196,6 +1307,7 @@ export function HostSetupPickClient({
             currentImageUrl={swapQuestion.image_url}
             candidates={photoCandidates}
             onChoose={handleChoosePhoto}
+            onClear={handleClearPhoto}
             onOpenUpload={() => {
               setUploadError(null);
               setModal({ kind: "upload", questionId: swapQuestion.id });
@@ -1225,6 +1337,28 @@ export function HostSetupPickClient({
             onErrorRetry={() => setUploadError(null)}
           />
         </ModalOverlay>
+      )}
+
+      {boardSyncRequired && (
+        <div
+          role="status"
+          data-testid="host-board-sync-required"
+          style={{
+            position: "fixed",
+            left: 20,
+            bottom: 20,
+            zIndex: 60,
+            padding: "10px 14px",
+            borderRadius: 10,
+            background: "rgba(123,82,20,.96)",
+            color: "#FFF",
+            fontFamily: "var(--font-sans)",
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          Saved edit needs a board refresh before Lock.
+        </div>
       )}
 
       {error && (

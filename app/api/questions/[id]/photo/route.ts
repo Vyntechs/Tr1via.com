@@ -16,11 +16,17 @@ import { requireOwnedQuestion } from "@/lib/api/auth";
 import { PatchQuestionPhotoBodySchema } from "@/lib/api/schemas";
 import {
   badRequest,
+  conflict,
   forbidden,
   notFound,
   ok,
   unauthorized,
 } from "@/lib/api/responses";
+import {
+  cleanupReplacedQuestionUpload,
+  compareAndSetQuestionImage,
+  type QuestionImageUpdate,
+} from "@/lib/host/question-image-storage";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
@@ -38,6 +44,7 @@ export async function PATCH(
     if (owned.status === 403) return forbidden(owned.error);
     return notFound(owned.error);
   }
+  const { night, question } = owned;
 
   let body: unknown;
   try {
@@ -50,24 +57,38 @@ export async function PATCH(
   const patch = parsed.data;
 
   const admin = getSupabaseAdmin();
-  const isClear = patch.url === undefined;
-  const update = isClear
-    ? { image_url: null, image_attribution: null, image_source: null }
+  const update: QuestionImageUpdate = patch.url === undefined
+    ? { image_url: null, image_attribution: null, image_source: "none" }
     : {
         image_url: patch.url,
         image_attribution: patch.attribution ?? null,
         image_source: patch.source ?? "pexels",
       };
 
-  const { data: updated, error } = await admin
-    .from("questions")
-    .update(update)
-    .eq("id", questionId)
-    .select("id, image_url, image_attribution, image_source")
-    .single();
-  if (error || !updated) {
-    return badRequest(`failed to update photo: ${error?.message ?? "unknown"}`);
+  const predecessor = {
+    imageUrl: question.image_url,
+    imageSource: question.image_source,
+  };
+  const result = await compareAndSetQuestionImage(admin, {
+    questionId,
+    predecessor,
+    update,
+  });
+  if (result.status === "error") {
+    return badRequest(`failed to update photo: ${result.error}`);
+  }
+  if (result.status === "conflict") {
+    return conflict(
+      "Another image choice was saved first. Review the current image and try again.",
+    );
   }
 
-  return ok({ question: updated });
+  await cleanupReplacedQuestionUpload(admin, {
+    nightId: night.id,
+    questionId,
+    predecessor,
+    replacementUrl: result.question.image_url,
+  });
+
+  return ok({ question: result.question });
 }

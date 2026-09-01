@@ -18,7 +18,7 @@ export interface GenerationRpcClient {
 
 interface EffectEnvelope {
   applied: boolean;
-  code: "applied" | "stale" | "conflict";
+  code: "applied" | "host_override" | "stale" | "conflict";
   job?: QuestionGenerationJobRow;
 }
 
@@ -119,7 +119,7 @@ export async function commitGenerationPhoto(
     attribution: string | null;
     source: string;
   },
-): Promise<boolean> {
+): Promise<GenerationPhotoCommitOutcome> {
   const result = await call(client, "commit_generation_photo", {
     p_category_id: input.categoryId,
     p_attempt: input.attempt,
@@ -128,7 +128,39 @@ export async function commitGenerationPhoto(
     p_image_attribution: input.attribution,
     p_image_source: input.source,
   });
-  return result.applied;
+  if (
+    result.code !== "applied" &&
+    result.code !== "host_override" &&
+    result.code !== "stale"
+  ) {
+    throw new Error(`commit_generation_photo returned unexpected code: ${result.code}`);
+  }
+  return result.code;
+}
+
+export type GenerationPhotoCommitOutcome =
+  | "applied"
+  | "host_override"
+  | "stale";
+
+/**
+ * Apply the non-SQL effects for one automatic photo result. A host override
+ * still fences the worker attempt, but intentionally records and broadcasts
+ * nothing. `false` tells the caller that the attempt itself became stale.
+ */
+export async function settleGenerationPhotoCommit(
+  outcome: GenerationPhotoCommitOutcome,
+  effects: {
+    onApplied(): void | Promise<void>;
+    fence(): Promise<void>;
+    broadcast(): Promise<void>;
+  },
+): Promise<boolean> {
+  if (outcome === "stale") return false;
+  if (outcome === "applied") await effects.onApplied();
+  await effects.fence();
+  if (outcome === "applied") await effects.broadcast();
+  return true;
 }
 
 export async function completeQuestionGeneration(

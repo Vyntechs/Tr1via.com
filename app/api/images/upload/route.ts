@@ -14,32 +14,38 @@
 //
 // Storage:
 //   bucket  = "question-images"
-//   key     = "{nightId}/{questionId}.{ext}"
+//   key     = a content-versioned path beneath the night and question
 //   public  = yes (the bucket is configured public-read in
 //             supabase/migrations/0004_storage.sql)
 //
 // The question's `image_url`, `image_attribution=null`, and
 // `image_source='upload'` are set on success.
 
+import { randomUUID } from "node:crypto";
 import { type NextRequest } from "next/server";
 
 import { requireOwnedQuestion } from "@/lib/api/auth";
 import {
   badRequest,
+  conflict,
   forbidden,
   notFound,
   ok,
   serverError,
   unauthorized,
 } from "@/lib/api/responses";
+import {
+  cleanupReplacedQuestionUpload,
+  compareAndSetQuestionImage,
+  QUESTION_IMAGE_BUCKET,
+  removeNewQuestionImageUpload,
+} from "@/lib/host/question-image-storage";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 10 * 1024 * 1024; // 10 MB
-const BUCKET = "question-images";
-
 interface ImageType {
   ext: "png" | "jpg" | "webp" | "gif";
   mime: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
@@ -90,43 +96,69 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const key = `${night.id}/${question.id}.${detected.ext}`;
+  // Public image URLs can be cached, so a replacement must never overwrite
+  // the bytes at an existing URL. The question row points at the latest
+  // immutable object version.
+  const key = `${night.id}/${question.id}/${randomUUID()}.${detected.ext}`;
   const admin = getSupabaseAdmin();
+  const predecessor = {
+    imageUrl: question.image_url,
+    imageSource: question.image_source,
+  };
 
   const { error: uploadError } = await admin.storage
-    .from(BUCKET)
+    .from(QUESTION_IMAGE_BUCKET)
     .upload(key, bytes, {
       contentType: detected.mime,
-      upsert: true,
+      upsert: false,
       cacheControl: "3600",
     });
   if (uploadError) {
     return serverError(`storage upload failed: ${uploadError.message}`);
   }
 
-  const { data: pub } = admin.storage.from(BUCKET).getPublicUrl(key);
-  const publicUrl = pub?.publicUrl;
+  let publicUrl: string | undefined;
+  try {
+    const { data: pub } = admin.storage
+      .from(QUESTION_IMAGE_BUCKET)
+      .getPublicUrl(key);
+    publicUrl = pub?.publicUrl;
+  } catch {
+    // Preserve the original public-URL failure below after compensation.
+  }
   if (!publicUrl) {
+    await removeNewQuestionImageUpload(admin, key);
     return serverError("failed to resolve public URL for uploaded image");
   }
 
-  const { data: updated, error: updateError } = await admin
-    .from("questions")
-    .update({
+  const result = await compareAndSetQuestionImage(admin, {
+    questionId: question.id,
+    predecessor,
+    update: {
       image_url: publicUrl,
       image_attribution: null,
       image_source: "upload",
-    })
-    .eq("id", question.id)
-    .select("id, image_url, image_source")
-    .single();
-  if (updateError || !updated) {
-    return serverError(
-      `failed to update question: ${updateError?.message ?? "unknown"}`,
+    },
+  });
+  if (result.status === "error") {
+    await removeNewQuestionImageUpload(admin, key);
+    return serverError(`failed to update question: ${result.error}`);
+  }
+  if (result.status === "conflict") {
+    await removeNewQuestionImageUpload(admin, key);
+    return conflict(
+      "Another image choice was saved first. Review it and try your upload again.",
     );
   }
 
-  return ok({ question: updated });
+  await cleanupReplacedQuestionUpload(admin, {
+    nightId: night.id,
+    questionId: question.id,
+    predecessor,
+    replacementUrl: result.question.image_url,
+  });
+
+  return ok({ question: result.question });
 }
 
 /**

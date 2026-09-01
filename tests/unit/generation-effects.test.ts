@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { commitGenerationQuestions } from "@/lib/ai/generation-effects";
+import {
+  commitGenerationPhoto,
+  commitGenerationQuestions,
+  settleGenerationPhotoCommit,
+} from "@/lib/ai/generation-effects";
 import type { GeneratedQuestion } from "@/lib/ai/generate-questions";
 
 const question: GeneratedQuestion = {
@@ -40,5 +44,49 @@ describe("commitGenerationQuestions", () => {
         imageUrl: null,
       },
     ]);
+  });
+});
+
+describe("generation photo commit outcomes", () => {
+  it.each(["applied", "host_override", "stale"] as const)(
+    "returns the explicit %s SQL outcome",
+    async (code) => {
+      const rpc = vi.fn(async () => ({
+        data: { applied: code === "applied", code },
+        error: null,
+      }));
+
+      await expect(
+        commitGenerationPhoto(
+          { rpc },
+          {
+            categoryId: "category-1",
+            attempt: 2,
+            questionId: "question-1",
+            imageUrl: "https://images.pexels.com/auto.jpg",
+            attribution: "Pexels photographer",
+            source: "pexels",
+          },
+        ),
+      ).resolves.toBe(code);
+    },
+  );
+
+  it("fences but neither counts nor broadcasts a host override", async () => {
+    const onApplied = vi.fn();
+    const fence = vi.fn(async () => undefined);
+    const broadcast = vi.fn(async () => undefined);
+
+    await expect(
+      settleGenerationPhotoCommit("host_override", {
+        onApplied,
+        fence,
+        broadcast,
+      }),
+    ).resolves.toBe(true);
+
+    expect(fence).toHaveBeenCalledOnce();
+    expect(onApplied).not.toHaveBeenCalled();
+    expect(broadcast).not.toHaveBeenCalled();
   });
 });

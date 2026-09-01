@@ -51,6 +51,9 @@ export function explainLockFailure(
  */
 export function explainPhotoSaveFailure(status: number): string {
   if (status === 404) return QUESTION_REPLACED_MESSAGE;
+  if (status === 409) {
+    return "Another image choice was saved first. Review the current image, then try again.";
+  }
   if (status === 401 || status === 403) {
     return "Your sign-in expired. Refresh the page and try again.";
   }
@@ -68,6 +71,9 @@ export function explainUploadFailure(
   status: number,
 ): string {
   if (status === 404) return QUESTION_REPLACED_MESSAGE;
+  if (status === 409) {
+    return "Another image choice was saved first. Review the current image, then try your upload again.";
+  }
   const msg = (rawMessage ?? "").toLowerCase();
   if (msg.includes("too large")) {
     return "That file is over 10 MB. Try a smaller export or compress it first.";

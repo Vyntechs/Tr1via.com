@@ -12,7 +12,7 @@ const ROWS = Array.from({ length: 7 }, (_, index) => ({
   point_value: null,
 }));
 
-function makeAdmin() {
+function makeAdmin(rows = ROWS) {
   const rpc = vi.fn().mockResolvedValue({ data: null, error: null });
   const writes: Array<Record<string, unknown>> = [];
 
@@ -40,7 +40,7 @@ function makeAdmin() {
       ) {
         return Promise.resolve(
           operation === "select"
-            ? { data: ROWS, error: null }
+            ? { data: rows, error: null }
             : { data: null, error: null },
         ).then(resolve, reject);
       },
@@ -58,27 +58,40 @@ function makeAdmin() {
 describe("pickQuestionsForCategory atomic persistence", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("commits all seven picks and category readiness in one database call", async () => {
+  it("commits the host's exact displayed assignments even when membership rows return reversed", async () => {
     const { client, rpc, writes } = makeAdmin();
     adminMock.getSupabaseAdmin.mockReturnValue(client);
     const { pickQuestionsForCategory } = await import(
       "@/lib/host/pickQuestions"
     );
 
-    const result = await pickQuestionsForCategory(
-      CATEGORY_ID,
-      ROWS.map((row) => row.id),
-    );
+    const assignments = [...ROWS]
+      .reverse()
+      .map((row, index) => ({ id: row.id, pointValue: (index + 1) * 100 }));
+    const result = await pickQuestionsForCategory(CATEGORY_ID, assignments);
 
     expect(result.ok).toBe(true);
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(rpc).toHaveBeenCalledWith("apply_category_picks", {
       p_category_id: CATEGORY_ID,
-      p_assignments: ROWS.map((row, index) => ({
-        id: row.id,
-        pointValue: (index + 1) * 100,
-      })),
+      p_assignments: assignments,
     });
     expect(writes).toEqual([]);
+  });
+
+  it("rejects assignments containing a question outside the category", async () => {
+    const { client, rpc } = makeAdmin(ROWS.slice(0, 6));
+    adminMock.getSupabaseAdmin.mockReturnValue(client);
+    const { pickQuestionsForCategory } = await import(
+      "@/lib/host/pickQuestions"
+    );
+    const assignments = ROWS.map((row, index) => ({
+      id: row.id,
+      pointValue: (index + 1) * 100,
+    }));
+
+    await expect(pickQuestionsForCategory(CATEGORY_ID, assignments)).resolves
+      .toMatchObject({ ok: false, error: expect.stringContaining("found 6") });
+    expect(rpc).not.toHaveBeenCalled();
   });
 });

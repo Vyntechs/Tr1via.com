@@ -1,7 +1,6 @@
-// Shared question-pick write-path. Extracted from POST /api/categories/[id]/pick
-// so the founder "build a full game" auto-pick uses the EXACT same logic as a
-// human pick — assign point values 100..700, atomically clear + set is_picked,
-// flip the category to 'ready'.
+// Shared board-assignment helpers. Auto-pick derives slots from difficulty;
+// human lock validates category membership and preserves the exact assignments
+// already displayed to the host. Both feed the same atomic database function.
 
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { assignPointValues } from "@/lib/game/difficulty";
@@ -40,10 +39,8 @@ export function selectSpreadQuestionIds(
 }
 
 /**
- * Assign point values to exactly 7 picked questions and flip the category to
- * 'ready'. Caller must have already verified ownership + that the category is
- * in 'review'/'ready'. The database persists the clear, seven assignments,
- * and ready state as one fenced transaction.
+ * Derive point values for founder auto-pick. Human lock must not use this:
+ * its displayed id-to-slot assignments are already authoritative.
  */
 export async function prepareQuestionAssignmentsForCategory(
   categoryId: string,
@@ -78,15 +75,31 @@ export async function prepareQuestionAssignmentsForCategory(
 
 export async function pickQuestionsForCategory(
   categoryId: string,
-  questionIds: string[],
+  assignments: Array<{ id: string; pointValue: number }>,
 ): Promise<PickResult> {
   const admin = getSupabaseAdmin();
-  const prepared = await prepareQuestionAssignmentsForCategory(
-    categoryId,
-    questionIds,
-  );
-  if (!prepared.ok) return prepared;
-  const assignments = prepared.picked;
+  const questionIds = assignments.map((assignment) => assignment.id);
+  const { data: belongs, error: belongsError } = await admin
+    .from("questions")
+    .select("id")
+    .eq("category_id", categoryId)
+    .in("id", questionIds);
+  if (belongsError) {
+    return {
+      ok: false,
+      error: `failed to verify questions: ${belongsError.message}`,
+    };
+  }
+  const belongingIds = new Set((belongs ?? []).map((row) => row.id));
+  if (
+    belongingIds.size !== 7 ||
+    questionIds.some((questionId) => !belongingIds.has(questionId))
+  ) {
+    return {
+      ok: false,
+      error: `expected 7 questions in this category, found ${belongingIds.size}`,
+    };
+  }
 
   const { error } = await (admin.rpc as unknown as (
     name: "apply_category_picks",

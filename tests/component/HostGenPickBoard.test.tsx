@@ -30,6 +30,37 @@ function sevenQuestions(): HostGenPickQuestion[] {
 }
 
 describe("HostGenPick — YOUR BOARD reorder + edit affordances", () => {
+  it("locks the exact id-to-slot assignments displayed in the sidebar", () => {
+    const onLock = vi.fn();
+    const questions = sevenQuestions();
+    // Explicit placements intentionally oppose input order. The callback must
+    // preserve what the host sees, not ask the server to derive it again.
+    questions[0].pointValue = 700;
+    questions[6].pointValue = 100;
+    render(
+      <HostGenPick
+        themeKey="house"
+        topic="Grunge bands"
+        questions={questions}
+        pickedIds={new Set(questions.map((q) => q.id))}
+        onLock={onLock}
+        onTogglePick={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /lock the category/i }));
+
+    expect(onLock).toHaveBeenCalledWith([
+      { id: "q6", pointValue: 100 },
+      { id: "q1", pointValue: 200 },
+      { id: "q2", pointValue: 300 },
+      { id: "q3", pointValue: 400 },
+      { id: "q4", pointValue: 500 },
+      { id: "q5", pointValue: 600 },
+      { id: "q0", pointValue: 700 },
+    ]);
+  });
+
   it("the board card pencil opens the edit handler with that question's id", () => {
     const onEdit = vi.fn();
     const questions = sevenQuestions();

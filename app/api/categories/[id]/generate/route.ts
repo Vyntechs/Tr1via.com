@@ -56,6 +56,7 @@ import {
   commitGenerationQuestions,
   completeQuestionGeneration,
   failQuestionGeneration,
+  settleGenerationPhotoCommit,
   type GenerationRpcClient,
 } from "@/lib/ai/generation-effects";
 import { costUsd, type TokenUsage } from "@/lib/ai/usage-cost";
@@ -687,23 +688,38 @@ async function runGenerationJob(opts: {
         topic: opts.topic,
         excludeImageUrls: usedImageUrls,
       });
-      if (photo.imageUrl) {
-        const applied = await commitGenerationPhoto(rpcClient, {
+      const imageUrl = photo.imageUrl;
+      if (imageUrl) {
+        const outcome = await commitGenerationPhoto(rpcClient, {
           categoryId: opts.categoryId,
           attempt: opts.attempt,
           questionId: id,
-          imageUrl: photo.imageUrl,
+          imageUrl,
           attribution: photo.attribution,
           source: "pexels",
         });
-        if (!applied) throw new GenerationAttemptSupersededError();
-        recordCategoryImageUrl(usedImageUrls, photo.imageUrl);
-        qualityReport.recordImageAttached();
-        imageCount += 1;
-        await writeWorkerProgress({
-          phase: "images",
-          image_count: imageCount,
+        const current = await settleGenerationPhotoCommit(outcome, {
+          onApplied: async () => {
+            recordCategoryImageUrl(usedImageUrls, imageUrl);
+            qualityReport.recordImageAttached();
+            imageCount += 1;
+            await writeWorkerProgress({
+              phase: "images",
+              image_count: imageCount,
+            });
+          },
+          fence: fenceSideEffect,
+          broadcast: () =>
+            broadcastToCategory(opts.categoryId, "photo_attached", {
+              serverNow: new Date().toISOString(),
+              attempt: opts.attempt,
+              questionId: id,
+              imageUrl,
+              attribution: photo.attribution,
+            }).catch(() => undefined),
         });
+        if (!current) throw new GenerationAttemptSupersededError();
+        continue;
       }
       await fenceSideEffect();
       await broadcastToCategory(opts.categoryId, "photo_attached", {

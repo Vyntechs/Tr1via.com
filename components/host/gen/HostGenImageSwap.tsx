@@ -47,6 +47,8 @@ export interface HostGenImageSwapProps {
   candidates?: HostGenPhotoCandidate[];
   /** Called when the host taps "Use this image". */
   onChoose?: (candidate: HostGenPhotoCandidate) => void;
+  /** Called when the host deliberately chooses to serve without an image. */
+  onClear?: () => void;
   /** Called when the host taps the upload-your-own tile. */
   onOpenUpload?: () => void;
   /** Called when the host taps "More from library" / refresh. */
@@ -98,6 +100,7 @@ function HostGenImageSwapInner({
   currentImageUrl = null,
   candidates = DEMO_CANDIDATES,
   onChoose,
+  onClear,
   onOpenUpload,
   onLoadMore,
   onBack,
@@ -331,6 +334,25 @@ function HostGenImageSwapInner({
               }}
             >
               {isSaving ? "Saving…" : "Use this image"}
+            </button>
+            <button
+              type="button"
+              onClick={onClear}
+              disabled={isSaving}
+              style={{
+                background: "transparent",
+                color: t.ink,
+                border: `1px solid ${t.line}`,
+                borderRadius: 12,
+                padding: "12px 0",
+                fontSize: 13,
+                fontWeight: 650,
+                fontFamily: "var(--font-sans)",
+                cursor: isSaving ? "not-allowed" : "pointer",
+                opacity: isSaving ? 0.65 : 1,
+              }}
+            >
+              No image
             </button>
             <button
               type="button"

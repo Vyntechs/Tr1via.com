@@ -8,7 +8,10 @@
 // DB-derived reset wiped them. This helper is the fix.
 
 import { describe, it, expect } from "vitest";
-import { mergePickedAfterRefetch } from "@/lib/host/mergePickedAfterRefetch";
+import {
+  canonicalPickedAfterRefetch,
+  mergePickedAfterRefetch,
+} from "@/lib/host/mergePickedAfterRefetch";
 
 describe("mergePickedAfterRefetch", () => {
   it("keeps client picks when their rows are still present", () => {
@@ -87,5 +90,24 @@ describe("mergePickedAfterRefetch", () => {
     const once = mergePickedAfterRefetch(previous, rows);
     const twice = mergePickedAfterRefetch(once, rows);
     expect(twice).toEqual(once);
+  });
+});
+
+describe("canonicalPickedAfterRefetch", () => {
+  it("replaces stale local picks after a point-value swap", () => {
+    const rows = [
+      { id: "a", is_picked: true },
+      { id: "b", is_picked: true },
+      { id: "c", is_picked: true },
+      { id: "d", is_picked: true },
+      { id: "e", is_picked: true },
+      { id: "f", is_picked: true },
+      { id: "C", is_picked: true, point_value: 500 },
+      { id: "D", is_picked: false, point_value: null },
+    ];
+
+    expect(canonicalPickedAfterRefetch(rows)).toEqual(
+      new Set(["a", "b", "c", "d", "e", "f", "C"]),
+    );
   });
 });
