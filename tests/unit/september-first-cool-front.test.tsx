@@ -92,9 +92,12 @@ describe("September atmosphere and control contract", () => {
     expect(screen.queryByTestId("september-front-contours")).toBeNull();
     expect(screen.getByTestId("september-front-compact-edge")).toBeInTheDocument();
     expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "compact");
-    expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
+    const compactLampHeads = screen.getAllByTestId("september-stadium-lamp-head");
+    expect(compactLampHeads).toHaveLength(2);
+    compactLampHeads.forEach((lampHead) => expect(lampHead.querySelectorAll("rect")).toHaveLength(13));
     expect(screen.getByTestId("september-stadium-light-beams")).toBeInTheDocument();
     expect(screen.getByTestId("september-stadium-goal-post")).toBeInTheDocument();
+    expect(screen.queryByTestId("september-stadium-press-box")).toBeNull();
     expect(screen.getByTestId("september-homecoming-pennants")).toBeInTheDocument();
     expect(screen.getByTestId("september-homecoming-sign")).toHaveTextContent("HOMECOMING");
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();

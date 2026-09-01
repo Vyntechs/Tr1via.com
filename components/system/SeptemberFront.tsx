@@ -119,43 +119,6 @@ function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number })
   );
 }
 
-function CompactLampBank({ side, quiet }: { side: "left" | "right"; quiet: boolean }) {
-  const isLeft = side === "left";
-  const transform = isLeft
-    ? "translate(-8 52) rotate(-5 44 22)"
-    : "translate(388 52) scale(-1 1) rotate(-5 44 22)";
-
-  return (
-    <g
-      data-testid="september-stadium-lamp-head"
-      transform={transform}
-      style={{ filter: `drop-shadow(0 4px ${quiet ? 13 : 20}px rgba(255,244,213,.68))` }}
-    >
-      <path
-        d="M0 8 78 0 88 34 8 42Z"
-        fill="#071014"
-        stroke="#F3E4C3"
-        strokeOpacity={quiet ? ".5" : ".72"}
-        strokeWidth="1.4"
-      />
-      {[0, 1, 2].map((column) =>
-        [0, 1].map((row) => (
-          <rect
-            key={`${column}-${row}`}
-            x={14 + column * 22}
-            y={9 + row * 14}
-            width="13"
-            height="8"
-            rx="2"
-            fill="#FFF4D5"
-            opacity={quiet ? ".72" : ".96"}
-          />
-        )),
-      )}
-    </g>
-  );
-}
-
 function StadiumLightBeams({ compact, quiet = false }: { compact: boolean; quiet?: boolean }) {
   return (
     <g data-testid="september-stadium-light-beams" fill="#FFF4D5" opacity={quiet ? ".52" : "1"}>
@@ -266,8 +229,8 @@ function DistantStadium({
             <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity={quiet ? ".4" : ".54"}>
               <path d="M3 742 14 94M22 742 30 94M377 742 366 94M358 742 350 94" strokeWidth="1.45" />
               <path d="M4 688 21 642 6 596 23 550 8 504 24 458 10 412 26 366 12 320 27 274 14 228 29 182M376 688 359 642 374 596 357 550 372 504 356 458 370 412 354 366 368 320 353 274 366 228 351 182" strokeWidth=".9" />
-              <CompactLampBank side="left" quiet={quiet} />
-              <CompactLampBank side="right" quiet={quiet} />
+              <LampHead x={0} y={52} scale={0.68} />
+              <LampHead x={309.28} y={52} scale={0.68} />
             </g>
             {quiet ? (
               <g data-testid="september-stadium-bowl">
@@ -276,8 +239,7 @@ function DistantStadium({
             ) : (
               <>
                 <g data-testid="september-stadium-bowl">
-                  <path data-testid="september-stadium-bleachers" d="M0 726V714H70V707H128V700H252V707H310V714H380V726Z" fill="#102B2B" opacity=".48" />
-                  <path data-testid="september-stadium-press-box" d="M145 700V682H235V700Z" fill="#071014" opacity=".6" />
+                  <path data-testid="september-stadium-bleachers" d="M0 726V714H70V707H128V726ZM252 726V707H310V714H380V726Z" fill="#102B2B" opacity=".48" />
                   <g data-testid="september-homecoming-pennants">
                     <path d="M106 661Q190 673 274 661" fill="none" stroke="#F3E4C3" strokeOpacity=".42" strokeWidth="1" />
                     <path d="m119 663 7 13 7-11m19 3 7 13 7-11m19 1 7 13 7-13m19-1 7 11 7-13m19-3 7 11 7-13" fill="#D65A32" opacity=".76" />
