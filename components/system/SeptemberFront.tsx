@@ -119,13 +119,52 @@ function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number })
   );
 }
 
+function CompactLampBank({ side, quiet }: { side: "left" | "right"; quiet: boolean }) {
+  const isLeft = side === "left";
+  const transform = isLeft
+    ? "translate(-8 52) rotate(-5 44 22)"
+    : "translate(388 52) scale(-1 1) rotate(-5 44 22)";
+
+  return (
+    <g
+      data-testid="september-stadium-lamp-head"
+      transform={transform}
+      style={{ filter: `drop-shadow(0 4px ${quiet ? 13 : 20}px rgba(255,244,213,.68))` }}
+    >
+      <path
+        d="M0 8 78 0 88 34 8 42Z"
+        fill="#071014"
+        stroke="#F3E4C3"
+        strokeOpacity={quiet ? ".5" : ".72"}
+        strokeWidth="1.4"
+      />
+      {[0, 1, 2].map((column) =>
+        [0, 1].map((row) => (
+          <rect
+            key={`${column}-${row}`}
+            x={14 + column * 22}
+            y={9 + row * 14}
+            width="13"
+            height="8"
+            rx="2"
+            fill="#FFF4D5"
+            opacity={quiet ? ".72" : ".96"}
+          />
+        )),
+      )}
+    </g>
+  );
+}
+
 function StadiumLightBeams({ compact, quiet = false }: { compact: boolean; quiet?: boolean }) {
   return (
     <g data-testid="september-stadium-light-beams" fill="#FFF4D5" opacity={quiet ? ".52" : "1"}>
       {compact ? (
         <>
-          <path d="M0 104 160 640H52Z" opacity=".075" />
-          <path d="M380 104 220 640H328Z" opacity=".07" />
+          <path d="M18 86 154 672H62Z" opacity=".055" />
+          <path d="M362 86 318 672H226Z" opacity=".052" />
+          <path d="M34 88 112 620H76Z" opacity=".04" />
+          <path d="M346 88 304 620H268Z" opacity=".038" />
         </>
       ) : (
         <>
@@ -224,11 +263,11 @@ function DistantStadium({
         ) : compact ? (
           <>
             <StadiumLightBeams compact quiet={quiet} />
-            <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity={quiet ? ".5" : ".68"}>
-              <path d="M8 742V132M18 742V132M362 742V132M372 742V132" strokeWidth="1.7" />
-              <path d="M8 706 18 660 8 614 18 568 8 522 18 476 8 430 18 384 8 338 18 292 8 246 18 200M372 706 362 660 372 614 362 568 372 522 362 476 372 430 362 384 372 338 362 292 372 246 362 200" strokeWidth="1" />
-              <LampHead x={-16} y={76} scale={0.68} />
-              <LampHead x={326} y={76} scale={0.68} />
+            <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity={quiet ? ".4" : ".54"}>
+              <path d="M3 742 14 94M22 742 30 94M377 742 366 94M358 742 350 94" strokeWidth="1.45" />
+              <path d="M4 688 21 642 6 596 23 550 8 504 24 458 10 412 26 366 12 320 27 274 14 228 29 182M376 688 359 642 374 596 357 550 372 504 356 458 370 412 354 366 368 320 353 274 366 228 351 182" strokeWidth=".9" />
+              <CompactLampBank side="left" quiet={quiet} />
+              <CompactLampBank side="right" quiet={quiet} />
             </g>
             {quiet ? (
               <g data-testid="september-stadium-bowl">
@@ -239,8 +278,29 @@ function DistantStadium({
                 <g data-testid="september-stadium-bowl">
                   <path data-testid="september-stadium-bleachers" d="M0 726V714H70V707H128V700H252V707H310V714H380V726Z" fill="#102B2B" opacity=".48" />
                   <path data-testid="september-stadium-press-box" d="M145 700V682H235V700Z" fill="#071014" opacity=".6" />
+                  <g data-testid="september-homecoming-pennants">
+                    <path d="M106 661Q190 673 274 661" fill="none" stroke="#F3E4C3" strokeOpacity=".42" strokeWidth="1" />
+                    <path d="m119 663 7 13 7-11m19 3 7 13 7-11m19 1 7 13 7-13m19-1 7 11 7-13m19-3 7 11 7-13" fill="#D65A32" opacity=".76" />
+                    <path d="m135 666 7 12 7-10m19 2 7 12 7-11m19 0 7 11 7-12m19-2 7 10 7-12" fill="#72B8B0" opacity=".74" />
+                  </g>
+                  <text
+                    data-testid="september-homecoming-sign"
+                    x="190"
+                    y="696"
+                    textAnchor="middle"
+                    fill="#F3E4C3"
+                    fillOpacity=".5"
+                    fontSize="7"
+                    fontWeight="700"
+                    letterSpacing="2.2"
+                  >
+                    HOMECOMING
+                  </text>
                 </g>
-                <path data-testid="september-stadium-goal-post" d="M190 724V658M162 658V686M218 658V686M162 674H218" fill="none" stroke="#D7A84D" strokeOpacity=".52" strokeWidth="2.4" />
+                <g data-testid="september-stadium-goal-post" fill="none" stroke="#E2B94F" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M190 724V678M151 678H229M160 678V610M220 678V610" stroke="#FFF1B8" strokeOpacity=".18" strokeWidth="6.5" />
+                  <path d="M190 724V678M151 678H229M160 678V610M220 678V610" strokeOpacity=".86" strokeWidth="3.2" />
+                </g>
                 <path data-testid="september-stadium-field" d="M0 728H380" fill="none" stroke="#72B8B0" strokeOpacity=".4" strokeWidth="1.5" />
               </>
             )}
@@ -283,7 +343,10 @@ function DistantStadium({
               )}
             </g>
             {!resultsSafe && (
-              <path data-testid="september-stadium-goal-post" d="M640 654V564M596 564V600M684 564V600M596 582H684" fill="none" stroke="#D7A84D" strokeOpacity=".46" strokeWidth="3" />
+              <g data-testid="september-stadium-goal-post" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M640 654V584M590 584H690M606 584V500M674 584V500" stroke="#FFF1B8" strokeOpacity=".14" strokeWidth="8" />
+                <path d="M640 654V584M590 584H690M606 584V500M674 584V500" stroke="#D7A84D" strokeOpacity=".58" strokeWidth="3.4" />
+              </g>
             )}
             <g data-testid="september-stadium-field">
               <path d="M0 658H1280" stroke="#72B8B0" strokeOpacity=".26" strokeWidth="2" />

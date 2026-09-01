@@ -95,10 +95,13 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
     expect(screen.getByTestId("september-stadium-light-beams")).toBeInTheDocument();
     expect(screen.getByTestId("september-stadium-goal-post")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-pennants")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-sign")).toHaveTextContent("HOMECOMING");
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
     expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
     expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
-    expect(screen.getAllByTestId("september-homecoming-leaf")).toHaveLength(4);
+    expect(screen.getAllByTestId("september-homecoming-leaf")).toHaveLength(3);
+    expect(screen.getAllByTestId("september-homecoming-pom")).toHaveLength(2);
   });
 
   it("uses state-specific static phases to carry the cool-front journey", () => {
