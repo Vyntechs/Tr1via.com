@@ -15,6 +15,7 @@
 
 import type { CSSProperties } from "react";
 import type { AugustPageName } from "./AugustPage";
+import { SeptemberHomecomingDrift } from "./SeptemberHomecomingDrift";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 
 export interface SeptemberFrontProps {
@@ -353,6 +354,12 @@ export function SeptemberFront({
       />
 
       <DistantStadium compact={compact} card={card} finale={clear} quiet={quiet} resultsSafe={resultsSafe} />
+      <SeptemberHomecomingDrift
+        animated={showMotion}
+        compact={compact}
+        card={card}
+        quiet={quiet}
+      />
       {!quiet && !resultsSafe && !card && !compact && <FridayNightHashes />}
       {compact ? <CompactPressureEdge /> : <Contours quiet={quiet} />}
 

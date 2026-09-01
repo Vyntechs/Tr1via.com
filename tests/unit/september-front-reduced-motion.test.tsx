@@ -21,6 +21,7 @@ describe("September First Cool Front honors reduced motion", () => {
     expect(screen.getByTestId("september-front-contours")).toBeInTheDocument();
     expect(screen.getByTestId("september-distant-stadium")).toBeInTheDocument();
     expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
   });
 
   it("omits the moving veil instead of freezing it", () => {
@@ -32,5 +33,6 @@ describe("September First Cool Front honors reduced motion", () => {
   it("renders the slow veil for an open full-size state", () => {
     render(<SeptemberFront page="lobby" />);
     expect(screen.getByTestId("september-front-wind-veil")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "falling");
   });
 });

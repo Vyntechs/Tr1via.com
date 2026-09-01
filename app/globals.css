@@ -160,6 +160,20 @@ body {
   100% { transform: translate3d(1.5%, -1%, 0) rotate(-7.25deg); opacity: .58; }
 }
 
+/* September homecoming drift. The full-height rail makes 100% equal the
+   surface height (not the glyph height), while the inner animation supplies
+   a slow, irregular tumble. Leaves dominate; footballs and pom-poms remain
+   small second-read details. Static surfaces do not receive these classes. */
+@keyframes tr1via-september-keepsake-fall {
+  0%   { transform: translate3d(0, 0, 0); }
+  46%  { transform: translate3d(calc(var(--sept-drift, 0px) * -.35), 46%, 0); }
+  100% { transform: translate3d(var(--sept-drift, 0px), 100%, 0); }
+}
+@keyframes tr1via-september-keepsake-flutter {
+  0%   { transform: rotate3d(1, 1.8, .3, var(--sept-tilt, 0deg)) translateX(-2px); }
+  50%  { transform: rotate3d(1, 1.8, .3, calc(var(--sept-tilt, 0deg) + 155deg)) translateX(3px); }
+  100% { transform: rotate3d(1, 1.8, .3, calc(var(--sept-tilt, 0deg) + 330deg)) translateX(-1px); }
+}
 /* Theme showcase ("the color year") — the gallery cards on /trivia-night and
    /themes. Entrance reuses tr1via-rise, staggered by each card's --i; the live
    ambient weather inside each card animates itself (ParticleField) and is

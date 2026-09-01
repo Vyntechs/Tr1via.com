@@ -23,9 +23,10 @@ describe("September · First Cool Front identity", () => {
     expect(contrastRatio("#F3E4C3", "#132126")).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("replaces September's shared leaf drift without changing November", () => {
+  it("uses a September-specific homecoming drift without changing November", () => {
     const september = render(<Weather themeKey="september" />);
     expect(screen.getByTestId("september-front")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-drift")).toBeInTheDocument();
     september.unmount();
 
     render(<Weather themeKey="november" />);
@@ -54,6 +55,10 @@ describe("September atmosphere and control contract", () => {
     expect(screen.queryByTestId("september-stadium-bleachers")).toBeNull();
     expect(screen.queryByTestId("september-stadium-perspective-lines")).toBeNull();
     expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "falling");
+    expect(screen.getAllByTestId("september-homecoming-leaf")).toHaveLength(9);
+    expect(screen.getAllByTestId("september-homecoming-football")).toHaveLength(2);
+    expect(screen.getAllByTestId("september-homecoming-pom")).toHaveLength(3);
   });
 
   it("makes questions still while preserving the static September identity", () => {
@@ -66,6 +71,7 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-stadium-bowl")).toBeInTheDocument();
     expect(screen.queryByTestId("september-stadium-field")).toBeNull();
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
   });
 
   it("simplifies compact surfaces and forwards finale intensity", () => {
@@ -78,6 +84,8 @@ describe("September atmosphere and control contract", () => {
     expect(screen.queryByTestId("september-stadium-lamp-head")).toBeNull();
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
     expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
+    expect(screen.getAllByTestId("september-homecoming-leaf")).toHaveLength(4);
   });
 
   it("uses state-specific static phases to carry the cool-front journey", () => {
