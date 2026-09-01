@@ -80,6 +80,9 @@ describe("September atmosphere and control contract", () => {
     render(<Weather themeKey="september" compact page="question" />);
     expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
     expect(screen.getByTestId("september-stadium-light-beams")).toBeInTheDocument();
+    screen.getAllByTestId("september-stadium-lamp-head").forEach((lampHead) => {
+      expect(lampHead).toHaveStyle({ opacity: "0.78" });
+    });
     expect(screen.queryByTestId("september-stadium-goal-post")).toBeNull();
     expect(screen.queryByTestId("september-stadium-bleachers")).toBeNull();
     expect(screen.getAllByTestId("september-homecoming-football")).toHaveLength(1);
@@ -94,7 +97,14 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "compact");
     const compactLampHeads = screen.getAllByTestId("september-stadium-lamp-head");
     expect(compactLampHeads).toHaveLength(2);
-    compactLampHeads.forEach((lampHead) => expect(lampHead.querySelectorAll("rect")).toHaveLength(13));
+    expect(compactLampHeads.map((lampHead) => lampHead.getAttribute("data-side"))).toEqual(["left", "right"]);
+    compactLampHeads.forEach((lampHead) => {
+      expect(lampHead.tagName.toLowerCase()).toBe("svg");
+      expect(lampHead).toHaveAttribute("viewBox", "0 0 104 58");
+      expect(lampHead).toHaveAttribute("preserveAspectRatio", "xMidYMid meet");
+      expect(lampHead).toHaveStyle({ aspectRatio: "104 / 58", opacity: "0.9" });
+      expect(lampHead.querySelectorAll("rect")).toHaveLength(13);
+    });
     expect(screen.getByTestId("september-stadium-light-beams")).toBeInTheDocument();
     expect(screen.getByTestId("september-stadium-goal-post")).toBeInTheDocument();
     expect(screen.queryByTestId("september-stadium-press-box")).toBeNull();

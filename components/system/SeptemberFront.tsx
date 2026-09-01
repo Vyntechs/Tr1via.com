@@ -80,24 +80,19 @@ function CompactPressureEdge() {
   );
 }
 
-function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number }) {
-  const width = 104 * scale;
-  const height = 58 * scale;
+function LampHeadArtwork() {
   return (
-    <g
-      data-testid="september-stadium-lamp-head"
-      style={{ filter: `drop-shadow(0 0 ${18 * scale}px rgba(243,228,195,.72))` }}
-    >
+    <>
       <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        rx={5 * scale}
+        x="0"
+        y="0"
+        width="104"
+        height="58"
+        rx="5"
         fill="#071014"
         stroke="#F3E4C3"
         strokeOpacity=".62"
-        strokeWidth={1.8 * scale}
+        strokeWidth="1.8"
       />
       {Array.from({ length: 12 }, (_, index) => {
         const column = index % 4;
@@ -105,17 +100,59 @@ function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number })
         return (
           <rect
             key={index}
-            x={x + (12 + column * 23) * scale}
-            y={y + (10 + row * 16) * scale}
-            width={12 * scale}
-            height={8 * scale}
-            rx={2 * scale}
+            x={12 + column * 23}
+            y={10 + row * 16}
+            width="12"
+            height="8"
+            rx="2"
             fill="#FFF4D5"
             opacity=".9"
           />
         );
       })}
+    </>
+  );
+}
+
+function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number }) {
+  return (
+    <g
+      data-testid="september-stadium-lamp-head"
+      transform={`translate(${x} ${y}) scale(${scale})`}
+      style={{ filter: `drop-shadow(0 0 ${18 * scale}px rgba(243,228,195,.72))` }}
+    >
+      <LampHeadArtwork />
     </g>
+  );
+}
+
+function CompactLampHead({ side, quiet }: { side: "left" | "right"; quiet: boolean }) {
+  const edge = side === "left" ? { left: 0 } : { right: 0 };
+  return (
+    <svg
+      data-testid="september-stadium-lamp-head"
+      data-side={side}
+      viewBox="0 0 104 58"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        // Keep the housing bottom tied to the tower tops while width changes
+        // with the phone. Its height always derives from the desktop 104:58
+        // artwork ratio, never from the stretched 380x760 scene SVG.
+        bottom: "87.97%",
+        width: "18.61%",
+        height: "auto",
+        aspectRatio: "104 / 58",
+        opacity: quiet ? 0.78 : 0.9,
+        overflow: "visible",
+        pointerEvents: "none",
+        filter: "drop-shadow(0 0 12.24px rgba(243,228,195,.72))",
+        ...edge,
+      }}
+    >
+      <LampHeadArtwork />
+    </svg>
   );
 }
 
@@ -229,8 +266,6 @@ function DistantStadium({
             <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity={quiet ? ".4" : ".54"}>
               <path d="M3 742 14 94M22 742 30 94M377 742 366 94M358 742 350 94" strokeWidth="1.45" />
               <path d="M4 688 21 642 6 596 23 550 8 504 24 458 10 412 26 366 12 320 27 274 14 228 29 182M376 688 359 642 374 596 357 550 372 504 356 458 370 412 354 366 368 320 353 274 366 228 351 182" strokeWidth=".9" />
-              <LampHead x={0} y={52} scale={0.68} />
-              <LampHead x={309.28} y={52} scale={0.68} />
             </g>
             {quiet ? (
               <g data-testid="september-stadium-bowl">
@@ -316,6 +351,12 @@ function DistantStadium({
           </>
         )}
       </svg>
+      {compact && !card && (
+        <>
+          <CompactLampHead side="left" quiet={quiet} />
+          <CompactLampHead side="right" quiet={quiet} />
+        </>
+      )}
     </div>
   );
 }
