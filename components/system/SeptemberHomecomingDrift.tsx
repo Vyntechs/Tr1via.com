@@ -1,10 +1,10 @@
-// September's local memory layer: early-turn leaves, a couple of tiny
-// footballs, and homecoming pom-poms caught in the first cool breeze.
+// September's local memory layer: early-turn leaves, footballs, and
+// homecoming pom-poms caught in the first cool breeze.
 //
-// The mix is intentionally leaf-heavy. Football and cheer are recognizable
-// homecoming punctuation, not clip art competing with the game. Full-size
-// ambient screens let the keepsakes fall; questions, theme cards, and
-// reduced-motion surfaces hold a sparse static composition at the edges.
+// Football and cheer carry the first read; leaves support them without taking
+// over the screen. Open game surfaces let the keepsakes fall, including narrow
+// host and player layouts. Questions, theme cards, and reduced-motion surfaces
+// hold a sparse static composition at the edges.
 
 import type { CSSProperties } from "react";
 
@@ -14,7 +14,12 @@ interface Keepsake {
   id: string;
   kind: KeepsakeKind;
   left: number;
+  compactLeft?: number;
   staticTop: number;
+  quietLeft?: number;
+  quietTop?: number;
+  compactQuietLeft?: number;
+  compactQuietTop?: number;
   size: number;
   duration: number;
   delay: number;
@@ -25,21 +30,25 @@ interface Keepsake {
 }
 
 const KEEPSAKES: Keepsake[] = [
-  { id: "leaf-1", kind: "leaf", left: 4,  staticTop: 15, size: 19, duration: 27, delay: 6,  drift: 38,  opacity: 0.54, rotate: -28, tone: "olive" },
-  { id: "leaf-2", kind: "leaf", left: 13, staticTop: 72, size: 27, duration: 34, delay: 24, drift: -54, opacity: 0.46, rotate: 24,  tone: "clay" },
-  { id: "pom-1",  kind: "pom",  left: 8,  staticTop: 68, size: 34, duration: 38, delay: 16, drift: 46,  opacity: 0.68, rotate: -15, tone: "cool" },
-  { id: "leaf-3", kind: "leaf", left: 30, staticTop: 84, size: 17, duration: 25, delay: 19, drift: -28, opacity: 0.5,  rotate: 42,  tone: "gold" },
-  { id: "ball-1", kind: "football", left: 39, staticTop: 18, size: 26, duration: 43, delay: 31, drift: 34, opacity: 0.64, rotate: -14, tone: "clay" },
-  { id: "leaf-4", kind: "leaf", left: 47, staticTop: 66, size: 22, duration: 31, delay: 12, drift: -42, opacity: 0.44, rotate: 16,  tone: "olive" },
-  { id: "leaf-5", kind: "leaf", left: 56, staticTop: 10, size: 18, duration: 29, delay: 22, drift: 48,  opacity: 0.52, rotate: -38, tone: "clay" },
-  { id: "pom-2",  kind: "pom",  left: 64, staticTop: 88, size: 32, duration: 41, delay: 8,  drift: -36, opacity: 0.6,  rotate: 22,  tone: "clay" },
-  { id: "leaf-6", kind: "leaf", left: 72, staticTop: 28, size: 25, duration: 36, delay: 27, drift: 56,  opacity: 0.47, rotate: 31,  tone: "gold" },
-  { id: "ball-2", kind: "football", left: 80, staticTop: 76, size: 23, duration: 46, delay: 18, drift: -31, opacity: 0.58, rotate: 16,  tone: "clay" },
-  { id: "leaf-7", kind: "leaf", left: 88, staticTop: 13, size: 16, duration: 26, delay: 10, drift: -47, opacity: 0.52, rotate: -21, tone: "olive" },
-  { id: "pom-3",  kind: "pom",  left: 86, staticTop: 48, size: 32, duration: 39, delay: 33, drift: 27,  opacity: 0.64, rotate: -29, tone: "cool" },
-  { id: "leaf-8", kind: "leaf", left: 8,  staticTop: 91, size: 16, duration: 24, delay: 14, drift: 25,  opacity: 0.48, rotate: 34,  tone: "gold" },
-  { id: "leaf-9", kind: "leaf", left: 92, staticTop: 37, size: 21, duration: 33, delay: 26, drift: -35, opacity: 0.45, rotate: 17,  tone: "clay" },
+  // The first football and pom are deterministic first-frame anchors. Their
+  // negative delays place them well inside the viewport on mount, and their
+  // opacity remains >= .32 after the setup overview's .5 weather veil.
+  { id: "ball-1", kind: "football", left: 8,  compactLeft: 72, staticTop: 21, quietLeft: 2,  quietTop: 50, compactQuietLeft: 76, compactQuietTop: 68, size: 44, duration: 22, delay: 7,  drift: 34,  opacity: 0.94, rotate: -14, tone: "clay" },
+  { id: "pom-1",  kind: "pom",      left: 22, compactLeft: 74, staticTop: 70, quietLeft: 94, quietTop: 54, compactQuietLeft: 82, compactQuietTop: 82, size: 48, duration: 20, delay: 12, drift: -30, opacity: 0.92, rotate: -15, tone: "cool" },
+  { id: "leaf-1", kind: "leaf",     left: 12, staticTop: 47, size: 27, duration: 25, delay: 17, drift: -46, opacity: 0.56, rotate: 24,  tone: "olive" },
+  { id: "pom-2",  kind: "pom",      left: 48, staticTop: 14, size: 46, duration: 24, delay: 5,  drift: 42,  opacity: 0.88, rotate: 18,  tone: "clay" },
+  { id: "ball-2", kind: "football", left: 61, staticTop: 56, size: 42, duration: 27, delay: 18, drift: -38, opacity: 0.9,  rotate: 13,  tone: "clay" },
+  { id: "leaf-2", kind: "leaf",     left: 38, staticTop: 86, size: 24, duration: 28, delay: 9,  drift: 38,  opacity: 0.5,  rotate: -34, tone: "clay" },
+  { id: "pom-3",  kind: "pom",      left: 76, staticTop: 83, size: 44, duration: 23, delay: 16, drift: -34, opacity: 0.9,  rotate: 24,  tone: "cool" },
+  { id: "leaf-3", kind: "leaf",     left: 70, staticTop: 31, size: 30, duration: 30, delay: 21, drift: 50,  opacity: 0.54, rotate: 31,  tone: "gold" },
+  { id: "ball-3", kind: "football", left: 82, staticTop: 24, size: 40, duration: 25, delay: 10, drift: 29,  opacity: 0.88, rotate: -20, tone: "clay" },
+  { id: "pom-4",  kind: "pom",      left: 88, staticTop: 62, size: 46, duration: 26, delay: 19, drift: -27, opacity: 0.9,  rotate: -29, tone: "clay" },
+  { id: "leaf-4", kind: "leaf",     left: 94, staticTop: 42, size: 25, duration: 26, delay: 13, drift: -31, opacity: 0.52, rotate: 17,  tone: "olive" },
 ];
+
+const CARD_IDS = new Set(["ball-1", "pom-1", "leaf-1", "leaf-4"]);
+const QUIET_IDS = new Set(["ball-1", "pom-1"]);
+const COMPACT_IDS = new Set(["ball-1", "pom-1", "leaf-1", "ball-3", "pom-4", "leaf-4"]);
 
 const LEAF_COLORS = {
   clay: "#D65A32",
@@ -112,73 +121,98 @@ export function SeptemberHomecomingDrift({
   card: boolean;
   quiet: boolean;
 }) {
-  const visible = KEEPSAKES.filter((keepsake, index) => {
-    if (card) return [0, 2, 4, 6, 8, 10, 11].includes(index);
-    if (quiet) return [0, 3, 8, 9, 10, 13].includes(index);
-    if (compact) return [0, 2, 6, 9, 11, 13].includes(index);
+  const visible = KEEPSAKES.filter((keepsake) => {
+    if (card) return CARD_IDS.has(keepsake.id);
+    if (quiet) return QUIET_IDS.has(keepsake.id);
+    if (compact) return COMPACT_IDS.has(keepsake.id);
     return true;
   });
+  const viewportScoped = animated && compact;
 
   return (
     <div
       data-testid="september-homecoming-drift"
       data-motion={animated ? "falling" : "static"}
-      style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
+      style={{ position: "absolute", inset: 0, overflow: "clip", pointerEvents: "none" }}
     >
-      {visible.map((keepsake) => {
-        const opacity = keepsake.opacity * (quiet ? 0.68 : card ? 0.86 : compact ? 0.92 : 1);
-        if (!animated) {
+      <div
+        className="tr1via-september-homecoming-motion-frame"
+        data-testid="september-homecoming-motion-frame"
+        data-viewport-scoped={viewportScoped ? "true" : "false"}
+        style={viewportScoped
+          ? { position: "sticky", top: 0, height: "100dvh", overflow: "hidden", pointerEvents: "none" }
+          : { position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
+      >
+        {visible.map((keepsake) => {
+          const surfaceOpacity = quiet ? 0.78 : card ? 0.86 : compact && keepsake.kind === "leaf" ? 0.92 : 1;
+          const opacity = keepsake.opacity * surfaceOpacity;
+          if (!animated) {
+            const staticLeft = quiet
+              ? compact
+                ? keepsake.compactQuietLeft ?? keepsake.quietLeft ?? keepsake.left
+                : keepsake.quietLeft ?? keepsake.left
+              : keepsake.left;
+            const staticTop = quiet
+              ? compact
+                ? keepsake.compactQuietTop ?? keepsake.quietTop ?? keepsake.staticTop
+                : keepsake.quietTop ?? keepsake.staticTop
+              : keepsake.staticTop;
+            return (
+              <div
+                key={keepsake.id}
+                data-testid={`september-homecoming-${keepsake.kind}`}
+                data-keepsake-id={keepsake.id}
+                style={{
+                  position: "absolute",
+                  left: `${staticLeft}%`,
+                  top: `${staticTop}%`,
+                  width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
+                  height: keepsake.size,
+                  opacity,
+                  transform: `rotate(${keepsake.rotate}deg)`,
+                }}
+              >
+                <KeepsakeGlyph keepsake={keepsake} />
+              </div>
+            );
+          }
+
           return (
             <div
               key={keepsake.id}
               data-testid={`september-homecoming-${keepsake.kind}`}
+              data-keepsake-id={keepsake.id}
+              className="tr1via-september-keepsake-rail"
               style={{
                 position: "absolute",
-                left: `${keepsake.left}%`,
-                top: `${keepsake.staticTop}%`,
+                left: `${compact ? keepsake.compactLeft ?? keepsake.left : keepsake.left}%`,
+                top: "-14%",
                 width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
-                height: keepsake.size,
+                height: "128%",
                 opacity,
-                transform: `rotate(${keepsake.rotate}deg)`,
-              }}
-            >
-              <KeepsakeGlyph keepsake={keepsake} />
-            </div>
-          );
-        }
-
-        return (
-          <div
-            key={keepsake.id}
-            data-testid={`september-homecoming-${keepsake.kind}`}
-            className="tr1via-september-keepsake-rail"
-            style={{
-              position: "absolute",
-              left: `${keepsake.left}%`,
-              top: "-14%",
-              width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
-              height: "128%",
-              opacity,
-              animation: `tr1via-september-keepsake-fall ${keepsake.duration}s linear ${-keepsake.delay}s infinite`,
-              ["--sept-drift" as string]: `${keepsake.drift}px`,
-            } as CSSProperties}
-          >
-            <div
-              className={`tr1via-september-keepsake-glyph tr1via-september-keepsake-${keepsake.kind}`}
-              style={{
-                width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
-                height: keepsake.size,
-                animation: keepsake.kind === "football"
-                  ? "tr1via-september-football-rock 6.8s ease-in-out infinite alternate"
-                  : `tr1via-september-keepsake-flutter ${keepsake.kind === "pom" ? 5.8 : 7.4}s ease-in-out infinite alternate`,
-                ["--sept-tilt" as string]: `${keepsake.rotate}deg`,
+                animation: `tr1via-september-keepsake-fall ${keepsake.duration}s linear ${-keepsake.delay}s infinite`,
+                ["--sept-drift" as string]: `${keepsake.drift}px`,
               } as CSSProperties}
             >
-              <KeepsakeGlyph keepsake={keepsake} />
+              <div
+                className={`tr1via-september-keepsake-glyph tr1via-september-keepsake-${keepsake.kind}`}
+                style={{
+                  width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
+                  height: keepsake.size,
+                  animation: keepsake.kind === "football"
+                    ? "tr1via-september-football-rock 4.8s ease-in-out infinite alternate"
+                    : keepsake.kind === "pom"
+                      ? "tr1via-september-pom-flutter 4.2s ease-in-out infinite alternate"
+                      : "tr1via-september-keepsake-flutter 7.4s ease-in-out infinite alternate",
+                  ["--sept-tilt" as string]: `${keepsake.rotate}deg`,
+                } as CSSProperties}
+              >
+                <KeepsakeGlyph keepsake={keepsake} />
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
