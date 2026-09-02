@@ -14,7 +14,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useTheme,
   Eyebrow,
@@ -27,6 +27,7 @@ import { categoryColor } from "@/lib/theme/categories";
 import { useAnswerKeyboard } from "@/lib/hooks/useAnswerKeyboard";
 import { useAutoFitText } from "@/lib/hooks/useAutoFitText";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { SeptemberQuestionLampBand } from "@/components/system/SeptemberFront";
 
 export type PlayerQuestionSlot = 1 | 2 | 3 | 4;
 
@@ -82,24 +83,68 @@ export function PlayerQuestion({
   onTap,
   disabled,
 }: PlayerQuestionProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const catColor = categoryColor(category, t.accent);
+  const septemberQuestion = themeKey === "september";
+  const bannerBottomGap = septemberQuestion ? 0 : 18;
   const slots: PlayerQuestionSlot[] = [1, 2, 3, 4];
   const [imageFailed, setImageFailed] = useState(false);
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const showImage = !!imageUrl && !imageFailed;
+  const screenRef = useRef<HTMLDivElement | null>(null);
+  const previousSurfaceSize = useRef<{ width: number; height: number } | null>(null);
+  const [decorationLevel, setDecorationLevel] = useState(0);
+  const finalDecorationLevel = septemberQuestion ? 3 : 2;
+  const showFooter = decorationLevel < 1;
+  const showLamps = decorationLevel < 2;
+  const showImage =
+    !!imageUrl &&
+    !imageFailed &&
+    decorationLevel < (septemberQuestion ? 3 : 2);
+
+  const handleImageFailure = useCallback(() => {
+    setImageFailed(true);
+    setDecorationLevel(0);
+  }, []);
 
   useEffect(() => {
     setImageFailed(false);
-  }, [imageUrl]);
+    setDecorationLevel(0);
+  }, [category, imageUrl, prompt, septemberQuestion]);
 
   useEffect(() => {
     const image = imageRef.current;
     if (!showImage || !image) return;
     if (image.complete && image.naturalWidth === 0) {
-      setImageFailed(true);
+      handleImageFailure();
     }
-  }, [imageUrl, showImage]);
+  }, [handleImageFailure, imageUrl, showImage]);
+
+  useEffect(() => {
+    const surface = screenRef.current;
+    if (!surface) return;
+
+    const initial = surface.getBoundingClientRect();
+    previousSurfaceSize.current = { width: initial.width, height: initial.height };
+    const observer = new ResizeObserver(([entry]) => {
+      const next = {
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      };
+      const previous = previousSurfaceSize.current;
+      previousSurfaceSize.current = next;
+      if (
+        previous &&
+        (next.width > previous.width + 1 || next.height > previous.height + 1)
+      ) {
+        // Re-evaluate from the richest composition when the mounted phone
+        // gains room. If it still cannot fit, the deficit state machine below
+        // reapplies only the degradation steps that remain necessary.
+        setDecorationLevel(0);
+      }
+    });
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, []);
 
   useAnswerKeyboard({
     enabled: !!onTap && !disabled,
@@ -109,14 +154,29 @@ export function PlayerQuestion({
   // Auto-fit the prompt text to the available height. The frame ref attaches
   // to the row that holds the prompt + thumbnail; the text ref attaches to
   // the prompt span. Hook re-measures on orientation change or content swap.
-  const { frameRef, textRef, fontSize } = useAutoFitText();
+  const { frameRef, textRef, fontSize, fitDeficit } = useAutoFitText({ fitTolerance: 0 });
+
+  useEffect(() => {
+    if (fitDeficit <= 0) return;
+    // Preserve the 16px gameplay-text floor and all four answers. Reclaim
+    // space in an explicit least-to-most-costly order: the touch-screen
+    // keyboard reminder, September's lamp band when present, then the
+    // decorative photo (second on themes without the lamp band).
+    setDecorationLevel((current) => Math.min(finalDecorationLevel, current + 1));
+  }, [finalDecorationLevel, fitDeficit]);
 
   return (
-    <PhoneScreen data-testid="player-question" scroll="locked">
+    <PhoneScreen
+      data-testid="player-question"
+      scroll="locked"
+      weatherPage="question"
+      screenRef={screenRef}
+      style={{ ["--player-question-decoration-level" as string]: decorationLevel }}
+    >
       {/* Category banner — full bleed across top */}
       <div
         style={{
-          margin: "-14px -22px 18px",
+          margin: `-14px -22px ${bannerBottomGap}px`,
           padding: "14px 22px",
           background: catColor,
           color: "#0E0805",
@@ -131,6 +191,8 @@ export function PlayerQuestion({
         </div>
         <PointTag value={value} color="#0E0805" ink={catColor} size="md" />
       </div>
+
+      {septemberQuestion && showLamps && <SeptemberQuestionLampBand />}
 
       {prompt && (
         <div
@@ -179,7 +241,7 @@ export function PlayerQuestion({
               alt=""
               aria-hidden="true"
               data-testid="player-question-image"
-              onError={() => setImageFailed(true)}
+              onError={handleImageFailure}
               style={{
                 width: 72,
                 height: 72,
@@ -224,18 +286,20 @@ export function PlayerQuestion({
         ))}
       </div>
 
-      <div
-        style={{
-          marginTop: "auto",
-          paddingTop: 14,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <Eyebrow color={t.inkMute} size={9}>EVERYONE&apos;S #&apos;S ARE SCRAMBLED · YOURS IS YOURS</Eyebrow>
-        <Eyebrow color={t.inkMute} size={9}>KEYBOARD: 1·2·3·4</Eyebrow>
-      </div>
+      {showFooter && (
+        <div
+          style={{
+            marginTop: "auto",
+            paddingTop: 14,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <Eyebrow color={t.inkMute} size={9}>EVERYONE&apos;S #&apos;S ARE SCRAMBLED · YOURS IS YOURS</Eyebrow>
+          <Eyebrow color={t.inkMute} size={9}>KEYBOARD: 1·2·3·4</Eyebrow>
+        </div>
+      )}
     </PhoneScreen>
   );
 }

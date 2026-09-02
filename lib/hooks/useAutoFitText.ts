@@ -66,6 +66,7 @@ export function useAutoFitText({
   const floor = minSize ?? sortedSizes[0] ?? 16;
   const ceiling = sortedSizes[sortedSizes.length - 1] ?? 16;
   const [fontSize, setFontSize] = useState<number>(ceiling);
+  const [fitDeficit, setFitDeficit] = useState(0);
 
   // Use a layout effect for the *initial* measurement so the user never sees
   // a flash of mis-sized text. Subsequent re-runs from the ResizeObserver
@@ -73,6 +74,7 @@ export function useAutoFitText({
   useLayoutEffect(() => {
     if (disabled) {
       setFontSize(ceiling);
+      setFitDeficit(0);
       return;
     }
     const frame = frameRef.current;
@@ -89,11 +91,19 @@ export function useAutoFitText({
       raf = requestAnimationFrame(() => {
         if (cancelled || !frame || !text) return;
         const frameHeight = frame.clientHeight;
-        // Edge case: container has 0 height (not yet laid out). Bail; the
-        // ResizeObserver below will retry once the container has a size.
-        if (frameHeight <= 0) return;
+        // A zero-height flex frame can be either transient (before layout) or
+        // the real constrained-phone result. If text already has measurable
+        // content, report the miss so the caller can reclaim decorative space;
+        // ResizeObserver still retries transient zeroes after layout settles.
+        if (frameHeight <= 0) {
+          text.style.fontSize = `${floor}px`;
+          setFontSize(floor);
+          setFitDeficit(Math.max(0, text.scrollHeight - fitTolerance));
+          return;
+        }
 
         let bestSize = floor;
+        let didFit = false;
         // Walk from largest → smallest; first one that fits wins.
         for (let i = sortedSizes.length - 1; i >= 0; i--) {
           const candidate = sortedSizes[i];
@@ -103,6 +113,7 @@ export function useAutoFitText({
           const contentHeight = text.scrollHeight;
           if (contentHeight <= frameHeight + fitTolerance) {
             bestSize = candidate;
+            didFit = true;
             break;
           }
         }
@@ -113,6 +124,9 @@ export function useAutoFitText({
         // regardless of whether React reconciles.
         text.style.fontSize = `${bestSize}px`;
         setFontSize(bestSize);
+        setFitDeficit(
+          didFit ? 0 : Math.max(0, text.scrollHeight - frameHeight - fitTolerance),
+        );
       });
     }
 
@@ -150,7 +164,7 @@ export function useAutoFitText({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, ceiling, floor, fitTolerance, sortedSizes.join(",")]);
 
-  return { frameRef, textRef, fontSize };
+  return { frameRef, textRef, fontSize, fits: fitDeficit === 0, fitDeficit };
 }
 
 /**

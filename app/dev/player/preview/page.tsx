@@ -9,9 +9,10 @@
 // viewport, not a 780px gallery frame. Without this route we'd be testing
 // the wrong layout.
 //
-// Query params (`?variant=long&theme=storm`):
-//   variant — short | long | image       (default: short)
-//   theme   — any ThemeKey                (default: house)
+// Query params (`?variant=long-image&theme=september&state=question`):
+//   variant — short | long | image | long-image | long-category (default: short)
+//   theme   — any ThemeKey                                    (default: house)
+//   state   — question | locked                               (default: question)
 //
 // Not linked from anywhere — accessed directly from validation scripts and
 // the dev gallery footer. Excluded from production builds via the `/dev`
@@ -20,21 +21,24 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { PlayerQuestion } from "@/components/player";
+import { PlayerLocked, PlayerQuestion } from "@/components/player";
 import { ThemeProvider } from "@/components/system";
 import { THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
 import { Suspense } from "react";
 
 const SAMPLE_IMAGE =
-  "https://images.pexels.com/photos/1366630/pexels-photo-1366630.jpeg?auto=compress&cs=tinysrgb&w=200";
+  "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='72' height='72' viewBox='0 0 72 72'%3E%3Crect width='72' height='72' fill='%2372B8B0'/%3E%3Cpath d='M8 54 27 31l12 14 9-10 16 19Z' fill='%23F3E4C3'/%3E%3C/svg%3E";
 
 // Same 163-char worst-case prompt the prod DB carries.
 const LONG_PROMPT =
   "Which work boot company, still operating in Chippewa Falls, Wisconsin, is known for making custom boots to order for specific trades like firefighting and logging?";
 
+const LONG_CATEGORY = "World History: Revolutions and Resistance";
+
 function PreviewBody() {
   const params = useSearchParams();
   const variant = (params.get("variant") ?? "short").toLowerCase();
+  const state = (params.get("state") ?? "question").toLowerCase();
   const themeKeyRaw = params.get("theme") ?? "house";
   const themeKey: ThemeKey = (THEME_KEYS as readonly string[]).includes(themeKeyRaw)
     ? (themeKeyRaw as ThemeKey)
@@ -42,11 +46,16 @@ function PreviewBody() {
 
   let prompt: string;
   let imageUrl: string | undefined;
-  if (variant === "long") {
+  let category = "Geography";
+  if (variant === "long" || variant === "long-image") {
     prompt = LONG_PROMPT;
+    imageUrl = variant === "long-image" ? SAMPLE_IMAGE : undefined;
   } else if (variant === "image") {
     prompt = "Which U.S. state has the largest land area?";
     imageUrl = SAMPLE_IMAGE;
+  } else if (variant === "long-category") {
+    prompt = "Which revolution began in 1789?";
+    category = LONG_CATEGORY;
   } else {
     prompt = "Which U.S. state has the largest land area?";
   }
@@ -63,7 +72,11 @@ function PreviewBody() {
           flexDirection: "column",
         }}
       >
-        <PlayerQuestion prompt={prompt} imageUrl={imageUrl} />
+        {state === "locked" ? (
+          <PlayerLocked category={category} />
+        ) : (
+          <PlayerQuestion prompt={prompt} imageUrl={imageUrl} category={category} />
+        )}
       </div>
     </ThemeProvider>
   );

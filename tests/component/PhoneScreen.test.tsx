@@ -1,3 +1,4 @@
+import { createRef } from "react";
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
@@ -36,5 +37,29 @@ describe("PhoneScreen adaptive height", () => {
   it("can remain fit-to-viewport for the timed question interaction", () => {
     const phone = renderScreen("locked");
     expect(phone).toHaveStyle({ overflowY: "hidden", overflowX: "hidden" });
+  });
+
+  it("forwards timed-reading state to state-aware compact weather", () => {
+    render(
+      <ThemeProvider themeKey="september">
+        <PhoneScreen data-testid="september-phone" weatherPage="question">
+          Question
+        </PhoneScreen>
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId("september-front")).toHaveAttribute("data-atmosphere", "quiet");
+    expect(screen.queryByTestId("september-stadium-goal-post")).toBeNull();
+  });
+
+  it("exposes the measured phone surface to responsive children", () => {
+    const screenRef = createRef<HTMLDivElement>();
+    render(
+      <ThemeProvider themeKey="house">
+        <PhoneScreen screenRef={screenRef}>Question</PhoneScreen>
+      </ThemeProvider>,
+    );
+
+    expect(screenRef.current).toBeInstanceOf(HTMLDivElement);
   });
 });

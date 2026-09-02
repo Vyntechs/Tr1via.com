@@ -15,6 +15,7 @@
 
 import type { CSSProperties } from "react";
 import type { AugustPageName } from "./AugustPage";
+import { SeptemberHomecomingDrift } from "./SeptemberHomecomingDrift";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 
 export interface SeptemberFrontProps {
@@ -79,24 +80,19 @@ function CompactPressureEdge() {
   );
 }
 
-function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number }) {
-  const width = 104 * scale;
-  const height = 58 * scale;
+function LampHeadArtwork() {
   return (
-    <g
-      data-testid="september-stadium-lamp-head"
-      style={{ filter: `drop-shadow(0 0 ${18 * scale}px rgba(243,228,195,.72))` }}
-    >
+    <>
       <rect
-        x={x}
-        y={y}
-        width={width}
-        height={height}
-        rx={5 * scale}
+        x="0"
+        y="0"
+        width="104"
+        height="58"
+        rx="5"
         fill="#071014"
         stroke="#F3E4C3"
         strokeOpacity=".62"
-        strokeWidth={1.8 * scale}
+        strokeWidth="1.8"
       />
       {Array.from({ length: 12 }, (_, index) => {
         const column = index % 4;
@@ -104,16 +100,122 @@ function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number })
         return (
           <rect
             key={index}
-            x={x + (12 + column * 23) * scale}
-            y={y + (10 + row * 16) * scale}
-            width={12 * scale}
-            height={8 * scale}
-            rx={2 * scale}
+            x={12 + column * 23}
+            y={10 + row * 16}
+            width="12"
+            height="8"
+            rx="2"
             fill="#FFF4D5"
             opacity=".9"
           />
         );
       })}
+    </>
+  );
+}
+
+/**
+ * Quiet phone lamps participate in the gameplay layout so their position is
+ * derived from the category banner's real height. The artwork is the same
+ * 104×58 housing and 12-LED grid used by every desktop/TV lamp above.
+ */
+export function SeptemberQuestionLampBand() {
+  return (
+    <div
+      data-testid="september-question-lamp-band"
+      style={{
+        height: 58,
+        margin: "0 -22px",
+        position: "relative",
+        flex: "0 0 58px",
+        pointerEvents: "none",
+      }}
+      aria-hidden="true"
+    >
+      {(["left", "right"] as const).map((side) => (
+        <svg
+          key={side}
+          data-testid="september-stadium-lamp-head"
+          data-side={side}
+          viewBox="0 0 104 58"
+          preserveAspectRatio="xMidYMid meet"
+          style={{
+            position: "absolute",
+            top: 0,
+            [side]: 0,
+            width: "18.61cqw",
+            height: "auto",
+            aspectRatio: "104 / 58",
+            opacity: 0.78,
+            overflow: "visible",
+            filter: "drop-shadow(0 0 12.24px rgba(243,228,195,.72))",
+          }}
+        >
+          <LampHeadArtwork />
+        </svg>
+      ))}
+    </div>
+  );
+}
+
+function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number }) {
+  return (
+    <g
+      data-testid="september-stadium-lamp-head"
+      transform={`translate(${x} ${y}) scale(${scale})`}
+      style={{ filter: `drop-shadow(0 0 ${18 * scale}px rgba(243,228,195,.72))` }}
+    >
+      <LampHeadArtwork />
+    </g>
+  );
+}
+
+function CompactLampHead({ side }: { side: "left" | "right" }) {
+  const edge = side === "left" ? { left: 0 } : { right: 0 };
+  return (
+    <svg
+      data-testid="september-stadium-lamp-head"
+      data-side={side}
+      viewBox="0 0 104 58"
+      preserveAspectRatio="xMidYMid meet"
+      aria-hidden="true"
+      style={{
+        position: "absolute",
+        // Open compact screens keep the housing bottom tied to the original
+        // tower top. Quiet question lamps render in SeptemberQuestionLampBand
+        // instead, where document flow follows the real category-banner height.
+        bottom: "87.97%",
+        width: "18.61%",
+        height: "auto",
+        aspectRatio: "104 / 58",
+        opacity: 0.9,
+        overflow: "visible",
+        pointerEvents: "none",
+        filter: "drop-shadow(0 0 12.24px rgba(243,228,195,.72))",
+        ...edge,
+      }}
+    >
+      <LampHeadArtwork />
+    </svg>
+  );
+}
+
+function StadiumLightBeams({ compact, quiet = false }: { compact: boolean; quiet?: boolean }) {
+  return (
+    <g data-testid="september-stadium-light-beams" fill="#FFF4D5" opacity={quiet ? ".52" : "1"}>
+      {compact ? (
+        <>
+          <path d="M18 86 154 672H62Z" opacity=".055" />
+          <path d="M362 86 318 672H226Z" opacity=".052" />
+          <path d="M34 88 112 620H76Z" opacity=".04" />
+          <path d="M346 88 304 620H268Z" opacity=".038" />
+        </>
+      ) : (
+        <>
+          <path d="M18 178 470 668H128Z" opacity=".055" />
+          <path d="M1262 178 810 668H1152Z" opacity=".052" />
+        </>
+      )}
     </g>
   );
 }
@@ -139,8 +241,9 @@ function DistantStadium({
       "radial-gradient(ellipse 22% 25% at 100% 22%, rgba(214,90,50,.45), transparent 66%)," +
       "radial-gradient(ellipse 70% 18% at 50% 78%, rgba(114,184,176,.24), transparent 68%)"
     : compact
-    ? "radial-gradient(ellipse 22% 18% at 0% 78%, rgba(243,228,195,.4), transparent 64%)," +
-      "radial-gradient(ellipse 22% 18% at 100% 78%, rgba(214,90,50,.34), transparent 64%)"
+    ? "radial-gradient(ellipse 38% 24% at 0% 14%, rgba(243,228,195,.48), transparent 65%)," +
+      "radial-gradient(ellipse 38% 24% at 100% 14%, rgba(214,90,50,.42), transparent 65%)," +
+      "radial-gradient(ellipse 80% 20% at 50% 94%, rgba(114,184,176,.2), transparent 70%)"
     : quiet
       ? "radial-gradient(ellipse 22% 34% at 5% 27%, rgba(243,228,195,.28), transparent 64%)," +
         "radial-gradient(ellipse 22% 34% at 95% 27%, rgba(214,90,50,.24), transparent 64%)"
@@ -158,7 +261,7 @@ function DistantStadium({
         style={layer({
           background: glow,
           mixBlendMode: "screen",
-          opacity: finale ? 0.94 : card ? 0.88 : compact ? 0.62 : quiet ? 0.54 : 0.82,
+          opacity: finale ? 0.94 : card ? 0.88 : compact ? 0.86 : quiet ? 0.54 : 0.88,
         })}
       />
       <div
@@ -181,7 +284,7 @@ function DistantStadium({
         viewBox={`0 0 ${viewWidth} ${viewHeight}`}
         preserveAspectRatio="none"
         aria-hidden="true"
-        style={layer({ opacity: card ? 0.9 : compact ? 0.72 : quiet ? 0.58 : 0.92 })}
+        style={layer({ opacity: card ? 0.9 : compact ? (quiet ? 0.78 : 0.9) : quiet ? 0.58 : 0.96 })}
       >
         {card ? (
           <>
@@ -203,13 +306,45 @@ function DistantStadium({
           </>
         ) : compact ? (
           <>
-            <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity=".44">
-              <path d="M4 742V610M14 742V610M366 742V610M376 742V610" strokeWidth="1.4" />
-              <path d="M4 730 14 706 4 682 14 658 4 634M376 730 366 706 376 682 366 658 376 634" strokeWidth="1" />
+            <StadiumLightBeams compact quiet={quiet} />
+            <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity={quiet ? ".4" : ".54"}>
+              <path d="M3 742 14 94M22 742 30 94M377 742 366 94M358 742 350 94" strokeWidth="1.45" />
+              <path d="M4 688 21 642 6 596 23 550 8 504 24 458 10 412 26 366 12 320 27 274 14 228 29 182M376 688 359 642 374 596 357 550 372 504 356 458 370 412 354 366 368 320 353 274 366 228 351 182" strokeWidth=".9" />
             </g>
-            <g data-testid="september-stadium-bowl">
-              <path d="M0 754H380V760H0Z" fill="#102B2B" opacity=".18" />
-            </g>
+            {quiet ? (
+              <g data-testid="september-stadium-bowl">
+                <path d="M0 728H380" fill="none" stroke="#72B8B0" strokeOpacity=".2" strokeWidth="1" />
+              </g>
+            ) : (
+              <>
+                <g data-testid="september-stadium-bowl">
+                  <path data-testid="september-stadium-bleachers" d="M0 726V714H70V707H128V726ZM252 726V707H310V714H380V726Z" fill="#102B2B" opacity=".48" />
+                  <g data-testid="september-homecoming-pennants">
+                    <path d="M106 661Q190 673 274 661" fill="none" stroke="#F3E4C3" strokeOpacity=".42" strokeWidth="1" />
+                    <path d="m119 663 7 13 7-11m19 3 7 13 7-11m19 1 7 13 7-13m19-1 7 11 7-13m19-3 7 11 7-13" fill="#D65A32" opacity=".76" />
+                    <path d="m135 666 7 12 7-10m19 2 7 12 7-11m19 0 7 11 7-12m19-2 7 10 7-12" fill="#72B8B0" opacity=".74" />
+                  </g>
+                  <text
+                    data-testid="september-homecoming-sign"
+                    x="190"
+                    y="696"
+                    textAnchor="middle"
+                    fill="#F3E4C3"
+                    fillOpacity=".5"
+                    fontSize="7"
+                    fontWeight="700"
+                    letterSpacing="2.2"
+                  >
+                    HOMECOMING
+                  </text>
+                </g>
+                <g data-testid="september-stadium-goal-post" fill="none" stroke="#E2B94F" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M190 724V678M151 678H229M160 678V610M220 678V610" stroke="#FFF1B8" strokeOpacity=".18" strokeWidth="6.5" />
+                  <path d="M190 724V678M151 678H229M160 678V610M220 678V610" strokeOpacity=".86" strokeWidth="3.2" />
+                </g>
+                <path data-testid="september-stadium-field" d="M0 728H380" fill="none" stroke="#72B8B0" strokeOpacity=".4" strokeWidth="1.5" />
+              </>
+            )}
           </>
         ) : quiet ? (
           <>
@@ -225,6 +360,7 @@ function DistantStadium({
           </>
         ) : (
           <>
+            <StadiumLightBeams compact={false} />
             <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity=".6">
               <path d="M34 650V206M54 650V206M1226 650V206M1246 650V206" strokeWidth="2.4" />
               <path d="M34 605 54 560 34 515 54 470 34 425 54 380 34 335 54 290M1246 605 1226 560 1246 515 1226 470 1246 425 1226 380 1246 335 1226 290" strokeWidth="1.6" />
@@ -236,17 +372,35 @@ function DistantStadium({
                 data-testid="september-stadium-silhouette"
                 d={resultsSafe
                   ? "M0 650H1280V658H0Z"
-                  : "M0 657V648H420V640H560V620H720V640H860V648H1280V657Z"}
+                  : "M0 657V648H180V638H410V628H545V616H735V628H870V638H1100V648H1280V657Z"}
                 fill="#102B2B"
-                opacity={resultsSafe ? ".3" : ".48"}
+                opacity={resultsSafe ? ".3" : ".62"}
               />
+              {!resultsSafe && (
+                <>
+                  <path data-testid="september-stadium-bleachers" d="M80 638H420M126 628H456M860 638H1200M824 628H1154" fill="none" stroke="#F3E4C3" strokeOpacity=".14" strokeWidth="2" />
+                  <path data-testid="september-stadium-press-box" d="M545 616V586H735V616Z" fill="#071014" opacity=".7" />
+                </>
+              )}
             </g>
+            {!resultsSafe && (
+              <g data-testid="september-stadium-goal-post" fill="none" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M640 654V584M590 584H690M606 584V500M674 584V500" stroke="#FFF1B8" strokeOpacity=".14" strokeWidth="8" />
+                <path d="M640 654V584M590 584H690M606 584V500M674 584V500" stroke="#D7A84D" strokeOpacity=".58" strokeWidth="3.4" />
+              </g>
+            )}
             <g data-testid="september-stadium-field">
               <path d="M0 658H1280" stroke="#72B8B0" strokeOpacity=".26" strokeWidth="2" />
             </g>
           </>
         )}
       </svg>
+      {compact && !card && !quiet && (
+        <>
+          <CompactLampHead side="left" />
+          <CompactLampHead side="right" />
+        </>
+      )}
     </div>
   );
 }
@@ -353,6 +507,12 @@ export function SeptemberFront({
       />
 
       <DistantStadium compact={compact} card={card} finale={clear} quiet={quiet} resultsSafe={resultsSafe} />
+      <SeptemberHomecomingDrift
+        animated={showMotion}
+        compact={compact}
+        card={card}
+        quiet={quiet}
+      />
       {!quiet && !resultsSafe && !card && !compact && <FridayNightHashes />}
       {compact ? <CompactPressureEdge /> : <Contours quiet={quiet} />}
 

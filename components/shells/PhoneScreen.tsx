@@ -7,9 +7,9 @@
 
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, Ref } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
-import { Weather } from "@/components/system/Weather";
+import { Weather, type WeatherProps } from "@/components/system/Weather";
 
 export interface PhoneScreenProps {
   children: ReactNode;
@@ -21,9 +21,13 @@ export interface PhoneScreenProps {
   weather?: boolean;
   /** Weather intensity 0-2.2 (>1 for the finale). */
   weatherIntensity?: number;
+  /** Lets state-aware monthly weather quiet itself on timed reading screens. */
+  weatherPage?: WeatherProps["page"];
   /** Dense states scroll on short phones; timed question input stays locked. */
   scroll?: "auto" | "locked";
   style?: CSSProperties;
+  /** Optional handle to the measured phone surface for responsive children. */
+  screenRef?: Ref<HTMLDivElement>;
   /** Forwarded data-testid for E2E tests. Applied to the outer container so
    *  Playwright can target any phone screen by its top-level id. */
   "data-testid"?: string;
@@ -35,8 +39,10 @@ export function PhoneScreen({
   fillColor,
   weather = true,
   weatherIntensity = 0.5,
+  weatherPage,
   scroll = "auto",
   style,
+  screenRef,
   "data-testid": dataTestId,
 }: PhoneScreenProps) {
   const { t, themeKey } = useTheme();
@@ -44,6 +50,7 @@ export function PhoneScreen({
   const fg = fill ? (t.dark ? "#0E0805" : t.paper) : t.ink;
   return (
     <div
+      ref={screenRef}
       data-testid={dataTestId}
       style={{
         width: "100%",
@@ -76,7 +83,7 @@ export function PhoneScreen({
       }}
     >
       {weather && !fill && (
-        <Weather themeKey={themeKey} intensity={weatherIntensity} compact />
+        <Weather themeKey={themeKey} intensity={weatherIntensity} compact page={weatherPage} />
       )}
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
         {children}

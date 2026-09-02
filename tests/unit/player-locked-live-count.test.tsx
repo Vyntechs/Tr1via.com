@@ -71,4 +71,17 @@ describe("PlayerLocked — live lock-in count", () => {
       animation: "none",
     });
   });
+
+  it("keeps September in its quiet question atmosphere after lock-in", () => {
+    render(
+      <ThemeProvider themeKey="september">
+        <PlayerLocked lockedCount={12} totalPlayers={18} />
+      </ThemeProvider>,
+    );
+
+    expect(screen.getByTestId("september-front")).toHaveAttribute("data-atmosphere", "quiet");
+    expect(screen.queryByTestId("september-stadium-goal-post")).toBeNull();
+    expect(screen.queryByTestId("september-stadium-bleachers")).toBeNull();
+    expect(screen.queryByTestId("september-homecoming-pennants")).toBeNull();
+  });
 });

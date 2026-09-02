@@ -16,6 +16,7 @@ import {
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { SeptemberQuestionLampBand } from "@/components/system/SeptemberFront";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import type { StandingRow } from "@/lib/player/betweenGames";
@@ -117,12 +118,14 @@ export function PlayerLocked({
   standings,
   roomMagicEnabled = false,
 }: PlayerLockedProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const reducedMotion = usePrefersReducedMotion();
   const pulseAnimation = reducedMotion
     ? "none"
     : "tr1via-pulse 1.4s ease-in-out infinite";
   const catColor = categoryColor(category, t.accent);
+  const septemberQuestion = themeKey === "september";
+  const bannerBottomGap = septemberQuestion ? 0 : 18;
   const secondsToLock = (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock < 5000;
   const hasStandings = !!standings && standings.top.length > 0;
@@ -137,10 +140,10 @@ export function PlayerLocked({
     : 0;
 
   return (
-    <PhoneScreen data-testid="player-locked">
+    <PhoneScreen data-testid="player-locked" weatherPage="question">
       <div
         style={{
-          margin: "-14px -22px 18px",
+          margin: `-14px -22px ${bannerBottomGap}px`,
           padding: "14px 22px",
           background: catColor,
           color: "#0E0805",
@@ -157,6 +160,8 @@ export function PlayerLocked({
         </div>
         <PointTag value={value} color="#0E0805" ink={catColor} size="md" />
       </div>
+
+      {septemberQuestion && <SeptemberQuestionLampBand />}
 
       <div
         style={{

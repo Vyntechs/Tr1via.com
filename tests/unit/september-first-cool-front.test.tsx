@@ -1,6 +1,9 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { SeptemberFront } from "@/components/system/SeptemberFront";
+import {
+  SeptemberFront,
+  SeptemberQuestionLampBand,
+} from "@/components/system/SeptemberFront";
 import { Weather, weatherLabel } from "@/components/system/Weather";
 import { contrastRatio } from "@/lib/theme/contrast";
 import { lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
@@ -23,9 +26,10 @@ describe("September · First Cool Front identity", () => {
     expect(contrastRatio("#F3E4C3", "#132126")).toBeGreaterThanOrEqual(4.5);
   });
 
-  it("replaces September's shared leaf drift without changing November", () => {
+  it("uses a September-specific homecoming drift without changing November", () => {
     const september = render(<Weather themeKey="september" />);
     expect(screen.getByTestId("september-front")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-drift")).toBeInTheDocument();
     september.unmount();
 
     render(<Weather themeKey="november" />);
@@ -49,11 +53,17 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-stadium-lights")).toBeInTheDocument();
     expect(screen.getByTestId("september-stadium-bowl")).toBeInTheDocument();
     expect(screen.getByTestId("september-stadium-field")).toBeInTheDocument();
+    expect(screen.getByTestId("september-stadium-light-beams")).toBeInTheDocument();
     expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
     expect(screen.getByTestId("september-stadium-silhouette")).toBeInTheDocument();
-    expect(screen.queryByTestId("september-stadium-bleachers")).toBeNull();
+    expect(screen.getByTestId("september-stadium-bleachers")).toBeInTheDocument();
+    expect(screen.getByTestId("september-stadium-goal-post")).toBeInTheDocument();
     expect(screen.queryByTestId("september-stadium-perspective-lines")).toBeNull();
     expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "falling");
+    expect(screen.getAllByTestId("september-homecoming-leaf")).toHaveLength(9);
+    expect(screen.getAllByTestId("september-homecoming-football")).toHaveLength(2);
+    expect(screen.getAllByTestId("september-homecoming-pom")).toHaveLength(3);
   });
 
   it("makes questions still while preserving the static September identity", () => {
@@ -66,6 +76,24 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getByTestId("september-stadium-bowl")).toBeInTheDocument();
     expect(screen.queryByTestId("september-stadium-field")).toBeNull();
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
+  });
+
+  it("keeps compact questions stadium-lit without putting field furniture behind answers", () => {
+    render(
+      <>
+        <Weather themeKey="september" compact page="question" />
+        <SeptemberQuestionLampBand />
+      </>,
+    );
+    expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
+    expect(screen.getByTestId("september-stadium-light-beams")).toBeInTheDocument();
+    screen.getAllByTestId("september-stadium-lamp-head").forEach((lampHead) => {
+      expect(lampHead).toHaveStyle({ opacity: "0.78" });
+    });
+    expect(screen.queryByTestId("september-stadium-goal-post")).toBeNull();
+    expect(screen.queryByTestId("september-stadium-bleachers")).toBeNull();
+    expect(screen.getAllByTestId("september-homecoming-football")).toHaveLength(1);
   });
 
   it("simplifies compact surfaces and forwards finale intensity", () => {
@@ -75,9 +103,26 @@ describe("September atmosphere and control contract", () => {
     expect(screen.queryByTestId("september-front-contours")).toBeNull();
     expect(screen.getByTestId("september-front-compact-edge")).toBeInTheDocument();
     expect(screen.getByTestId("september-distant-stadium")).toHaveAttribute("data-stadium-mode", "compact");
-    expect(screen.queryByTestId("september-stadium-lamp-head")).toBeNull();
+    const compactLampHeads = screen.getAllByTestId("september-stadium-lamp-head");
+    expect(compactLampHeads).toHaveLength(2);
+    expect(compactLampHeads.map((lampHead) => lampHead.getAttribute("data-side"))).toEqual(["left", "right"]);
+    compactLampHeads.forEach((lampHead) => {
+      expect(lampHead.tagName.toLowerCase()).toBe("svg");
+      expect(lampHead).toHaveAttribute("viewBox", "0 0 104 58");
+      expect(lampHead).toHaveAttribute("preserveAspectRatio", "xMidYMid meet");
+      expect(lampHead).toHaveStyle({ aspectRatio: "104 / 58", opacity: "0.9" });
+      expect(lampHead.querySelectorAll("rect")).toHaveLength(13);
+    });
+    expect(screen.getByTestId("september-stadium-light-beams")).toBeInTheDocument();
+    expect(screen.getByTestId("september-stadium-goal-post")).toBeInTheDocument();
+    expect(screen.queryByTestId("september-stadium-press-box")).toBeNull();
+    expect(screen.getByTestId("september-homecoming-pennants")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-sign")).toHaveTextContent("HOMECOMING");
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
     expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
+    expect(screen.getAllByTestId("september-homecoming-leaf")).toHaveLength(3);
+    expect(screen.getAllByTestId("september-homecoming-pom")).toHaveLength(2);
   });
 
   it("uses state-specific static phases to carry the cool-front journey", () => {
@@ -103,6 +148,30 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
     expect(screen.getByTestId("september-stadium-press-box")).toBeInTheDocument();
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
+    expect(
+      Number.parseFloat(screen.getAllByTestId("september-homecoming-leaf")[0].style.opacity),
+    ).toBeCloseTo(0.54 * 0.86, 5);
+  });
+
+  it("keeps the desktop and TV lamp artwork and positioning unchanged", () => {
+    const desktop = render(<SeptemberFront page="lobby" />);
+    const desktopLamps = screen.getAllByTestId("september-stadium-lamp-head");
+    expect(desktopLamps).toHaveLength(2);
+    expect(desktopLamps.map((lamp) => lamp.tagName.toLowerCase())).toEqual(["g", "g"]);
+    expect(desktopLamps.map((lamp) => lamp.getAttribute("transform"))).toEqual([
+      "translate(-14 148) scale(1)",
+      "translate(1190 148) scale(1)",
+    ]);
+    desktopLamps.forEach((lamp) => expect(lamp.querySelectorAll("rect")).toHaveLength(13));
+    desktop.unmount();
+
+    render(<SeptemberFront page="question" />);
+    const tvLamps = screen.getAllByTestId("september-stadium-lamp-head");
+    expect(tvLamps.map((lamp) => lamp.getAttribute("transform"))).toEqual([
+      "translate(-18 190) scale(0.78)",
+      "translate(1218 190) scale(0.78)",
+    ]);
+    tvLamps.forEach((lamp) => expect(lamp.querySelectorAll("rect")).toHaveLength(13));
   });
 
   it("yields completely when weather is off or the surface owns its background", () => {
