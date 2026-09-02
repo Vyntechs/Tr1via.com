@@ -117,12 +117,13 @@ export function PlayerLocked({
   standings,
   roomMagicEnabled = false,
 }: PlayerLockedProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const reducedMotion = usePrefersReducedMotion();
   const pulseAnimation = reducedMotion
     ? "none"
     : "tr1via-pulse 1.4s ease-in-out infinite";
   const catColor = categoryColor(category, t.accent);
+  const bannerBottomGap = themeKey === "september" ? 58 : 18;
   const secondsToLock = (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock < 5000;
   const hasStandings = !!standings && standings.top.length > 0;
@@ -137,10 +138,10 @@ export function PlayerLocked({
     : 0;
 
   return (
-    <PhoneScreen data-testid="player-locked">
+    <PhoneScreen data-testid="player-locked" weatherPage="question">
       <div
         style={{
-          margin: "-14px -22px 18px",
+          margin: `-14px -22px ${bannerBottomGap}px`,
           padding: "14px 22px",
           background: catColor,
           color: "#0E0805",

@@ -137,10 +137,13 @@ function CompactLampHead({ side, quiet }: { side: "left" | "right"; quiet: boole
       aria-hidden="true"
       style={{
         position: "absolute",
-        // Keep the housing bottom tied to the tower tops while width changes
-        // with the phone. Its height always derives from the desktop 104:58
-        // artwork ratio, never from the stretched 380x760 scene SVG.
-        bottom: "87.97%",
+        // A question's opaque category banner owns the first 89px. Place quiet
+        // lamps immediately beneath it; the solid housing masks the tower lines
+        // behind it, so they still read as one fixture. Open compact screens keep
+        // the housing bottom tied to the original tower top. In both cases height
+        // derives from the desktop 104:58 artwork, never the stretched scene SVG.
+        top: quiet ? 89 : undefined,
+        bottom: quiet ? undefined : "87.97%",
         width: "18.61%",
         height: "auto",
         aspectRatio: "104 / 58",

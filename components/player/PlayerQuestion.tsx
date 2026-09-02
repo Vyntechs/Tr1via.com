@@ -82,8 +82,9 @@ export function PlayerQuestion({
   onTap,
   disabled,
 }: PlayerQuestionProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const catColor = categoryColor(category, t.accent);
+  const bannerBottomGap = themeKey === "september" ? 58 : 18;
   const slots: PlayerQuestionSlot[] = [1, 2, 3, 4];
   const [imageFailed, setImageFailed] = useState(false);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -116,7 +117,7 @@ export function PlayerQuestion({
       {/* Category banner — full bleed across top */}
       <div
         style={{
-          margin: "-14px -22px 18px",
+          margin: `-14px -22px ${bannerBottomGap}px`,
           padding: "14px 22px",
           background: catColor,
           color: "#0E0805",
