@@ -12,7 +12,7 @@
 // Query params (`?variant=long-image&theme=september&state=question`):
 //   variant — short | long | image | long-image | long-category (default: short)
 //   theme   — any ThemeKey                                    (default: house)
-//   state   — lobby | question | locked                       (default: question)
+//   state   — lobby | question | locked | recap               (default: question)
 //
 // Not linked from anywhere — accessed directly from validation scripts and
 // the dev gallery footer. Excluded from production builds via the `/dev`
@@ -21,7 +21,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { PlayerLobby, PlayerLocked, PlayerQuestion } from "@/components/player";
+import { PlayerLobby, PlayerLocked, PlayerQuestion, PlayerRecap } from "@/components/player";
 import { ThemeProvider } from "@/components/system";
 import { THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
 import { Suspense } from "react";
@@ -63,6 +63,7 @@ function PreviewBody() {
   return (
     <ThemeProvider themeKey={themeKey}>
       <div
+        data-player-layout="true"
         style={{
           // Match the real player layout exactly — 100dvh on the device
           // viewport, no gallery chrome.
@@ -72,7 +73,9 @@ function PreviewBody() {
           flexDirection: "column",
         }}
       >
-        {state === "lobby" ? (
+        {state === "recap" ? (
+          <PlayerRecap />
+        ) : state === "lobby" ? (
           <PlayerLobby playerName="Maya" inRoomCount={12} />
         ) : state === "locked" ? (
           <PlayerLocked category={category} />

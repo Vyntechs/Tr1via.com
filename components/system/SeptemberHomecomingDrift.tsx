@@ -136,6 +136,7 @@ export function SeptemberHomecomingDrift({
       style={{ position: "absolute", inset: 0, overflow: "clip", pointerEvents: "none" }}
     >
       <div
+        className="tr1via-september-homecoming-motion-frame"
         data-testid="september-homecoming-motion-frame"
         data-viewport-scoped={viewportScoped ? "true" : "false"}
         style={viewportScoped

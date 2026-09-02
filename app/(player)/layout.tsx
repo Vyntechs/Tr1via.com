@@ -14,6 +14,7 @@ import { ConnectionRibbonProvider } from "@/components/player/ConnectionRibbonPr
 export default function PlayerLayout({ children }: { children: ReactNode }) {
   return (
     <div
+      data-player-layout="true"
       style={{
         minHeight: "100dvh",
         width: "100%",

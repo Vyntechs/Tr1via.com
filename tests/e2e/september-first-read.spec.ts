@@ -146,6 +146,33 @@ async function expectScrolledCompactMotion(page: Page, surface: Locator) {
   });
 }
 
+async function expectScrolledPlayerMotion(surface: Locator) {
+  const frame = surface.getByTestId("september-homecoming-motion-frame");
+  await expect(frame).toHaveAttribute("data-viewport-scoped", "true");
+  await expect(frame).toHaveCSS("position", "fixed");
+
+  const scrollRange = await surface.evaluate(
+    (element) => element.scrollHeight - element.clientHeight,
+  );
+  expect(scrollRange).toBeGreaterThan(50);
+  await surface.evaluate((element) => element.scrollTo(0, element.scrollHeight));
+  await expect.poll(() => surface.evaluate((element) => element.scrollTop)).toBeGreaterThan(50);
+
+  await expect(frame).toBeInViewport();
+  const frameBox = await frame.boundingBox();
+  expect(frameBox).not.toBeNull();
+  expect(Math.abs(frameBox!.y)).toBeLessThanOrEqual(1);
+  expect(frameBox!.height).toBeCloseTo(
+    await surface.page().evaluate(() => innerHeight),
+    0,
+  );
+
+  await expectRecognizableKeepsakes(surface, {
+    deterministicPhase: true,
+    requireViewport: true,
+  });
+}
+
 async function expectFloodlightAssemblies(surface: Locator) {
   const front = surface.getByTestId("september-front");
   const lamps = front.getByTestId("september-stadium-lamp-head");
@@ -225,6 +252,10 @@ test("September keeps TV and player reading states quiet while open surfaces fal
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/dev/player/preview?theme=september&state=lobby");
   await expectRecognizableKeepsakes(page.getByTestId("player-lobby"), { requireViewport: true });
+
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto("/dev/player/preview?theme=september&state=recap");
+  await expectScrolledPlayerMotion(page.getByTestId("player-recap"));
 
   for (const state of ["question", "locked"] as const) {
     await page.goto(`/dev/player/preview?theme=september&state=${state}`);

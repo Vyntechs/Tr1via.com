@@ -38,6 +38,19 @@ main:has([data-september-viewport-motion="true"]),
   overflow-x: clip !important;
 }
 
+/* Player surfaces own an internal scrollport, so sticky resolves against the
+   phone shell instead of the browser viewport. The real player layout marks
+   that context explicitly; promote only its animated September frame to fixed
+   while host setup keeps the document-scoped sticky behavior above. */
+[data-player-layout="true"]
+  [data-september-viewport-motion="true"]
+  .tr1via-september-homecoming-motion-frame[data-viewport-scoped="true"] {
+  position: fixed !important;
+  top: 0 !important;
+  right: 0 !important;
+  left: 0 !important;
+}
+
 /* Host prep is one product across laptop and phone. Components opt into this
    contract with data-host-mobile-surface; desktop styles remain untouched. */
 @media (max-width: 860px) {
