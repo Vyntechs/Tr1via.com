@@ -162,8 +162,8 @@ body {
 
 /* September homecoming drift. The full-height rail makes 100% equal the
    surface height (not the glyph height), while the inner animation supplies
-   a slow, irregular tumble. Leaves dominate; footballs and pom-poms remain
-   small second-read details. Static surfaces do not receive these classes. */
+   a slow, irregular tumble. Footballs and pom-poms carry the first read while
+   leaves support the breeze. Static surfaces do not receive these classes. */
 @keyframes tr1via-september-keepsake-fall {
   0%   { transform: translate3d(0, 0, 0); }
   46%  { transform: translate3d(calc(var(--sept-drift, 0px) * -.35), 46%, 0); }
@@ -175,9 +175,14 @@ body {
   100% { transform: rotate3d(1, 1.8, .3, calc(var(--sept-tilt, 0deg) + 330deg)) translateX(-1px); }
 }
 @keyframes tr1via-september-football-rock {
-  0%   { transform: rotate(calc(var(--sept-tilt, 0deg) - 7deg)) translateX(-2px); }
-  50%  { transform: rotate(calc(var(--sept-tilt, 0deg) + 5deg)) translateX(3px); }
-  100% { transform: rotate(calc(var(--sept-tilt, 0deg) - 2deg)) translateX(-1px); }
+  0%   { transform: rotate(calc(var(--sept-tilt, 0deg) - 10deg)) translateX(-3px); }
+  50%  { transform: rotate(calc(var(--sept-tilt, 0deg) + 8deg)) translateX(4px); }
+  100% { transform: rotate(calc(var(--sept-tilt, 0deg) - 4deg)) translateX(-2px); }
+}
+@keyframes tr1via-september-pom-flutter {
+  0%   { transform: rotate(calc(var(--sept-tilt, 0deg) - 8deg)) scale(.97); }
+  50%  { transform: rotate(calc(var(--sept-tilt, 0deg) + 10deg)) scale(1.04); }
+  100% { transform: rotate(calc(var(--sept-tilt, 0deg) - 3deg)) scale(1); }
 }
 /* Theme showcase ("the color year") — the gallery cards on /trivia-night and
    /themes. Entrance reuses tr1via-rise, staggered by each card's --i; the live

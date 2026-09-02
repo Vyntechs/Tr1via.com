@@ -1,4 +1,4 @@
-// Full-viewport preview of a single PlayerQuestion variant. Unlike the
+// Full-viewport preview of a single player surface. Unlike the
 // /dev/player gallery — which renders inside a fixed 380×780 phone frame —
 // this route fills the actual browser viewport so a device-emulation tool
 // (Playwright with viewport={iPhone SE 375×667}) sees exactly what the
@@ -12,7 +12,7 @@
 // Query params (`?variant=long-image&theme=september&state=question`):
 //   variant — short | long | image | long-image | long-category (default: short)
 //   theme   — any ThemeKey                                    (default: house)
-//   state   — question | locked                               (default: question)
+//   state   — lobby | question | locked                       (default: question)
 //
 // Not linked from anywhere — accessed directly from validation scripts and
 // the dev gallery footer. Excluded from production builds via the `/dev`
@@ -21,7 +21,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { PlayerLocked, PlayerQuestion } from "@/components/player";
+import { PlayerLobby, PlayerLocked, PlayerQuestion } from "@/components/player";
 import { ThemeProvider } from "@/components/system";
 import { THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
 import { Suspense } from "react";
@@ -72,7 +72,9 @@ function PreviewBody() {
           flexDirection: "column",
         }}
       >
-        {state === "locked" ? (
+        {state === "lobby" ? (
+          <PlayerLobby playerName="Maya" inRoomCount={12} />
+        ) : state === "locked" ? (
           <PlayerLocked category={category} />
         ) : (
           <PlayerQuestion prompt={prompt} imageUrl={imageUrl} category={category} />

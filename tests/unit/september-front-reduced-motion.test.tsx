@@ -22,6 +22,12 @@ describe("September First Cool Front honors reduced motion", () => {
     expect(screen.getByTestId("september-distant-stadium")).toBeInTheDocument();
     expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
     expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
+    const football = screen.getAllByTestId("september-homecoming-football")[0];
+    const pom = screen.getAllByTestId("september-homecoming-pom")[0];
+    expect(Number.parseFloat(football.style.height)).toBeGreaterThanOrEqual(40);
+    expect(Number.parseFloat(pom.style.height)).toBeGreaterThanOrEqual(44);
+    expect(football.style.animation).toBe("");
+    expect(pom.style.animation).toBe("");
   });
 
   it("omits the moving veil instead of freezing it", () => {
@@ -33,6 +39,12 @@ describe("September First Cool Front honors reduced motion", () => {
   it("renders the slow veil for an open full-size state", () => {
     render(<SeptemberFront page="lobby" />);
     expect(screen.getByTestId("september-front-wind-veil")).toBeInTheDocument();
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "falling");
+  });
+
+  it("lets an open compact game surface fall when motion is allowed", () => {
+    render(<SeptemberFront compact page="lobby" />);
+    expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
     expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "falling");
   });
 });

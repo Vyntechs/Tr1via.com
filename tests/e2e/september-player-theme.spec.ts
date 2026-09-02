@@ -139,7 +139,8 @@ test("September quiet phone states retain their static identity with reduced mot
       "data-motion",
       "static",
     );
-    await expect(page.getByTestId("september-homecoming-leaf").first()).toBeAttached();
+    await expect(page.getByTestId("september-homecoming-football").first()).toBeAttached();
+    await expect(page.getByTestId("september-homecoming-pom").first()).toBeAttached();
     await expect(page.getByTestId("player-question-prompt")).toBeInViewport();
   }
 });
