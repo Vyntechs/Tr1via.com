@@ -14,7 +14,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   useTheme,
   Eyebrow,
@@ -101,6 +101,11 @@ export function PlayerQuestion({
     !imageFailed &&
     decorationLevel < (septemberQuestion ? 3 : 2);
 
+  const handleImageFailure = useCallback(() => {
+    setImageFailed(true);
+    setDecorationLevel(0);
+  }, []);
+
   useEffect(() => {
     setImageFailed(false);
     setDecorationLevel(0);
@@ -110,9 +115,9 @@ export function PlayerQuestion({
     const image = imageRef.current;
     if (!showImage || !image) return;
     if (image.complete && image.naturalWidth === 0) {
-      setImageFailed(true);
+      handleImageFailure();
     }
-  }, [imageUrl, showImage]);
+  }, [handleImageFailure, imageUrl, showImage]);
 
   useEffect(() => {
     const surface = screenRef.current;
@@ -236,7 +241,7 @@ export function PlayerQuestion({
               alt=""
               aria-hidden="true"
               data-testid="player-question-image"
-              onError={() => setImageFailed(true)}
+              onError={handleImageFailure}
               style={{
                 width: 72,
                 height: 72,

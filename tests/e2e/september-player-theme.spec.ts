@@ -172,6 +172,43 @@ test("September restores decorations when the same mounted question gains space"
     .toBe(0);
 });
 
+test("September restores the least-degraded layout when a question image fails", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto("/dev/player/preview?theme=september&variant=long-image");
+
+  const question = page.getByTestId("player-question");
+  const image = question.getByTestId("player-question-image");
+  const decorationLevel = () =>
+    question.evaluate((element) =>
+      Number.parseInt(
+        getComputedStyle(element).getPropertyValue("--player-question-decoration-level"),
+        10,
+      ),
+    );
+
+  await expect.poll(decorationLevel).toBe(2);
+  await expect(question.getByTestId("september-stadium-lamp-head")).toHaveCount(0);
+
+  await image.dispatchEvent("error");
+
+  await expect(image).toHaveCount(0);
+  await expect.poll(decorationLevel).toBe(1);
+  await expect(question.getByTestId("september-stadium-lamp-head")).toHaveCount(2);
+  await expect
+    .poll(() =>
+      question.getByTestId("player-question-prompt").evaluate((element) => {
+        const frame = element.parentElement;
+        return element.scrollHeight <= (frame?.clientHeight ?? 0) + 1;
+      }),
+    )
+    .toBe(true);
+  for (let slot = 1; slot <= 4; slot += 1) {
+    await expect(question.getByTestId(`player-answer-${slot}`)).toBeInViewport();
+  }
+});
+
 test("September remains quiet after the player locks in", async ({ page }) => {
   await page.goto("/dev/player");
   await page.locator("select").selectOption("september");
