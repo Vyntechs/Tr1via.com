@@ -144,6 +144,34 @@ test("September quiet phone states retain their static identity with reduced mot
   }
 });
 
+test("September restores decorations when the same mounted question gains space", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 375, height: 667 });
+  await page.goto("/dev/player/preview?theme=september&variant=long-image");
+
+  const question = page.getByTestId("player-question");
+  await expect
+    .poll(() => question.getByTestId("september-stadium-lamp-head").count())
+    .toBe(0);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect
+    .poll(() => question.getByTestId("september-stadium-lamp-head").count())
+    .toBe(2);
+  await expect(question.getByTestId("player-question-image")).toBeVisible();
+  await expect
+    .poll(() =>
+      question.evaluate((element) =>
+        Number.parseInt(
+          getComputedStyle(element).getPropertyValue("--player-question-decoration-level"),
+          10,
+        ),
+      ),
+    )
+    .toBe(0);
+});
+
 test("September remains quiet after the player locks in", async ({ page }) => {
   await page.goto("/dev/player");
   await page.locator("select").selectOption("september");

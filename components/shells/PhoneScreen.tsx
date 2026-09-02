@@ -7,7 +7,7 @@
 
 "use client";
 
-import type { CSSProperties, ReactNode } from "react";
+import type { CSSProperties, ReactNode, Ref } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
 import { Weather, type WeatherProps } from "@/components/system/Weather";
 
@@ -26,6 +26,8 @@ export interface PhoneScreenProps {
   /** Dense states scroll on short phones; timed question input stays locked. */
   scroll?: "auto" | "locked";
   style?: CSSProperties;
+  /** Optional handle to the measured phone surface for responsive children. */
+  screenRef?: Ref<HTMLDivElement>;
   /** Forwarded data-testid for E2E tests. Applied to the outer container so
    *  Playwright can target any phone screen by its top-level id. */
   "data-testid"?: string;
@@ -40,6 +42,7 @@ export function PhoneScreen({
   weatherPage,
   scroll = "auto",
   style,
+  screenRef,
   "data-testid": dataTestId,
 }: PhoneScreenProps) {
   const { t, themeKey } = useTheme();
@@ -47,6 +50,7 @@ export function PhoneScreen({
   const fg = fill ? (t.dark ? "#0E0805" : t.paper) : t.ink;
   return (
     <div
+      ref={screenRef}
       data-testid={dataTestId}
       style={{
         width: "100%",

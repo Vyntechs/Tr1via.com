@@ -90,6 +90,8 @@ export function PlayerQuestion({
   const slots: PlayerQuestionSlot[] = [1, 2, 3, 4];
   const [imageFailed, setImageFailed] = useState(false);
   const imageRef = useRef<HTMLImageElement | null>(null);
+  const screenRef = useRef<HTMLDivElement | null>(null);
+  const previousSurfaceSize = useRef<{ width: number; height: number } | null>(null);
   const [decorationLevel, setDecorationLevel] = useState(0);
   const finalDecorationLevel = septemberQuestion ? 3 : 2;
   const showFooter = decorationLevel < 1;
@@ -111,6 +113,33 @@ export function PlayerQuestion({
       setImageFailed(true);
     }
   }, [imageUrl, showImage]);
+
+  useEffect(() => {
+    const surface = screenRef.current;
+    if (!surface) return;
+
+    const initial = surface.getBoundingClientRect();
+    previousSurfaceSize.current = { width: initial.width, height: initial.height };
+    const observer = new ResizeObserver(([entry]) => {
+      const next = {
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      };
+      const previous = previousSurfaceSize.current;
+      previousSurfaceSize.current = next;
+      if (
+        previous &&
+        (next.width > previous.width + 1 || next.height > previous.height + 1)
+      ) {
+        // Re-evaluate from the richest composition when the mounted phone
+        // gains room. If it still cannot fit, the deficit state machine below
+        // reapplies only the degradation steps that remain necessary.
+        setDecorationLevel(0);
+      }
+    });
+    observer.observe(surface);
+    return () => observer.disconnect();
+  }, []);
 
   useAnswerKeyboard({
     enabled: !!onTap && !disabled,
@@ -136,6 +165,7 @@ export function PlayerQuestion({
       data-testid="player-question"
       scroll="locked"
       weatherPage="question"
+      screenRef={screenRef}
       style={{ ["--player-question-decoration-level" as string]: decorationLevel }}
     >
       {/* Category banner — full bleed across top */}

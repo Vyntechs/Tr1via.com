@@ -1,3 +1,4 @@
+import { createRef } from "react";
 import { describe, expect, it } from "vitest";
 import { render, screen } from "@testing-library/react";
 
@@ -49,5 +50,16 @@ describe("PhoneScreen adaptive height", () => {
 
     expect(screen.getByTestId("september-front")).toHaveAttribute("data-atmosphere", "quiet");
     expect(screen.queryByTestId("september-stadium-goal-post")).toBeNull();
+  });
+
+  it("exposes the measured phone surface to responsive children", () => {
+    const screenRef = createRef<HTMLDivElement>();
+    render(
+      <ThemeProvider themeKey="house">
+        <PhoneScreen screenRef={screenRef}>Question</PhoneScreen>
+      </ThemeProvider>,
+    );
+
+    expect(screenRef.current).toBeInstanceOf(HTMLDivElement);
   });
 });
