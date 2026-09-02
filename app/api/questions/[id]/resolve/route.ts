@@ -40,6 +40,25 @@ import {
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
+type ResolveQuestionOnceResult = {
+  data: boolean | null;
+  error: { message: string } | null;
+};
+
+async function resolveLegacyQuestionOnce(
+  admin: AdminClient,
+  questionId: string,
+): Promise<ResolveQuestionOnceResult> {
+  // This migration has not been applied to the shared database, so generated
+  // types cannot include the additive RPC yet. Keep the temporary type bridge
+  // isolated here; `npm run typegen` can remove it after the migration lands.
+  const rpc = admin.rpc as unknown as (
+    fn: "resolve_question_once",
+    args: { p_question_id: string },
+  ) => PromiseLike<ResolveQuestionOnceResult>;
+  return rpc("resolve_question_once", { p_question_id: questionId });
+}
+
 async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const { data: before, error: beforeError } = await admin
@@ -230,30 +249,36 @@ export async function POST(
       return conflict("question is not live");
     }
 
-    // Once resolved, keep the route's existing idempotent behavior: the RPC
-    // no-ops and a retry can rebuild/broadcast the canonical result. The
-    // deadline guard is needed only while the question remains live.
-    if (!q.finished_at) {
-      const playedAtMs = new Date(q.played_at).getTime();
-      if (!Number.isFinite(playedAtMs)) return serverError();
+    // Most retries arrive after the winning transaction is visible. Return a
+    // quiet success before the RPC and, crucially, before another broadcast.
+    if (q.finished_at) {
+      return ok({ resolvedAt: q.finished_at, alreadyResolved: true });
+    }
 
-      const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
-      const themeKey = resolveTheme(
-        { theme_key: night.theme_key },
-        { default_theme_key: host?.default_theme_key ?? null },
-      );
-      const resolveAtMs =
-        playedAtMs + questionDurationFor(themeKey) * 1_000;
-      if (Date.now() < resolveAtMs) {
-        return conflict("question answer window is still open");
-      }
+    const playedAtMs = new Date(q.played_at).getTime();
+    if (!Number.isFinite(playedAtMs)) return serverError();
+
+    const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
+    const themeKey = resolveTheme(
+      { theme_key: night.theme_key },
+      { default_theme_key: host?.default_theme_key ?? null },
+    );
+    const resolveAtMs = playedAtMs + questionDurationFor(themeKey) * 1_000;
+    if (Date.now() < resolveAtMs) {
+      return conflict("question answer window is still open");
     }
   }
 
-  const { error: rpcError } = await admin.rpc("resolve_question", {
-    p_question_id: questionId,
-  });
+  const { data: freshlyResolved, error: rpcError } =
+    await resolveLegacyQuestionOnce(admin, questionId);
   if (rpcError) return serverError();
+
+  // Concurrent phones can all have read `finished_at = null` before the first
+  // transaction commits. The row-locked RPC identifies the sole winner; every
+  // loser succeeds quietly so only one resolve/fireworks pair reaches the room.
+  if (!freshlyResolved) {
+    return ok({ alreadyResolved: true });
+  }
 
   // Preserve the response's aggregate count without selecting private answer
   // details into this shared-broadcast path.

@@ -45,12 +45,14 @@ function makeAdmin({
   playedAt = "2026-07-19T03:59:50.000Z",
   finishedAt = null,
   rpcError = null,
+  freshlyResolved = true,
 }: {
   playedAt?: string;
   finishedAt?: string | null;
   rpcError?: { message: string } | null;
+  freshlyResolved?: boolean;
 } = {}) {
-  const rpc = vi.fn(async () => ({ data: null, error: rpcError }));
+  const rpc = vi.fn(async () => ({ data: freshlyResolved, error: rpcError }));
   const rows: Record<string, DbResult> = {
     questions: {
       data: {
@@ -125,7 +127,7 @@ describe("POST /api/questions/[id]/resolve", () => {
     const response = await POST(request(), ctx);
 
     expect(response.status).toBe(200);
-    expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_once", {
       p_question_id: QUESTION_ID,
     });
   });
@@ -139,6 +141,7 @@ describe("POST /api/questions/[id]/resolve", () => {
 
     expect(response.status).toBe(200);
     expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
+    expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
     const [roomCode, event, payload] = broadcastMock.broadcastToRoom.mock.calls[0];
     expect(roomCode).toBe("ABCDEF");
     expect(event).toBe("resolve");
@@ -172,9 +175,29 @@ describe("POST /api/questions/[id]/resolve", () => {
     const response = await POST(request(), ctx);
 
     expect(response.status).toBe(200);
-    expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
+    expect(admin.rpc).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastToRoom).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastFireworks).not.toHaveBeenCalled();
+  });
+
+  it("lets a concurrent RPC loser succeed without rebroadcasting", async () => {
+    const admin = makeAdmin({
+      playedAt: "2026-07-19T03:59:30.000Z",
+      freshlyResolved: false,
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ alreadyResolved: true });
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_once", {
       p_question_id: QUESTION_ID,
     });
+    expect(broadcastMock.broadcastToRoom).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastFireworks).not.toHaveBeenCalled();
   });
 
   it("keeps fast-forward available only when the existing test-mode gate approves the request", async () => {
@@ -190,7 +213,7 @@ describe("POST /api/questions/[id]/resolve", () => {
 
     expect(response.status).toBe(200);
     expect(testModeMock.isTestModeEnabled).toHaveBeenCalled();
-    expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_once", {
       p_question_id: QUESTION_ID,
     });
   });
