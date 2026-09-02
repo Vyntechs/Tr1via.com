@@ -1,6 +1,9 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
-import { SeptemberFront } from "@/components/system/SeptemberFront";
+import {
+  SeptemberFront,
+  SeptemberQuestionLampBand,
+} from "@/components/system/SeptemberFront";
 import { Weather, weatherLabel } from "@/components/system/Weather";
 import { contrastRatio } from "@/lib/theme/contrast";
 import { lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
@@ -77,7 +80,12 @@ describe("September atmosphere and control contract", () => {
   });
 
   it("keeps compact questions stadium-lit without putting field furniture behind answers", () => {
-    render(<Weather themeKey="september" compact page="question" />);
+    render(
+      <>
+        <Weather themeKey="september" compact page="question" />
+        <SeptemberQuestionLampBand />
+      </>,
+    );
     expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
     expect(screen.getByTestId("september-stadium-light-beams")).toBeInTheDocument();
     screen.getAllByTestId("september-stadium-lamp-head").forEach((lampHead) => {
@@ -140,6 +148,30 @@ describe("September atmosphere and control contract", () => {
     expect(screen.getAllByTestId("september-stadium-lamp-head")).toHaveLength(2);
     expect(screen.getByTestId("september-stadium-press-box")).toBeInTheDocument();
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
+    expect(
+      Number.parseFloat(screen.getAllByTestId("september-homecoming-leaf")[0].style.opacity),
+    ).toBeCloseTo(0.54 * 0.86, 5);
+  });
+
+  it("keeps the desktop and TV lamp artwork and positioning unchanged", () => {
+    const desktop = render(<SeptemberFront page="lobby" />);
+    const desktopLamps = screen.getAllByTestId("september-stadium-lamp-head");
+    expect(desktopLamps).toHaveLength(2);
+    expect(desktopLamps.map((lamp) => lamp.tagName.toLowerCase())).toEqual(["g", "g"]);
+    expect(desktopLamps.map((lamp) => lamp.getAttribute("transform"))).toEqual([
+      "translate(-14 148) scale(1)",
+      "translate(1190 148) scale(1)",
+    ]);
+    desktopLamps.forEach((lamp) => expect(lamp.querySelectorAll("rect")).toHaveLength(13));
+    desktop.unmount();
+
+    render(<SeptemberFront page="question" />);
+    const tvLamps = screen.getAllByTestId("september-stadium-lamp-head");
+    expect(tvLamps.map((lamp) => lamp.getAttribute("transform"))).toEqual([
+      "translate(-18 190) scale(0.78)",
+      "translate(1218 190) scale(0.78)",
+    ]);
+    tvLamps.forEach((lamp) => expect(lamp.querySelectorAll("rect")).toHaveLength(13));
   });
 
   it("yields completely when weather is off or the surface owns its background", () => {

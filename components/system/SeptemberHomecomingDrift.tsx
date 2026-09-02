@@ -126,7 +126,7 @@ export function SeptemberHomecomingDrift({
       style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
     >
       {visible.map((keepsake) => {
-        const opacity = keepsake.opacity * (quiet ? 0.68 : compact ? 0.92 : card ? 0.86 : 1);
+        const opacity = keepsake.opacity * (quiet ? 0.68 : card ? 0.86 : compact ? 0.92 : 1);
         if (!animated) {
           return (
             <div

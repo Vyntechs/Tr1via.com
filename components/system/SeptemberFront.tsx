@@ -114,6 +114,50 @@ function LampHeadArtwork() {
   );
 }
 
+/**
+ * Quiet phone lamps participate in the gameplay layout so their position is
+ * derived from the category banner's real height. The artwork is the same
+ * 104×58 housing and 12-LED grid used by every desktop/TV lamp above.
+ */
+export function SeptemberQuestionLampBand() {
+  return (
+    <div
+      data-testid="september-question-lamp-band"
+      style={{
+        height: 58,
+        margin: "0 -22px",
+        position: "relative",
+        flex: "0 0 58px",
+        pointerEvents: "none",
+      }}
+      aria-hidden="true"
+    >
+      {(["left", "right"] as const).map((side) => (
+        <svg
+          key={side}
+          data-testid="september-stadium-lamp-head"
+          data-side={side}
+          viewBox="0 0 104 58"
+          preserveAspectRatio="xMidYMid meet"
+          style={{
+            position: "absolute",
+            top: 0,
+            [side]: 0,
+            width: "18.61cqw",
+            height: "auto",
+            aspectRatio: "104 / 58",
+            opacity: 0.78,
+            overflow: "visible",
+            filter: "drop-shadow(0 0 12.24px rgba(243,228,195,.72))",
+          }}
+        >
+          <LampHeadArtwork />
+        </svg>
+      ))}
+    </div>
+  );
+}
+
 function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number }) {
   return (
     <g
@@ -126,7 +170,7 @@ function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number })
   );
 }
 
-function CompactLampHead({ side, quiet }: { side: "left" | "right"; quiet: boolean }) {
+function CompactLampHead({ side }: { side: "left" | "right" }) {
   const edge = side === "left" ? { left: 0 } : { right: 0 };
   return (
     <svg
@@ -137,17 +181,14 @@ function CompactLampHead({ side, quiet }: { side: "left" | "right"; quiet: boole
       aria-hidden="true"
       style={{
         position: "absolute",
-        // A question's opaque category banner owns the first 89px. Place quiet
-        // lamps immediately beneath it; the solid housing masks the tower lines
-        // behind it, so they still read as one fixture. Open compact screens keep
-        // the housing bottom tied to the original tower top. In both cases height
-        // derives from the desktop 104:58 artwork, never the stretched scene SVG.
-        top: quiet ? 89 : undefined,
-        bottom: quiet ? undefined : "87.97%",
+        // Open compact screens keep the housing bottom tied to the original
+        // tower top. Quiet question lamps render in SeptemberQuestionLampBand
+        // instead, where document flow follows the real category-banner height.
+        bottom: "87.97%",
         width: "18.61%",
         height: "auto",
         aspectRatio: "104 / 58",
-        opacity: quiet ? 0.78 : 0.9,
+        opacity: 0.9,
         overflow: "visible",
         pointerEvents: "none",
         filter: "drop-shadow(0 0 12.24px rgba(243,228,195,.72))",
@@ -354,10 +395,10 @@ function DistantStadium({
           </>
         )}
       </svg>
-      {compact && !card && (
+      {compact && !card && !quiet && (
         <>
-          <CompactLampHead side="left" quiet={quiet} />
-          <CompactLampHead side="right" quiet={quiet} />
+          <CompactLampHead side="left" />
+          <CompactLampHead side="right" />
         </>
       )}
     </div>

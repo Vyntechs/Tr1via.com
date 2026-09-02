@@ -16,6 +16,7 @@ import {
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { SeptemberQuestionLampBand } from "@/components/system/SeptemberFront";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import type { StandingRow } from "@/lib/player/betweenGames";
@@ -123,7 +124,8 @@ export function PlayerLocked({
     ? "none"
     : "tr1via-pulse 1.4s ease-in-out infinite";
   const catColor = categoryColor(category, t.accent);
-  const bannerBottomGap = themeKey === "september" ? 58 : 18;
+  const septemberQuestion = themeKey === "september";
+  const bannerBottomGap = septemberQuestion ? 0 : 18;
   const secondsToLock = (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock < 5000;
   const hasStandings = !!standings && standings.top.length > 0;
@@ -158,6 +160,8 @@ export function PlayerLocked({
         </div>
         <PointTag value={value} color="#0E0805" ink={catColor} size="md" />
       </div>
+
+      {septemberQuestion && <SeptemberQuestionLampBand />}
 
       <div
         style={{
