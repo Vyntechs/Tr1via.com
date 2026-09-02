@@ -30,6 +30,14 @@ body {
   padding-top: 0 !important;
 }
 
+/* overflow-x:hidden also creates a vertical scroll container, trapping the
+   compact September sticky motion frame. clip preserves horizontal clipping
+   without intercepting viewport scroll. */
+main:has([data-september-viewport-motion="true"]),
+[data-host-layout="true"]:has([data-september-viewport-motion="true"]) {
+  overflow-x: clip !important;
+}
+
 /* Host prep is one product across laptop and phone. Components opt into this
    contract with data-host-mobile-surface; desktop styles remain untouched. */
 @media (max-width: 860px) {

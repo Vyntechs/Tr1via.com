@@ -22,6 +22,10 @@ describe("September First Cool Front honors reduced motion", () => {
     expect(screen.getByTestId("september-distant-stadium")).toBeInTheDocument();
     expect(screen.getByTestId("september-friday-night-hashes")).toBeInTheDocument();
     expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
+    expect(screen.getByTestId("september-homecoming-motion-frame")).toHaveAttribute(
+      "data-viewport-scoped",
+      "false",
+    );
     const football = screen.getAllByTestId("september-homecoming-football")[0];
     const pom = screen.getAllByTestId("september-homecoming-pom")[0];
     expect(Number.parseFloat(football.style.height)).toBeGreaterThanOrEqual(40);
@@ -46,5 +50,9 @@ describe("September First Cool Front honors reduced motion", () => {
     render(<SeptemberFront compact page="lobby" />);
     expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
     expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "falling");
+    expect(screen.getByTestId("september-homecoming-motion-frame")).toHaveAttribute(
+      "data-viewport-scoped",
+      "true",
+    );
   });
 });

@@ -7,9 +7,9 @@
 // game into a weather map. A distant, floodlit stadium horizon and faint chalk
 // hashes add the second read: this front arrived on a Texas football night.
 //
-// The TV question is deliberately still, compact surfaces keep only a cropped
-// static horizon, and self-painted reveals get nothing. No motion is a status
-// signal. Reduced motion keeps the static identity and drops the veil.
+// Open compact game states keep their falling keepsakes in a viewport-scoped
+// frame, while questions, theme cards, and reduced-motion surfaces stay still.
+// Compact surfaces omit the broad wind veil. Self-painted reveals get nothing.
 
 "use client";
 
@@ -21,13 +21,13 @@ import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 export interface SeptemberFrontProps {
   /** 0 = off, 1 = default, >1 = a clearer finale atmosphere. */
   intensity?: number;
-  /** Phone/card-sized surface: stronger static corner fields, with no motion. */
+  /** Phone-sized surface: viewport-scoped keepsakes in open game states. */
   compact?: boolean;
   /** False when a reveal or other special moment owns its background. */
   substrate?: boolean;
-  /** TV state: questions stay motionless and visually quiet. */
+  /** Game state: questions stay quiet/static; other game states remain open. */
   page?: AugustPageName;
-  /** The theme gallery needs a card-safe stadium composition of its own. */
+  /** Theme-gallery cards always use their static, card-safe composition. */
   surface?: "game" | "card";
 }
 
@@ -164,45 +164,26 @@ export function SeptemberQuestionLampBand() {
   );
 }
 
-function LampHead({ x, y, scale = 1 }: { x: number; y: number; scale?: number }) {
+function LampHead({
+  x,
+  y,
+  scale = 1,
+  side,
+}: {
+  x: number;
+  y: number;
+  scale?: number;
+  side?: "left" | "right";
+}) {
   return (
     <g
       data-testid="september-stadium-lamp-head"
+      data-side={side}
       transform={`translate(${x} ${y}) scale(${scale})`}
       style={{ filter: `drop-shadow(0 0 ${18 * scale}px rgba(243,228,195,.72))` }}
     >
       <LampHeadArtwork />
     </g>
-  );
-}
-
-function CompactLampHead({ side }: { side: "left" | "right" }) {
-  const edge = side === "left" ? { left: "2.5%" } : { right: "2.5%" };
-  return (
-    <svg
-      data-testid="september-stadium-lamp-head"
-      data-side={side}
-      viewBox="0 0 104 58"
-      preserveAspectRatio="xMidYMid meet"
-      aria-hidden="true"
-      style={{
-        position: "absolute",
-        // Open compact screens keep the housing bottom tied to the original
-        // tower top. Quiet question lamps render in SeptemberQuestionLampBand
-        // instead, where document flow follows the real category-banner height.
-        bottom: "87.97%",
-        width: "18.61%",
-        height: "auto",
-        aspectRatio: "104 / 58",
-        opacity: 0.9,
-        overflow: "visible",
-        pointerEvents: "none",
-        filter: "drop-shadow(0 0 12.24px rgba(243,228,195,.72))",
-        ...edge,
-      }}
-    >
-      <LampHeadArtwork />
-    </svg>
   );
 }
 
@@ -317,7 +298,14 @@ function DistantStadium({
             <g data-testid="september-stadium-lights" fill="none" stroke="#F3E4C3" strokeOpacity={quiet ? ".56" : ".8"}>
               <path d="M36 742V94M54 742V94M326 742V94M344 742V94" strokeWidth="1.65" />
               <path d="M36 688 54 642 36 596 54 550 36 504 54 458 36 412 54 366 36 320 54 274 36 228 54 182M344 688 326 642 344 596 326 550 344 504 326 458 344 412 326 366 344 320 326 274 344 228 326 182" strokeWidth="1.05" />
-              <path d="M34 94H56M324 94H346" strokeWidth="2.2" />
+              <path data-testid="september-stadium-lamp-crossbar" data-side="left" d="M34 94H56" strokeWidth="2.2" />
+              <path data-testid="september-stadium-lamp-crossbar" data-side="right" d="M324 94H346" strokeWidth="2.2" />
+              {!quiet && (
+                <>
+                  <LampHead side="left" x={9.5} y={55} scale={0.68} />
+                  <LampHead side="right" x={299.5} y={55} scale={0.68} />
+                </>
+              )}
             </g>
             {quiet ? (
               <g data-testid="september-stadium-bowl">
@@ -405,12 +393,6 @@ function DistantStadium({
           </>
         )}
       </svg>
-      {compact && !card && !quiet && (
-        <>
-          <CompactLampHead side="left" />
-          <CompactLampHead side="right" />
-        </>
-      )}
     </div>
   );
 }
@@ -486,8 +468,9 @@ export function SeptemberFront({
       data-intensity={intensity}
       data-atmosphere={quiet ? "quiet" : "open"}
       data-front-phase={compact ? "compact" : clear ? "clear" : balanced ? "balanced" : quiet ? "quiet" : "arrival"}
+      data-september-viewport-motion={compact && showKeepsakeMotion ? "true" : "false"}
       aria-hidden="true"
-      style={layer({ overflow: "hidden", opacity: strength })}
+      style={layer({ overflow: "clip", opacity: strength })}
     >
       {/* Two temperatures in one evening: cool relief entering from above,
           with the last stored heat compressed into the opposite horizon. */}

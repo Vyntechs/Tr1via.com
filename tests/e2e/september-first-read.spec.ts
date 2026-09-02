@@ -6,9 +6,26 @@ async function chooseSeptember(page: Page) {
   await page.locator("select").first().selectOption(SEPTEMBER);
 }
 
+async function setDeterministicFallPhase(rail: Locator, progress = 0.32) {
+  await rail.evaluate((element, phase) => {
+    const animation = element.getAnimations()[0];
+    const effect = animation?.effect;
+    const duration = effect?.getTiming().duration;
+    if (!animation || !effect || typeof duration !== "number") {
+      throw new Error("Expected a finite September fall animation");
+    }
+    animation.pause();
+    effect.updateTiming({ delay: 0 });
+    animation.currentTime = duration * phase;
+  }, progress);
+}
+
 async function expectRecognizableKeepsakes(
   surface: Locator,
-  { requireViewport = false }: { requireViewport?: boolean } = {},
+  {
+    deterministicPhase = false,
+    requireViewport = false,
+  }: { deterministicPhase?: boolean; requireViewport?: boolean } = {},
 ) {
   const drift = surface.getByTestId("september-homecoming-drift");
   await expect(drift).toHaveAttribute("data-motion", "falling");
@@ -22,6 +39,10 @@ async function expectRecognizableKeepsakes(
   const pom = surface.locator('[data-keepsake-id="pom-1"]');
   const footballGlyph = surface.locator('[data-keepsake-id="ball-1"] svg');
   const pomGlyph = surface.locator('[data-keepsake-id="pom-1"] svg');
+  if (deterministicPhase) {
+    await setDeterministicFallPhase(football);
+    await setDeterministicFallPhase(pom);
+  }
   await expect(footballGlyph).toBeVisible();
   await expect(pomGlyph).toBeVisible();
   if (requireViewport) {
@@ -51,13 +72,78 @@ async function expectRecognizableKeepsakes(
     football.evaluate((element) => getComputedStyle(element).transform),
     pom.evaluate((element) => getComputedStyle(element).transform),
   ]);
-  await surface.page().waitForTimeout(1_000);
+  if (deterministicPhase) {
+    await Promise.all([
+      football.evaluate((element) => element.getAnimations()[0]?.play()),
+      pom.evaluate((element) => element.getAnimations()[0]?.play()),
+    ]);
+  }
+  await surface.page().waitForTimeout(deterministicPhase ? 250 : 1_000);
   const after = await Promise.all([
     football.evaluate((element) => getComputedStyle(element).transform),
     pom.evaluate((element) => getComputedStyle(element).transform),
   ]);
   expect(after[0]).not.toBe(before[0]);
   expect(after[1]).not.toBe(before[1]);
+}
+
+async function expectCompactLampAttachments(surface: Locator) {
+  const lamps = surface.getByTestId("september-stadium-lamp-head");
+  await expect(lamps).toHaveCount(2);
+
+  for (const side of ["left", "right"] as const) {
+    const lamp = surface.locator(
+      `[data-testid="september-stadium-lamp-head"][data-side="${side}"]`,
+    );
+    const geometry = await lamp.evaluate((element, lampSide) => {
+      if (!(element instanceof SVGGraphicsElement)) {
+        throw new Error("Compact lamp head must be SVG geometry");
+      }
+      const supports = element.closest('[data-testid="september-stadium-lights"]');
+      const crossbar = supports?.querySelector(
+        `[data-testid="september-stadium-lamp-crossbar"][data-side="${lampSide}"]`,
+      );
+      const yoke = element.querySelector('[data-testid="september-stadium-lamp-yoke"]');
+      if (!(supports instanceof SVGGraphicsElement) || !(crossbar instanceof SVGPathElement) || !yoke) {
+        throw new Error("Compact lamp support geometry is incomplete");
+      }
+      const lampMatrix = element.getScreenCTM();
+      const crossbarMatrix = crossbar.getScreenCTM();
+      if (!lampMatrix || !crossbarMatrix) throw new Error("Compact lamp geometry has no screen matrix");
+
+      const yokeBottom = new DOMPoint(52, 57).matrixTransform(lampMatrix);
+      const midpoint = crossbar.getPointAtLength(crossbar.getTotalLength() / 2);
+      const crossbarCenter = new DOMPoint(midpoint.x, midpoint.y).matrixTransform(crossbarMatrix);
+      return {
+        sameOwner:
+          element.ownerSVGElement === supports.ownerSVGElement &&
+          element.ownerSVGElement === crossbar.ownerSVGElement,
+        verticalGap: Math.abs(yokeBottom.y - crossbarCenter.y),
+      };
+    }, side);
+
+    expect(geometry.sameOwner).toBe(true);
+    expect(geometry.verticalGap).toBeLessThanOrEqual(2);
+  }
+}
+
+async function expectScrolledCompactMotion(page: Page, surface: Locator) {
+  const frame = surface.getByTestId("september-homecoming-motion-frame");
+  await expect(frame).toHaveAttribute("data-viewport-scoped", "true");
+  await expect(frame).toHaveCSS("position", "sticky");
+
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight - innerHeight - 24));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(500);
+  await expect(frame).toBeInViewport();
+  const frameBox = await frame.boundingBox();
+  expect(frameBox).not.toBeNull();
+  expect(Math.abs(frameBox!.y)).toBeLessThanOrEqual(1);
+  expect(frameBox!.height).toBeCloseTo(await page.evaluate(() => innerHeight), 0);
+
+  await expectRecognizableKeepsakes(surface, {
+    deterministicPhase: true,
+    requireViewport: true,
+  });
 }
 
 async function expectFloodlightAssemblies(surface: Locator) {
@@ -106,14 +192,21 @@ test("September is first-read on the production host overview at desktop and com
       };
     `,
   });
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/dev/host/mobile?surface=overview");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", SEPTEMBER);
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 375, height: 667 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto("/dev/host/mobile?surface=overview");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", SEPTEMBER);
 
-  await expect(page.getByTestId("host-gen-overview-layout")).toHaveAttribute("data-layout", "mobile");
-  const compact = page.getByTestId("host-gen-overview-layout").locator("xpath=../..");
-  await expectRecognizableKeepsakes(compact, { requireViewport: true });
-  await expectFloodlightAssemblies(compact);
+    await expect(page.getByTestId("host-gen-overview-layout")).toHaveAttribute("data-layout", "mobile");
+    const compact = page.getByTestId("host-gen-overview-layout").locator("xpath=../..");
+    expect((await compact.boundingBox())!.height).toBeGreaterThan(2_000);
+    await expectFloodlightAssemblies(compact);
+    await expectCompactLampAttachments(compact);
+    await expectScrolledCompactMotion(page, compact);
+  }
 });
 
 test("September keeps TV and player reading states quiet while open surfaces fall", async ({ page }) => {

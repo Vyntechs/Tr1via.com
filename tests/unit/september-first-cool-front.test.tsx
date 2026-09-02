@@ -43,7 +43,20 @@ describe("September atmosphere and control contract", () => {
   it("keeps the atmospheric layer decorative and clipped beneath content", () => {
     render(<SeptemberFront page="lobby" />);
     expect(screen.getByTestId("september-front")).toHaveAttribute("aria-hidden", "true");
-    expect(screen.getByTestId("september-front")).toHaveStyle({ pointerEvents: "none" });
+    expect(screen.getByTestId("september-front")).toHaveStyle({
+      overflow: "clip",
+      pointerEvents: "none",
+    });
+    expect(screen.getByTestId("september-homecoming-drift")).toHaveStyle({
+      overflow: "clip",
+      pointerEvents: "none",
+    });
+    const fullMotionFrame = screen.getByTestId("september-homecoming-motion-frame");
+    expect(fullMotionFrame).toHaveAttribute(
+      "data-viewport-scoped",
+      "false",
+    );
+    expect(fullMotionFrame).toHaveStyle({ position: "absolute", inset: "0" });
     expect(screen.getByTestId("september-front-air-masses")).toBeInTheDocument();
     expect(screen.getByTestId("september-front-contours")).toBeInTheDocument();
     expect(screen.getByTestId("september-distant-stadium")).toBeInTheDocument();
@@ -109,11 +122,15 @@ describe("September atmosphere and control contract", () => {
     const compactLampHeads = screen.getAllByTestId("september-stadium-lamp-head");
     expect(compactLampHeads).toHaveLength(2);
     expect(compactLampHeads.map((lampHead) => lampHead.getAttribute("data-side"))).toEqual(["left", "right"]);
+    expect(compactLampHeads.map((lampHead) => lampHead.getAttribute("transform"))).toEqual([
+      "translate(9.5 55) scale(0.68)",
+      "translate(299.5 55) scale(0.68)",
+    ]);
+    const compactSupports = screen.getByTestId("september-stadium-lights");
+    expect(screen.getAllByTestId("september-stadium-lamp-crossbar")).toHaveLength(2);
     compactLampHeads.forEach((lampHead) => {
-      expect(lampHead.tagName.toLowerCase()).toBe("svg");
-      expect(lampHead).toHaveAttribute("viewBox", "0 0 104 58");
-      expect(lampHead).toHaveAttribute("preserveAspectRatio", "xMidYMid meet");
-      expect(lampHead).toHaveStyle({ aspectRatio: "104 / 58", opacity: "0.9" });
+      expect(lampHead.tagName.toLowerCase()).toBe("g");
+      expect(lampHead.closest("svg")).toBe(compactSupports.closest("svg"));
       expect(lampHead.querySelectorAll("circle")).toHaveLength(12);
       expect(lampHead.querySelector('[data-testid="september-stadium-lamp-bank"]')).not.toBeNull();
       expect(lampHead.querySelector('[data-testid="september-stadium-lamp-yoke"]')).not.toBeNull();
@@ -126,6 +143,16 @@ describe("September atmosphere and control contract", () => {
     expect(screen.queryByTestId("september-friday-night-hashes")).toBeNull();
     expect(screen.queryByTestId("september-front-wind-veil")).toBeNull();
     expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "falling");
+    expect(screen.getByTestId("september-homecoming-motion-frame")).toHaveAttribute(
+      "data-viewport-scoped",
+      "true",
+    );
+    expect(screen.getByTestId("september-homecoming-motion-frame")).toHaveStyle({
+      position: "sticky",
+      top: "0px",
+      height: "100dvh",
+      overflow: "hidden",
+    });
     expect(screen.getAllByTestId("september-homecoming-leaf")).toHaveLength(2);
     expect(screen.getAllByTestId("september-homecoming-football")).toHaveLength(2);
     expect(screen.getAllByTestId("september-homecoming-pom")).toHaveLength(2);
@@ -219,6 +246,10 @@ describe("September atmosphere and control contract", () => {
 
     const question = render(<SeptemberFront compact page="question" />);
     expect(screen.getByTestId("september-homecoming-drift")).toHaveAttribute("data-motion", "static");
+    expect(screen.getByTestId("september-homecoming-motion-frame")).toHaveAttribute(
+      "data-viewport-scoped",
+      "false",
+    );
     screen.getAllByTestId(/september-homecoming-(football|pom)/).forEach((keepsake) => {
       expect(keepsake.style.animation).toBe("");
     });

@@ -127,85 +127,91 @@ export function SeptemberHomecomingDrift({
     if (compact) return COMPACT_IDS.has(keepsake.id);
     return true;
   });
+  const viewportScoped = animated && compact;
 
   return (
     <div
       data-testid="september-homecoming-drift"
       data-motion={animated ? "falling" : "static"}
-      style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
+      style={{ position: "absolute", inset: 0, overflow: "clip", pointerEvents: "none" }}
     >
-      {visible.map((keepsake) => {
-        const surfaceOpacity = quiet ? 0.78 : card ? 0.86 : compact && keepsake.kind === "leaf" ? 0.92 : 1;
-        const opacity = keepsake.opacity * surfaceOpacity;
-        if (!animated) {
-          const staticLeft = quiet
-            ? compact
-              ? keepsake.compactQuietLeft ?? keepsake.quietLeft ?? keepsake.left
-              : keepsake.quietLeft ?? keepsake.left
-            : keepsake.left;
-          const staticTop = quiet
-            ? compact
-              ? keepsake.compactQuietTop ?? keepsake.quietTop ?? keepsake.staticTop
-              : keepsake.quietTop ?? keepsake.staticTop
-            : keepsake.staticTop;
+      <div
+        data-testid="september-homecoming-motion-frame"
+        data-viewport-scoped={viewportScoped ? "true" : "false"}
+        style={viewportScoped
+          ? { position: "sticky", top: 0, height: "100dvh", overflow: "hidden", pointerEvents: "none" }
+          : { position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none" }}
+      >
+        {visible.map((keepsake) => {
+          const surfaceOpacity = quiet ? 0.78 : card ? 0.86 : compact && keepsake.kind === "leaf" ? 0.92 : 1;
+          const opacity = keepsake.opacity * surfaceOpacity;
+          if (!animated) {
+            const staticLeft = quiet
+              ? compact
+                ? keepsake.compactQuietLeft ?? keepsake.quietLeft ?? keepsake.left
+                : keepsake.quietLeft ?? keepsake.left
+              : keepsake.left;
+            const staticTop = quiet
+              ? compact
+                ? keepsake.compactQuietTop ?? keepsake.quietTop ?? keepsake.staticTop
+                : keepsake.quietTop ?? keepsake.staticTop
+              : keepsake.staticTop;
+            return (
+              <div
+                key={keepsake.id}
+                data-testid={`september-homecoming-${keepsake.kind}`}
+                data-keepsake-id={keepsake.id}
+                style={{
+                  position: "absolute",
+                  left: `${staticLeft}%`,
+                  top: `${staticTop}%`,
+                  width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
+                  height: keepsake.size,
+                  opacity,
+                  transform: `rotate(${keepsake.rotate}deg)`,
+                }}
+              >
+                <KeepsakeGlyph keepsake={keepsake} />
+              </div>
+            );
+          }
+
           return (
             <div
               key={keepsake.id}
               data-testid={`september-homecoming-${keepsake.kind}`}
               data-keepsake-id={keepsake.id}
+              className="tr1via-september-keepsake-rail"
               style={{
                 position: "absolute",
-                left: `${staticLeft}%`,
-                top: `${staticTop}%`,
+                left: `${compact ? keepsake.compactLeft ?? keepsake.left : keepsake.left}%`,
+                top: "-14%",
                 width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
-                height: keepsake.size,
+                height: "128%",
                 opacity,
-                transform: `rotate(${keepsake.rotate}deg)`,
-              }}
-            >
-              <KeepsakeGlyph keepsake={keepsake} />
-            </div>
-          );
-        }
-
-        return (
-          <div
-            key={keepsake.id}
-            data-testid={`september-homecoming-${keepsake.kind}`}
-            data-keepsake-id={keepsake.id}
-            className="tr1via-september-keepsake-rail"
-            style={{
-              position: "absolute",
-              left: `${compact ? keepsake.compactLeft ?? keepsake.left : keepsake.left}%`,
-              // A compact host page can be much taller than its viewport. Tie
-              // the loop to the visible screen so first-read keepsakes do not
-              // spend their whole cycle below the fold.
-              top: compact ? "-14dvh" : "-14%",
-              width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
-              height: compact ? "128dvh" : "128%",
-              opacity,
-              animation: `tr1via-september-keepsake-fall ${keepsake.duration}s linear ${-keepsake.delay}s infinite`,
-              ["--sept-drift" as string]: `${keepsake.drift}px`,
-            } as CSSProperties}
-          >
-            <div
-              className={`tr1via-september-keepsake-glyph tr1via-september-keepsake-${keepsake.kind}`}
-              style={{
-                width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
-                height: keepsake.size,
-                animation: keepsake.kind === "football"
-                  ? "tr1via-september-football-rock 4.8s ease-in-out infinite alternate"
-                  : keepsake.kind === "pom"
-                    ? "tr1via-september-pom-flutter 4.2s ease-in-out infinite alternate"
-                    : "tr1via-september-keepsake-flutter 7.4s ease-in-out infinite alternate",
-                ["--sept-tilt" as string]: `${keepsake.rotate}deg`,
+                animation: `tr1via-september-keepsake-fall ${keepsake.duration}s linear ${-keepsake.delay}s infinite`,
+                ["--sept-drift" as string]: `${keepsake.drift}px`,
               } as CSSProperties}
             >
-              <KeepsakeGlyph keepsake={keepsake} />
+              <div
+                className={`tr1via-september-keepsake-glyph tr1via-september-keepsake-${keepsake.kind}`}
+                style={{
+                  width: keepsake.size * (keepsake.kind === "football" ? 1.55 : 1.35),
+                  height: keepsake.size,
+                  animation: keepsake.kind === "football"
+                    ? "tr1via-september-football-rock 4.8s ease-in-out infinite alternate"
+                    : keepsake.kind === "pom"
+                      ? "tr1via-september-pom-flutter 4.2s ease-in-out infinite alternate"
+                      : "tr1via-september-keepsake-flutter 7.4s ease-in-out infinite alternate",
+                  ["--sept-tilt" as string]: `${keepsake.rotate}deg`,
+                } as CSSProperties}
+              >
+                <KeepsakeGlyph keepsake={keepsake} />
+              </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
     </div>
   );
 }
