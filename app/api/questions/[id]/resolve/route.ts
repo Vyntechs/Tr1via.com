@@ -41,7 +41,6 @@ import {
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
 const MISSING_RESOLVE_ONCE_RPC = "PGRST202";
-const LEGACY_RESOLVE_BROADCAST_RETRY_DELAY_MS = 100;
 
 async function resolveLegacyQuestionOnce(
   admin: AdminClient,
@@ -65,7 +64,7 @@ async function resolveLegacyQuestionOnce(
   return { data: true, error: null };
 }
 
-async function broadcastLegacyResolveWithRetry(
+async function broadcastLegacyResolveBestEffort(
   roomCode: string,
   payload: {
     questionId: string;
@@ -74,19 +73,13 @@ async function broadcastLegacyResolveWithRetry(
     serverNow: string;
   },
 ): Promise<void> {
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      await broadcastToRoom(roomCode, "resolve", payload);
-      return;
-    } catch {
-      if (attempt === 1) {
-        console.warn("broadcast resolve failed after retry");
-        return;
-      }
-      await new Promise((resolve) =>
-        setTimeout(resolve, LEGACY_RESOLVE_BROADCAST_RETRY_DELAY_MS),
-      );
-    }
+  try {
+    await broadcastToRoom(roomCode, "resolve", payload);
+  } catch {
+    // A timeout can mean Supabase accepted the broadcast but its acknowledgement
+    // was lost. Do not retry and amplify one commit into two room-wide refetches;
+    // durable Postgres Changes and snapshot recovery cover a truly missed signal.
+    console.warn("broadcast resolve failed");
   }
 }
 
@@ -318,7 +311,7 @@ export async function POST(
     serverNow: new Date().toISOString(),
   };
 
-  await broadcastLegacyResolveWithRetry(roomCode, payload);
+  await broadcastLegacyResolveBestEffort(roomCode, payload);
 
   // Synchronized firework salvo (July) — every July screen ignites the same
   // burst at the same instant as the answer is revealed. Cosmetic + best-effort

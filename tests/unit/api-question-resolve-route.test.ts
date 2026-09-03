@@ -195,31 +195,12 @@ describe("POST /api/questions/[id]/resolve", () => {
     expect(serialized).not.toContain("awarded");
   });
 
-  it("retries only the winning resolve broadcast after one transient failure", async () => {
+  it("does not retry an ambiguously failed resolve broadcast", async () => {
     const admin = makeAdmin({ playedAt: "2026-07-19T03:59:30.000Z" });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
-    broadcastMock.broadcastToRoom
-      .mockRejectedValueOnce(new Error("transient"))
-      .mockResolvedValueOnce(undefined);
-
-    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
-    const responsePromise = POST(request(), ctx);
-    await vi.runAllTimersAsync();
-    const response = await responsePromise;
-
-    expect(response.status).toBe(200);
-    expect(admin.rpc).toHaveBeenCalledOnce();
-    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledTimes(2);
-    expect(broadcastMock.broadcastToRoom.mock.calls[1]).toEqual(
-      broadcastMock.broadcastToRoom.mock.calls[0],
+    broadcastMock.broadcastToRoom.mockRejectedValueOnce(
+      new Error("accepted but acknowledgement lost"),
     );
-    expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
-  });
-
-  it("stops after two failed resolve broadcasts while preserving committed success", async () => {
-    const admin = makeAdmin({ playedAt: "2026-07-19T03:59:30.000Z" });
-    adminMock.getSupabaseAdmin.mockReturnValue(admin);
-    broadcastMock.broadcastToRoom.mockRejectedValue(new Error("offline"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     const { POST } = await import("@/app/api/questions/[id]/resolve/route");
@@ -229,9 +210,9 @@ describe("POST /api/questions/[id]/resolve", () => {
 
     expect(response.status).toBe(200);
     expect(admin.rpc).toHaveBeenCalledOnce();
-    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledTimes(2);
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
     expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
-    expect(warn).toHaveBeenCalledWith("broadcast resolve failed after retry");
+    expect(warn).toHaveBeenCalledWith("broadcast resolve failed");
   });
 
   it("fans out a committed resolution when answer-count metadata is unavailable", async () => {
