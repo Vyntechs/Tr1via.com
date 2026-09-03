@@ -46,17 +46,27 @@ function makeAdmin({
   finishedAt = null,
   rpcError = null,
   freshlyResolved = true,
+  answersError = null,
+  requireRpcReceiver = false,
 }: {
   playedAt?: string;
   finishedAt?: string | null;
   rpcError?: { code?: string; message: string } | null;
   freshlyResolved?: boolean;
+  answersError?: { code?: string; message: string } | null;
+  requireRpcReceiver?: boolean;
 } = {}) {
-  const rpc = vi.fn(async (fn: string) =>
-    fn === "resolve_question_once"
+  const rpc = vi.fn(async function (this: unknown, fn: string) {
+    if (
+      requireRpcReceiver &&
+      (typeof this !== "object" || this === null || !("from" in this))
+    ) {
+      throw new TypeError("Supabase RPC receiver was detached");
+    }
+    return fn === "resolve_question_once"
       ? { data: freshlyResolved, error: rpcError }
-      : { data: null, error: null },
-  );
+      : { data: null, error: null };
+  });
   const rows: Record<string, DbResult> = {
     questions: {
       data: {
@@ -79,7 +89,7 @@ function makeAdmin({
       },
       error: null,
     },
-    answers: { data: [], error: null },
+    answers: { data: answersError ? null : [], error: answersError },
   };
 
   return {
@@ -126,6 +136,22 @@ describe("POST /api/questions/[id]/resolve", () => {
 
   it("allows an anonymous timer trigger once the authoritative window is due", async () => {
     const admin = makeAdmin({ playedAt: "2026-07-19T03:59:30.000Z" });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+
+    expect(response.status).toBe(200);
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_once", {
+      p_question_id: QUESTION_ID,
+    });
+  });
+
+  it("keeps the Supabase client receiver on the race-winning RPC call", async () => {
+    const admin = makeAdmin({
+      playedAt: "2026-07-19T03:59:30.000Z",
+      requireRpcReceiver: true,
+    });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
 
     const { POST } = await import("@/app/api/questions/[id]/resolve/route");
@@ -206,6 +232,28 @@ describe("POST /api/questions/[id]/resolve", () => {
     expect(broadcastMock.broadcastToRoom).toHaveBeenCalledTimes(2);
     expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
     expect(warn).toHaveBeenCalledWith("broadcast resolve failed after retry");
+  });
+
+  it("fans out a committed resolution when answer-count metadata is unavailable", async () => {
+    const admin = makeAdmin({
+      playedAt: "2026-07-19T03:59:30.000Z",
+      answersError: { code: "XX000", message: SENTINEL },
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ awardCount: 0 });
+    expect(JSON.stringify(body)).not.toContain(SENTINEL);
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
+    expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      "answer count unavailable after resolve",
+    );
   });
 
   it("preserves idempotent success for an already-resolved question", async () => {

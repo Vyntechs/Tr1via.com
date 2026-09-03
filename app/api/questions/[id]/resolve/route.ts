@@ -40,26 +40,14 @@ import {
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
-type ResolveQuestionOnceResult = {
-  data: boolean | null;
-  error: { code?: string; message: string } | null;
-};
-
 const MISSING_RESOLVE_ONCE_RPC = "PGRST202";
 const LEGACY_RESOLVE_BROADCAST_RETRY_DELAY_MS = 100;
 
 async function resolveLegacyQuestionOnce(
   admin: AdminClient,
   questionId: string,
-): Promise<ResolveQuestionOnceResult> {
-  // This migration has not been applied to the shared database, so generated
-  // types cannot include the additive RPC yet. Keep the temporary type bridge
-  // isolated here; `npm run typegen` can remove it after the migration lands.
-  const rpc = admin.rpc as unknown as (
-    fn: "resolve_question_once",
-    args: { p_question_id: string },
-  ) => PromiseLike<ResolveQuestionOnceResult>;
-  const result = await rpc("resolve_question_once", {
+) {
+  const result = await admin.rpc("resolve_question_once", {
     p_question_id: questionId,
   });
   if (result.error?.code !== MISSING_RESOLVE_ONCE_RPC) return result;
@@ -323,14 +311,6 @@ export async function POST(
     return ok({ alreadyResolved: true });
   }
 
-  // Preserve the response's aggregate count without selecting private answer
-  // details into this shared-broadcast path.
-  const { data: answerRows, error: answersError } = await admin
-    .from("answers")
-    .select("id")
-    .eq("question_id", questionId);
-  if (answersError) return serverError();
-
   const payload = {
     questionId,
     correctIndex: q.correct_index,
@@ -348,6 +328,15 @@ export async function POST(
   } catch {
     console.warn("broadcast fireworks(salvo) failed");
   }
+
+  // Resolution is already committed and fanned out. Keep this aggregate
+  // response metadata best-effort so an unrelated read failure cannot strand
+  // every surface on stale state.
+  const { data: answerRows, error: answersError } = await admin
+    .from("answers")
+    .select("id")
+    .eq("question_id", questionId);
+  if (answersError) console.warn("answer count unavailable after resolve");
 
   return ok({
     resolvedAt: new Date().toISOString(),
