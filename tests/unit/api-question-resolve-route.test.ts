@@ -49,10 +49,14 @@ function makeAdmin({
 }: {
   playedAt?: string;
   finishedAt?: string | null;
-  rpcError?: { message: string } | null;
+  rpcError?: { code?: string; message: string } | null;
   freshlyResolved?: boolean;
 } = {}) {
-  const rpc = vi.fn(async () => ({ data: freshlyResolved, error: rpcError }));
+  const rpc = vi.fn(async (fn: string) =>
+    fn === "resolve_question_once"
+      ? { data: freshlyResolved, error: rpcError }
+      : { data: null, error: null },
+  );
   const rows: Record<string, DbResult> = {
     questions: {
       data: {
@@ -104,6 +108,7 @@ describe("POST /api/questions/[id]/resolve", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -164,6 +169,45 @@ describe("POST /api/questions/[id]/resolve", () => {
     expect(serialized).not.toContain("awarded");
   });
 
+  it("retries only the winning resolve broadcast after one transient failure", async () => {
+    const admin = makeAdmin({ playedAt: "2026-07-19T03:59:30.000Z" });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    broadcastMock.broadcastToRoom
+      .mockRejectedValueOnce(new Error("transient"))
+      .mockResolvedValueOnce(undefined);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const responsePromise = POST(request(), ctx);
+    await vi.runAllTimersAsync();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(admin.rpc).toHaveBeenCalledOnce();
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledTimes(2);
+    expect(broadcastMock.broadcastToRoom.mock.calls[1]).toEqual(
+      broadcastMock.broadcastToRoom.mock.calls[0],
+    );
+    expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
+  });
+
+  it("stops after two failed resolve broadcasts while preserving committed success", async () => {
+    const admin = makeAdmin({ playedAt: "2026-07-19T03:59:30.000Z" });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    broadcastMock.broadcastToRoom.mockRejectedValue(new Error("offline"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const responsePromise = POST(request(), ctx);
+    await vi.runAllTimersAsync();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(admin.rpc).toHaveBeenCalledOnce();
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledTimes(2);
+    expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith("broadcast resolve failed after retry");
+  });
+
   it("preserves idempotent success for an already-resolved question", async () => {
     const admin = makeAdmin({
       playedAt: "2026-07-19T03:59:30.000Z",
@@ -218,10 +262,35 @@ describe("POST /api/questions/[id]/resolve", () => {
     });
   });
 
+  it("falls back to the existing resolver only when PostgREST cannot find the new RPC", async () => {
+    const admin = makeAdmin({
+      playedAt: "2026-07-19T03:59:30.000Z",
+      rpcError: {
+        code: "PGRST202",
+        message: "Could not find the function in the schema cache",
+      },
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+
+    expect(response.status).toBe(200);
+    expect(admin.rpc.mock.calls).toEqual([
+      ["resolve_question_once", { p_question_id: QUESTION_ID }],
+      ["resolve_question", { p_question_id: QUESTION_ID }],
+    ]);
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      "resolve_question_once is unavailable (PGRST202); falling back to resolve_question until the migration is applied",
+    );
+  });
+
   it("never exposes a resolve RPC database error", async () => {
     const admin = makeAdmin({
       playedAt: "2026-07-19T03:59:30.000Z",
-      rpcError: { message: SENTINEL },
+      rpcError: { code: "42501", message: SENTINEL },
     });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
 
@@ -232,5 +301,10 @@ describe("POST /api/questions/[id]/resolve", () => {
     expect(response.status).toBe(500);
     expect(body).toEqual({ error: "server error" });
     expect(JSON.stringify(body)).not.toContain(SENTINEL);
+    expect(admin.rpc).toHaveBeenCalledOnce();
+    expect(admin.rpc).not.toHaveBeenCalledWith("resolve_question", {
+      p_question_id: QUESTION_ID,
+    });
+    expect(broadcastMock.broadcastToRoom).not.toHaveBeenCalled();
   });
 });

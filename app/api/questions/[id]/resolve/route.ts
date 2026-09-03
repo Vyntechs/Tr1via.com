@@ -42,8 +42,11 @@ type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
 type ResolveQuestionOnceResult = {
   data: boolean | null;
-  error: { message: string } | null;
+  error: { code?: string; message: string } | null;
 };
+
+const MISSING_RESOLVE_ONCE_RPC = "PGRST202";
+const LEGACY_RESOLVE_BROADCAST_RETRY_DELAY_MS = 100;
 
 async function resolveLegacyQuestionOnce(
   admin: AdminClient,
@@ -56,7 +59,47 @@ async function resolveLegacyQuestionOnce(
     fn: "resolve_question_once",
     args: { p_question_id: string },
   ) => PromiseLike<ResolveQuestionOnceResult>;
-  return rpc("resolve_question_once", { p_question_id: questionId });
+  const result = await rpc("resolve_question_once", {
+    p_question_id: questionId,
+  });
+  if (result.error?.code !== MISSING_RESOLVE_ONCE_RPC) return result;
+
+  // Keep legacy games available while the additive migration rolls out. This
+  // intentionally preserves the old behavior only for PostgREST's exact
+  // missing-function signal; every other RPC error remains fail-closed.
+  console.warn(
+    "resolve_question_once is unavailable (PGRST202); falling back to resolve_question until the migration is applied",
+  );
+  const fallback = await admin.rpc("resolve_question", {
+    p_question_id: questionId,
+  });
+  if (fallback.error) return { data: null, error: fallback.error };
+  return { data: true, error: null };
+}
+
+async function broadcastLegacyResolveWithRetry(
+  roomCode: string,
+  payload: {
+    questionId: string;
+    correctIndex: number;
+    refetch: true;
+    serverNow: string;
+  },
+): Promise<void> {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await broadcastToRoom(roomCode, "resolve", payload);
+      return;
+    } catch {
+      if (attempt === 1) {
+        console.warn("broadcast resolve failed after retry");
+        return;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, LEGACY_RESOLVE_BROADCAST_RETRY_DELAY_MS),
+      );
+    }
+  }
 }
 
 async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
@@ -291,15 +334,11 @@ export async function POST(
   const payload = {
     questionId,
     correctIndex: q.correct_index,
-    refetch: true,
+    refetch: true as const,
     serverNow: new Date().toISOString(),
   };
 
-  try {
-    await broadcastToRoom(roomCode, "resolve", payload);
-  } catch {
-    console.warn("broadcast resolve failed");
-  }
+  await broadcastLegacyResolveWithRetry(roomCode, payload);
 
   // Synchronized firework salvo (July) — every July screen ignites the same
   // burst at the same instant as the answer is revealed. Cosmetic + best-effort

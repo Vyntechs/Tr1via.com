@@ -447,6 +447,62 @@ afterAll(async () => {
 });
 
 describe("authoritative answer engine PostgreSQL races", () => {
+  test("forty legacy resolvers produce one winner, reveal, and scoring result", async () => {
+    const fixture = await createFixture(1);
+    try {
+      await admin.query(
+        "update questions set played_at = now() - interval '30 seconds' where id = $1",
+        [fixture.questionId],
+      );
+      await admin.query(
+        `insert into answers (
+           question_id, player_id, chosen_index, scramble, ms_to_lock
+         ) values ($1, $2, 0, '[0,1,2,3]'::jsonb, 4000)`,
+        [fixture.questionId, fixture.players[0].id],
+      );
+
+      const results = await concurrently(
+        Array.from({ length: 40 }, () => async (client) => {
+          const result = await client.query<{ freshly_resolved: boolean }>(
+            "select public.resolve_question_once($1) as freshly_resolved",
+            [fixture.questionId],
+          );
+          return result.rows[0]?.freshly_resolved ?? false;
+        }),
+      );
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(results.filter((freshlyResolved) => !freshlyResolved)).toHaveLength(39);
+
+      const terminal = await admin.query<{
+        finished: boolean;
+        resolve_reveals: number;
+        is_correct: boolean;
+        awarded_points: number;
+      }>(
+        `select q.finished_at is not null as finished,
+                (select count(*)::int
+                   from reveals r
+                  where r.question_id = q.id
+                    and r.event = 'resolve') as resolve_reveals,
+                a.is_correct,
+                a.awarded_points
+           from questions q
+           join answers a on a.question_id = q.id
+          where q.id = $1`,
+        [fixture.questionId],
+      );
+      expect(terminal.rows[0]).toEqual({
+        finished: true,
+        resolve_reveals: 1,
+        is_correct: true,
+        awarded_points: 110,
+      });
+    } finally {
+      await removeFixture(fixture);
+    }
+  });
+
   test("mixed receipt and application order cannot falsely resolve all-in", async () => {
     const { fixture, runId, playId } = await readyPlay(2);
     const earlyClaimant = await connect();
