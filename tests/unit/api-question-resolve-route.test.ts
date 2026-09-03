@@ -45,12 +45,28 @@ function makeAdmin({
   playedAt = "2026-07-19T03:59:50.000Z",
   finishedAt = null,
   rpcError = null,
+  freshlyResolved = true,
+  answersError = null,
+  requireRpcReceiver = false,
 }: {
   playedAt?: string;
   finishedAt?: string | null;
-  rpcError?: { message: string } | null;
+  rpcError?: { code?: string; message: string } | null;
+  freshlyResolved?: boolean;
+  answersError?: { code?: string; message: string } | null;
+  requireRpcReceiver?: boolean;
 } = {}) {
-  const rpc = vi.fn(async () => ({ data: null, error: rpcError }));
+  const rpc = vi.fn(async function (this: unknown, fn: string) {
+    if (
+      requireRpcReceiver &&
+      (typeof this !== "object" || this === null || !("from" in this))
+    ) {
+      throw new TypeError("Supabase RPC receiver was detached");
+    }
+    return fn === "resolve_question_once"
+      ? { data: freshlyResolved, error: rpcError }
+      : { data: null, error: null };
+  });
   const rows: Record<string, DbResult> = {
     questions: {
       data: {
@@ -73,7 +89,7 @@ function makeAdmin({
       },
       error: null,
     },
-    answers: { data: [], error: null },
+    answers: { data: answersError ? null : [], error: answersError },
   };
 
   return {
@@ -102,6 +118,7 @@ describe("POST /api/questions/[id]/resolve", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
   });
 
@@ -125,7 +142,23 @@ describe("POST /api/questions/[id]/resolve", () => {
     const response = await POST(request(), ctx);
 
     expect(response.status).toBe(200);
-    expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_once", {
+      p_question_id: QUESTION_ID,
+    });
+  });
+
+  it("keeps the Supabase client receiver on the race-winning RPC call", async () => {
+    const admin = makeAdmin({
+      playedAt: "2026-07-19T03:59:30.000Z",
+      requireRpcReceiver: true,
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+
+    expect(response.status).toBe(200);
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_once", {
       p_question_id: QUESTION_ID,
     });
   });
@@ -139,6 +172,7 @@ describe("POST /api/questions/[id]/resolve", () => {
 
     expect(response.status).toBe(200);
     expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
+    expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
     const [roomCode, event, payload] = broadcastMock.broadcastToRoom.mock.calls[0];
     expect(roomCode).toBe("ABCDEF");
     expect(event).toBe("resolve");
@@ -161,6 +195,48 @@ describe("POST /api/questions/[id]/resolve", () => {
     expect(serialized).not.toContain("awarded");
   });
 
+  it("does not retry an ambiguously failed resolve broadcast", async () => {
+    const admin = makeAdmin({ playedAt: "2026-07-19T03:59:30.000Z" });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    broadcastMock.broadcastToRoom.mockRejectedValueOnce(
+      new Error("accepted but acknowledgement lost"),
+    );
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const responsePromise = POST(request(), ctx);
+    await vi.runAllTimersAsync();
+    const response = await responsePromise;
+
+    expect(response.status).toBe(200);
+    expect(admin.rpc).toHaveBeenCalledOnce();
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
+    expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith("broadcast resolve failed");
+  });
+
+  it("fans out a committed resolution when answer-count metadata is unavailable", async () => {
+    const admin = makeAdmin({
+      playedAt: "2026-07-19T03:59:30.000Z",
+      answersError: { code: "XX000", message: SENTINEL },
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ awardCount: 0 });
+    expect(JSON.stringify(body)).not.toContain(SENTINEL);
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
+    expect(broadcastMock.broadcastFireworks).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      "answer count unavailable after resolve",
+    );
+  });
+
   it("preserves idempotent success for an already-resolved question", async () => {
     const admin = makeAdmin({
       playedAt: "2026-07-19T03:59:30.000Z",
@@ -172,9 +248,29 @@ describe("POST /api/questions/[id]/resolve", () => {
     const response = await POST(request(), ctx);
 
     expect(response.status).toBe(200);
-    expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
+    expect(admin.rpc).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastToRoom).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastFireworks).not.toHaveBeenCalled();
+  });
+
+  it("lets a concurrent RPC loser succeed without rebroadcasting", async () => {
+    const admin = makeAdmin({
+      playedAt: "2026-07-19T03:59:30.000Z",
+      freshlyResolved: false,
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toEqual({ alreadyResolved: true });
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_once", {
       p_question_id: QUESTION_ID,
     });
+    expect(broadcastMock.broadcastToRoom).not.toHaveBeenCalled();
+    expect(broadcastMock.broadcastFireworks).not.toHaveBeenCalled();
   });
 
   it("keeps fast-forward available only when the existing test-mode gate approves the request", async () => {
@@ -190,15 +286,40 @@ describe("POST /api/questions/[id]/resolve", () => {
 
     expect(response.status).toBe(200);
     expect(testModeMock.isTestModeEnabled).toHaveBeenCalled();
-    expect(admin.rpc).toHaveBeenCalledWith("resolve_question", {
+    expect(admin.rpc).toHaveBeenCalledWith("resolve_question_once", {
       p_question_id: QUESTION_ID,
     });
+  });
+
+  it("falls back to the existing resolver only when PostgREST cannot find the new RPC", async () => {
+    const admin = makeAdmin({
+      playedAt: "2026-07-19T03:59:30.000Z",
+      rpcError: {
+        code: "PGRST202",
+        message: "Could not find the function in the schema cache",
+      },
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    const response = await POST(request(), ctx);
+
+    expect(response.status).toBe(200);
+    expect(admin.rpc.mock.calls).toEqual([
+      ["resolve_question_once", { p_question_id: QUESTION_ID }],
+      ["resolve_question", { p_question_id: QUESTION_ID }],
+    ]);
+    expect(broadcastMock.broadcastToRoom).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith(
+      "resolve_question_once is unavailable (PGRST202); falling back to resolve_question until the migration is applied",
+    );
   });
 
   it("never exposes a resolve RPC database error", async () => {
     const admin = makeAdmin({
       playedAt: "2026-07-19T03:59:30.000Z",
-      rpcError: { message: SENTINEL },
+      rpcError: { code: "42501", message: SENTINEL },
     });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
 
@@ -209,5 +330,10 @@ describe("POST /api/questions/[id]/resolve", () => {
     expect(response.status).toBe(500);
     expect(body).toEqual({ error: "server error" });
     expect(JSON.stringify(body)).not.toContain(SENTINEL);
+    expect(admin.rpc).toHaveBeenCalledOnce();
+    expect(admin.rpc).not.toHaveBeenCalledWith("resolve_question", {
+      p_question_id: QUESTION_ID,
+    });
+    expect(broadcastMock.broadcastToRoom).not.toHaveBeenCalled();
   });
 });

@@ -1557,9 +1557,21 @@ export type Database = {
         Args: { p_opened_at: string; p_received_at: string }
         Returns: boolean
       }
+      _lock_board_authoring_game: {
+        Args: { p_game_id: string }
+        Returns: undefined
+      }
       _lock_current_generation_attempt: {
         Args: { p_attempt: number; p_category_id: string }
         Returns: boolean
+      }
+      _try_lock_board_authoring_game: {
+        Args: { p_game_id: string }
+        Returns: undefined
+      }
+      apply_category_picks: {
+        Args: { p_assignments: Json; p_category_id: string }
+        Returns: Json
       }
       apply_claimed_question_play_answer: {
         Args: {
@@ -1567,6 +1579,10 @@ export type Database = {
           p_run_id: string
           p_verified_device_id: string
         }
+        Returns: Json
+      }
+      apply_question_authoring_patch: {
+        Args: { p_patch: Json; p_question_id: string }
         Returns: Json
       }
       begin_question_generation: {
@@ -1693,6 +1709,23 @@ export type Database = {
         }
         Returns: Json
       }
+      record_standings_advance: {
+        Args: {
+          p_game_id: string
+          p_occurred_at: string
+          p_question_id: string
+          p_resolved_at: string
+        }
+        Returns: boolean
+      }
+      reorder_category_board: {
+        Args: { p_assignments: Json; p_category_id: string }
+        Returns: Json
+      }
+      replace_category_with_manual_questions: {
+        Args: { p_category_id: string; p_questions: Json }
+        Returns: Json
+      }
       reset_live_night_to_setup: {
         Args: {
           p_command_id: string
@@ -1705,6 +1738,10 @@ export type Database = {
       reset_night_to_setup: { Args: { p_night_id: string }; Returns: Json }
       resolve_question: { Args: { p_question_id: string }; Returns: undefined }
       resolve_question_if_all_locked: {
+        Args: { p_question_id: string }
+        Returns: boolean
+      }
+      resolve_question_once: {
         Args: { p_question_id: string }
         Returns: boolean
       }

@@ -40,6 +40,49 @@ import {
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
+const MISSING_RESOLVE_ONCE_RPC = "PGRST202";
+
+async function resolveLegacyQuestionOnce(
+  admin: AdminClient,
+  questionId: string,
+) {
+  const result = await admin.rpc("resolve_question_once", {
+    p_question_id: questionId,
+  });
+  if (result.error?.code !== MISSING_RESOLVE_ONCE_RPC) return result;
+
+  // Keep legacy games available while the additive migration rolls out. This
+  // intentionally preserves the old behavior only for PostgREST's exact
+  // missing-function signal; every other RPC error remains fail-closed.
+  console.warn(
+    "resolve_question_once is unavailable (PGRST202); falling back to resolve_question until the migration is applied",
+  );
+  const fallback = await admin.rpc("resolve_question", {
+    p_question_id: questionId,
+  });
+  if (fallback.error) return { data: null, error: fallback.error };
+  return { data: true, error: null };
+}
+
+async function broadcastLegacyResolveBestEffort(
+  roomCode: string,
+  payload: {
+    questionId: string;
+    correctIndex: number;
+    refetch: true;
+    serverNow: string;
+  },
+): Promise<void> {
+  try {
+    await broadcastToRoom(roomCode, "resolve", payload);
+  } catch {
+    // A timeout can mean Supabase accepted the broadcast but its acknowledgement
+    // was lost. Do not retry and amplify one commit into two room-wide refetches;
+    // durable Postgres Changes and snapshot recovery cover a truly missed signal.
+    console.warn("broadcast resolve failed");
+  }
+}
+
 async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const { data: before, error: beforeError } = await admin
@@ -230,51 +273,45 @@ export async function POST(
       return conflict("question is not live");
     }
 
-    // Once resolved, keep the route's existing idempotent behavior: the RPC
-    // no-ops and a retry can rebuild/broadcast the canonical result. The
-    // deadline guard is needed only while the question remains live.
-    if (!q.finished_at) {
-      const playedAtMs = new Date(q.played_at).getTime();
-      if (!Number.isFinite(playedAtMs)) return serverError();
+    // Most retries arrive after the winning transaction is visible. Return a
+    // quiet success before the RPC and, crucially, before another broadcast.
+    if (q.finished_at) {
+      return ok({ resolvedAt: q.finished_at, alreadyResolved: true });
+    }
 
-      const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
-      const themeKey = resolveTheme(
-        { theme_key: night.theme_key },
-        { default_theme_key: host?.default_theme_key ?? null },
-      );
-      const resolveAtMs =
-        playedAtMs + questionDurationFor(themeKey) * 1_000;
-      if (Date.now() < resolveAtMs) {
-        return conflict("question answer window is still open");
-      }
+    const playedAtMs = new Date(q.played_at).getTime();
+    if (!Number.isFinite(playedAtMs)) return serverError();
+
+    const host = Array.isArray(night.hosts) ? night.hosts[0] : night.hosts;
+    const themeKey = resolveTheme(
+      { theme_key: night.theme_key },
+      { default_theme_key: host?.default_theme_key ?? null },
+    );
+    const resolveAtMs = playedAtMs + questionDurationFor(themeKey) * 1_000;
+    if (Date.now() < resolveAtMs) {
+      return conflict("question answer window is still open");
     }
   }
 
-  const { error: rpcError } = await admin.rpc("resolve_question", {
-    p_question_id: questionId,
-  });
+  const { data: freshlyResolved, error: rpcError } =
+    await resolveLegacyQuestionOnce(admin, questionId);
   if (rpcError) return serverError();
 
-  // Preserve the response's aggregate count without selecting private answer
-  // details into this shared-broadcast path.
-  const { data: answerRows, error: answersError } = await admin
-    .from("answers")
-    .select("id")
-    .eq("question_id", questionId);
-  if (answersError) return serverError();
+  // Concurrent phones can all have read `finished_at = null` before the first
+  // transaction commits. The row-locked RPC identifies the sole winner; every
+  // loser succeeds quietly so only one resolve/fireworks pair reaches the room.
+  if (!freshlyResolved) {
+    return ok({ alreadyResolved: true });
+  }
 
   const payload = {
     questionId,
     correctIndex: q.correct_index,
-    refetch: true,
+    refetch: true as const,
     serverNow: new Date().toISOString(),
   };
 
-  try {
-    await broadcastToRoom(roomCode, "resolve", payload);
-  } catch {
-    console.warn("broadcast resolve failed");
-  }
+  await broadcastLegacyResolveBestEffort(roomCode, payload);
 
   // Synchronized firework salvo (July) — every July screen ignites the same
   // burst at the same instant as the answer is revealed. Cosmetic + best-effort
@@ -284,6 +321,15 @@ export async function POST(
   } catch {
     console.warn("broadcast fireworks(salvo) failed");
   }
+
+  // Resolution is already committed and fanned out. Keep this aggregate
+  // response metadata best-effort so an unrelated read failure cannot strand
+  // every surface on stale state.
+  const { data: answerRows, error: answersError } = await admin
+    .from("answers")
+    .select("id")
+    .eq("question_id", questionId);
+  if (answersError) console.warn("answer count unavailable after resolve");
 
   return ok({
     resolvedAt: new Date().toISOString(),
