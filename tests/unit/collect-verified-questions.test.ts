@@ -5,6 +5,78 @@ import {
 } from "@/lib/ai/collect-verified-questions";
 import type { GeneratedQuestion } from "@/lib/ai/generate-questions";
 import type { AnswerVerdict } from "@/lib/ai/verify-answers";
+import { candidateDifficultyMix, difficultyBand, selectBalancedQuestionIds, type DifficultyMix } from "@/lib/game/questionBalance";
+
+it("refills the missing easy band after verification rejects easy questions", async () => {
+  const mixes: DifficultyMix[] = [];
+  const persisted: GeneratedQuestion[] = [];
+  const out = await collectVerifiedQuestions({
+    target: 20,
+    maxRounds: 4,
+    difficultyMix: candidateDifficultyMix(),
+    generate: async (_avoid, need, mix) => {
+      mixes.push({ ...mix! });
+      expect(need).toBe(mix!.approachable + mix!.moderate + mix!.stretch);
+      const batch: GeneratedQuestion[] = [];
+      for (const [difficulty, count] of [[2, mix!.approachable], [4, mix!.moderate], [6, mix!.stretch]]) {
+        for (let i = 0; i < count!; i++) batch.push({ ...q(`round-${mixes.length}-${difficulty}-${i}`), difficulty: difficulty as 2 | 4 | 6 });
+      }
+      return batch;
+    },
+    verify: async (batch, pass) => batch.map((question, index) =>
+      mixes.length === 1 && question.difficulty === 2 && pass === 1 ? wrong(index) : ok(index)),
+    onAccepted: (batch) => { persisted.push(...batch); },
+  });
+  expect(mixes).toEqual([
+    { approachable: 8, moderate: 9, stretch: 3 },
+    { approachable: 8, moderate: 0, stretch: 0 },
+  ]);
+  expect(out).toHaveLength(20);
+  expect(persisted).toEqual(out);
+  const pool = out.map((question, index) => ({ id: String(index), difficulty: question.difficulty }));
+  const selected = selectBalancedQuestionIds(pool).map((id) => difficultyBand(out[Number(id)]!.difficulty));
+  expect(selected).toEqual(["approachable", "approachable", "approachable", "moderate", "moderate", "moderate", "stretch"]);
+});
+
+it("bounds retries when the model keeps supplying hard questions instead of easier ones", async () => {
+  const mixes: DifficultyMix[] = [];
+  const reasons: string[] = [];
+  const out = await collectVerifiedQuestions({
+    target: 20,
+    maxRounds: 4,
+    difficultyMix: candidateDifficultyMix(),
+    generate: async (_avoid, need, mix) => {
+      mixes.push({ ...mix! });
+      return Array.from({ length: need }, (_, index) => ({ ...q(`round-${mixes.length}-${index}`), difficulty: 7 as const }));
+    },
+    verify: async (batch) => batch.map((_, index) => ok(index)),
+    onRoundComplete: (event) => { reasons.push(...event.rejected.flatMap((item) => item.reasons)); },
+  });
+  expect(mixes).toHaveLength(4);
+  expect(mixes[1]).toEqual({ approachable: 8, moderate: 9, stretch: 0 });
+  expect(out).toHaveLength(3);
+  expect(reasons).toContain("difficulty_balance");
+});
+
+it("resumes with the missing difficulty mix rather than re-requesting a full distribution", async () => {
+  const saved = Array.from({ length: 12 }, (_, index) => ({ ...q(`saved-${index}`), difficulty: (index < 9 ? 4 : 6) as 4 | 6 }));
+  let request: DifficultyMix | undefined;
+  const out = await collectVerifiedQuestions({
+    target: 20,
+    maxRounds: 1,
+    initialClean: saved,
+    difficultyMix: candidateDifficultyMix(),
+    generate: async (avoid, need, mix) => {
+      expect(avoid).toEqual(saved.map((question) => question.prompt));
+      expect(need).toBe(8);
+      request = { ...mix! };
+      return Array.from({ length: 8 }, (_, index) => ({ ...q(`new-${index}`), difficulty: 2 as const }));
+    },
+    verify: async (batch) => batch.map((_, index) => ok(index)),
+  });
+  expect(request).toEqual({ approachable: 8, moderate: 0, stretch: 0 });
+  expect(out).toHaveLength(20);
+});
 
 function q(prompt: string): GeneratedQuestion {
   return { prompt, options: ["a", "b", "c", "d"], correctIndex: 0, difficulty: 4, factBlurb: "blurb here", photoQuery: "q" };

@@ -218,6 +218,21 @@ describe("generateQuestions", () => {
     expect(system[0]?.text.length).toBeGreaterThan(500);
   });
 
+  it("forwards an exact refill mix so a missing easy band does not request more hard questions", async () => {
+    const capture: MockClientCall[] = [];
+    const client = makeMockClient({ questions: [validQuestion({ difficulty: 2 })] }, capture);
+    await generateQuestions({
+      topic: "Space",
+      count: 3,
+      difficultyMix: { approachable: 3, moderate: 0, stretch: 0 },
+      // @ts-expect-error — narrowing to the SDK shape in tests
+      client,
+    });
+    const messages = capture[0]!.params.messages as Array<{ content: string }>;
+    expect(messages[0]!.content).toContain("Number of questions: 3");
+    expect(messages[0]!.content).toContain("3 approachable (1–2), 0 moderate (3–5), 0 stretch (6–7)");
+  });
+
   it("forces the emit_questions tool via tool_choice and ships the tool schema", async () => {
     const capture: MockClientCall[] = [];
     const client = makeMockClient(

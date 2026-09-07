@@ -75,10 +75,14 @@ import {
 } from "@/lib/ai/generation-job";
 import { createGenerationHeartbeat } from "@/lib/ai/generation-heartbeat";
 import { rerollPlan } from "@/lib/host/rerollPlan";
+import { prepareQuestionAssignmentsForCategory } from "@/lib/host/pickQuestions";
 import {
-  prepareQuestionAssignmentsForCategory,
-  selectSpreadQuestionIds,
-} from "@/lib/host/pickQuestions";
+  assertBoardDifficultyMix,
+  candidateDifficultyMix,
+  QuestionBalanceError,
+  selectBalancedQuestionIds,
+  takeDifficultyMix,
+} from "@/lib/game/questionBalance";
 import { PexelsRateLimitError } from "@/lib/pexels/search";
 import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
 
@@ -231,7 +235,9 @@ export async function POST(
       console.error("[generate] job failed:", internalMessage);
       const hostMessage = parsed.data.keptIds
         ? "Another set could not be finished. Your usable questions are still safe."
-        : "The question builder paused before it finished.";
+        : err instanceof QuestionBalanceError
+          ? err.message
+          : "The question builder paused before it finished.";
 
       // First-run failures remain resumable in `generating`: certified rows
       // are durable and the next click fills only the shortfall. Rerolls keep
@@ -291,7 +297,7 @@ async function runGenerationJob(opts: {
   // the fresh batch is in. Absent ⇒ first generation (append-only, nothing to
   // keep or delete).
   keptIds?: string[];
-  // When true: after photos, auto-pick 7 (spread across difficulty) and flip
+  // When true: auto-pick 3 approachable, 3 moderate, 1 stretch and flip
   // to 'ready' instead of 'review'. Founder build-a-full-game path.
   autoPick?: boolean;
   /** Resume a stopped first run from its already-certified question rows. */
@@ -303,6 +309,7 @@ async function runGenerationJob(opts: {
   const admin = getSupabaseAdmin();
   const jobClient = admin as unknown as GenerationJobClient;
   const rpcClient = admin as unknown as GenerationRpcClient;
+  const difficultyMix = candidateDifficultyMix(opts.difficulty);
   const qualityReport = createQuestionGenerationReportAccumulator({
     requestedCount: 20,
     verifyPasses: 2,
@@ -504,15 +511,23 @@ async function runGenerationJob(opts: {
       const acceptedStoredIndexes = new Set(
         storedClassification.acceptedIndexes,
       );
-      certifiedStoredQuestions = storedQuestions.filter((_, index) =>
-        acceptedStoredIndexes.has(index),
+      // Old checkpoints can be full of difficult candidates. Keep only the
+      // unpicked rows that fit this pool, leaving durable room for easier ones.
+      const balancedStored = takeDifficultyMix(
+        storedQuestions
+          .filter((_, index) => acceptedStoredIndexes.has(index))
+          .map((item) => ({ ...item, difficulty: item.q.difficulty })),
+        difficultyMix,
       );
+      certifiedStoredQuestions = balancedStored.accepted;
       const rejectedStoredIds = storedClassification.rejected.map(
         ({ index }) => storedQuestions[index]!.id,
       );
+      rejectedStoredIds.push(...balancedStored.surplus.map((item) => item.id));
       rejectedStoredPrompts = storedClassification.rejected.map(
         ({ prompt }) => prompt,
       );
+      rejectedStoredPrompts.push(...balancedStored.surplus.map((item) => item.q.prompt));
 
       if (rejectedStoredIds.length > 0) {
         const deletion = await commitGenerationQuestions(rpcClient, {
@@ -532,10 +547,13 @@ async function runGenerationJob(opts: {
         requested: storedQuestions.length,
         generated: storedQuestions.length,
         accepted: certifiedStoredQuestions.length,
-        rejected: storedClassification.rejected.map(({ prompt, reasons }) => ({
-          prompt,
-          reasons,
-        })),
+        rejected: [
+          ...storedClassification.rejected.map(({ prompt, reasons }) => ({ prompt, reasons })),
+          ...balancedStored.surplus.map((item) => ({
+            prompt: item.q.prompt,
+            reasons: ["difficulty_balance" as const],
+          })),
+        ],
       });
       await writeWorkerProgress({
         phase,
@@ -547,12 +565,13 @@ async function runGenerationJob(opts: {
     generated = await collectVerifiedQuestions({
       target: 20,
       initialClean: certifiedStoredQuestions.map((item) => item.q),
+      difficultyMix,
       // Up to 4 rounds to top back up to 20. Almost always 1; an occasional
       // rejected question takes a cheap 2nd round. The bound caps worst-case
       // latency if the model keeps producing borderline answers.
       maxRounds: 4,
       verifyPasses: 2,
-      generate: async (avoid, need) => {
+      generate: async (avoid, need, remainingMix) => {
         phase = "writing";
         await writeWorkerProgress({ phase: "writing" });
         void emitProgress().catch(() => undefined);
@@ -560,9 +579,10 @@ async function runGenerationJob(opts: {
           topic: opts.topic,
           flavor: opts.flavor,
           difficulty: opts.difficulty,
-          // Refill rounds request just the gap (+1 buffer to absorb a re-reject
-          // without forcing yet another round), capped at the full target.
-          count: Math.min(20, need + 1),
+          // Ask for the actual missing bands; an excess of hard questions
+          // cannot consume the spaces reserved for approachable choices.
+          difficultyMix: remainingMix,
+          count: need,
           themeKey: opts.themeKey,
           avoidPrompts: [
             ...(reroll?.avoidPrompts ?? []),
@@ -625,6 +645,9 @@ async function runGenerationJob(opts: {
       `${MIN_PLAYABLE_QUESTIONS - generated.length} certified question choices are still needed`,
     );
   }
+  // A playable count alone is insufficient: the pool must support the three
+  // approachable opening slots, including after a bounded partial generation.
+  assertBoardDifficultyMix(generated);
   qualityReport.recordAcceptedQuestions(generated);
 
   // Step 2: insert all rows up front so the UI can render them immediately.
@@ -660,14 +683,12 @@ async function runGenerationJob(opts: {
     .map((row) => ({ id: row.id, q: row.q }));
   let autoPickAssignments: Array<{ id: string; pointValue: number }> | null = null;
   if (opts.autoPick) {
-    const ids = selectSpreadQuestionIds(
-      inserted.map((row) => ({
-        id: row.id,
-        difficulty: row.q.difficulty,
-      })),
-      7,
+    const ids = selectBalancedQuestionIds(
+      inserted.map((row) => ({ id: row.id, difficulty: row.q.difficulty })),
     );
-    const result = await prepareQuestionAssignmentsForCategory(opts.categoryId, ids);
+    const result = await prepareQuestionAssignmentsForCategory(opts.categoryId, ids, {
+      honorPointOverrides: false,
+    });
     if (!result.ok) {
       throw new Error(`auto-pick failed: ${result.error}`);
     }

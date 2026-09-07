@@ -16,6 +16,12 @@
 import type { GeneratedQuestion } from "./generate-questions";
 import type { AnswerVerdict } from "./verify-answers";
 import { blockingRiskFlagsForQuestion } from "./question-risk-flags";
+import {
+  difficultyBand,
+  remainingDifficultyMix,
+  takeDifficultyMix,
+  type DifficultyMix,
+} from "@/lib/game/questionBalance";
 
 export type CollectVerifiedRejectionReason =
   | "verifier_wrong"
@@ -24,7 +30,8 @@ export type CollectVerifiedRejectionReason =
   | "fact_blurb_wrong"
   | "image_required"
   | "category_mismatch"
-  | "deterministic_risk";
+  | "deterministic_risk"
+  | "difficulty_balance";
 
 export interface CollectVerifiedRejectedCandidate {
   prompt: string;
@@ -49,6 +56,8 @@ export interface CollectVerifiedOptions {
   maxRounds: number;
   /** Previously certified questions restored from durable storage. */
   initialClean?: GeneratedQuestion[];
+  /** Reserve candidate slots by editorial band while keeping fact checks intact. */
+  difficultyMix?: DifficultyMix;
   /** Distinct verify passes that must ALL agree a question is clean. Default 2. */
   verifyPasses?: number;
   /**
@@ -56,7 +65,11 @@ export interface CollectVerifiedOptions {
    * `need` is how many MORE clean questions are still required, so a refill round
    * can request just the shortfall instead of a whole new batch.
    */
-  generate: (avoidPrompts: string[], need: number) => Promise<GeneratedQuestion[]>;
+  generate: (
+    avoidPrompts: string[],
+    need: number,
+    difficultyMix?: DifficultyMix,
+  ) => Promise<GeneratedQuestion[]>;
   verify: (
     questions: GeneratedQuestion[],
     passIndex: number,
@@ -73,17 +86,27 @@ export async function collectVerifiedQuestions(
   opts: CollectVerifiedOptions,
 ): Promise<GeneratedQuestion[]> {
   const passes = opts.verifyPasses ?? 2;
-  const clean: GeneratedQuestion[] = (opts.initialClean ?? []).slice(
-    0,
-    opts.target,
-  );
-  const seenPrompts: string[] = clean.map((question) => question.prompt);
+  if (opts.difficultyMix) {
+    const counts = Object.values(opts.difficultyMix);
+    if (counts.some((count) => !Number.isInteger(count) || count < 0) ||
+      counts.reduce((sum, count) => sum + count, 0) !== opts.target) {
+      throw new Error("difficulty mix must contain nonnegative counts summing to target");
+    }
+  }
+  const initial = opts.initialClean ?? [];
+  const clean = opts.difficultyMix
+    ? takeDifficultyMix(initial, opts.difficultyMix).accepted
+    : initial.slice(0, opts.target);
+  const seenPrompts = initial.map((question) => question.prompt);
 
   for (let round = 0; round < opts.maxRounds && clean.length < opts.target; round++) {
     // Refill rounds only ask for the remaining gap, so topping 19 -> 20 costs
     // one extra question + its verify passes, not a whole fresh batch.
     const need = opts.target - clean.length;
-    const batch = await opts.generate([...seenPrompts], need);
+    const remaining = opts.difficultyMix
+      ? remainingDifficultyMix(opts.difficultyMix, clean)
+      : undefined;
+    const batch = await opts.generate([...seenPrompts], need, remaining ? { ...remaining } : undefined);
     if (batch.length === 0) {
       await opts.onRoundComplete?.({
         round: round + 1,
@@ -106,16 +129,24 @@ export async function collectVerifiedQuestions(
     );
     const classification = classifyVerifiedQuestions(batch, passResults);
     const accepted: GeneratedQuestion[] = [];
-    for (const index of classification.acceptedIndexes) {
-      if (clean.length >= opts.target) break;
-      const question = batch[index]!;
-      clean.push(question);
-      accepted.push(question);
-    }
-    const rejected = classification.rejected.map(({ prompt, reasons }) => ({
+    const rejected: CollectVerifiedRejectedCandidate[] = classification.rejected.map(({ prompt, reasons }) => ({
       prompt,
       reasons,
     }));
+    for (const index of classification.acceptedIndexes) {
+      if (clean.length >= opts.target) break;
+      const question = batch[index]!;
+      if (remaining) {
+        const band = difficultyBand(question.difficulty);
+        if (remaining[band] === 0) {
+          rejected.push({ prompt: question.prompt, reasons: ["difficulty_balance"] });
+          continue;
+        }
+        remaining[band]--;
+      }
+      clean.push(question);
+      accepted.push(question);
+    }
     if (accepted.length > 0) {
       await opts.onAccepted?.(accepted);
     }

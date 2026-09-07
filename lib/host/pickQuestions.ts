@@ -11,35 +11,6 @@ export type PickResult =
   | { ok: false; error: string };
 
 /**
- * Choose `count` question ids spread across difficulty so an auto-built board
- * spans easy→hard. Sorts ascending by difficulty (stable) and takes evenly
- * spaced indices. Pure + deterministic.
- */
-export function selectSpreadQuestionIds(
-  questions: Array<{ id: string; difficulty: number }>,
-  count: number,
-): string[] {
-  if (questions.length < count) {
-    throw new Error(
-      `selectSpreadQuestionIds: need ${count}, have ${questions.length}`,
-    );
-  }
-  const sorted = [...questions].sort((a, b) => a.difficulty - b.difficulty);
-  if (questions.length === count) return sorted.map((q) => q.id);
-  const chosen = new Set<string>();
-  for (let i = 0; i < count; i++) {
-    const idx = Math.round((i * (sorted.length - 1)) / (count - 1));
-    chosen.add(sorted[idx].id);
-  }
-  // Even-spacing can collide on rounding; backfill from the sorted pool.
-  for (const q of sorted) {
-    if (chosen.size === count) break;
-    chosen.add(q.id);
-  }
-  return [...chosen];
-}
-
-/**
  * Assign point values to exactly 7 picked questions and flip the category to
  * 'ready'. Caller must have already verified ownership + that the category is
  * in 'review'/'ready'. The database persists the clear, seven assignments,
@@ -48,6 +19,7 @@ export function selectSpreadQuestionIds(
 export async function prepareQuestionAssignmentsForCategory(
   categoryId: string,
   questionIds: string[],
+  options: { honorPointOverrides?: boolean } = {},
 ): Promise<PickResult> {
   const admin = getSupabaseAdmin();
 
@@ -70,7 +42,8 @@ export async function prepareQuestionAssignmentsForCategory(
     belongs.map((row) => ({
       id: row.id,
       difficulty: row.difficulty,
-      pointValue: row.point_value,
+      // Auto-build owns its difficulty ladder; manual picks keep host overrides.
+      pointValue: options.honorPointOverrides === false ? null : row.point_value,
     })),
   );
   return { ok: true, picked: assignments };

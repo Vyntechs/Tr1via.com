@@ -20,6 +20,7 @@ export type QuestionRejectionReason =
   | "image_required"
   | "category_mismatch"
   | "deterministic_risk"
+  | "difficulty_balance"
   | "duplicate_prompt"
   | "generation_empty"
   | "max_rounds_exhausted";

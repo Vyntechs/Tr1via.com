@@ -35,6 +35,7 @@ import { z } from "zod";
 import { SYSTEM_PROMPT, userPromptFor } from "./prompts";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import type { TokenUsage } from "./usage-cost";
+import type { DifficultyMix } from "@/lib/game/questionBalance";
 
 // ─── Public types ─────────────────────────────────────────────────────
 
@@ -99,6 +100,8 @@ export interface GenerateQuestionsOptions {
   topic: string;
   flavor?: string[];
   difficulty?: "easy" | "normal" | "hard";
+  /** Remaining editorial bands, supplied by the verified refill loop. */
+  difficultyMix?: DifficultyMix;
   /** How many candidate questions to ask Claude for. Default 20. */
   count?: number;
   /** Theme key for the night — sets the question timer duration in the prompt. */
@@ -221,6 +224,7 @@ export async function generateQuestions(
     topic: opts.topic,
     flavor: opts.flavor,
     difficulty: opts.difficulty,
+    difficultyMix: opts.difficultyMix,
     count,
     themeKey: opts.themeKey,
     avoidPrompts: opts.avoidPrompts,

@@ -7,11 +7,11 @@
 //
 // Source rules — tr1via-plan.md, section "Building the questions" + the
 // LOCKED design decisions about question style. Summary:
-//   1. "Unique and learnable, not common."
+//   1. Familiar entry points with interesting, learnable reveals.
 //   2. Players should walk away having actually learned something —
 //      "interesting, not obscure for the sake of obscure."
 //   3. Multiple-choice with FOUR options, ALL plausible — no obviously
-//      wrong throwaways. Players must not win by elimination.
+//      wrong throwaways. Informed elimination is a legitimate solving path.
 //   4. Difficulty is rated internally 1..7 (later mapped to 100..700).
 //   5. Each question gets a `factBlurb`: a one-liner the TV reveal screen
 //      will show next to the answer (e.g. "33,904 miles of tidal coastline
@@ -39,6 +39,7 @@
 
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { candidateDifficultyMix, type DifficultyMix } from "@/lib/game/questionBalance";
 
 /**
  * The fact-blurb rules, kept separate because TWO callers need them and they
@@ -79,23 +80,26 @@ rides on the quality of these questions.
 
 ## What makes a TR1VIA question good
 
-A great question is UNIQUE AND LEARNABLE. The player walks away saying
-"huh, I didn't know that" or "wait, really?" — not "yeah obviously" and
-not "how would anyone know that." The sweet spot is INTERESTING, not
-OBSCURE for the sake of obscure. Trivia about things that are surprising
-on second thought.
+A great question gives ordinary players a FAIR WAY IN through knowledge,
+recognition, or reasoning. Start from familiar subjects and find an interesting
+angle. A player who knows a little about the topic should regularly have
+something useful to work with. A straightforward familiar question is welcome:
+getting one right builds confidence and makes the harder questions enjoyable.
+
+The reveal can teach a surprising fact, but that does not make an unreachable
+question fair. Check the question BEFORE seeing its answer: what would help
+an ordinary player get there? Do not invent clues or mislabel specialist recall
+as easy. Keep rare details for the small number of stretch questions.
 
 Some shapes that work:
   - A fact that flips a common assumption ("which of these is older than
     the Eiffel Tower?")
-  - A specific number, name, or place that feels reachable but is
-    actually rare knowledge ("which U.S. state has more tidal coastline
-    than all the others combined?")
+  - A recognizable person, place, story, or everyday phenomenon with
+    enough context for someone with broad knowledge to make a reasoned choice
   - A connection between two things people know that they didn't realize
     were connected ("which musician played guitar on Carole King's
     Tapestry?")
-  - A near-miss / second-place fact ("the second-highest-grossing Pixar
-    film is...")
+  - A familiar fact asked clearly, with a reveal that adds an interesting detail
 
 Shapes that DO NOT work:
   - "What color is the sky" — too common
@@ -104,7 +108,9 @@ Shapes that DO NOT work:
   - "Which of these is NOT a..." negation questions — confusing under time
     pressure
   - Trick questions with technically-true gotchas — frustrating, not fun
-  - Questions whose answer is obvious from the question's wording
+  - Questions that literally state the answer or reveal it through mismatched options
+  - Exact dates, rankings, minor credits, or specialist terminology without
+    a reasonable route in for the intended difficulty
   - Two-part questions ("which of these did X and also Y") — too long to
     read on TV under time pressure
 
@@ -158,9 +164,11 @@ Good distractors are real things, in the same category as the correct
 answer, that a knowledgeable person could believe. If the question is
 "which painter…" the four options are four real painters from a similar
 era. If the question is "which city…" the four options are four real
-cities of comparable size and reputation. The PLAYER MUST NOT BE ABLE
-TO WIN BY ELIMINATION — they have to actually know the answer (or make
-a smart guess between plausible options).
+cities of comparable size and reputation. Informed elimination IS a valid
+way to solve a question. Let players use partial knowledge, connections, and
+clues in the stem to narrow the choices. All options must still be credible,
+the same kind of answer, and only one may be correct. Do not make distractors
+artificially indistinguishable merely to demand exact recall.
 
 ## The correct answer must be unambiguously correct
 
@@ -216,17 +224,23 @@ prompt cannot stand alone as plain text with its four options, regenerate it.
 
 ## Difficulty rating (1..7, internal)
 
-Rate each question 1 (an average regular gets it cold) to 7 (only someone
-with deep topic knowledge will get it). The host's app maps these to
-point values 100..700 later. Spread them out — if you write 20 questions
-on the same topic, aim for roughly 3 at difficulty 1-2, 6 at 3-4, 8 at
-5-6, 3 at 7. Don't make every question hard. The 100-point question is
-the on-ramp — a player gets it, smiles, and leans in.
+Rate difficulty against ordinary mixed-experience venue players, not against
+the other candidates or only dedicated fans of the topic:
+  - 1–2 APPROACHABLE: familiar knowledge, recognition, or a short reasoning path.
+    Someone with casual exposure has a fair chance. Give narrow topics enough
+    accurate context to make these genuinely approachable.
+  - 3–5 MODERATE: a meaningful challenge using broader connections or more
+    topic knowledge, with plausible choices that reward informed reasoning.
+  - 6–7 STRETCH: specialist knowledge or a difficult connection. These are a
+    small part of the night, not the default experience.
 
-The "normal" target difficulty across the 20-question batch is around 4.
-"Easy" shifts the curve down a notch. "Hard" shifts it up a notch. Even
-on Hard, keep at least 2-3 questions at difficulty 3-4 — never make a
-whole batch unreachable.
+The normal 20-question pool should contain 8 approachable, 9 moderate, and
+3 stretch questions, supporting a seven-question board with 3 approachable,
+3 moderate, and 1 stretch question. The user prompt specifies exact band
+counts when filling gaps after verification; those counts take priority.
+"Easy" supplies more approachable choices and "Hard" more stretch choices,
+but both retain entry points. Never change a question's rating just to meet
+a requested count: rewrite it with a fair route in or choose a different fact.
 
 ${FACT_BLURB_RULES}
 
@@ -266,6 +280,8 @@ export function userPromptFor(opts: {
   themeKey?: ThemeKey;
   /** Question prompts the host has already seen — the generator must not repeat them. */
   avoidPrompts?: string[];
+  /** Exact missing band counts when refilling a verified candidate pool. */
+  difficultyMix?: DifficultyMix;
 }): string {
   const count = opts.count ?? 20;
   const difficulty = opts.difficulty ?? "normal";
@@ -277,6 +293,11 @@ export function userPromptFor(opts: {
   lines.push(`Topic: ${opts.topic.trim()}`);
   lines.push(`Difficulty target: ${difficulty}`);
   lines.push(`Number of questions: ${count}`);
+  const mix = opts.difficultyMix ?? (count === 20 ? candidateDifficultyMix(difficulty) : undefined);
+  if (mix) {
+    lines.push(`Required difficulty mix: ${mix.approachable} approachable (1–2), ${mix.moderate} moderate (3–5), ${mix.stretch} stretch (6–7).`);
+    lines.push("Fill these bands exactly; a zero means no questions from that band. Ratings must describe actual accessibility.");
+  }
   lines.push(`Question timer: ${durationS} seconds`);
   if (flavor.length > 0) {
     lines.push(`Flavor: ${flavor.map((f) => f.trim()).join(", ")}`);
@@ -291,7 +312,7 @@ export function userPromptFor(opts: {
   lines.push("");
   lines.push(
     `Generate ${count} questions on this topic following the rules in your system prompt. ` +
-      `Spread the difficulty across the 1..7 range as described. Each option must be ` +
+      `Follow the requested difficulty mix, preserving fair entry points. Each option must be ` +
       `plausible — no throwaways. Each question must include a factBlurb and a photoQuery. ` +
       `Players will have ${durationS} seconds to read and answer — keep prompts readable in that time. ` +
       `Call the emit_questions tool with the result.`,
