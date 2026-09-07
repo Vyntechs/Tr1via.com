@@ -125,8 +125,17 @@ async function openPlay(fixture: Fixture, runId: string, revision = 2): Promise<
   return opened.result.playId as string;
 }
 
-async function readyPlay(playerCount = 2): Promise<{ fixture: Fixture; runId: string; playId: string }> {
+async function readyPlay(playerCount = 2, firstPlayerCorrect = false): Promise<{ fixture: Fixture; runId: string; playId: string }> {
   const fixture = await createFixture(playerCount);
+  if (firstPlayerCorrect) {
+    // Author the answer before Start: live board content is immutable.
+    await admin.query(
+      `update questions
+          set correct_index = (public._live_scramble_for($2::uuid, $3::uuid))[1]
+        where id = $1`,
+      [fixture.questionId, fixture.questionId, fixture.players[0].id],
+    );
+  }
   const runId = await openRun(fixture);
   await startGame(fixture, runId);
   return { fixture, runId, playId: await openPlay(fixture, runId) };
@@ -191,6 +200,47 @@ async function answer(
 async function removeFixture(fixture: Fixture): Promise<void> {
   await admin.query("delete from hosts where id = $1", [fixture.hostId]);
   await admin.query("delete from auth.users where id = $1", [fixture.hostUserId]);
+}
+
+async function readyLegacyQuestion(playerCount = 2): Promise<Fixture> {
+  const fixture = await createFixture(playerCount);
+  await admin.query("update games set state = 'live', started_at = now() where id = $1", [fixture.gameId]);
+  await admin.query("update questions set played_at = now() - interval '31 seconds' where id = $1", [fixture.questionId]);
+  await admin.query(
+    "insert into reveals (game_id, question_id, event, occurred_at) values ($1, $2, 'reveal', now() - interval '31 seconds')",
+    [fixture.gameId, fixture.questionId],
+  );
+  for (const [index, player] of fixture.players.entries()) {
+    await admin.query(
+      `insert into answers (question_id, player_id, chosen_index, scramble, ms_to_lock)
+       values ($1, $2, 0, '[0,1,2,3]'::jsonb, $3)`,
+      [fixture.questionId, player.id, index === 0 ? 4999 : 5000],
+    );
+  }
+  return fixture;
+}
+
+async function legacyState(fixture: Fixture) {
+  const result = await admin.query(
+    `select g.state, q.played_at is not null as played, q.finished_at is not null as finished,
+            (select count(*)::int from reveals where question_id = q.id and event = 'resolve') as resolves,
+            (select count(*)::int from answers where question_id = q.id) as answers,
+            (select coalesce(sum(awarded_points), 0)::int from answers where question_id = q.id) as points,
+            (select count(*)::int from answers where question_id = q.id and is_correct) as correct
+       from questions q join categories c on c.id = q.category_id
+       join games g on g.id = c.game_id where q.id = $1`,
+    [fixture.questionId],
+  );
+  return result.rows[0];
+}
+
+type LegacyResolver = "resolve_question_once" | "resolve_question" | "resolve_question_if_all_locked";
+
+async function legacyResolve(client: Client, fixture: Fixture, resolver: LegacyResolver) {
+  const result = await client.query<{ result: boolean | null }>(
+    `select public.${resolver}($1) as result`, [fixture.questionId],
+  );
+  return result.rows[0].result;
 }
 
 const CLAIM_SIGNATURE = "public.claim_question_play_answer(uuid,uuid,uuid,uuid,smallint)";
@@ -406,15 +456,9 @@ async function proveClockedSpeedBoundary(
   expectedMs: number,
   expectedPoints: number,
 ): Promise<void> {
-  const boundary = await readyPlay();
+  const boundary = await readyPlay(2, true);
   try {
     await setClockedPlay(boundary.playId, submitAt, expectedMs, "after");
-    await admin.query(
-      `update questions
-          set correct_index = (public._live_scramble_for($2::uuid, $3::uuid))[1]
-        where id = $1`,
-      [boundary.fixture.questionId, boundary.fixture.questionId, boundary.fixture.players[0].id],
-    );
     expect(await clockedAnswer(client, submitAt, boundary.playId, boundary.runId, boundary.fixture.players[0].deviceId))
       .toMatchObject({ freshlyApplied: true, result: { code: "confirmed" } });
     const receipt = await admin.query<{ received_at: string; ms_to_lock: number }>(
@@ -447,6 +491,171 @@ afterAll(async () => {
 });
 
 describe("authoritative answer engine PostgreSQL races", () => {
+  test.each([
+    ["resolve_question_once", "resolve_question"],
+    ["resolve_question", "resolve_question_once"],
+    ["resolve_question_once", "resolve_question_if_all_locked"],
+    ["resolve_question_if_all_locked", "resolve_question_once"],
+  ] as const)("legacy %s wins before blocked %s: one committed score and resolve", async (first, second) => {
+    const fixture = await readyLegacyQuestion();
+    const winner = await connect();
+    const waiter = await connect();
+    let pending: Promise<boolean | null> | undefined;
+    try {
+      await winner.query("begin");
+      const firstResult = await legacyResolve(winner, fixture, first);
+      const { rows } = await waiter.query<{ pid: number }>("select pg_backend_pid() as pid");
+      pending = legacyResolve(waiter, fixture, second);
+      await waitForLockWait(rows[0].pid, second);
+      expect(await legacyState(fixture)).toMatchObject({ finished: false, resolves: 0, points: 0 });
+      await winner.query("commit");
+      const secondResult = await pending;
+      if (first === "resolve_question_once") expect(firstResult).toBe(true);
+      if (first === "resolve_question_if_all_locked") expect(firstResult).toBe(true);
+      if (second === "resolve_question_once") expect(secondResult).toBe(false);
+      // all-locked's boolean means resolved, not freshly applied.
+      if (second === "resolve_question_if_all_locked") expect(secondResult).toBe(true);
+      expect(await legacyState(fixture)).toEqual({
+        state: "live", played: true, finished: true, resolves: 1,
+        answers: 2, points: 210, correct: 2,
+      });
+    } finally {
+      await winner.query("rollback").catch(() => undefined);
+      await pending?.catch(() => undefined);
+      await Promise.all([winner.end(), waiter.end()]);
+      await removeFixture(fixture);
+    }
+  });
+
+  test("legacy all-locked declines a missing eligible answer before the timer scores once", async () => {
+    const fixture = await readyLegacyQuestion();
+    try {
+      await admin.query("delete from answers where question_id = $1 and player_id = $2", [fixture.questionId, fixture.players[1].id]);
+      expect(await legacyResolve(admin, fixture, "resolve_question_if_all_locked")).toBe(false);
+      expect(await legacyState(fixture)).toMatchObject({ finished: false, resolves: 0, points: 0 });
+      expect(await legacyResolve(admin, fixture, "resolve_question_once")).toBe(true);
+      expect(await legacyState(fixture)).toMatchObject({ finished: true, resolves: 1, answers: 1, points: 110 });
+    } finally { await removeFixture(fixture); }
+  });
+
+  test("legacy undo's committed route sequence cancels a delayed resolver without scoring", async () => {
+    const fixture = await readyLegacyQuestion();
+    try {
+      // The real undo route accepts only a reveal younger than two seconds.
+      // A due timer cannot legitimately coexist in that window; this calls
+      // the RPC directly to prove its stale-request cancellation boundary.
+      await admin.query("update questions set played_at = now() where id = $1", [fixture.questionId]);
+      await admin.query("update reveals set occurred_at = now() where question_id = $1", [fixture.questionId]);
+      const latest = await admin.query<{ id: string }>("select id from reveals where question_id = $1 and event = 'reveal'", [fixture.questionId]);
+      // Keep the route's separate committed writes, not a fabricated atomic undo.
+      await admin.query(
+        "insert into reveals (game_id, question_id, event, metadata) values ($1, $2, 'undo', jsonb_build_object('undone_reveal_id', $3::uuid))",
+        [fixture.gameId, fixture.questionId, latest.rows[0].id],
+      );
+      await admin.query("delete from answers where question_id = $1", [fixture.questionId]);
+      await admin.query("update questions set played_at = null, finished_at = null where id = $1", [fixture.questionId]);
+      await expect(legacyResolve(admin, fixture, "resolve_question_once")).rejects.toThrow("was never revealed");
+      expect(await legacyState(fixture)).toEqual({
+        state: "live", played: false, finished: false, resolves: 0,
+        answers: 0, points: 0, correct: 0,
+      });
+    } finally { await removeFixture(fixture); }
+  });
+
+  test("a completed legacy reset cancels a delayed resolver and preserves its board and players", async () => {
+    const fixture = await readyLegacyQuestion();
+    try {
+      const reset = await admin.query("select public.reset_night_to_setup($1) as result", [fixture.nightId]);
+      expect(reset.rows[0].result).toMatchObject({ kept: { categories: 1, pickedQuestions: 1, players: 2 } });
+      await expect(legacyResolve(admin, fixture, "resolve_question_once")).rejects.toThrow("was never revealed");
+      expect(await legacyState(fixture)).toEqual({
+        state: "ready", played: false, finished: false, resolves: 0,
+        answers: 0, points: 0, correct: 0,
+      });
+    } finally { await removeFixture(fixture); }
+  });
+
+  test.each(["resolve_question_once", "resolve_question"] as const)("legacy reset overlapping uncommitted %s clears every resolve event", async (resolveFunction) => {
+    const fixture = await readyLegacyQuestion();
+    const resolver = await connect();
+    const resetter = await connect();
+    let pending: Promise<unknown> | undefined;
+    try {
+      await resolver.query("begin");
+      await legacyResolve(resolver, fixture, resolveFunction);
+      const { rows } = await resetter.query<{ pid: number }>("select pg_backend_pid() as pid");
+      pending = resetter.query("select public.reset_night_to_setup($1)", [fixture.nightId]);
+      await waitForLockWait(rows[0].pid, "legacy reset waiting on uncommitted scored answers");
+      await resolver.query("commit");
+      await pending;
+      expect(await legacyState(fixture)).toEqual({
+        state: "ready", played: false, finished: false, resolves: 0,
+        answers: 0, points: 0, correct: 0,
+      });
+    } finally {
+      await resolver.query("rollback").catch(() => undefined);
+      await pending?.catch(() => undefined);
+      await Promise.all([resolver.end(), resetter.end()]);
+      await removeFixture(fixture);
+    }
+  });
+
+  test("forty legacy resolvers produce one winner, reveal, and scoring result", async () => {
+    const fixture = await createFixture(1);
+    try {
+      await admin.query(
+        "update questions set played_at = now() - interval '30 seconds' where id = $1",
+        [fixture.questionId],
+      );
+      await admin.query(
+        `insert into answers (
+           question_id, player_id, chosen_index, scramble, ms_to_lock
+         ) values ($1, $2, 0, '[0,1,2,3]'::jsonb, 4000)`,
+        [fixture.questionId, fixture.players[0].id],
+      );
+
+      const results = await concurrently(
+        Array.from({ length: 40 }, () => async (client) => {
+          const result = await client.query<{ freshly_resolved: boolean }>(
+            "select public.resolve_question_once($1) as freshly_resolved",
+            [fixture.questionId],
+          );
+          return result.rows[0]?.freshly_resolved ?? false;
+        }),
+      );
+
+      expect(results.filter(Boolean)).toHaveLength(1);
+      expect(results.filter((freshlyResolved) => !freshlyResolved)).toHaveLength(39);
+
+      const terminal = await admin.query<{
+        finished: boolean;
+        resolve_reveals: number;
+        is_correct: boolean;
+        awarded_points: number;
+      }>(
+        `select q.finished_at is not null as finished,
+                (select count(*)::int
+                   from reveals r
+                  where r.question_id = q.id
+                    and r.event = 'resolve') as resolve_reveals,
+                a.is_correct,
+                a.awarded_points
+           from questions q
+           join answers a on a.question_id = q.id
+          where q.id = $1`,
+        [fixture.questionId],
+      );
+      expect(terminal.rows[0]).toEqual({
+        finished: true,
+        resolve_reveals: 1,
+        is_correct: true,
+        awarded_points: 110,
+      });
+    } finally {
+      await removeFixture(fixture);
+    }
+  });
+
   test("mixed receipt and application order cannot falsely resolve all-in", async () => {
     const { fixture, runId, playId } = await readyPlay(2);
     const earlyClaimant = await connect();
@@ -564,17 +773,11 @@ describe("authoritative answer engine PostgreSQL races", () => {
   });
 
   test("a due finalizer blocked by an in-flight admission scores the committed claim once", async () => {
-    const { fixture, runId, playId } = await readyPlay(1);
+    const { fixture, runId, playId } = await readyPlay(1, true);
     const claimant = await connect();
     const finalizer = await connect();
     let finalizerPromise: Promise<Envelope> | null = null;
     try {
-      await admin.query(
-        `update questions
-            set correct_index = (public._live_scramble_for($2, $3))[1]
-          where id = $1`,
-        [fixture.questionId, fixture.questionId, fixture.players[0].id],
-      );
       await claimant.query("begin");
       const admitted = await claimAnswer(
         claimant,
@@ -814,7 +1017,7 @@ describe("authoritative answer engine PostgreSQL races", () => {
     } finally { await removeFixture(fixture); }
   });
 
-  test("a concurrent ready-board edit waits behind a validated game start", async () => {
+  test("a concurrent ready-board edit is rejected after a validated game start wins", async () => {
     const fixture = await createFixture();
     const runId = await openRun(fixture);
     const gate = await connect();
@@ -858,7 +1061,10 @@ describe("authoritative answer engine PostgreSQL races", () => {
         freshlyApplied: true,
         result: { code: "applied", eventKind: "game_started" },
       });
-      await editPromise;
+      await expect(editPromise).rejects.toMatchObject({
+        code: "55000",
+        message: "the board cannot change after its game starts",
+      });
       await editor.query("rollback");
 
       const state = await admin.query<{
