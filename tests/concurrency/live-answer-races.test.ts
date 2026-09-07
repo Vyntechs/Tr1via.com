@@ -575,7 +575,7 @@ describe("authoritative answer engine PostgreSQL races", () => {
     } finally { await removeFixture(fixture); }
   });
 
-  test.each(["resolve_question_once", "resolve_question"] as const)("legacy reset overlapping uncommitted %s clears every resolve event", async (resolveFunction) => {
+  test.each(["resolve_question_once", "resolve_question", "resolve_question_if_all_locked"] as const)("legacy reset overlapping uncommitted %s clears every resolve event", async (resolveFunction) => {
     const fixture = await readyLegacyQuestion();
     const resolver = await connect();
     const resetter = await connect();
@@ -584,10 +584,14 @@ describe("authoritative answer engine PostgreSQL races", () => {
       await resolver.query("begin");
       await legacyResolve(resolver, fixture, resolveFunction);
       const { rows } = await resetter.query<{ pid: number }>("select pg_backend_pid() as pid");
-      pending = resetter.query("select public.reset_night_to_setup($1)", [fixture.nightId]);
-      await waitForLockWait(rows[0].pid, "legacy reset waiting on uncommitted scored answers");
+      pending = resetter.query("select public.reset_night_to_setup($1) as result", [fixture.nightId]);
+      await waitForLockWait(rows[0].pid, "legacy reset waiting on the scorer");
       await resolver.query("commit");
-      await pending;
+      const reset = await pending as { rows: Array<{ result: unknown }> };
+      expect(reset.rows[0].result).toEqual({
+        wiped: { reveals: 2, answers: 2, finishedQuestions: 1, adjustments: 0 },
+        kept: { categories: 1, pickedQuestions: 1, players: 2 },
+      });
       expect(await legacyState(fixture)).toEqual({
         state: "ready", played: false, finished: false, resolves: 0,
         answers: 0, points: 0, correct: 0,
@@ -596,6 +600,50 @@ describe("authoritative answer engine PostgreSQL races", () => {
       await resolver.query("rollback").catch(() => undefined);
       await pending?.catch(() => undefined);
       await Promise.all([resolver.end(), resetter.end()]);
+      await removeFixture(fixture);
+    }
+  });
+
+  test.each(["resolve_question_once", "resolve_question", "resolve_question_if_all_locked"] as const)("legacy reset wins before blocked %s without resurrecting a result", async (resolveFunction) => {
+    const fixture = await readyLegacyQuestion();
+    const resetter = await connect();
+    const resolver = await connect();
+    let pending: Promise<unknown> | undefined;
+    try {
+      await resetter.query("begin");
+      await resetter.query("select public.reset_night_to_setup($1)", [fixture.nightId]);
+      const { rows } = await resolver.query<{ pid: number }>("select pg_backend_pid() as pid");
+      // Attach the rejection assertion before releasing the blocking transaction.
+      pending = expect(legacyResolve(resolver, fixture, resolveFunction)).rejects.toThrow("was never revealed");
+      await waitForLockWait(rows[0].pid, "legacy scorer waiting on reset");
+      await resetter.query("commit");
+      await pending;
+      expect(await legacyState(fixture)).toEqual({
+        state: "ready", played: false, finished: false, resolves: 0,
+        answers: 0, points: 0, correct: 0,
+      });
+      // The same board can start and score a fresh play after reset.
+      await admin.query("update games set state = 'live', started_at = now() where id = $1", [fixture.gameId]);
+      expect(await legacyState(fixture)).toMatchObject({ state: "live", played: false, resolves: 0 });
+      await admin.query("update questions set played_at = now() - interval '31 seconds' where id = $1", [fixture.questionId]);
+      await admin.query(
+        "insert into reveals (game_id, question_id, event) values ($1, $2, 'reveal')",
+        [fixture.gameId, fixture.questionId],
+      );
+      await admin.query(
+        `insert into answers (question_id, player_id, chosen_index, scramble, ms_to_lock)
+         values ($1, $2, 0, '[0,1,2,3]'::jsonb, 4999)`,
+        [fixture.questionId, fixture.players[0].id],
+      );
+      expect(await legacyResolve(admin, fixture, "resolve_question_once")).toBe(true);
+      expect(await legacyState(fixture)).toEqual({
+        state: "live", played: true, finished: true, resolves: 1,
+        answers: 1, points: 110, correct: 1,
+      });
+    } finally {
+      await resetter.query("rollback").catch(() => undefined);
+      await pending?.catch(() => undefined);
+      await Promise.all([resetter.end(), resolver.end()]);
       await removeFixture(fixture);
     }
   });
