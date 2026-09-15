@@ -18,8 +18,13 @@ const REVEAL_BOARD_GUARD_MIGRATION = path.join(
   MIGRATIONS_DIR,
   "0033_resilient_reveal_board_guard.sql",
 );
+const ANSWER_TIMER_MIGRATION = path.join(
+  MIGRATIONS_DIR,
+  "20260915182433_player_answer_timer_25_seconds.sql",
+);
 const hasSchemaMigration = existsSync(SCHEMA_MIGRATION);
 const hasFunctionsMigration = existsSync(FUNCTIONS_MIGRATION);
+const hasAnswerTimerMigration = existsSync(ANSWER_TIMER_MIGRATION);
 
 const SERVER_ONLY_TABLES = [
   "host_answer_engine_settings",
@@ -117,6 +122,9 @@ async function freshDb(): Promise<PGlite> {
   }
   if (existsSync(REVEAL_BOARD_GUARD_MIGRATION)) {
     await db.exec(readFileSync(REVEAL_BOARD_GUARD_MIGRATION, "utf8"));
+  }
+  if (existsSync(ANSWER_TIMER_MIGRATION)) {
+    await db.exec(readFileSync(ANSWER_TIMER_MIGRATION, "utf8"));
   }
   return db;
 }
@@ -420,6 +428,10 @@ describe("authoritative live answer engine schema", () => {
 
   test("requires migration 0023", () => {
     expect(hasFunctionsMigration).toBe(true);
+  });
+
+  test("requires the 25-second answer timer migration", () => {
+    expect(hasAnswerTimerMigration).toBe(true);
   });
 
   describe.skipIf(!hasSchemaMigration)("0022 schema contract", () => {
@@ -1542,10 +1554,26 @@ describe("authoritative live answer engine schema", () => {
         expect(row.rows[0]).toMatchObject({
           status: "accepting",
           eligible_count: 2,
-          main_ms: 30_000,
+          main_ms: 25_000,
           final_ms: 2_000,
         });
         expect(row.rows[0]?.played_at).not.toBeNull();
+
+        const event = await db.query<{ main_ms: number; final_ms: number }>(
+          `select
+             round(extract(epoch from (
+               (payload->>'mainZeroAt')::timestamptz
+               - (payload->>'openedAt')::timestamptz
+             )) * 1000)::integer as main_ms,
+             round(extract(epoch from (
+               (payload->>'finalWindowEndsAt')::timestamptz
+               - (payload->>'mainZeroAt')::timestamptz
+             )) * 1000)::integer as final_ms
+             from live_room_events
+            where play_id = $1 and kind = 'play_opened'`,
+          [play.playId],
+        );
+        expect(event.rows[0]).toEqual({ main_ms: 25_000, final_ms: 2_000 });
 
         const eligible = await db.query<{ player_id: string }>(
           "select player_id from question_play_eligibility where play_id = $1 order by player_id",

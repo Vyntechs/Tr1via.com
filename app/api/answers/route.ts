@@ -15,7 +15,7 @@
 // We translate the player's `slotChosen` (1..4 — the visible slot on the
 // phone) into a canonical `chosen_index` (0..3 — what the host's question
 // row calls the correct answer) by indexing the scramble. The DB stores
-// chosen_index so scoring at T+20 is a simple `chosen_index == correct_index`.
+// chosen_index so scoring at T+25 is a simple `chosen_index == correct_index`.
 //
 // `ms_to_lock` is computed server-side from questions.played_at; we don't
 // trust the client clock. is_correct + awarded_points remain NULL until

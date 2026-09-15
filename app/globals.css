@@ -99,7 +99,7 @@ main:has([data-september-viewport-motion="true"]),
                                  100% { transform:translate3d(var(--drift, 0px), 130vh, 0) rotate(var(--spin, 0deg)); } }
 /* August bonfire. The page is being read next to a fire just off-screen:
    the light breathes, and embers climb while the leaves come down. Slow and
-   low-amplitude on purpose — a venue TV holds a question for 30 seconds and
+   low-amplitude on purpose — a venue TV holds a question for 25 seconds and
    nothing ambient may pull an eye off it. */
 @keyframes tr1via-firelight   { 0%,100% { opacity:.82; }
                                 38% { opacity:1; } 61% { opacity:.9; } }

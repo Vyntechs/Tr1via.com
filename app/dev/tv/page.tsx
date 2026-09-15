@@ -155,7 +155,7 @@ export default function TVGallery() {
           <Frame label="03 · Question" previewKey="question">
             <TVQuestion />
           </Frame>
-          <Frame label="03a · Question · May/Storm — stationary lock status + 30s timer">
+          <Frame label="03a · Question · May/Storm — stationary lock status + 25s timer">
             <TVQuestion
               themeKey="may"
               seconds={18}

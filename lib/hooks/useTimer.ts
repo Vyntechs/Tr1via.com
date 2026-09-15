@@ -7,7 +7,7 @@
 //     was sent. We use this to compute a per-device clock offset so the
 //     countdown is precisely aligned across phones / TV.
 //   - durationS: seconds the question is live for. When omitted, defaults
-//     come from the theme registry (30 for every theme).
+//     come from the theme registry (25 for every theme).
 //   - onZero: called exactly once when the timer first crosses 0. Used by
 //     phones to fire `/api/questions/:id/resolve` on the timer-zero path.
 //
@@ -30,7 +30,7 @@ export interface UseTimerOpts {
   serverNowMs?: number | null;
   /**
    * Total question duration in seconds. When omitted, the default comes
-   * from the theme registry — 30 for every theme.
+   * from the theme registry — 25 for every theme.
    */
   durationS?: number;
   /** When set, default duration is derived from this theme's registry entry. */
@@ -80,7 +80,7 @@ export function useTimer(opts: UseTimerOpts): UseTimerResult {
 
   useEffect(() => {
     // Reset the "I fired onZero" latch whenever the question changes —
-    // a fresh reveal means we're ready to fire again at T+20.
+    // a fresh reveal means we're ready to fire again at T+25.
     firedZero.current = false;
     if (opts.revealedAtMs === null) {
       setRemaining(duration);

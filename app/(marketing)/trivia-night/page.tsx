@@ -436,7 +436,7 @@ function HowItWorks() {
       <ol className="mt-8 grid gap-x-12 gap-y-10 sm:grid-cols-2">
         <Step n="01" title="Pick your categories" body="Type your own questions, or let TR1VIA write a whole category for you in seconds. Any topic, fully yours." />
         <Step n="02" title="Players join from their seats" body="They scan a code on the screen — no app to download, no sign-up. They're in within seconds." />
-        <Step n="03" title="You run the board off the TV" body="Tap a question. The whole room sees it at once and a 20-second timer starts. You set the pace." />
+        <Step n="03" title="You run the board off the TV" body="Tap a question. The whole room sees it at once and a 25-second timer starts. You set the pace." />
         <Step n="04" title="Everyone answers alone" body="The four answers are shuffled on every single phone, so shouting “it’s number three!” means nothing." />
       </ol>
     </div>

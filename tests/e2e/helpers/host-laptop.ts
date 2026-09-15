@@ -185,7 +185,7 @@ export async function endGame(page: Page, gameId: string): Promise<void> {
 /**
  * Fast-forward a live question's timer. Calls /api/_test/fast-forward which
  * internally invokes the production resolve route — same code path as the
- * 20-second timer expiring naturally.
+ * 25-second timer expiring naturally.
  */
 export async function fastForwardTimer(page: Page, questionId: string): Promise<void> {
   const res = await page.request.post("/api/_test/fast-forward", {

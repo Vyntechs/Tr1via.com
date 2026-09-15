@@ -1,4 +1,4 @@
-// POST /api/games/:id/end-early — host short-circuits a question timer (theme-derived; 30s for every theme).
+// POST /api/games/:id/end-early — host short-circuits a question timer (theme-derived; 25s for every theme).
 //
 // Used when "everyone has obviously answered, let's see the result." Manual
 // presses reuse resolve_question(); guarded auto-reveal uses a DB-side

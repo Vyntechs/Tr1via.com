@@ -9,22 +9,22 @@ import {
 describe("lockInCeremonyFor", () => {
   it("returns the May/Storm config for themeKey 'may'", () => {
     const cfg = lockInCeremonyFor("may");
-    expect(cfg.duration).toBe(30);
+    expect(cfg.duration).toBe(25);
     expect(cfg.marquee).toBe(true);
     expect(cfg.ceremony).toBe("lightning");
   });
 
   it("returns the July/4th config for themeKey 'july' (marquee + fireworks)", () => {
     const cfg = lockInCeremonyFor("july");
-    expect(cfg.duration).toBe(30);
+    expect(cfg.duration).toBe(25);
     expect(cfg.marquee).toBe(true);
     expect(cfg.ceremony).toBe("fireworks");
   });
 
-  it("gives every non-registered theme the 30s default (no marquee/ceremony)", () => {
+  it("gives every non-registered theme the 25s default (no marquee/ceremony)", () => {
     for (const k of ["house", "daylight", "january", "june", "december"] as const) {
       const cfg = lockInCeremonyFor(k);
-      expect(cfg.duration).toBe(30);
+      expect(cfg.duration).toBe(25);
       expect(cfg.marquee).toBe(false);
       expect(cfg.ceremony).toBeNull();
     }
@@ -64,16 +64,16 @@ describe("phone lock-in bolt gate (ceremony kind, NOT generic hasCeremony)", () 
 });
 
 describe("questionDurationFor", () => {
-  it("returns 30 for every theme (the default)", () => {
-    expect(questionDurationFor("may")).toBe(30);
-    expect(questionDurationFor("june")).toBe(30);
-    expect(questionDurationFor("house")).toBe(30);
-    expect(questionDurationFor("january")).toBe(30);
+  it("returns 25 for every theme (the default)", () => {
+    expect(questionDurationFor("may")).toBe(25);
+    expect(questionDurationFor("june")).toBe(25);
+    expect(questionDurationFor("house")).toBe(25);
+    expect(questionDurationFor("january")).toBe(25);
   });
 
-  it("returns 30 when themeKey is undefined or invalid", () => {
-    expect(questionDurationFor(undefined)).toBe(30);
+  it("returns 25 when themeKey is undefined or invalid", () => {
+    expect(questionDurationFor(undefined)).toBe(25);
     // @ts-expect-error testing runtime fallback
-    expect(questionDurationFor("notatheme")).toBe(30);
+    expect(questionDurationFor("notatheme")).toBe(25);
   });
 });

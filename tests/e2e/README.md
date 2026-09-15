@@ -37,5 +37,5 @@ keys into `.env.local`, run `npm run typegen`, then export
 
 - `reveal-sync.spec.ts` — host + TV + 3 phones in five separate browser
   contexts. Validates the "one press, three surfaces" hot path: reveal
-  arrival latency, per-phone scrambled answer ordering, T+20 resolve
+  arrival latency, per-phone scrambled answer ordering, T+25 resolve
   arrival latency, and the awarded-points math for fast/slow/wrong taps.

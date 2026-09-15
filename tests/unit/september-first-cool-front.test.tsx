@@ -274,7 +274,7 @@ describe("September atmosphere and control contract", () => {
 
   it("does not change the timer, marquee, or lock-in ceremony", () => {
     expect(lockInCeremonyFor("september")).toEqual({
-      duration: 30,
+      duration: 25,
       marquee: false,
       ceremony: null,
     });

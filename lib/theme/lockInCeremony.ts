@@ -1,11 +1,11 @@
 // Per-theme registry for the lock-in ceremony treatment. Parallel to the
 // Weather component's switch-on-themeKey pattern in components/system/Weather.tsx.
 //
-// The question timer is 30s for every theme (the default). Themes may register
+// The question timer is 25s for every theme (the default). Themes may register
 // to opt INTO extra live-question treatments — an auto-scrolling marquee
 // scoreboard and a per-player ceremony on lock-in (May/Storm fires lightning;
 // July/4th fires a player-tinted firework). Themes that don't register fall back
-// to the default: 30s timer, lock-in pile, no transit ceremony.
+// to the default: 25s timer, lock-in pile, no transit ceremony.
 //
 // This is the single source of truth. Every conditional in the codebase that
 // asks "is this theme on the new May/Storm experience?" reads from here.
@@ -15,7 +15,7 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 export type CeremonyKind = "lightning" | "fireworks" | null;
 
 export interface LockInCeremonyConfig {
-  /** Question timer length in seconds. 30 for every theme (the default). */
+  /** Question timer length in seconds. 25 for every theme (the default). */
   duration: number;
   /** True → bottom strip is the auto-scrolling marquee. False → existing lock-in pile. */
   marquee: boolean;
@@ -25,21 +25,21 @@ export interface LockInCeremonyConfig {
 }
 
 const DEFAULT_CONFIG: LockInCeremonyConfig = {
-  duration: 30,
+  duration: 25,
   marquee: false,
   ceremony: null,
 };
 
 /** Themes register here to opt into extra treatments (marquee / lightning).
- *  The 30s timer is the default — no entry needed just for the timer length. */
+ *  The 25s timer is the default — no entry needed just for the timer length. */
 const REGISTRY: Partial<Record<ThemeKey, LockInCeremonyConfig>> = {
   may: {
-    duration: 30,
+    duration: 25,
     marquee: true,
     ceremony: "lightning",
   },
   july: {
-    duration: 30,
+    duration: 25,
     marquee: true,
     ceremony: "fireworks",
   },

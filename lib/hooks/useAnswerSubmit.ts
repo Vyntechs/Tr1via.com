@@ -9,7 +9,7 @@
 //   pending → exhausted    → failed        (after maxAttempts)
 //   failed  → retry()      → pending       (manual re-attempt from the UI)
 //
-// The 20-second question timer caps the total useful retry window, so the
+// The 25-second question timer caps the total useful retry window, so the
 // default backoff schedule (500ms, 1s, 2s) over 4 attempts keeps the last
 // retry under ~8s — fast enough to still hit the question.
 //
