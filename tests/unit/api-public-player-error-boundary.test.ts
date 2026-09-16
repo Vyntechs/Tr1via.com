@@ -86,12 +86,13 @@ describe("public and signed-player route error boundary", () => {
 
   it("does not expose an answer insert database error", async () => {
     const expectedScramble = scrambleFor(QUESTION_ID, PLAYER_ID);
+    const playedAt = new Date(Date.now() - 1_000).toISOString();
     const rows: Record<string, Result> = {
       questions: {
         data: {
           id: QUESTION_ID,
           category_id: CATEGORY_ID,
-          played_at: "2026-07-19T04:00:00.000Z",
+          played_at: playedAt,
           finished_at: null,
           correct_index: 0,
         },

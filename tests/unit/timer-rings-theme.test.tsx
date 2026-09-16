@@ -19,16 +19,16 @@ function getProgressCircle(container: HTMLElement) {
 }
 
 describe("TimerRing themeKey", () => {
-  it("uses max=30 when themeKey='may' and max prop is omitted", () => {
-    // seconds=30 fills the arc completely only when resolvedMax=30
-    const { container } = render(wrap(<TimerRing seconds={30} themeKey="may" accent="#fff" />));
+  it("uses max=25 when themeKey='may' and max prop is omitted", () => {
+    // seconds=25 fills the arc completely only when resolvedMax=25
+    const { container } = render(wrap(<TimerRing seconds={25} themeKey="may" accent="#fff" />));
     const circle = getProgressCircle(container);
     expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
 
-  it("uses the 30s default (house context) when themeKey is omitted", () => {
-    // seconds=30 fills the arc completely only when resolvedMax=30
-    const { container } = render(wrap(<TimerRing seconds={30} accent="#fff" />));
+  it("uses the 25s default (house context) when themeKey is omitted", () => {
+    // seconds=25 fills the arc completely only when resolvedMax=25
+    const { container } = render(wrap(<TimerRing seconds={25} accent="#fff" />));
     const circle = getProgressCircle(container);
     expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
@@ -56,32 +56,31 @@ function getTVProgressCircle(container: HTMLElement) {
 
 // Regression: render sites (PlayerQuestion, TVQuestion, HostPhoneLive, PlayerLocked)
 // pass NEITHER themeKey NOR max. The ring must therefore read the ACTIVE theme from
-// context — otherwise it pins max=20 while the timer counts from 30, so the arc sits
-// full for the first 10s ("lapping"). may is the live 30s theme. seconds=28 is inside
-// the 30s speed-bonus window (seconds > 30 - 5 = 25), so the bonus arc renders too.
+// context — otherwise it can pin a stale max while the timer counts from 25, so the
+// arc sits full before depleting ("lapping"). seconds=23 is inside the 25s
+// speed-bonus window (seconds > 25 - 5 = 20), so the bonus arc renders too.
 describe("rings fall back to the active theme's duration (no lapping)", () => {
-  it("TimerRing reads the ThemeProvider theme when themeKey/max omitted — 30, not 20", () => {
-    // At 28s into a 30s theme the arc must be partially depleted; the buggy
-    // path (max=20) clamps frac to 1 → dashoffset 0 → the lap.
-    const ctx = render(wrap(<TimerRing seconds={28} accent="#fff" />, "may"));
-    const ref = render(wrap(<TimerRing seconds={28} max={30} accent="#fff" />));
+  it("TimerRing reads the ThemeProvider theme when themeKey/max omitted — 25", () => {
+    // At 23s into a 25s theme the arc must be partially depleted.
+    const ctx = render(wrap(<TimerRing seconds={23} accent="#fff" />, "may"));
+    const ref = render(wrap(<TimerRing seconds={23} max={25} accent="#fff" />));
     expect(getProgressCircle(ctx.container)?.getAttribute("stroke-dashoffset")).toBe(
       getProgressCircle(ref.container)?.getAttribute("stroke-dashoffset"),
     );
     expect(getProgressCircle(ctx.container)?.getAttribute("stroke-dashoffset")).not.toBe("0");
   });
 
-  it("TimerRing scales the speed-bonus arc to the theme — 5/30 on may, not 5/20", () => {
-    const ctx = render(wrap(<TimerRing seconds={28} accent="#fff" />, "may"));
-    const ref = render(wrap(<TimerRing seconds={28} max={30} accent="#fff" />));
+  it("TimerRing scales the speed-bonus arc to the theme — 5/25 on may", () => {
+    const ctx = render(wrap(<TimerRing seconds={23} accent="#fff" />, "may"));
+    const ref = render(wrap(<TimerRing seconds={23} max={25} accent="#fff" />));
     expect(getBonusCircle(ctx.container)?.getAttribute("stroke-dasharray")).toBe(
       getBonusCircle(ref.container)?.getAttribute("stroke-dasharray"),
     );
   });
 
-  it("TVTimerArc reads the ThemeProvider theme when themeKey/max omitted — 30, not 20", () => {
-    const ctx = render(wrap(<TVTimerArc seconds={28} accent="#fff" />, "may"));
-    const ref = render(wrap(<TVTimerArc seconds={28} max={30} accent="#fff" />));
+  it("TVTimerArc reads the ThemeProvider theme when themeKey/max omitted — 25", () => {
+    const ctx = render(wrap(<TVTimerArc seconds={23} accent="#fff" />, "may"));
+    const ref = render(wrap(<TVTimerArc seconds={23} max={25} accent="#fff" />));
     expect(getTVProgressCircle(ctx.container)?.getAttribute("stroke-dashoffset")).toBe(
       getTVProgressCircle(ref.container)?.getAttribute("stroke-dashoffset"),
     );
@@ -90,16 +89,16 @@ describe("rings fall back to the active theme's duration (no lapping)", () => {
 });
 
 describe("TVTimerArc themeKey", () => {
-  it("uses max=30 when themeKey='may' and max prop is omitted", () => {
-    // seconds=30 fills the arc completely only when resolvedMax=30
-    const { container } = render(wrap(<TVTimerArc seconds={30} themeKey="may" accent="#fff" />));
+  it("uses max=25 when themeKey='may' and max prop is omitted", () => {
+    // seconds=25 fills the arc completely only when resolvedMax=25
+    const { container } = render(wrap(<TVTimerArc seconds={25} themeKey="may" accent="#fff" />));
     const circle = getTVProgressCircle(container);
     expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });
 
-  it("uses the 30s default (house context) when themeKey is omitted", () => {
-    // seconds=30 fills the arc completely only when resolvedMax=30
-    const { container } = render(wrap(<TVTimerArc seconds={30} accent="#fff" />));
+  it("uses the 25s default (house context) when themeKey is omitted", () => {
+    // seconds=25 fills the arc completely only when resolvedMax=25
+    const { container } = render(wrap(<TVTimerArc seconds={25} accent="#fff" />));
     const circle = getTVProgressCircle(container);
     expect(circle?.getAttribute("stroke-dashoffset")).toBe("0");
   });

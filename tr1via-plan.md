@@ -48,8 +48,8 @@
 ### How a question works (the live game flow)
 - The host's **laptop is the source screen.** It connects to the venue **TV with an HDMI cord, and the TV mirrors the laptop exactly** — whatever is on her laptop is on the TV.
 - The host **sees and reads each question privately first**, to capture the room's attention, before anyone else can see it. *(See OPEN — this private preview needs a device other than the mirrored laptop.)*
-- When she is ready she **presses a button.** At that moment three things happen together: the **question appears on the TV**, the **4 answer options appear on every player's phone**, and the **20-second timer starts**.
-- If a player doesn't pick an answer within the 20 seconds, they miss their chance on that question.
+- When she is ready she **presses a button.** At that moment three things happen together: the **question appears on the TV**, the **4 answer options appear on every player's phone**, and the **25-second timer starts**.
+- If a player doesn't pick an answer within the 25 seconds, they miss their chance on that question.
 - The **question is shown only on the TV** — it is never sent to players' phones. Players read the question off the TV.
 - **Anti-cheat — scrambled answer order:** each phone shows the 4 options as the real answer text, numbered **1–4**, but the **order is randomized separately on every phone**. If someone shouts "the answer is 3!", that "3" is a different answer on everyone else's phone — so it doesn't help cheaters. A player has to actually read their own options.
 - After a player picks, they are **not told right or wrong** until the timer ends. When the timer ends, **everyone is shown right/wrong at the same moment** — on their own phone and on the TV.
@@ -70,7 +70,7 @@
 
 ### Cheating (a major concern)
 - Cheating is a big problem — groups at tables sharing answers.
-- Defenses already decided: the **20-second timer**, the **scrambled per-phone answer order**, and **keeping the question off players' phones**.
+- Defenses already decided: the **25-second timer**, the **scrambled per-phone answer order**, and **keeping the question off players' phones**.
 - Brandon also wants the app to **quietly track how long each player leaves the app** (switches to another app, or exits their browser) — as a signal the host can glance at.
 - **Anti-cheat must never create friction** for the host or the players. It stays invisible and never accuses anyone.
 

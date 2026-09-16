@@ -1,7 +1,7 @@
 // POST {questionId} → invokes the existing /api/questions/[id]/resolve.
 // The resolve route is already idempotent + race-safe (the resolve_question
 // RPC does a SELECT … FOR UPDATE on questions), so calling it directly
-// from a test is equivalent to the client-driven T+20 path — no "force"
+// from a test is equivalent to the client-driven T+25 path — no "force"
 // parameter is needed.
 
 import { NextResponse, type NextRequest } from "next/server";

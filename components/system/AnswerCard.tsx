@@ -2,7 +2,7 @@
 //   idle           — default, tappable
 //   locked-self    — this player just picked this answer
 //   locked-other   — this player picked something else, so this fades
-//   correct        — revealed correct after T+20
+//   correct        — revealed correct after T+25
 //   wrong          — this is what this player picked, but it's wrong
 //   missed-correct — the right answer they didn't pick (shown after reveal)
 //

@@ -1,6 +1,6 @@
 // Service-role Supabase client. RLS bypassed. ONLY use server-side for
 // trusted operations:
-//   - resolving a question at T+20 (computes is_correct + awarded_points
+//   - resolving a question at T+25 (computes is_correct + awarded_points
 //     for all answers in one transaction)
 //   - creating a player on behalf of a device that hasn't authed yet
 //   - housekeeping (closing nights, etc.)

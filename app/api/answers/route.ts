@@ -15,7 +15,7 @@
 // We translate the player's `slotChosen` (1..4 — the visible slot on the
 // phone) into a canonical `chosen_index` (0..3 — what the host's question
 // row calls the correct answer) by indexing the scramble. The DB stores
-// chosen_index so scoring at T+20 is a simple `chosen_index == correct_index`.
+// chosen_index so scoring at T+25 is a simple `chosen_index == correct_index`.
 //
 // `ms_to_lock` is computed server-side from questions.played_at; we don't
 // trust the client clock. is_correct + awarded_points remain NULL until
@@ -31,6 +31,7 @@ import { badRequest, noContent, forbidden, unauthorized, serverError, notFound, 
 import { getDeviceId } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { scrambleFor } from "@/lib/game/scramble";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { broadcastAppliedLiveRoomEvent } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
@@ -128,6 +129,10 @@ async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
 }
 
 export async function POST(req: NextRequest) {
+  // Capture the request at the route boundary. For legacy answers this is the
+  // official receipt time used by the final database deadline check; parsing
+  // and lookups must not move a timely answer past the line.
+  const receivedAt = new Date();
   const deviceId = await getDeviceId();
   if (!deviceId) return unauthorized("no device session");
 
@@ -299,7 +304,18 @@ export async function POST(req: NextRequest) {
   if (questionError) return serverError();
   if (!q) return notFound("question not found");
   if (!q.played_at) return conflict("question is not live");
-  if (q.finished_at) return conflict("question is closed");
+  if (
+    receivedAt.getTime() >=
+    new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000
+  ) {
+    return badRequest("answer deadline passed");
+  }
+  if (
+    q.finished_at &&
+    receivedAt.getTime() >= new Date(q.finished_at).getTime()
+  ) {
+    return badRequest("question is closed");
+  }
 
   const { data: cat, error: categoryError } = await admin
     .from("categories")
@@ -373,7 +389,7 @@ export async function POST(req: NextRequest) {
   const chosenIndex = expected[parsed.data.slotChosen - 1] as 0 | 1 | 2 | 3;
   const msToLock = Math.max(
     0,
-    Date.now() - new Date(q.played_at).getTime(),
+    receivedAt.getTime() - new Date(q.played_at).getTime(),
   );
 
   const { error } = await admin
@@ -384,8 +400,12 @@ export async function POST(req: NextRequest) {
       chosen_index: chosenIndex,
       scramble: provided,
       ms_to_lock: msToLock,
+      locked_at: receivedAt.toISOString(),
     });
   if (error) {
+    if (error.code === "TR025") return badRequest("answer deadline passed");
+    if (error.code === "TRCL0") return badRequest("question is closed");
+    if (error.code === "TRNL0") return badRequest("question is not live");
     // 23505 = duplicate (player already answered this question). The
     // rules say one answer per (player, question); surface as 409 so
     // the UI can show "you already answered" rather than spinning.

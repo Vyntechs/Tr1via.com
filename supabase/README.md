@@ -50,7 +50,7 @@ data (`seed.sql`). The app talks to Supabase via the typed client in
 ## When to NOT use the service-role client
 
 The service-role client bypasses RLS. Only use it for:
-- Resolving a question at T+20 (server-side, in a Server Action triggered by the first phone's timer-end or by host end-early)
+- Resolving a question at T+25 (server-side, triggered by the first phone's timer-end or by host end-early)
 - Background generation jobs writing 20 questions for a category
 - Housekeeping cron (closing nights past their scheduled_at + 6 hours)
 

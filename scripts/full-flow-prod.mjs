@@ -18,7 +18,7 @@
 //
 //   The script runs the 2-game arc TWICE in sequence:
 //     Pass 1 — themeKey "may":  25s timer, marquee=true.
-//     Pass 2 — themeKey "house": 20s timer, marquee=false.
+//     Pass 2 — themeKey "house": 25s timer, marquee=false.
 //   Each pass creates a fresh night, plays it, asserts theme + timer,
 //   then deletes it before starting the next. Total ~330s.
 //   Set SMOKE_THEME_SINGLE=may|house to run only one pass.

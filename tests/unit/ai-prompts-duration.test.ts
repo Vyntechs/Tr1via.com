@@ -16,21 +16,21 @@ describe("SYSTEM_PROMPT duration", () => {
 });
 
 describe("userPromptFor duration", () => {
-  it("renders '30 seconds' when themeKey is 'may'", () => {
+  it("renders '25 seconds' when themeKey is 'may'", () => {
     const prompt = userPromptFor({ topic: "Geography", themeKey: "may" });
-    expect(prompt).toContain("30 seconds");
-    expect(prompt).not.toContain("25 seconds");
+    expect(prompt).toContain("25 seconds");
+    expect(prompt).not.toContain("30 seconds");
   });
 
-  it("renders '30 seconds' for every theme (the default)", () => {
+  it("renders '25 seconds' for every theme (the default)", () => {
     const prompt = userPromptFor({ topic: "Geography", themeKey: "house" });
-    expect(prompt).toContain("30 seconds");
-    expect(prompt).not.toContain("25 seconds");
+    expect(prompt).toContain("25 seconds");
+    expect(prompt).not.toContain("30 seconds");
   });
 
-  it("renders '30 seconds' when themeKey is omitted", () => {
+  it("renders '25 seconds' when themeKey is omitted", () => {
     const prompt = userPromptFor({ topic: "Geography" });
-    expect(prompt).toContain("30 seconds");
-    expect(prompt).not.toContain("25 seconds");
+    expect(prompt).toContain("25 seconds");
+    expect(prompt).not.toContain("30 seconds");
   });
 });

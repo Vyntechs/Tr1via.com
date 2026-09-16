@@ -45,6 +45,24 @@ describe("PlayerQuestion", () => {
     expect(screen.getByTestId("player-answer-4")).toBeInTheDocument();
   });
 
+  it("blocks both tapping and keyboard answers when the deadline closes", () => {
+    const onTap = vi.fn();
+    renderInTheme(
+      <PlayerQuestion
+        prompt="Time is up."
+        seconds={0}
+        onTap={onTap}
+        disabled
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    fireEvent.keyDown(document, { key: "1" });
+
+    expect(onTap).not.toHaveBeenCalled();
+    expect(screen.getByTestId("player-answer-1").tagName).toBe("DIV");
+  });
+
   it("applies a numeric font-size derived from useAutoFitText", () => {
     // The hook initializes at the ceiling (28px) before its measurement
     // pass runs. jsdom never lays out text so the measurement is effectively
