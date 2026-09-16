@@ -29,6 +29,8 @@ export type AnswerSubmitStatus = "idle" | "pending" | "sent" | "failed";
 export interface UseAnswerSubmitOptions {
   questionId: string;
   scramble: number[];
+  /** False once the authoritative player timer reaches zero. */
+  accepting?: boolean;
   /** Default 4. */
   maxAttempts?: number;
   /** Default [500, 1000, 2000] (ms between attempts). */
@@ -109,6 +111,7 @@ function shouldTreatAsSent(status: number): boolean {
 export function useAnswerSubmit({
   questionId,
   scramble,
+  accepting = true,
   maxAttempts = 4,
   backoffMs = DEFAULT_BACKOFF,
 }: UseAnswerSubmitOptions): UseAnswerSubmitResult {
@@ -116,9 +119,16 @@ export function useAnswerSubmit({
   const [confirmedAt, setConfirmedAt] = useState<number | null>(null);
   const lastSlotRef = useRef<1 | 2 | 3 | 4 | null>(null);
   const cancelledRef = useRef(false);
+  const acceptingRef = useRef(accepting);
+  acceptingRef.current = accepting;
 
   const runAttempt = useCallback(
     async (slot: 1 | 2 | 3 | 4, attempt: number) => {
+      if (!acceptingRef.current) {
+        clearPendingAnswer();
+        setStatus("failed");
+        return;
+      }
       try {
         const res = await fetch("/api/answers", {
           method: "POST",
@@ -145,6 +155,11 @@ export function useAnswerSubmit({
       } catch {
         if (cancelledRef.current) return;
         // Network error — fall through to retry.
+      }
+      if (!acceptingRef.current) {
+        clearPendingAnswer();
+        setStatus("failed");
+        return;
       }
       if (attempt + 1 >= maxAttempts) {
         // Exhausted in-memory retries. Leave the localStorage entry alone:
@@ -174,9 +189,13 @@ export function useAnswerSubmit({
     const pending = loadPendingAnswer();
     if (pending) {
       if (pending.questionId === questionId) {
-        lastSlotRef.current = pending.slotChosen;
-        setStatus("pending");
-        void runAttempt(pending.slotChosen, 0);
+        if (acceptingRef.current) {
+          lastSlotRef.current = pending.slotChosen;
+          setStatus("pending");
+          void runAttempt(pending.slotChosen, 0);
+        } else {
+          clearPendingAnswer();
+        }
       } else {
         // Stale entry for a different question — clear so it doesn't fire later.
         clearPendingAnswer();
@@ -191,8 +210,15 @@ export function useAnswerSubmit({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [questionId]);
 
+  useEffect(() => {
+    if (accepting) return;
+    const pending = loadPendingAnswer();
+    if (pending?.questionId === questionId) clearPendingAnswer();
+  }, [accepting, questionId]);
+
   const submit = useCallback(
     (slot: 1 | 2 | 3 | 4) => {
+      if (!acceptingRef.current) return;
       if (status === "pending" || status === "sent") return;
       lastSlotRef.current = slot;
       savePendingAnswer({ questionId, slotChosen: slot });
@@ -203,6 +229,7 @@ export function useAnswerSubmit({
   );
 
   const retry = useCallback(() => {
+    if (!acceptingRef.current) return;
     if (status !== "failed") return;
     const slot = lastSlotRef.current;
     if (!slot) return;

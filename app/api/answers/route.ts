@@ -128,6 +128,10 @@ async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
 }
 
 export async function POST(req: NextRequest) {
+  // Capture the request at the route boundary. For legacy answers this is the
+  // official receipt time used by the final database deadline check; parsing
+  // and lookups must not move a timely answer past the line.
+  const receivedAt = new Date();
   const deviceId = await getDeviceId();
   if (!deviceId) return unauthorized("no device session");
 
@@ -299,7 +303,12 @@ export async function POST(req: NextRequest) {
   if (questionError) return serverError();
   if (!q) return notFound("question not found");
   if (!q.played_at) return conflict("question is not live");
-  if (q.finished_at) return conflict("question is closed");
+  if (
+    q.finished_at &&
+    receivedAt.getTime() >= new Date(q.finished_at).getTime()
+  ) {
+    return badRequest("question is closed");
+  }
 
   const { data: cat, error: categoryError } = await admin
     .from("categories")
@@ -373,7 +382,7 @@ export async function POST(req: NextRequest) {
   const chosenIndex = expected[parsed.data.slotChosen - 1] as 0 | 1 | 2 | 3;
   const msToLock = Math.max(
     0,
-    Date.now() - new Date(q.played_at).getTime(),
+    receivedAt.getTime() - new Date(q.played_at).getTime(),
   );
 
   const { error } = await admin
@@ -384,8 +393,12 @@ export async function POST(req: NextRequest) {
       chosen_index: chosenIndex,
       scramble: provided,
       ms_to_lock: msToLock,
+      locked_at: receivedAt.toISOString(),
     });
   if (error) {
+    if (error.code === "TR025") return badRequest("answer deadline passed");
+    if (error.code === "TRCL0") return badRequest("question is closed");
+    if (error.code === "TRNL0") return badRequest("question is not live");
     // 23505 = duplicate (player already answered this question). The
     // rules say one answer per (player, question); surface as 409 so
     // the UI can show "you already answered" rather than spinning.

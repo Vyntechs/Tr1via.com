@@ -146,6 +146,35 @@ describe("useAnswerSubmit", () => {
     await waitFor(() => expect(result.current.status).toBe("sent"));
   });
 
+  it("does not submit or retry once the answer window has closed", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(jsonResponse(400))
+      .mockResolvedValueOnce(jsonResponse(200));
+    const { result, rerender } = renderHook(
+      ({ accepting }: { accepting: boolean }) =>
+        useAnswerSubmit({
+          questionId: "q1",
+          scramble: [0, 1, 2, 3],
+          accepting,
+          backoffMs: FAST_BACKOFF,
+        }),
+      { initialProps: { accepting: true } },
+    );
+
+    act(() => result.current.submit(1));
+    await waitFor(() => expect(result.current.status).toBe("failed"));
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    rerender({ accepting: false });
+    act(() => {
+      result.current.retry();
+      result.current.submit(2);
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
   // ─── Refresh-survives-the-answer (localStorage persistence) ───────────────
 
   it("persists pending submit to localStorage on tap, clears on sent", async () => {
@@ -184,6 +213,25 @@ describe("useAnswerSubmit", () => {
       slotChosen: 4,
       scramble: [2, 0, 3, 1],
     });
+    expect(loadPendingAnswer()).toBeNull();
+  });
+
+  it("clears rather than resuming a persisted answer after the deadline", () => {
+    window.localStorage.setItem(
+      PENDING_ANSWER_KEY,
+      JSON.stringify({ questionId: "q1", slotChosen: 4 }),
+    );
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    renderHook(() =>
+      useAnswerSubmit({
+        questionId: "q1",
+        scramble: [0, 1, 2, 3],
+        accepting: false,
+      }),
+    );
+
+    expect(fetchSpy).not.toHaveBeenCalled();
     expect(loadPendingAnswer()).toBeNull();
   });
 

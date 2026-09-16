@@ -37,6 +37,7 @@ const h = vi.hoisted(() => {
     fetchSnapshot,
     handlers,
     timerOnZero: null as null | (() => void),
+    timerExpired: false,
   };
 });
 
@@ -76,7 +77,10 @@ vi.mock("@/lib/hooks/useDeviceSession", () => ({
 vi.mock("@/lib/hooks/useTimer", () => ({
   useTimer: (options: { onZero?: () => void }) => {
     h.timerOnZero = options.onZero ?? null;
-    return { displaySeconds: 12 };
+    return {
+      displaySeconds: h.timerExpired ? 0 : 12,
+      hasExpired: h.timerExpired,
+    };
   },
 }));
 
@@ -194,6 +198,7 @@ describe("player answer signed snapshot refresh", () => {
     window.localStorage.clear();
     __resetReachabilityForTests();
     h.timerOnZero = null;
+    h.timerExpired = false;
   });
 
   afterEach(() => {
@@ -239,6 +244,25 @@ describe("player answer signed snapshot refresh", () => {
     });
 
     expect(await screen.findByTestId("player-locked")).toBeInTheDocument();
+  });
+
+  it("does not send touch or keyboard answers when the timer is at zero", async () => {
+    h.timerExpired = true;
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    fireEvent.keyDown(document, { key: "1" });
+
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/answers",
+      expect.anything(),
+    );
+    expect(screen.getByTestId("player-answer-1").tagName).toBe("DIV");
   });
 
   it("coalesces simultaneous transition wake-ups into sequential signed refreshes", async () => {

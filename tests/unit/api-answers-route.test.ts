@@ -160,6 +160,8 @@ describe("POST /api/answers", () => {
   });
 
   it("preserves the legacy answer path and response", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-07-19T01:00:24.999Z");
     const insert = vi.fn(async () => ({ data: null, error: null }));
     const rows: Record<string, DbResult> = {
       questions: {
@@ -197,7 +199,63 @@ describe("POST /api/answers", () => {
     expect(response.status).toBe(204);
     expect(admin.rpc).not.toHaveBeenCalled();
     expect(insert).toHaveBeenCalledTimes(1);
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
+      question_id: QUESTION_ID,
+      player_id: PLAYER_ID,
+      ms_to_lock: 24_999,
+      locked_at: "2026-07-19T01:00:24.999Z",
+    }));
     expect(broadcastMock.broadcastAppliedLiveRoomEvent).not.toHaveBeenCalled();
+  });
+
+  it("returns a terminal rejection when the final save reaches the 25-second boundary", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime("2026-07-19T01:00:25.000Z");
+    const insert = vi.fn(async () => ({
+      data: null,
+      error: {
+        code: "TR025",
+        message: "legacy_answer_deadline_passed",
+      },
+    }));
+    const rows: Record<string, DbResult> = {
+      questions: {
+        data: {
+          id: QUESTION_ID,
+          category_id: CATEGORY_ID,
+          played_at: "2026-07-19T01:00:00.000Z",
+          finished_at: null,
+          correct_index: 0,
+        },
+        error: null,
+      },
+      categories: { data: { id: CATEGORY_ID, game_id: GAME_ID }, error: null },
+      games: { data: { id: GAME_ID, night_id: NIGHT_ID }, error: null },
+      nights: { data: { id: NIGHT_ID, answer_engine: "legacy" }, error: null },
+      players: { data: { id: PLAYER_ID, removed_at: null }, error: null },
+      game_participations: { data: { id: "participation" }, error: null },
+    };
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      rpc: vi.fn(),
+      from: vi.fn((table: string) =>
+        table === "answers" ? { insert } : query(rows[table]!),
+      ),
+    });
+
+    const { scrambleFor } = await import("@/lib/game/scramble");
+    const { POST } = await import("@/app/api/answers/route");
+    const response = await POST(post({
+      questionId: QUESTION_ID,
+      slotChosen: 1,
+      scramble: scrambleFor(QUESTION_ID, PLAYER_ID),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "answer deadline passed" });
+    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
+      ms_to_lock: 25_000,
+      locked_at: "2026-07-19T01:00:25.000Z",
+    }));
   });
 
   it("rejects forbidden resilient identity and answer fields before mutation", async () => {

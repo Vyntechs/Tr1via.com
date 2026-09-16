@@ -42,7 +42,7 @@ export interface UseTimerOpts {
 export interface UseTimerResult {
   /** Seconds remaining, clamped [0, durationS]. Updates every 100ms. */
   secondsRemaining: number;
-  /** Convenience: floor() of secondsRemaining for the displayed integer. */
+  /** Displayed integer. Reaches 0 only when the answer window has expired. */
   displaySeconds: number;
   /** Convenience: secondsRemaining / durationS for arc rendering, [0..1]. */
   fraction: number;
@@ -115,7 +115,10 @@ export function useTimer(opts: UseTimerOpts): UseTimerResult {
 
   return {
     secondsRemaining: remaining,
-    displaySeconds: Math.floor(remaining),
+    // ceil keeps the visible countdown and the actual deadline on the same
+    // boundary: 1 remains visible through the final fractional second, and 0
+    // appears only once `hasExpired` becomes true.
+    displaySeconds: Math.ceil(remaining),
     fraction: duration === 0 ? 0 : remaining / duration,
     hasExpired: remaining <= 0,
   };

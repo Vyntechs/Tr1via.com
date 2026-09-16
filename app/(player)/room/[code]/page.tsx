@@ -606,6 +606,7 @@ function RoomStateMachine({
             categories={snapshot.categories}
             game={currentGame}
             themeKey={themeKey}
+            revealBroadcast={snapshot.lastBroadcast}
             standings={buildGame1Standings(scores, me.id)}
             totalPlayers={scores.length > 0 ? scores.length : snapshot.players.length}
             roomMagicEnabled={roomMagicEnabled}
@@ -959,7 +960,7 @@ function QuestionView({
     resolveCalled.current = false;
   }, [question.id]);
 
-  const { displaySeconds } = useTimer({
+  const { displaySeconds, hasExpired } = useTimer({
     revealedAtMs,
     serverNowMs,
     durationS: questionDurationFor(themeKey),
@@ -973,6 +974,7 @@ function QuestionView({
   const { submit, status: submitStatus, retry, confirmedAt } = useAnswerSubmit({
     questionId: question.id,
     scramble: Array.from(scramble),
+    accepting: !hasExpired,
   });
 
   // Propagate server confirmation so the parent immediately refreshes the
@@ -988,11 +990,12 @@ function QuestionView({
 
   const handleTap = useCallback(
     (slot: PlayerQuestionSlot) => {
+      if (hasExpired) return;
       // The tap is submission intent only. PlayerLocked and scoring wait for
       // the signed snapshot to return the canonical answer row.
       submit(slot);
     },
-    [submit],
+    [hasExpired, submit],
   );
 
   const questionNumber = computeQuestionNumber(question, categories);
@@ -1008,9 +1011,9 @@ function QuestionView({
         prompt={question.prompt}
         imageUrl={question.image_url}
         onTap={handleTap}
-        disabled={submitStatus === "pending" || submitStatus === "sent"}
+        disabled={hasExpired || submitStatus === "pending" || submitStatus === "sent"}
       />
-      {submitStatus === "failed" && (
+      {submitStatus === "failed" && !hasExpired && (
         <button
           type="button"
           onClick={retry}
@@ -1053,6 +1056,7 @@ function LockedView({
   categories,
   game,
   themeKey,
+  revealBroadcast,
   standings,
   totalPlayers,
   roomMagicEnabled,
@@ -1066,6 +1070,7 @@ function LockedView({
   categories: CategoryRow[];
   game: GameRow;
   themeKey?: ThemeKey;
+  revealBroadcast: ReturnType<typeof useRoom>["lastBroadcast"];
   standings?: { top: StandingRow[]; you: StandingRow | null };
   /** Players who can answer this question — denominator for the live bar. */
   totalPlayers: number;
@@ -1096,6 +1101,10 @@ function LockedView({
   // phone sits on "Waiting for the room to lock in…" indefinitely. The
   // resolve route is idempotent — first call wins, the rest no-op.
   const revealedAtMs = question.played_at ? new Date(question.played_at).getTime() : null;
+  const serverNowMs =
+    revealBroadcast?.event === "reveal" && revealBroadcast.questionId === question.id
+      ? new Date(revealBroadcast.serverNow).getTime()
+      : null;
   const resolveCalled = useRef(false);
   const handleZero = useCallback(() => {
     if (resolveCalled.current) return;
@@ -1112,6 +1121,7 @@ function LockedView({
   }, [question.id]);
   const { displaySeconds } = useTimer({
     revealedAtMs,
+    serverNowMs,
     durationS: questionDurationFor(themeKey),
     onZero: handleZero,
   });
