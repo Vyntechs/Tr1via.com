@@ -31,6 +31,7 @@ import { badRequest, noContent, forbidden, unauthorized, serverError, notFound, 
 import { getDeviceId } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { scrambleFor } from "@/lib/game/scramble";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { broadcastAppliedLiveRoomEvent } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
@@ -303,6 +304,12 @@ export async function POST(req: NextRequest) {
   if (questionError) return serverError();
   if (!q) return notFound("question not found");
   if (!q.played_at) return conflict("question is not live");
+  if (
+    receivedAt.getTime() >=
+    new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000
+  ) {
+    return badRequest("answer deadline passed");
+  }
   if (
     q.finished_at &&
     receivedAt.getTime() >= new Date(q.finished_at).getTime()

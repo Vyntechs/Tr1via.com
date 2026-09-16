@@ -208,16 +208,9 @@ describe("POST /api/answers", () => {
     expect(broadcastMock.broadcastAppliedLiveRoomEvent).not.toHaveBeenCalled();
   });
 
-  it("returns a terminal rejection when the final save reaches the 25-second boundary", async () => {
+  it("rejects the exact 25-second boundary before any save", async () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-07-19T01:00:25.000Z");
-    const insert = vi.fn(async () => ({
-      data: null,
-      error: {
-        code: "TR025",
-        message: "legacy_answer_deadline_passed",
-      },
-    }));
     const rows: Record<string, DbResult> = {
       questions: {
         data: {
@@ -229,17 +222,11 @@ describe("POST /api/answers", () => {
         },
         error: null,
       },
-      categories: { data: { id: CATEGORY_ID, game_id: GAME_ID }, error: null },
-      games: { data: { id: GAME_ID, night_id: NIGHT_ID }, error: null },
-      nights: { data: { id: NIGHT_ID, answer_engine: "legacy" }, error: null },
-      players: { data: { id: PLAYER_ID, removed_at: null }, error: null },
-      game_participations: { data: { id: "participation" }, error: null },
     };
+    const from = vi.fn((table: string) => query(rows[table]!));
     adminMock.getSupabaseAdmin.mockReturnValue({
       rpc: vi.fn(),
-      from: vi.fn((table: string) =>
-        table === "answers" ? { insert } : query(rows[table]!),
-      ),
+      from,
     });
 
     const { scrambleFor } = await import("@/lib/game/scramble");
@@ -252,10 +239,8 @@ describe("POST /api/answers", () => {
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: "answer deadline passed" });
-    expect(insert).toHaveBeenCalledWith(expect.objectContaining({
-      ms_to_lock: 25_000,
-      locked_at: "2026-07-19T01:00:25.000Z",
-    }));
+    expect(from).toHaveBeenCalledTimes(1);
+    expect(from).toHaveBeenCalledWith("questions");
   });
 
   it("rejects forbidden resilient identity and answer fields before mutation", async () => {
