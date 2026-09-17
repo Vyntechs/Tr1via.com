@@ -67,6 +67,7 @@ import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { useSurfaceObservation } from "@/lib/hooks/useGameDelivery";
+import { clientEvidenceHeaders } from "@/lib/observability/release";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { rankScores } from "@/lib/game/rankScores";
@@ -950,6 +951,7 @@ function QuestionView({
     void fetch(`/api/questions/${question.id}/resolve`, {
       method: "POST",
       credentials: "same-origin",
+      headers: clientEvidenceHeaders("player"),
     })
       .catch((e) => console.warn("resolve failed", e))
       .finally(() => onResolveSettled());
@@ -1112,6 +1114,7 @@ function LockedView({
     void fetch(`/api/questions/${question.id}/resolve`, {
       method: "POST",
       credentials: "same-origin",
+      headers: clientEvidenceHeaders("player"),
     })
       .catch((e) => console.warn("resolve failed (locked)", e))
       .finally(() => onResolveSettled());

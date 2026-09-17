@@ -22,7 +22,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRoom, type BroadcastTag } from "@/lib/hooks/useRoom";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { hostRecoverySeed } from "@/lib/room/hostRecoverySeed";
@@ -53,6 +53,11 @@ import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoRevea
 import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
 import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
+import { useSurfaceEvidence, type SurfaceEvidenceFrame } from "@/lib/hooks/useSurfaceEvidence";
+import {
+  browserReleaseIdentity,
+  clientEvidenceHeaders,
+} from "@/lib/observability/release";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -130,6 +135,34 @@ function DesktopHostLiveConsoleClient({
   const [addingLatecomer, setAddingLatecomer] = useState(false);
   const [removingPlayerId, setRemovingPlayerId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [surfaceEvidenceFrame, setSurfaceEvidenceFrame] =
+    useState<SurfaceEvidenceFrame | null>(null);
+  const clientRelease = useMemo(() => {
+    const identity = browserReleaseIdentity();
+    return identity.deploymentId ?? identity.release ?? "unknown";
+  }, []);
+  const evidenceEndpoint = `/api/host/nights/${nightId}/surface-receipts`;
+  useSurfaceEvidence({
+    endpoint: evidenceEndpoint,
+    frame: surfaceEvidenceFrame,
+    clientRelease,
+  });
+  const handleSurfaceEvidenceFrame = useCallback(
+    (frame: SurfaceEvidenceFrame | null) => {
+      if (!frame) {
+        setSurfaceEvidenceFrame(null);
+        return;
+      }
+      setSurfaceEvidenceFrame((current) =>
+        current?.questionId === frame.questionId &&
+        current.frameKind === frame.frameKind &&
+        current.instanceKey === frame.instanceKey
+          ? current
+          : frame,
+      );
+    },
+    [],
+  );
   const activePlayerIdSignature = useMemo(
     () => [...room.players.map((p) => p.id)].sort().join(","),
     [room.players],
@@ -437,7 +470,10 @@ function DesktopHostLiveConsoleClient({
       }
       const res = await fetch(`/api/games/${currentGame.id}/reveal`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...clientEvidenceHeaders("host_laptop"),
+        },
         body: JSON.stringify({ questionId }),
       });
       if (!res.ok) {
@@ -490,7 +526,10 @@ function DesktopHostLiveConsoleClient({
     try {
       const res = await fetch(`/api/games/${currentGame.id}/end-early`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...clientEvidenceHeaders("host_laptop"),
+        },
         body: JSON.stringify({
           questionId: room.currentQuestion.id,
           ...(requireAllLocked ? { requireAllLocked: true } : {}),
@@ -680,6 +719,7 @@ function DesktopHostLiveConsoleClient({
         roomMagicEnabled={Boolean(room.night?.room_magic_enabled)}
         lastRoomMagicReaction={room.lastRoomMagicReaction}
         roomMagicReactions={room.roomMagicReactions ?? []}
+        onTVEvidenceFrame={handleSurfaceEvidenceFrame}
       />
       {adjusting && (
         <AdjustPointsModal

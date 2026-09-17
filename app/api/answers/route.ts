@@ -46,6 +46,15 @@ import {
   recordLiveAnswerHealth,
   type LiveAnswerResultCode,
 } from "@/lib/live-answer/telemetry";
+import {
+  recordLegacyAnswerRejection,
+  type AnswerRejectionReason,
+} from "@/lib/evidence/incidentEvidence";
+import { deadlineDeltaBucketFor, recordGameEvidence } from "@/lib/observability/gameEvidence";
+import {
+  recordReleaseMismatchBestEffort,
+  requestEvidenceContext,
+} from "@/lib/observability/requestEvidence";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
@@ -133,6 +142,8 @@ export async function POST(req: NextRequest) {
   // official receipt time used by the final database deadline check; parsing
   // and lookups must not move a timely answer past the line.
   const receivedAt = new Date();
+  const evidenceContext = requestEvidenceContext(req);
+  void recordReleaseMismatchBestEffort(evidenceContext);
   const deviceId = await getDeviceId();
   if (!deviceId) return unauthorized("no device session");
 
@@ -304,19 +315,6 @@ export async function POST(req: NextRequest) {
   if (questionError) return serverError();
   if (!q) return notFound("question not found");
   if (!q.played_at) return conflict("question is not live");
-  if (
-    receivedAt.getTime() >=
-    new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000
-  ) {
-    return badRequest("answer deadline passed");
-  }
-  if (
-    q.finished_at &&
-    receivedAt.getTime() >= new Date(q.finished_at).getTime()
-  ) {
-    return badRequest("question is closed");
-  }
-
   const { data: cat, error: categoryError } = await admin
     .from("categories")
     .select("id, game_id")
@@ -387,6 +385,59 @@ export async function POST(req: NextRequest) {
   // scramble[slot-1] is the canonical option index the phone showed in that
   // slot. Out-of-range is impossible because SubmitAnswerSchema clamps to 1..4.
   const chosenIndex = expected[parsed.data.slotChosen - 1] as 0 | 1 | 2 | 3;
+  const deadlineAtMs =
+    new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000;
+  const closed = Boolean(
+    q.finished_at &&
+      receivedAt.getTime() >= new Date(q.finished_at).getTime(),
+  );
+  const deadlinePassed = receivedAt.getTime() >= deadlineAtMs;
+  if (closed || deadlinePassed) {
+    let reason: AnswerRejectionReason = closed
+      ? "question_closed"
+      : "deadline_passed";
+    if (!closed) {
+      const { data: existingAnswer } = await admin
+        .from("answers")
+        .select("id")
+        .eq("question_id", parsed.data.questionId)
+        .eq("player_id", player.id)
+        .maybeSingle();
+      if (existingAnswer) reason = "late_retry_after_accept";
+    }
+    await Promise.all([
+      recordLegacyAnswerRejection({
+        questionId: parsed.data.questionId,
+        playerId: player.id,
+        actionId: parsed.data.actionId,
+        selectedIndex: chosenIndex,
+        receivedAt,
+        reason,
+        traceId: evidenceContext.traceId,
+        releaseId:
+          evidenceContext.client.deploymentId ??
+          evidenceContext.client.release ??
+          undefined,
+      }),
+      recordGameEvidence({
+        event: "game_answer_result",
+        engine: "legacy",
+        surface: evidenceContext.surface ?? "player",
+        nightId,
+        gameId,
+        questionId: parsed.data.questionId,
+        outcome: closed ? "question_closed" : "deadline_passed",
+        ...(deadlinePassed
+          ? {
+              deadlineDeltaBucket: deadlineDeltaBucketFor(
+                receivedAt.getTime() - deadlineAtMs,
+              ),
+            }
+          : {}),
+      }),
+    ]);
+    return badRequest(closed ? "question is closed" : "answer deadline passed");
+  }
   const msToLock = Math.max(
     0,
     receivedAt.getTime() - new Date(q.played_at).getTime(),
@@ -403,15 +454,56 @@ export async function POST(req: NextRequest) {
       locked_at: receivedAt.toISOString(),
     });
   if (error) {
-    if (error.code === "TR025") return badRequest("answer deadline passed");
-    if (error.code === "TRCL0") return badRequest("question is closed");
+    if (error.code === "TR025" || error.code === "TRCL0") {
+      const outcome = error.code === "TR025" ? "deadline_passed" : "question_closed";
+      await recordGameEvidence({
+        event: "game_answer_result",
+        engine: "legacy",
+        surface: evidenceContext.surface ?? "player",
+        nightId,
+        gameId,
+        questionId: parsed.data.questionId,
+        outcome,
+        ...(outcome === "deadline_passed"
+          ? {
+              deadlineDeltaBucket: deadlineDeltaBucketFor(
+                receivedAt.getTime() - deadlineAtMs,
+              ),
+            }
+          : {}),
+      });
+      return badRequest(
+        error.code === "TR025" ? "answer deadline passed" : "question is closed",
+      );
+    }
     if (error.code === "TRNL0") return badRequest("question is not live");
     // 23505 = duplicate (player already answered this question). The
     // rules say one answer per (player, question); surface as 409 so
     // the UI can show "you already answered" rather than spinning.
-    if (error.code === "23505") return conflict("already answered");
+    if (error.code === "23505") {
+      await recordGameEvidence({
+        event: "game_answer_result",
+        engine: "legacy",
+        surface: evidenceContext.surface ?? "player",
+        nightId,
+        gameId,
+        questionId: parsed.data.questionId,
+        outcome: "duplicate",
+      });
+      return conflict("already answered");
+    }
     return serverError();
   }
+
+  await recordGameEvidence({
+    event: "game_answer_result",
+    engine: "legacy",
+    surface: evidenceContext.surface ?? "player",
+    nightId,
+    gameId,
+    questionId: parsed.data.questionId,
+    outcome: "accepted",
+  });
 
   return noContent();
 }

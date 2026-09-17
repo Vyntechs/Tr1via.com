@@ -23,6 +23,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { clientEvidenceHeaders } from "@/lib/observability/release";
 
 export type AnswerSubmitStatus = "idle" | "pending" | "sent" | "failed";
 
@@ -52,12 +53,15 @@ export interface UseAnswerSubmitResult {
 }
 
 const DEFAULT_BACKOFF = [500, 1000, 2000];
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export const PENDING_ANSWER_KEY = "tr1via:pending-answer";
 
 export interface PendingAnswer {
   questionId: string;
   slotChosen: 1 | 2 | 3 | 4;
+  actionId?: string;
 }
 
 export function loadPendingAnswer(): PendingAnswer | null {
@@ -74,8 +78,14 @@ export function loadPendingAnswer(): PendingAnswer | null {
     ) {
       return null;
     }
-    const obj = p as { questionId: string; slotChosen: number };
-    return { questionId: obj.questionId, slotChosen: obj.slotChosen as 1 | 2 | 3 | 4 };
+    const obj = p as { questionId: string; slotChosen: number; actionId?: unknown };
+    return {
+      questionId: obj.questionId,
+      slotChosen: obj.slotChosen as 1 | 2 | 3 | 4,
+      ...(typeof obj.actionId === "string" && UUID_PATTERN.test(obj.actionId)
+        ? { actionId: obj.actionId }
+        : {}),
+    };
   } catch {
     return null;
   }
@@ -123,7 +133,7 @@ export function useAnswerSubmit({
   acceptingRef.current = accepting;
 
   const runAttempt = useCallback(
-    async (slot: 1 | 2 | 3 | 4, attempt: number) => {
+    async (slot: 1 | 2 | 3 | 4, actionId: string, attempt: number) => {
       if (!acceptingRef.current) {
         clearPendingAnswer();
         setStatus("failed");
@@ -133,8 +143,11 @@ export function useAnswerSubmit({
         const res = await fetch("/api/answers", {
           method: "POST",
           credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ questionId, slotChosen: slot, scramble }),
+          headers: {
+            "Content-Type": "application/json",
+            ...clientEvidenceHeaders("player"),
+          },
+          body: JSON.stringify({ questionId, actionId, slotChosen: slot, scramble }),
         });
         if (cancelledRef.current) return;
         if (shouldTreatAsSent(res.status)) {
@@ -169,7 +182,7 @@ export function useAnswerSubmit({
       }
       const delay = backoffMs[Math.min(attempt, backoffMs.length - 1)] ?? backoffMs[backoffMs.length - 1] ?? 1000;
       setTimeout(() => {
-        if (!cancelledRef.current) runAttempt(slot, attempt + 1);
+        if (!cancelledRef.current) runAttempt(slot, actionId, attempt + 1);
       }, delay);
     },
     [questionId, scramble, maxAttempts, backoffMs],
@@ -192,7 +205,9 @@ export function useAnswerSubmit({
         if (acceptingRef.current) {
           lastSlotRef.current = pending.slotChosen;
           setStatus("pending");
-          void runAttempt(pending.slotChosen, 0);
+          const actionId = pending.actionId ?? crypto.randomUUID();
+          savePendingAnswer({ ...pending, actionId });
+          void runAttempt(pending.slotChosen, actionId, 0);
         } else {
           clearPendingAnswer();
         }
@@ -220,10 +235,11 @@ export function useAnswerSubmit({
     (slot: 1 | 2 | 3 | 4) => {
       if (!acceptingRef.current) return;
       if (status === "pending" || status === "sent") return;
+      const actionId = crypto.randomUUID();
       lastSlotRef.current = slot;
-      savePendingAnswer({ questionId, slotChosen: slot });
+      savePendingAnswer({ questionId, slotChosen: slot, actionId });
       setStatus("pending");
-      runAttempt(slot, 0);
+      runAttempt(slot, actionId, 0);
     },
     [status, runAttempt, questionId],
   );
@@ -233,9 +249,14 @@ export function useAnswerSubmit({
     if (status !== "failed") return;
     const slot = lastSlotRef.current;
     if (!slot) return;
-    savePendingAnswer({ questionId, slotChosen: slot });
+    const pending = loadPendingAnswer();
+    const actionId =
+      pending?.questionId === questionId && pending.actionId
+        ? pending.actionId
+        : crypto.randomUUID();
+    savePendingAnswer({ questionId, slotChosen: slot, actionId });
     setStatus("pending");
-    runAttempt(slot, 0);
+    runAttempt(slot, actionId, 0);
   }, [status, runAttempt, questionId]);
 
   return { status, submit, retry, confirmedAt };

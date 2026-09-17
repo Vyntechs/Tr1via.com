@@ -8,7 +8,7 @@
 # Privacy Policy
 
 TR1VIA · operated by Vyntechs · 1712 Raylene Dr, Cleburne, TX 76033 · support@vyntechs.com
-Effective June 1, 2026 · Last updated June 1, 2026
+Effective June 1, 2026 · Last updated September 17, 2026
 
 This policy explains what information TR1VIA collects when you play or host live trivia at tr1via.com, why we collect it, who we share it with, how long we keep it, and what choices you have. It is written to be read, not to hide anything.
 
@@ -29,11 +29,15 @@ If you are a parent or guardian and believe a child under 13 has played and you 
 
 ## What we collect automatically — from everyone
 
-**Server logs.** Vercel, our hosting provider, receives and logs ordinary web-request data for every visit: your IP address (used to route the request and derive approximate city/region location), your browser and operating system (User-Agent), the page you came from (referrer), the pages you request, and timestamps. Vercel keeps these access logs for up to 30 days. We do not separately store them.
+**Server logs.** Vercel, our hosting provider, receives and logs ordinary web-request data for every visit: your IP address (used to route the request and derive approximate city/region location), your browser and operating system (User-Agent), the page you came from (referrer), the pages you request, and timestamps. Vercel keeps these access logs for up to 30 days. For live-game troubleshooting, our server also writes limited operational entries to Vercel logs, such as a game or question ID, a broad timing range, the type of game action, whether it worked, and the software release involved. Those entries do not include player names, answer choices, room codes, device IDs, cookies, IP addresses, or browser details.
 
 **The live game connection.** Live games use a continuous connection provided by Supabase Realtime, a US-based service we use (see "Who we share data with"). Through that connection Supabase receives your IP address and connection timing. Some connection-liveness information — for example, when you were last seen and how long the game tab was in the background — is written to your player record and is kept along with that record after the game ends.
 
 **Answers, timing, and scores.** To score fairly, TR1VIA records which answer you chose and how quickly you locked it in. This information is stored in our database and is kept after the game ends — it powers the end-of-game recap, the leaderboard, and the host's ability to review past nights. It is linked to the device identifier described below.
+
+If an answer arrives after the deadline or after a question closes, we keep a private troubleshooting record for up to 30 days. It can include the answer choice, when it first and last reached our server, how late it was, and how many times the same action was retried. This helps us investigate scoring disputes; it does not change the score.
+
+**Host display reliability.** During a live game, the signed-in host's venue display can send a private receipt after a question, timer zero, or answer reveal has actually been drawn by the browser. We keep the question ID, frame type, time, software release, and a protected per-tab identifier for up to 30 days. The receipt does not contain the question text, answer text, player names, or host email, and it cannot control the game.
 
 **Display names.** If you enter a display name to join, it is shown to other players and to the host during the game, and it is stored with your game data and the device identifier and kept after the game ends. Please pick a nickname rather than your full real name.
 
@@ -65,7 +69,7 @@ We do not sell your personal information, and we do not use it for advertising o
 | Provider | Role | What it receives | Policy |
 | --- | --- | --- | --- |
 | Vercel (US) | Hosting & server logs | IP address, User-Agent, page requests, timestamps. | vercel.com/legal/privacy-policy |
-| Supabase (US) | Database, authentication & live connection | Host email; player display names; the device identifier; answers, timing, and scores; and player IP / connection timing through the live game connection. | supabase.com/privacy |
+| Supabase (US) | Database, authentication & live connection | Host email; player display names; the device identifier; answers, timing, scores, short-lived late-answer evidence and host-display receipts; and player IP / connection timing through the live game connection. | supabase.com/privacy |
 | Pexels (US) | Question images | Image-search text from our server, and — because question images load directly from Pexels in your browser — your IP address and browser type when an image is shown. | pexels.com/privacy-policy |
 | Anthropic (US) | AI question generation | The trivia topic and instructions a host types, used to generate questions. No player or host personal information is sent. | anthropic.com/legal/privacy |
 
@@ -76,6 +80,7 @@ We may also disclose information if required by law or valid legal process, or t
 | Data | How long we keep it |
 | --- | --- |
 | Server access logs (Vercel) | Up to 30 days |
+| Late-answer evidence and host-display receipts | Up to 30 days |
 | Player display names, answers, timing, and scores | Stored in our database and kept after the game ends, so hosts can show recaps and leaderboards and review past nights. We keep this until you ask us to delete it, or until we no longer need it to run the service. |
 | Device identifier (tr1via_device) | Up to 1 year in the cookie; stored with your player record until that record is deleted |
 | Host email address | While the account is active; deleted within 30 days of a deletion request |

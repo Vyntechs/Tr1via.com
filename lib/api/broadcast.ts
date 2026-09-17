@@ -32,6 +32,7 @@ import type {
   RoomMagicReactionEvent,
   RoomMagicReactionKind,
 } from "@/lib/room-magic/reactions";
+import { recordGameEvidence, timingBucketFor } from "@/lib/observability/gameEvidence";
 
 export type RoomEventName =
   | "reveal"
@@ -118,12 +119,15 @@ const LIVE_BROADCAST_TIMEOUT_MS = 750;
  * Changes) or rethrow.
  */
 async function postBroadcasts(messages: BroadcastMessage[]): Promise<void> {
+  const startedAt = performance.now();
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) {
+    await recordBroadcastEvidence(messages, "configuration_error", 0);
     throw new Error("broadcastToRoom: missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
   }
   const controller = new AbortController();
+  let failureRecorded = false;
   const timeout = setTimeout(
     () => controller.abort(),
     LIVE_BROADCAST_TIMEOUT_MS,
@@ -141,11 +145,84 @@ async function postBroadcasts(messages: BroadcastMessage[]): Promise<void> {
     });
     if (!res.ok) {
       const body = await res.text().catch(() => "");
+      await recordBroadcastEvidence(
+        messages,
+        "http_error",
+        performance.now() - startedAt,
+      );
+      failureRecorded = true;
       throw new Error(`broadcast HTTP ${res.status}: ${body}`);
     }
+    await recordBroadcastEvidence(
+      messages,
+      "supabase_accepted",
+      performance.now() - startedAt,
+    );
+  } catch (error) {
+    if (controller.signal.aborted) {
+      await recordBroadcastEvidence(
+        messages,
+        "timeout",
+        performance.now() - startedAt,
+      );
+    } else if (!failureRecorded) {
+      await recordBroadcastEvidence(
+        messages,
+        "failed",
+        performance.now() - startedAt,
+      );
+    }
+    throw error;
   } finally {
     clearTimeout(timeout);
   }
+}
+
+const BROADCAST_EVIDENCE_ACTIONS: Partial<Record<RoomEventName, string>> = {
+  reveal: "question_opened",
+  resolve: "question_resolved",
+  "end-early": "question_ended_early",
+  "game-started": "game_started",
+  "game-ended": "game_ended",
+  undo: "play_undone",
+};
+
+function broadcastEvidenceAction(message: BroadcastMessage): string | undefined {
+  if (message.event !== "live-room-event") {
+    return BROADCAST_EVIDENCE_ACTIONS[message.event as RoomEventName];
+  }
+  if (message.payload.kind === "play_opened") return "question_opened";
+  if (message.payload.kind === "answer_progress") return "answer_progress";
+  if (message.payload.kind === "play_resolved") return "question_resolved";
+  return "recovery_wakeup";
+}
+
+async function recordBroadcastEvidence(
+  messages: BroadcastMessage[],
+  outcome:
+    | "supabase_accepted"
+    | "timeout"
+    | "http_error"
+    | "configuration_error"
+    | "failed",
+  latencyMs: number,
+): Promise<void> {
+  const latencyBucket = timingBucketFor(latencyMs);
+  if (!latencyBucket) return;
+  await Promise.all(
+    messages.map(async (message) => {
+      const action = broadcastEvidenceAction(message);
+      if (!action) return;
+      const questionId = message.payload.questionId;
+      await recordGameEvidence({
+        event: "game_broadcast_result",
+        action,
+        outcome,
+        latencyBucket,
+        ...(typeof questionId === "string" ? { questionId } : {}),
+      });
+    }),
+  );
 }
 
 /**
