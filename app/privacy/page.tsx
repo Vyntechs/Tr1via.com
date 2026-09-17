@@ -24,6 +24,7 @@ export const metadata: Metadata = {
 };
 
 const EFFECTIVE = "June 1, 2026";
+const LAST_UPDATED = "September 17, 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -39,7 +40,7 @@ export default function PrivacyPolicyPage() {
           Privacy Policy
         </h1>
         <p className="mt-3 text-sm text-ink/60">
-          Effective {EFFECTIVE} · Last updated {EFFECTIVE}
+          Effective {EFFECTIVE} · Last updated {LAST_UPDATED}
         </p>
         <p className="mt-6 text-[15px] leading-relaxed text-ink/80">
           This policy explains what information TR1VIA collects when you play or
@@ -112,7 +113,12 @@ export default function PrivacyPolicyPage() {
           derive approximate city/region location), your browser and operating
           system (User-Agent), the page you came from (referrer), the pages you
           request, and timestamps. Vercel keeps these access logs for up to 30
-          days. We do not separately store them.
+          days. For live-game troubleshooting, our server also writes limited
+          operational entries to Vercel logs, such as a game or question ID,
+          a broad timing range, the type of game action, whether it worked,
+          and the software release involved. Those entries do not include
+          player names, answer choices, room codes, device IDs, cookies, IP
+          addresses, or browser details.
         </P>
         <H3>The live game connection</H3>
         <P>
@@ -131,6 +137,22 @@ export default function PrivacyPolicyPage() {
           kept after the game ends</B> — it powers the end-of-game recap, the
           leaderboard, and the host’s ability to review past nights. It is
           linked to the device identifier described below.
+        </P>
+        <P>
+          If an answer arrives after the deadline or after a question closes,
+          we keep a private troubleshooting record for up to 30 days. It can
+          include the answer choice, when it first and last reached our server,
+          how late it was, and how many times the same action was retried. This
+          helps us investigate scoring disputes; it does not change the score.
+        </P>
+        <H3>Host display reliability</H3>
+        <P>
+          During a live game, the signed-in host’s venue display can send a
+          private receipt after a question, timer zero, or answer reveal has
+          actually been drawn by the browser. We keep the question ID, frame
+          type, time, software release, and a protected per-tab identifier for
+          up to 30 days. The receipt does not contain the question text, answer
+          text, player names, or host email, and it cannot control the game.
         </P>
         <H3>Display names</H3>
         <P>
@@ -221,7 +243,7 @@ export default function PrivacyPolicyPage() {
             [
               "Supabase (US)",
               "Database, authentication & live connection",
-              "Host email; player display names; the device identifier; answers, timing, and scores; and player IP / connection timing through the live game connection.",
+              "Host email; player display names; the device identifier; answers, timing, scores, short-lived late-answer evidence and host-display receipts; and player IP / connection timing through the live game connection.",
               "supabase.com/privacy",
             ],
             [
@@ -250,6 +272,10 @@ export default function PrivacyPolicyPage() {
           head={["Data", "How long we keep it"]}
           rows={[
             ["Server access logs (Vercel)", "Up to 30 days"],
+            [
+              "Late-answer evidence and host-display receipts",
+              "Up to 30 days",
+            ],
             [
               "Player display names, answers, timing, and scores",
               "Stored in our database and kept after the game ends, so hosts can show recaps and leaderboards and review past nights. We keep this until you ask us to delete it, or until we no longer need it to run the service.",

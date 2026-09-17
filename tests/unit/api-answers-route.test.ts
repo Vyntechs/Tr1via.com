@@ -208,7 +208,7 @@ describe("POST /api/answers", () => {
     expect(broadcastMock.broadcastAppliedLiveRoomEvent).not.toHaveBeenCalled();
   });
 
-  it("rejects the exact 25-second boundary before any save", async () => {
+  it("rejects the exact 25-second boundary and stores only private evidence", async () => {
     vi.useFakeTimers();
     vi.setSystemTime("2026-07-19T01:00:25.000Z");
     const rows: Record<string, DbResult> = {
@@ -222,10 +222,17 @@ describe("POST /api/answers", () => {
         },
         error: null,
       },
+      categories: { data: { id: CATEGORY_ID, game_id: GAME_ID }, error: null },
+      games: { data: { id: GAME_ID, night_id: NIGHT_ID }, error: null },
+      nights: { data: { id: NIGHT_ID, answer_engine: "legacy" }, error: null },
+      players: { data: { id: PLAYER_ID, removed_at: null }, error: null },
+      game_participations: { data: { id: "participation" }, error: null },
+      answers: { data: null, error: null },
     };
     const from = vi.fn((table: string) => query(rows[table]!));
+    const rpc = vi.fn(async () => ({ data: "evidence-id", error: null }));
     adminMock.getSupabaseAdmin.mockReturnValue({
-      rpc: vi.fn(),
+      rpc,
       from,
     });
 
@@ -233,14 +240,24 @@ describe("POST /api/answers", () => {
     const { POST } = await import("@/app/api/answers/route");
     const response = await POST(post({
       questionId: QUESTION_ID,
+      actionId: SUBMISSION_ID,
       slotChosen: 1,
       scramble: scrambleFor(QUESTION_ID, PLAYER_ID),
     }));
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: "answer deadline passed" });
-    expect(from).toHaveBeenCalledTimes(1);
-    expect(from).toHaveBeenCalledWith("questions");
+    expect(from).toHaveBeenCalledWith("answers");
+    expect(rpc).toHaveBeenCalledWith(
+      "record_legacy_answer_rejection",
+      expect.objectContaining({
+        p_question_id: QUESTION_ID,
+        p_player_id: PLAYER_ID,
+        p_client_action_id: SUBMISSION_ID,
+        p_received_at: "2026-07-19T01:00:25.000Z",
+        p_reason: "deadline_passed",
+      }),
+    );
   });
 
   it("rejects forbidden resilient identity and answer fields before mutation", async () => {

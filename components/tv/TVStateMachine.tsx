@@ -60,6 +60,7 @@ import { shouldHoldReveal } from "@/lib/tv/revealPause";
 import { selectLobbyTopics } from "@/lib/tv/lobbyTopics";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { fireJuneBeat } from "@/components/system";
+import { clientEvidenceHeaders, type ClientSurface } from "@/lib/observability/release";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
 
@@ -91,6 +92,14 @@ export interface TVStateMachineProps {
    *  (25s for every theme). When omitted, useTimer falls back to the
    *  registry default (25s). */
   themeKey?: ThemeKey;
+  /** Host-laptop only: reports meaningful frames after React commits them. */
+  onEvidenceFrame?: (frame: TVSurfaceEvidenceFrame | null) => void;
+}
+
+export interface TVSurfaceEvidenceFrame {
+  questionId: string;
+  frameKind: "question_open" | "timer_zero" | "answer_reveal";
+  instanceKey?: string;
 }
 
 export function TVStateMachine({
@@ -101,6 +110,7 @@ export function TVStateMachine({
   hostAdvanced = false,
   welcomeEvent = null,
   themeKey,
+  onEvidenceFrame,
 }: TVStateMachineProps) {
   const games = snapshot.games;
   const game1 = games.find((g) => g.gameNo === 1) ?? null;
@@ -257,6 +267,8 @@ export function TVStateMachine({
           serverNow={lastBroadcastServerNow}
           themeKey={themeKey}
           onPendingCountChange={onPendingCountChange}
+          onEvidenceFrame={onEvidenceFrame}
+          resolveSurface={onGridCellClick ? "host_laptop" : "tv"}
         />
       );
     }
@@ -293,6 +305,8 @@ export function TVStateMachine({
             serverNow={lastBroadcastServerNow}
             themeKey={themeKey}
             onPendingCountChange={onPendingCountChange}
+            onEvidenceFrame={onEvidenceFrame}
+            resolveSurface={onGridCellClick ? "host_laptop" : "tv"}
           />
         );
       }
@@ -305,6 +319,7 @@ export function TVStateMachine({
           snapshot={snapshot}
           question={revealQuestion}
           themeKey={themeKey}
+          onEvidenceFrame={onEvidenceFrame}
         />
       );
     }
@@ -490,6 +505,8 @@ function TVQuestionView({
   serverNow,
   themeKey,
   onPendingCountChange,
+  onEvidenceFrame,
+  resolveSurface,
 }: {
   snapshot: TVSnapshot;
   question: TVSnapshot["questions"][number];
@@ -499,6 +516,8 @@ function TVQuestionView({
   /** Fires whenever the ceremony queue length changes — lets the parent
    *  state machine gate the reveal transition during the drain window. */
   onPendingCountChange?: (count: number) => void;
+  onEvidenceFrame?: (frame: TVSurfaceEvidenceFrame | null) => void;
+  resolveSurface: ClientSurface;
 }) {
   const cat = snapshot.categories.find((c) => c.id === question.categoryId);
   const category = cat?.name ?? "Trivia";
@@ -524,13 +543,35 @@ function TVQuestionView({
     onZero: () => {
       void fetch(`/api/questions/${question.id}/resolve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...clientEvidenceHeaders(resolveSurface),
+        },
       }).catch(() => {
         // Network/transient failure: phones or host's manual End-early
         // button remain as fallbacks. Logging would be noise.
       });
     },
   });
+
+  useEffect(() => {
+    onEvidenceFrame?.({
+      questionId: question.id,
+      frameKind: "question_open",
+      instanceKey: question.playedAt ?? undefined,
+    });
+    return () => onEvidenceFrame?.(null);
+  }, [onEvidenceFrame, question.id, question.playedAt]);
+
+  useEffect(() => {
+    if (displaySeconds !== 0) return;
+    onEvidenceFrame?.({
+      questionId: question.id,
+      frameKind: "timer_zero",
+      instanceKey: question.playedAt ?? undefined,
+    });
+    return () => onEvidenceFrame?.(null);
+  }, [displaySeconds, onEvidenceFrame, question.id, question.playedAt]);
 
   const tiles: TVQuestionTile[] = useMemo(() => {
     // The TV shows tiles in the order they arrive — newest at the end so
@@ -698,11 +739,22 @@ function TVRevealView({
   snapshot,
   question,
   themeKey,
+  onEvidenceFrame,
 }: {
   snapshot: TVSnapshot;
   question: TVSnapshot["questions"][number];
   themeKey?: ThemeKey;
+  onEvidenceFrame?: (frame: TVSurfaceEvidenceFrame | null) => void;
 }) {
+  useEffect(() => {
+    onEvidenceFrame?.({
+      questionId: question.id,
+      frameKind: "answer_reveal",
+      instanceKey: question.finishedAt ?? undefined,
+    });
+    return () => onEvidenceFrame?.(null);
+  }, [onEvidenceFrame, question.finishedAt, question.id]);
+
   useEffect(() => {
     if (themeKey === "june") fireJuneBeat("reveal");
   }, [themeKey]);

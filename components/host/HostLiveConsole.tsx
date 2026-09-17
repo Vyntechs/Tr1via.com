@@ -22,6 +22,7 @@ import {
   useTheme,
 } from "@/components/system";
 import { TVRoomMagicOverlay, TVSectionComplete, TVStateMachine } from "@/components/tv";
+import type { TVSurfaceEvidenceFrame } from "@/components/tv/TVStateMachine";
 import { fireLightningBeat } from "@/components/system/Lightning";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
@@ -120,6 +121,8 @@ export interface HostLiveConsoleProps {
   roomMagicReactions?: RoomMagicReactionEvent[];
   /** Per-night Room Magic toggle. Default false preserves Heather's Classic. */
   roomMagicEnabled?: boolean;
+  /** Private reliability receipt for the HDMI-mirrored host display. */
+  onTVEvidenceFrame?: (frame: TVSurfaceEvidenceFrame | null) => void;
 }
 
 export function HostLiveConsole(props: HostLiveConsoleProps) {
@@ -171,6 +174,7 @@ function HostLiveConsoleInner({
   lastRoomMagicReaction = null,
   roomMagicReactions = [],
   roomMagicEnabled = false,
+  onTVEvidenceFrame,
   themeKey,
 }: HostLiveConsoleProps) {
   const { t } = useTheme();
@@ -260,6 +264,7 @@ function HostLiveConsoleInner({
               hostAdvanced={hostAdvanced}
               welcomeEvent={welcomeEvent}
               themeKey={themeKey}
+              onEvidenceFrame={onTVEvidenceFrame}
             />
           ) : (
             <NoSnapshotPanel />

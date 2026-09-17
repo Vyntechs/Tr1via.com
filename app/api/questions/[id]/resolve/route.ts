@@ -37,6 +37,11 @@ import {
   liveAnswerServerLogSink,
   recordLiveAnswerHealth,
 } from "@/lib/live-answer/telemetry";
+import { deadlineDeltaBucketFor, recordGameEvidence } from "@/lib/observability/gameEvidence";
+import {
+  recordReleaseMismatchBestEffort,
+  requestEvidenceContext,
+} from "@/lib/observability/requestEvidence";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
@@ -144,6 +149,8 @@ export async function POST(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: questionId } = await ctx.params;
+  const evidenceContext = requestEvidenceContext(req);
+  void recordReleaseMismatchBestEffort(evidenceContext);
   const admin = getSupabaseAdmin();
 
   // Look up question → category → game → night.room_code through three
@@ -304,11 +311,15 @@ export async function POST(
     return ok({ alreadyResolved: true });
   }
 
+  // Fan out immediately after the transaction. Evidence reads happen only
+  // after phones and the TV have been woken, so proof collection cannot add
+  // to the timer-zero → answer-reveal delay we are measuring.
+  const broadcastAt = new Date().toISOString();
   const payload = {
     questionId,
     correctIndex: q.correct_index,
     refetch: true as const,
-    serverNow: new Date().toISOString(),
+    serverNow: broadcastAt,
   };
 
   await broadcastLegacyResolveBestEffort(roomCode, payload);
@@ -322,6 +333,33 @@ export async function POST(
     console.warn("broadcast fireworks(salvo) failed");
   }
 
+  const { data: resolvedQuestion } = await admin
+    .from("questions")
+    .select("finished_at")
+    .eq("id", questionId)
+    .maybeSingle();
+  const resolvedAt = resolvedQuestion?.finished_at ?? broadcastAt;
+  const deadlineAtMs = q.played_at
+    ? Date.parse(q.played_at) + questionDurationFor(undefined) * 1_000
+    : Number.NaN;
+  if (Number.isFinite(deadlineAtMs)) {
+    await recordGameEvidence({
+      event: "game_question_finalize",
+      engine: "legacy",
+      surface: evidenceContext.surface ?? "server",
+      nightId: night.id,
+      gameId: cat.game_id,
+      questionId,
+      outcome: "resolved",
+      trigger: "timer",
+      deadlineAt: new Date(deadlineAtMs).toISOString(),
+      resolvedAt,
+      deadlineDeltaBucket: deadlineDeltaBucketFor(
+        Date.parse(resolvedAt) - deadlineAtMs,
+      ),
+    });
+  }
+
   // Resolution is already committed and fanned out. Keep this aggregate
   // response metadata best-effort so an unrelated read failure cannot strand
   // every surface on stale state.
@@ -332,7 +370,7 @@ export async function POST(
   if (answersError) console.warn("answer count unavailable after resolve");
 
   return ok({
-    resolvedAt: new Date().toISOString(),
+    resolvedAt,
     awardCount: answerRows?.length ?? 0,
   });
 }

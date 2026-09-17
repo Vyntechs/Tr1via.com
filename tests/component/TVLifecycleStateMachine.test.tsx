@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TVStateMachine } from "@/components/tv/TVStateMachine";
 import { ThemeProvider } from "@/components/system";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
@@ -66,6 +66,70 @@ function lifecycleSnapshot(overrides: Partial<TVSnapshot> = {}): TVSnapshot {
 }
 
 describe("TVStateMachine lifecycle boundaries", () => {
+  it("reports committed question and reveal frames, then clears the stale frame", () => {
+    const onEvidenceFrame = vi.fn();
+    const base = lifecycleSnapshot();
+    const openQuestion = {
+      ...base.questions[0]!,
+      correctIndex: null,
+      finishedAt: null,
+      playedAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const open = lifecycleSnapshot({
+      games: [{ ...base.games[0]!, state: "live", endedAt: null }],
+      currentGameId: "g1",
+      categories: [base.categories[0]!],
+      questions: [openQuestion],
+      liveQuestionId: "q1",
+      targetQuestionId: "q1",
+      reveals: [],
+    });
+    const view = render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine
+          snapshot={open}
+          themeKey="april"
+          onEvidenceFrame={onEvidenceFrame}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(onEvidenceFrame).toHaveBeenCalledWith(expect.objectContaining({
+      questionId: "q1",
+      frameKind: "question_open",
+    }));
+
+    const finishedAt = new Date().toISOString();
+    const reveal = {
+      ...open,
+      questions: [{ ...openQuestion, correctIndex: 0 as const, finishedAt }],
+      reveals: [{
+        id: "r1",
+        gameId: "g1",
+        questionId: "q1",
+        event: "resolve" as const,
+        occurredAt: finishedAt,
+        metadata: null,
+      }],
+    };
+    view.rerender(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine
+          snapshot={reveal}
+          themeKey="april"
+          onEvidenceFrame={onEvidenceFrame}
+        />
+      </ThemeProvider>,
+    );
+
+    expect(onEvidenceFrame).toHaveBeenCalledWith(null);
+    expect(onEvidenceFrame).toHaveBeenCalledWith(expect.objectContaining({
+      questionId: "q1",
+      frameKind: "answer_reveal",
+      instanceKey: finishedAt,
+    }));
+  });
+
   it("uses a finished current-game target as sticky reveal evidence", () => {
     const current = lifecycleSnapshot({
       games: [

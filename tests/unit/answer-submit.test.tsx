@@ -180,7 +180,11 @@ describe("useAnswerSubmit", () => {
   it("persists pending submit to localStorage on tap, clears on sent", async () => {
     vi.spyOn(globalThis, "fetch").mockImplementationOnce(async () => {
       // Right BEFORE the fetch resolves, the persisted entry should exist.
-      expect(loadPendingAnswer()).toEqual({ questionId: "q1", slotChosen: 3 });
+      expect(loadPendingAnswer()).toEqual(expect.objectContaining({
+        questionId: "q1",
+        slotChosen: 3,
+        actionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+      }));
       return jsonResponse(200);
     });
     const { result } = renderHook(() =>
@@ -208,11 +212,12 @@ describe("useAnswerSubmit", () => {
     );
     await waitFor(() => expect(result.current.status).toBe("sent"));
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(capturedBody).toEqual({
+    expect(capturedBody).toEqual(expect.objectContaining({
       questionId: "q1",
       slotChosen: 4,
       scramble: [2, 0, 3, 1],
-    });
+      actionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    }));
     expect(loadPendingAnswer()).toBeNull();
   });
 
@@ -275,7 +280,11 @@ describe("useAnswerSubmit", () => {
     });
     await waitFor(() => expect(result.current.status).toBe("failed"));
     // Network never came back; user can refresh and the next mount will retry.
-    expect(loadPendingAnswer()).toEqual({ questionId: "q1", slotChosen: 1 });
+    expect(loadPendingAnswer()).toEqual(expect.objectContaining({
+      questionId: "q1",
+      slotChosen: 1,
+      actionId: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    }));
   });
 
   it("loadPendingAnswer returns null for malformed entries", () => {

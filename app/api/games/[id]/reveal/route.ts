@@ -25,12 +25,20 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastAppliedLiveRoomEvent, broadcastToRoom } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import { recordGameEvidence } from "@/lib/observability/gameEvidence";
+import {
+  recordReleaseMismatchBestEffort,
+  requestEvidenceContext,
+} from "@/lib/observability/requestEvidence";
 
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id: gameId } = await ctx.params;
+  const evidenceContext = requestEvidenceContext(req);
+  void recordReleaseMismatchBestEffort(evidenceContext);
   const owned = await requireOwnedGame(gameId);
   if (!owned.ok) {
     if (owned.status === 401) return unauthorized(owned.error);
@@ -167,6 +175,22 @@ export async function POST(
       metadata: { revealed_at: revealedAt },
     });
   if (revealError) return serverError(revealError.message);
+
+  const durationSeconds = questionDurationFor(undefined);
+  await recordGameEvidence({
+    event: "game_question_open",
+    engine: "legacy",
+    surface: evidenceContext.surface ?? "host_laptop",
+    nightId: owned.night.id,
+    gameId,
+    questionId: parsed.data.questionId,
+    outcome: "applied",
+    openedAt: revealedAt,
+    deadlineAt: new Date(
+      Date.parse(revealedAt) + durationSeconds * 1_000,
+    ).toISOString(),
+    durationSeconds,
+  });
 
   // Broadcast for low-latency UI animation. Includes serverNow for
   // clock-skew compensation by receivers.

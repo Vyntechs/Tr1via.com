@@ -95,6 +95,8 @@ export const EndEarlySchema = z.object({
 
 export const SubmitAnswerSchema = z.object({
   questionId: UuidSchema,
+  /** Stable across browser retries/refreshes; used only to join evidence. */
+  actionId: UuidSchema.optional(),
   slotChosen: SlotChosenSchema,
   scramble: ScrambleSchema,
 });
