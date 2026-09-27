@@ -1,6 +1,6 @@
 // Supabase-backed RateStore for lib/auth/rate-limits.ts. Service role only:
 // public.auth_rate_events has RLS on, no policies, and no browser grants
-// (migration 20260927210000_auth_rate_events.sql).
+// (migration 20260927205247_auth_rate_events.sql).
 //
 // That migration is written but not yet applied anywhere, so the table isn't
 // in the generated lib/supabase/types.ts. Until it is (apply, then

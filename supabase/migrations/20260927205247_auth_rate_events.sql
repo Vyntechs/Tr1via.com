@@ -1,4 +1,4 @@
--- 20260927210000_auth_rate_events.sql
+-- 20260927205247_auth_rate_events.sql
 --
 -- Abuse limits for the host sign-in doors (/api/auth/start, send-code,
 -- verify-code, host-access, login). One row per counted event: a request
