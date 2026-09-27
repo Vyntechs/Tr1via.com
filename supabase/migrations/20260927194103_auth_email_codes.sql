@@ -1,4 +1,4 @@
--- 20260927120000_auth_email_codes.sql
+-- 20260927194103_auth_email_codes.sql
 --
 -- One-time 6-digit sign-in codes that TR1VIA emails to hosts (sign in to an
 -- account with no password yet, reset a forgotten password, confirm a new

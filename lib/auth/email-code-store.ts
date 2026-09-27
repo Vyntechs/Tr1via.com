@@ -1,18 +1,13 @@
 // Supabase-backed CodeStore for lib/auth/email-codes.ts. Service role only:
 // public.auth_email_codes has RLS on, no policies, and no browser grants
-// (migration 20260927120000_auth_email_codes.sql).
-//
-// The table isn't in the generated lib/supabase/types.ts yet (typegen needs
-// the migration applied to a local stack), so this one file talks to it
-// through an untyped view of the admin client. Every other file goes
+// (migration 20260927194103_auth_email_codes.sql). Every other file goes
 // through the CodeStore interface.
 
 import "server-only";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import type { CodePurpose, CodeRow, CodeStore, NewCodeRow } from "@/lib/auth/email-codes";
 
-const TABLE = "auth_email_codes";
+const TABLE = "auth_email_codes" as const;
 
 export class CodeStoreError extends Error {}
 
@@ -21,13 +16,14 @@ function check(error: { message: string } | null, what: string) {
 }
 
 export function supabaseCodeStore(
-  client: SupabaseClient = getSupabaseAdmin() as unknown as SupabaseClient,
+  client: ReturnType<typeof getSupabaseAdmin> = getSupabaseAdmin(),
 ): CodeStore {
   const t = () => client.from(TABLE);
   return {
-    async countSince(email, sinceIso) {
+    async countSince({ email, purpose }, sinceIso) {
       let q = t().select("id", { count: "exact", head: true }).gte("created_at", sinceIso);
       if (email) q = q.eq("email", email);
+      if (purpose) q = q.eq("purpose", purpose);
       const { count, error } = await q;
       check(error, "count codes");
       return count ?? 0;

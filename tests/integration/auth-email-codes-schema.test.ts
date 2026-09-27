@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-// Migration 20260927120000_auth_email_codes.sql on real Postgres (pglite).
+// Migration 20260927194103_auth_email_codes.sql on real Postgres (pglite).
 // Proves: RLS is on with zero policies; the browser roles (anon,
 // authenticated) can't read or write the table; the service role can; and
 // the checks reject bad purposes and mixed-case emails.
@@ -13,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 const MIGRATION = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../../supabase/migrations/20260927120000_auth_email_codes.sql",
+  "../../supabase/migrations/20260927194103_auth_email_codes.sql",
 );
 
 describe("auth_email_codes schema", () => {
