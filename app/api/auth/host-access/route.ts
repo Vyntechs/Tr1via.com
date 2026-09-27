@@ -1,115 +1,81 @@
-// POST /api/auth/host-access — the single self-serve door for hosts.
+// POST /api/auth/host-access — self-serve sign-up for brand-new hosts.
 //
-// One email box, two outcomes, no dead-end:
-//   - Known email (already an auth user)  → mint a session, sign them in.
-//   - New email (no auth user yet)        → create the account, mint a
-//                                            session. They land on
-//                                            /host/onboarding (the /host
-//                                            page redirects there whenever
-//                                            no hosts row exists yet).
+// Body: { email, password, confirm }. Creates the Supabase account WITH a
+// password and our app_metadata.password_set_at marker, then signs the new
+// host in (session cookies on the 200 response). They land on /host, which
+// routes them to /host/onboarding because no hosts row exists yet.
 //
-// Either way we return 200 with auth cookies on the response and the
-// client navigates to /host. There is intentionally NO 404 "we don't
-// recognize that email" branch — that dead-end is what this endpoint
-// replaces. (Sign-in for known hosts still also works via the older
-// /api/auth/founder-login, which the prod smoke + history reference; this
-// endpoint is the new superset the /login page calls.)
-//
-// Why no magic-link round-trip: same trust model as founder-login —
-// anyone who could intercept a verification email could just type the
-// address here. We mint the session directly via generateLink → verifyOtp.
+// Existing accounts are never signed in here — that's /api/auth/login with
+// a password. A duplicate email gets 409 and a "sign in instead" message.
+// No more account-by-email-only, and no user-list lookup at all: Supabase's
+// own duplicate-email check on createUser does the work.
 //
 // What this endpoint does NOT do: it never writes the hosts row. The row
 // (carrying the 30-day trial) is created by /(host)/auth/onboarding-complete
-// so that onboarding stays the single writer and a brand-new account is
-// actually routed THROUGH the onboarding form (which only happens while no
-// hosts row exists). See migration 0010 + the onboarding-complete handler.
+// so onboarding stays the single writer. See migration 0010.
 
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { z } from "zod";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { createSessionCookieClient } from "@/lib/auth/session-cookies";
+import { checkNewPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
+import {
+  ACCOUNT_EXISTS_MESSAGE,
+  RATE_LIMIT_MESSAGE,
+  TRY_AGAIN_MESSAGE,
+  WEAK_PASSWORD_MESSAGE,
+  isDuplicateEmail,
+  isRateLimited,
+  isWeakPassword,
+} from "@/lib/auth/auth-messages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-interface CookieToSet {
-  name: string;
-  value: string;
-  options?: CookieOptions;
+const Email = z.string().trim().toLowerCase().email().max(254);
+
+function fail(status: number, code: string, error: string, field?: string) {
+  return NextResponse.json({ code, error, ...(field ? { field } : {}) }, { status });
 }
 
 export async function POST(req: NextRequest) {
-  const body = (await req.json().catch(() => null)) as { email?: string } | null;
-  const email = body?.email?.trim().toLowerCase();
-  if (!email) {
-    return NextResponse.json({ error: "email required" }, { status: 400 });
+  const body = (await req.json().catch(() => null)) as
+    | { email?: unknown; password?: unknown; confirm?: unknown }
+    | null;
+  const parsedEmail = Email.safeParse(body?.email);
+  if (!parsedEmail.success) {
+    return fail(400, "bad_email", "Please type a real email address.", "email");
   }
+  const email = parsedEmail.data;
+  const password = typeof body?.password === "string" ? body.password : "";
+  const confirm = typeof body?.confirm === "string" ? body.confirm : "";
+  const check = checkNewPassword(password, confirm);
+  if (!check.ok) return fail(400, "bad_password", check.error, check.field);
 
   const admin = getSupabaseAdmin();
-
-  // Find the auth.users row by email. auth.users isn't selectable from the
-  // JS client, so we list (capped 200 — same as founder-login) and match.
-  const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({ perPage: 200 });
-  if (listErr) {
-    return NextResponse.json({ error: "lookup failed" }, { status: 500 });
-  }
-  let user = usersList?.users.find((u) => u.email?.toLowerCase() === email) ?? null;
-
-  // New email → create the auth account. email_confirm: true marks the
-  // address verified so verifyOtp works immediately on this first request
-  // (mirrors how /api/admin/hosts creates comped accounts). We do NOT
-  // create the hosts row here — onboarding does that.
-  if (!user) {
-    const { data: created, error: createErr } = await admin.auth.admin.createUser({
-      email,
-      email_confirm: true,
-    });
-    if (createErr || !created?.user) {
-      return NextResponse.json(
-        { error: createErr?.message ?? "account creation failed" },
-        { status: 500 },
-      );
-    }
-    user = created.user;
-  }
-
-  // Mint a session via generateLink + verifyOtp — identical to
-  // founder-login. The SSR client writes cookies onto the response we
-  // return; the browser keeps them and the next request to /host carries
-  // the session.
-  const { data: linkData, error: linkErr } = await admin.auth.admin.generateLink({
-    type: "magiclink",
+  const { data: created, error: createErr } = await admin.auth.admin.createUser({
     email,
+    password,
+    // Marks the address verified so password sign-in works immediately
+    // (mirrors how /api/admin/hosts creates comped accounts).
+    email_confirm: true,
+    app_metadata: { [PASSWORD_SET_AT_KEY]: new Date().toISOString() },
   });
-  if (linkErr || !linkData?.properties?.hashed_token) {
-    return NextResponse.json(
-      { error: linkErr?.message ?? "generateLink failed" },
-      { status: 500 },
-    );
+  if (createErr || !created?.user) {
+    if (isDuplicateEmail(createErr)) return fail(409, "account_exists", ACCOUNT_EXISTS_MESSAGE);
+    if (isWeakPassword(createErr)) {
+      return fail(400, "weak_password", WEAK_PASSWORD_MESSAGE, "password");
+    }
+    if (isRateLimited(createErr)) return fail(429, "rate_limited", RATE_LIMIT_MESSAGE);
+    return fail(500, "create_failed", TRY_AGAIN_MESSAGE);
   }
 
-  const response = NextResponse.json({ ok: true }, { status: 200 });
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () => req.cookies.getAll().map((c) => ({ name: c.name, value: c.value })),
-        setAll: (toSet: CookieToSet[]) => {
-          for (const { name, value, options } of toSet) {
-            response.cookies.set({ name, value, ...options });
-          }
-        },
-      },
-    },
-  );
-  const { error: otpErr } = await supabase.auth.verifyOtp({
-    type: "magiclink",
-    token_hash: linkData.properties.hashed_token,
-  });
-  if (otpErr) {
-    return NextResponse.json({ error: otpErr.message }, { status: 500 });
+  const { supabase, applyCookies } = createSessionCookieClient(req);
+  const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
+  if (signInErr) {
+    if (isRateLimited(signInErr)) return fail(429, "rate_limited", RATE_LIMIT_MESSAGE);
+    return fail(500, "sign_in_failed", TRY_AGAIN_MESSAGE);
   }
 
-  return response;
+  return applyCookies(NextResponse.json({ ok: true }, { status: 200 }));
 }

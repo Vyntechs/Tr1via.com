@@ -70,11 +70,11 @@ export default function PrivacyPolicyPage() {
           </li>
           <li>
             <B>Hosts</B> — venue staff or organizers who run games. A host signs
-            in by entering their email address; our server checks it against the
-            list of host accounts and creates a login session. We do not send a
-            magic-link or one-time-code email as part of normal sign-in. New
-            hosts are added by the operator, who may share a one-time sign-in
-            link directly.
+            in with their email address and a password they choose; our server
+            checks them with our sign-in provider and creates a login session.
+            We do not send a magic-link or one-time-code email as part of normal
+            sign-in. New hosts create an account with a password, or are added
+            by the operator, who may share a one-time sign-in link directly.
           </li>
         </UL>
       </Section>

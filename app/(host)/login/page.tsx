@@ -1,13 +1,17 @@
-// HOST LOGIN — one email field, one "Sign in" button. Wrapped in the
-// shared host shell so the same account-first door works on any device.
+// HOST LOGIN — email + password. Wrapped in the shared host shell so the
+// same account-first door works on any device.
 //
-// Auth: POST /api/auth/host-access looks the email up against the hosts
-// table and mints that host's session on the response — no magic link, no
-// OTP, no email round-trip. Sign-in completes in one request. On 200 the
-// client returns to a safe intended /host path; the first-time-vs-returning split is
-// decided server-side (app/host/page.tsx redirects to /host/onboarding when
-// there's no hosts row, and HostHomeClient picks onboarding vs dashboard by
-// isFirstNightComplete).
+// Two modes on one page:
+//   - Sign in (default): POST /api/auth/login. Only accounts that have
+//     created a password (app_metadata.password_set_at) get in. Older
+//     accounts see "This account doesn't have a password yet. Text Brandon
+//     for a sign-in link." — the founder's /host/admin link is the way back.
+//   - New here: POST /api/auth/host-access with email + password + confirm.
+//     Creates the account with its password and starts the free trial via
+//     /host/onboarding (app/host/page.tsx redirects there when there's no
+//     hosts row yet).
+// Either way the server writes the session cookies on its 200 response and
+// the client returns to a safe intended /host path.
 
 "use client";
 
@@ -18,10 +22,15 @@ import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
 import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { hostReturnPath } from "@/lib/host/hostReturnPath";
+import { PasswordField, ShowPasswordToggle } from "@/components/host/PasswordField";
+import { checkNewPassword } from "@/lib/auth/password-gate";
+
+type Mode = "signin" | "signup";
 
 type FormState =
   | { kind: "idle" }
   | { kind: "sending" }
+  | { kind: "notice"; message: string }
   | { kind: "error"; message: string };
 
 export default function HostLoginPage() {
@@ -38,7 +47,11 @@ function HostLoginInner() {
   // Below ~640px the two-column "pitch | form" splits into a single stacked
   // column so the email field + submit button are fully on-screen and tappable.
   const compact = useMediaQuery("(max-width: 640px)");
+  const [mode, setMode] = useState<Mode>("signin");
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [revealed, setRevealed] = useState(false);
   const [state, setState] = useState<FormState>({ kind: "idle" });
   // If the visitor already has a session, show "signed in as X" with a
   // sign-out option BEFORE the email form. Solves the "I never get asked
@@ -73,35 +86,67 @@ function HostLoginInner() {
     router.refresh();
   }
 
+  function switchMode(next: Mode) {
+    setMode(next);
+    setConfirm("");
+    setState({ kind: "idle" });
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const trimmed = email.trim();
-    if (!trimmed) return;
+    if (!trimmed || !password) {
+      setState({ kind: "error", message: "Please type your email and your password." });
+      return;
+    }
+    if (mode === "signup") {
+      const check = checkNewPassword(password, confirm);
+      if (!check.ok) {
+        setState({ kind: "error", message: check.error });
+        return;
+      }
+    }
 
     setState({ kind: "sending" });
     try {
-      // One unified door. The server signs in a known host or creates a
-      // brand-new trial account on the spot, then mints the session on the
-      // response. No magic link, no email round-trip, no "we don't
-      // recognize you" dead-end — first-timers land on /host/onboarding.
-      const res = await fetch("/api/auth/host-access", {
+      const res = await fetch(mode === "signin" ? "/api/auth/login" : "/api/auth/host-access", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmed }),
+        credentials: "same-origin",
+        body: JSON.stringify(
+          mode === "signin"
+            ? { email: trimmed, password }
+            : { email: trimmed, password, confirm },
+        ),
       });
       if (res.ok) {
         router.replace(intendedHostPath());
         return;
       }
-      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      const body = (await res.json().catch(() => null)) as
+        | { error?: string; code?: string }
+        | null;
+      if (mode === "signin" && body?.code === "no_account") {
+        // Unknown email → offer to create the account right here, keeping
+        // what they typed.
+        setMode("signup");
+        setConfirm("");
+        setState({ kind: "notice", message: body.error ?? "Create your free account below." });
+        return;
+      }
+      if (mode === "signup" && body?.code === "account_exists") {
+        setMode("signin");
+        setState({ kind: "error", message: body.error ?? "Please sign in instead." });
+        return;
+      }
       setState({
         kind: "error",
         message: body?.error ?? `Sign-in failed (${res.status})`,
       });
-    } catch (err) {
+    } catch {
       setState({
         kind: "error",
-        message: err instanceof Error ? err.message : "Something went wrong.",
+        message: "We couldn't reach TR1VIA. Check your internet, then try again.",
       });
     }
   }
@@ -149,8 +194,8 @@ function HostLoginInner() {
             fontWeight: 500,
           }}
         >
-          Type your email to sign in &mdash; or to start a free 30-day
-          trial if you&apos;re new. No password, no email check, no waiting.
+          Sign in with your email and password &mdash; or start a free
+          30-day trial if you&apos;re new.
         </p>
       </div>
 
@@ -209,10 +254,36 @@ function HostLoginInner() {
               }}
             />
 
+            <PasswordField
+              id="password"
+              label="Password"
+              value={password}
+              onChange={setPassword}
+              revealed={revealed}
+              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              disabled={isSending}
+            />
+            {mode === "signup" && (
+              <PasswordField
+                id="confirm-password"
+                label="Type it again"
+                value={confirm}
+                onChange={setConfirm}
+                revealed={revealed}
+                autoComplete="new-password"
+                disabled={isSending}
+              />
+            )}
+            <ShowPasswordToggle
+              revealed={revealed}
+              onToggle={() => setRevealed((v) => !v)}
+              disabled={isSending}
+            />
+
             <button
               type="submit"
               data-testid="login-submit"
-              disabled={isSending || !email.trim()}
+              disabled={isSending || !email.trim() || !password}
               style={{
                 marginTop: 4,
                 padding: "18px 22px",
@@ -229,12 +300,38 @@ function HostLoginInner() {
                 letterSpacing: "-0.005em",
               }}
             >
-              {isSending ? "Signing in…" : "Sign in or start free  →"}
+              {isSending
+                ? mode === "signin"
+                  ? "Signing in…"
+                  : "Creating your account…"
+                : mode === "signin"
+                  ? "Sign in  →"
+                  : "Create my free account  →"}
             </button>
+
+            {state.kind === "notice" && (
+              <div
+                role="status"
+                data-testid="login-notice"
+                style={{
+                  marginTop: 6,
+                  padding: "12px 14px",
+                  borderRadius: 10,
+                  background: t.surface,
+                  color: t.ink,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  lineHeight: 1.4,
+                }}
+              >
+                {state.message}
+              </div>
+            )}
 
             {state.kind === "error" && (
               <div
                 role="alert"
+                data-testid="login-error"
                 style={{
                   marginTop: 6,
                   padding: "12px 14px",
@@ -250,9 +347,30 @@ function HostLoginInner() {
               </div>
             )}
 
-            <Eyebrow color={t.inkMute} size={10} style={{ display: "block", marginTop: 10 }}>
-              NEW HERE? JUST TYPE YOUR EMAIL — YOUR FREE TRIAL STARTS INSTANTLY.
-            </Eyebrow>
+            <button
+              type="button"
+              data-testid="login-mode-switch"
+              onClick={() => switchMode(mode === "signin" ? "signup" : "signin")}
+              disabled={isSending}
+              style={{
+                alignSelf: "flex-start",
+                marginTop: 10,
+                padding: 0,
+                background: "transparent",
+                border: "none",
+                color: t.accent,
+                fontFamily: "var(--font-sans)",
+                fontSize: 14,
+                fontWeight: 700,
+                textDecoration: "underline",
+                textUnderlineOffset: 3,
+                cursor: isSending ? "default" : "pointer",
+              }}
+            >
+              {mode === "signin"
+                ? "New here? Create a free account"
+                : "Already have an account? Sign in"}
+            </button>
             <div
               style={{
                 display: "block",

@@ -17,7 +17,7 @@ TR1VIA is operated by Vyntechs, based in Cleburne, Texas, United States. Mailing
 ## Who this policy covers
 
 - **Players** — anyone who joins a game by entering a 6-character room code on their phone. No account, email, or password is required. You may type a display name so others can see your score; that name, and a device identifier we set (see "Cookies and your device"), are stored with your game data.
-- **Hosts** — venue staff or organizers who run games. A host signs in by entering their email address; our server checks it against the list of host accounts and creates a login session. We do not send a magic-link or one-time-code email as part of normal sign-in. New hosts are added by the operator, who may share a one-time sign-in link directly.
+- **Hosts** — venue staff or organizers who run games. A host signs in with their email address and a password they choose; our server checks them with our sign-in provider and creates a login session. We do not send a magic-link or one-time-code email as part of normal sign-in. New hosts create an account with a password, or are added by the operator, who may share a one-time sign-in link directly.
 
 ## Children under 13
 
