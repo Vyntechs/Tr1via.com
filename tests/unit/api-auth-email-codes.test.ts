@@ -12,7 +12,8 @@ import { NextRequest } from "next/server";
 import { memoryCodeStore } from "./helpers/memory-code-store";
 import { memoryRateStore } from "./helpers/memory-rate-store";
 import { RATE_LIMITS } from "@/lib/auth/rate-limits";
-import { MAX_SENDS_PER_HOUR_SITEWIDE } from "@/lib/auth/email-codes";
+import { MAX_ATTEMPTS, MAX_SENDS_PER_HOUR_SITEWIDE } from "@/lib/auth/email-codes";
+import { fakeShowDb, openedNight, type FakeShowDb } from "./helpers/fake-show-db";
 
 type SetAll = (c: Array<{ name: string; value: string; options?: object }>) => void;
 
@@ -29,6 +30,8 @@ const h = vi.hoisted(() => ({
   setAll: null as null | SetAll,
   store: null as unknown,
   rates: null as unknown,
+  db: null as null | FakeShowDb,
+  nights: [] as object[],
 }));
 
 vi.mock("@supabase/ssr", () => ({
@@ -40,9 +43,7 @@ vi.mock("@supabase/ssr", () => ({
 vi.mock("@/lib/supabase/admin", () => ({
   getSupabaseAdmin: () => ({
     rpc: h.rpc,
-    from: () => ({
-      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { role: h.hostRole } }) }) }),
-    }),
+    from: (t: string) => h.db!.from(t),
     auth: {
       admin: {
         listUsers: h.listUsers,
@@ -114,6 +115,14 @@ beforeEach(() => {
   h.rates = memoryRateStore();
   h.sendMail.mockResolvedValue({ messageId: "m" });
   h.hostRole = "host";
+  // The signed-in user (u1) has a host row; last week's night was never
+  // closed (like every production night) — not a running show.
+  h.nights = [openedNight("host-u1", 24 * 7)];
+  h.db = fakeShowDb({
+    hosts: () => [{ id: "host-u1", user_id: "u1", role: h.hostRole }],
+    nights: () => h.nights as never,
+    games: () => [],
+  });
   h.updateUserById.mockResolvedValue({ data: {}, error: null });
   vi.stubEnv("SESSION_SECRET", "route-test-secret");
   vi.stubEnv("ZOHO_SMTP_PASSWORD", "zoho-app-password");
@@ -191,7 +200,7 @@ describe("POST /api/auth/start — step 1, email only", () => {
     log.mockRestore();
   });
 
-  it("after 5 codes in an hour → 429, but she still lands on the code step", async () => {
+  it("after 5 codes to one email from one network in an hour → 429, but she still lands on the code step", async () => {
     users({ id: "h", email: "heather@example.com", app_metadata: {} });
     for (let i = 0; i < 5; i++) {
       expect((await start(req("/api/auth/start", { email: "heather@example.com" }))).status).toBe(200);
@@ -490,6 +499,159 @@ describe("sign-up proves the email with a code before the account exists", () =>
     );
     expect(res.status).toBe(400);
     expect(h.createUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("verify-code never walks her into a password step during a show", () => {
+  it.each([
+    ["login", {}],
+    ["reset", MARKED],
+  ] as const)("%s code while one of her nights is running → straight to next", async (purpose, meta) => {
+    h.nights = [openedNight("host-u1", 1)];
+    users({ id: "h", email: "heather@example.com", app_metadata: meta });
+    if (purpose === "login") await start(req("/api/auth/start", { email: "heather@example.com" }));
+    else await sendCode(req("/api/auth/send-code", { email: "heather@example.com", purpose: "reset" }));
+    sessionWorks(meta);
+    const res = await verify(
+      req("/api/auth/verify-code", {
+        email: "heather@example.com",
+        purpose,
+        code: lastEmailedCode(),
+        next: "/host/setup/n1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, redirect: "/host/setup/n1" });
+    expect(res.cookies.get("sb-test-auth-token")?.value).toBe("session");
+  });
+
+  it("can't tell whether a show is running → no password step (never risk a show)", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }));
+    sessionWorks({});
+    h.db!.fail = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: lastEmailedCode() }),
+    );
+    log.mockRestore();
+    expect(await res.json()).toEqual({ ok: true, redirect: "/host" });
+  });
+
+  it("a sign-in clears an earlier 'Not now', so she's asked again", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }));
+    sessionWorks({});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: lastEmailedCode() }),
+    );
+    expect(res.headers.getSetCookie().some((c) => /^tr1via_pw_later=;.*Max-Age=0/i.test(c))).toBe(true);
+  });
+});
+
+describe("verify-code uses the code up only after her session starts", () => {
+  it("session start fails → friendly error, and the SAME code works on retry", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }));
+    const code = lastEmailedCode();
+    h.generateLink.mockResolvedValueOnce({ data: null, error: { message: "auth down" } });
+    const first = await verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code }));
+    expect(first.status).toBe(500);
+    expect(first.cookies.get("sb-test-auth-token")).toBeUndefined();
+    expect(store().rows[0].consumed_at).toBeNull();
+
+    sessionWorks({});
+    const retry = await verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code }));
+    expect(retry.status).toBe(200);
+    expect(retry.cookies.get("sb-test-auth-token")?.value).toBe("session");
+    expect(store().rows[0].consumed_at).not.toBeNull();
+  });
+
+  it("if another request used the code first, this one gets no session cookies", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }));
+    const code = lastEmailedCode();
+    // The other request uses the code while this one is starting its session.
+    h.generateLink.mockImplementation(async () => {
+      store().rows[0].consumed_at = new Date().toISOString();
+      return { data: { properties: { hashed_token: "hashed-tok" } }, error: null };
+    });
+    h.verifyOtp.mockImplementation(async () => {
+      h.setAll?.([{ name: "sb-test-auth-token", value: "session", options: { path: "/" } }]);
+      return { data: { user: { id: "u1", app_metadata: {} } }, error: null };
+    });
+    const res = await verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("code_used");
+    expect(res.cookies.get("sb-test-auth-token")).toBeUndefined();
+  });
+});
+
+describe("a stranger on one network can't stop Heather getting in by code", () => {
+  const HEATHER_IP = "198.51.100.8";
+  const STRANGER_IP = "203.0.113.66";
+
+  it("the stranger uses up only their own share of codes; Heather still gets hers", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    for (let i = 0; i < RATE_LIMITS["send:code-ip-email"]; i++) {
+      expect((await start(req("/api/auth/start", { email: "heather@example.com" }, STRANGER_IP))).status).toBe(200);
+    }
+    const blocked = await start(req("/api/auth/start", { email: "heather@example.com" }, STRANGER_IP));
+    expect(blocked.status).toBe(429);
+    const mails = h.sendMail.mock.calls.length;
+    const hers = await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));
+    expect(hers.status).toBe(200);
+    expect(await hers.json()).toMatchObject({ step: "code", purpose: "login" });
+    expect(h.sendMail.mock.calls.length).toBe(mails + 1);
+  });
+
+  it("a stranger asking for a new code doesn't cancel the one in her inbox", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));
+    const hers = lastEmailedCode();
+    await start(req("/api/auth/start", { email: "heather@example.com" }, STRANGER_IP));
+    sessionWorks({});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: hers }, HEATHER_IP),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("the stranger's wrong guesses can't lock the code she is typing", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));
+    const hers = lastEmailedCode();
+    const wrong = hers === "000000" ? "111111" : "000000";
+    const answers: string[] = [];
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      const r = await verify(
+        req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: wrong }, STRANGER_IP),
+      );
+      answers.push((await r.json()).code);
+    }
+    // Five wrong tries, then the stranger's network is told to wait.
+    expect(answers.slice(0, RATE_LIMITS["fail:code-ip-email"])).toEqual(
+      Array(RATE_LIMITS["fail:code-ip-email"]).fill("wrong_code"),
+    );
+    expect(answers.at(-1)).toBe("too_many_wrong_codes");
+    expect(store().rows[0].attempts).toBe(RATE_LIMITS["fail:code-ip-email"]);
+    expect(RATE_LIMITS["fail:code-ip-email"]).toBeLessThan(MAX_ATTEMPTS);
+
+    sessionWorks({});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: hers }, HEATHER_IP),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("send-code: too many codes still hands back the masked email so the page shows the code boxes", async () => {
+    users({ id: "b", email: "brandon@vyntechs.com", app_metadata: MARKED });
+    for (let i = 0; i < RATE_LIMITS["send:code-ip-email"]; i++) {
+      await sendCode(req("/api/auth/send-code", { email: "brandon@vyntechs.com", purpose: "reset" }));
+    }
+    const r = await sendCode(req("/api/auth/send-code", { email: "brandon@vyntechs.com", purpose: "reset" }));
+    expect(r.status).toBe(429);
+    expect(await r.json()).toMatchObject({ code: "too_many_codes", maskedEmail: "b***@vyntechs.com" });
   });
 });
 

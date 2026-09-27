@@ -231,6 +231,13 @@ function HostLoginInner() {
         );
         return;
       }
+      if (body?.code === "too_many_codes") {
+        // Same as the email step (/api/auth/start): she already has recent
+        // codes for this, so show the code boxes with the message.
+        goToCode(nextPurpose, body.maskedEmail ?? maskedEmail);
+        setState({ kind: "error", message: body.error ?? "" });
+        return;
+      }
       if (body?.code === "account_exists") {
         setStep("password");
         setPassword("");
@@ -273,6 +280,16 @@ function HostLoginInner() {
         });
         if (res.ok) {
           router.replace(intendedHostPath());
+          return;
+        }
+        if (body?.code === "account_ready") {
+          // Account made, but signing in right after failed: the code is
+          // used up, so go to the normal password sign-in (her password is
+          // still typed in).
+          setSignupCode(null);
+          setCode("");
+          setStep("password");
+          setState({ kind: "notice", message: body.error ?? "Your account is ready. Sign in with your password." });
           return;
         }
         if (body?.code === "account_exists") {

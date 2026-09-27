@@ -1,7 +1,10 @@
 // host-sign-in-codes.spec.ts — signed-out doors of the email-first /login.
 //
-// Covers: an account with no password gets an emailed code; 5 wrong tries
-// lock the code; an expired code is refused; password sign-in; "Forgot
+// Covers: an account with no password gets an emailed code; while one of
+// her nights is running a code sign-in skips the password step (and saving
+// is refused), after the show she's asked, with "Not now"; one stranger's
+// network can't lock her code, but 10 wrong tries from anywhere lock it;
+// an expired code is refused; password sign-in; "Forgot
 // password?"; a brand-new host must prove the email with a code; and the
 // old email-only doors are closed.
 //
@@ -11,7 +14,7 @@
 // Skips unless E2E_SMTP_SINK_URL is set and a local service-role key exists.
 
 import { test, expect, type Page } from "@playwright/test";
-import { loginAsHost, resetTestData } from "./helpers/host-laptop";
+import { loginAsHost, resetTestData, seedNight } from "./helpers/host-laptop";
 import { TID } from "./helpers/selectors";
 import { getAuthUser, localAdminOrNull, makeLegacyAccount } from "./helpers/supabase-admin";
 
@@ -106,7 +109,7 @@ test.describe("email-first sign-in — codes, passwords, closed doors", () => {
     expect(await res.json()).toEqual({ step: "password" });
   });
 
-  test("5 wrong tries lock the code; the right code is refused after", async ({ page }) => {
+  test("one stranger's wrong guesses can't lock her code; 10 wrong tries from anywhere do", async ({ page }) => {
     const addr = email("lock");
     await legacyHost(page, addr);
     const since = new Date().toISOString();
@@ -114,27 +117,104 @@ test.describe("email-first sign-in — codes, passwords, closed doors", () => {
     expect((await start.json()).step).toBe("code");
     const good = await latestCode(addr, since);
     const wrong = good === "000000" ? "111111" : "000000";
-
-    const tries: string[] = [];
-    for (let i = 0; i < 5; i++) {
+    const guess = async (ip: string, code: string) => {
       const r = await page.request.post("/api/auth/verify-code", {
+        headers: { "x-real-ip": ip },
+        data: { email: addr, purpose: "login", code },
+      });
+      return `${r.status()}:${(await r.json()).code}`;
+    };
+
+    // Stranger A: 5 wrong tries, then this network is told to wait.
+    const a: string[] = [];
+    for (let i = 0; i < 6; i++) a.push(await guess("203.0.113.61", wrong));
+    expect(a).toEqual([...Array(5).fill("400:wrong_code"), "429:too_many_wrong_codes"]);
+    // Stranger B (another network) uses the other 5 tries: now the code is locked.
+    const b: string[] = [];
+    for (let i = 0; i < 5; i++) b.push(await guess("203.0.113.62", wrong));
+    expect(b).toEqual([...Array(4).fill("400:wrong_code"), "429:code_locked"]);
+    expect(await guess("198.51.100.8", good)).toBe("429:code_locked");
+    expect((await page.context().cookies()).filter((c) => c.name.startsWith("sb-"))).toEqual([]);
+
+    // A fresh code is still allowed, and works from her own network.
+    const since2 = new Date().toISOString();
+    const again = await page.request.post("/api/auth/start", {
+      headers: { "x-real-ip": "198.51.100.8" },
+      data: { email: addr },
+    });
+    expect(again.status()).toBe(200);
+    expect(await guess("198.51.100.8", await latestCode(addr, since2))).toBe("200:undefined");
+  });
+
+  test("one stranger's wrong guesses don't stop her own code working", async ({ page }) => {
+    const addr = email("stranger");
+    await legacyHost(page, addr);
+    const since = new Date().toISOString();
+    await page.request.post("/api/auth/start", { headers: { "x-real-ip": "198.51.100.9" }, data: { email: addr } });
+    const good = await latestCode(addr, since);
+    const wrong = good === "000000" ? "111111" : "000000";
+    for (let i = 0; i < 8; i++) {
+      await page.request.post("/api/auth/verify-code", {
+        headers: { "x-real-ip": "203.0.113.70" },
         data: { email: addr, purpose: "login", code: wrong },
       });
-      tries.push(`${r.status()}:${(await r.json()).code}`);
     }
-    expect(tries).toEqual([
-      "400:wrong_code",
-      "400:wrong_code",
-      "400:wrong_code",
-      "400:wrong_code",
-      "429:code_locked",
-    ]);
-    const after = await page.request.post("/api/auth/verify-code", {
+    const r = await page.request.post("/api/auth/verify-code", {
+      headers: { "x-real-ip": "198.51.100.9" },
       data: { email: addr, purpose: "login", code: good },
     });
-    expect(after.status()).toBe(429);
-    expect((await after.json()).code).toBe("code_locked");
-    expect((await page.context().cookies()).filter((c) => c.name.startsWith("sb-"))).toEqual([]);
+    expect(r.status(), await r.text()).toBe(200);
+  });
+
+  test("show running: a code sign-in skips the password step; after the show she's asked, with 'Not now'", async ({
+    page,
+  }) => {
+    const addr = email("show");
+    const { hostId, userId } = await loginAsHost(page, addr, "Show Host");
+    const night = await seedNight(page, hostId, "empty-night");
+    await page.context().clearCookies();
+    await makeLegacyAccount(admin!, userId);
+    // Her night is open (running) right now.
+    const opened = await admin!
+      .from("nights")
+      .update({ opened_at: new Date().toISOString() })
+      .eq("id", night.nightId);
+    expect(opened.error).toBeNull();
+
+    const signInByCode = async () => {
+      const since = new Date().toISOString();
+      await page.goto("/login");
+      await page.getByLabel("Email").fill(addr);
+      await page.getByTestId(TID.login.submit).click();
+      await expect(page.getByTestId("login-code-sent")).toBeVisible({ timeout: 30_000 });
+      await typeCode(page, await latestCode(addr, since));
+    };
+
+    await signInByCode();
+    // Straight in — no "Create your password" mid-show.
+    await expect(page).toHaveURL(/\/host$/, { timeout: 30_000 });
+    await expect(page.getByTestId("set-password-screen")).toHaveCount(0);
+    const refused = await page.request.post("/api/auth/set-password", {
+      data: { password: PASSWORD, confirm: PASSWORD },
+    });
+    expect(refused.status(), await refused.text()).toBe(409);
+    expect((await refused.json()).code).toBe("show_running");
+    expect((await getAuthUser(admin!, userId)).app_metadata?.password_set_at ?? null).toBeNull();
+
+    // After the show, her next sign-in walks her to the password step…
+    const closed = await admin!
+      .from("nights")
+      .update({ closed_at: new Date().toISOString() })
+      .eq("id", night.nightId);
+    expect(closed.error).toBeNull();
+    await page.context().clearCookies();
+    await signInByCode();
+    await expect(page).toHaveURL(/\/host\/set-password\?from=code&next=%2Fhost$/, { timeout: 30_000 });
+    // …with a clear "Not now" that goes to /host.
+    await page.getByTestId("set-password-later").click();
+    await expect(page).toHaveURL(/\/host$/, { timeout: 30_000 });
+    await expect(page.getByTestId("set-password-screen")).toHaveCount(0);
+    expect((await getAuthUser(admin!, userId)).app_metadata?.password_set_at ?? null).toBeNull();
   });
 
   test("an expired code is refused", async ({ page }) => {

@@ -10,7 +10,8 @@
 //     switch fails the hosts row is put back (never half-applied)
 // GET /auth/grant:
 //   - a host with no password lands on /host/set-password (unless the
-//     founder switched her prompt explicitly off); with one → /host
+//     founder switched her prompt explicitly off, or one of her nights is
+//     running right now); with one → /host
 //   - the founder's own account gets app_metadata.founder at sign-in, so
 //     the middleware gate never needs a hosts query
 
@@ -28,7 +29,11 @@ const h = vi.hoisted(() => ({
   hostRow: null as null | Record<string, unknown>,
   verifyOtp: vi.fn(),
   setAll: null as null | SetAll,
+  running: false as boolean | null,
 }));
+
+// lib/auth/live-show.ts has its own tests; here only its answer matters.
+vi.mock("@/lib/auth/live-show", () => ({ hostHasRunningShow: async () => h.running }));
 
 vi.mock("@/lib/api/auth", () => ({ requireFounder: h.requireFounder }));
 vi.mock("@/lib/supabase/admin", () => ({
@@ -165,10 +170,23 @@ describe("GET /auth/grant", () => {
   }
 
   it("lands a host with no password on set-password, signed in", async () => {
+    h.running = false;
     verifiedAs({});
     const res = await grant(grantReq());
     expect(res.headers.get("location")).toBe("http://test/host/set-password?next=%2Fhost");
     expect(res.cookies.get("sb-test-auth-token")?.value).toBe("session");
+  });
+
+  it.each([
+    ["one of her nights is running", true],
+    ["we can't tell", null],
+  ] as const)("goes straight to /host when %s (no password step mid-show)", async (_label, running) => {
+    h.running = running;
+    verifiedAs({});
+    const res = await grant(grantReq());
+    expect(res.headers.get("location")).toBe("http://test/host");
+    expect(res.cookies.get("sb-test-auth-token")?.value).toBe("session");
+    h.running = false;
   });
 
   it("goes straight to /host once a password exists", async () => {

@@ -1,5 +1,5 @@
 // In-memory CodeStore for tests — same contract as the Supabase store
-// (compare-and-set tries, single-use consume, newest-unconsumed lookup).
+// (compare-and-set tries, single-use consume, live-code lookup).
 
 import type { CodePurpose, CodeRow, CodeStore, NewCodeRow } from "@/lib/auth/email-codes";
 
@@ -8,12 +8,13 @@ export function memoryCodeStore(): CodeStore & { rows: CodeRow[] } {
   let n = 0;
   return {
     rows,
-    async countSince({ email, purpose }, sinceIso) {
+    async countSince({ email, purpose, attemptsBelow }, sinceIso) {
       return rows.filter(
         (r) =>
           r.created_at >= sinceIso &&
           (email === null || r.email === email) &&
-          (purpose === null || r.purpose === purpose),
+          (purpose === null || r.purpose === purpose) &&
+          (attemptsBelow === undefined || r.attempts < attemptsBelow),
       ).length;
     },
     async retireActive(email: string, purpose: CodePurpose, nowIso: string) {
@@ -22,7 +23,23 @@ export function memoryCodeStore(): CodeStore & { rows: CodeRow[] } {
       }
     },
     async insert(row: NewCodeRow) {
-      rows.push({ ...row, id: `code-${++n}`, attempts: 0, consumed_at: null });
+      const id = `code-${++n}`;
+      rows.push({ ...row, id, attempts: 0, consumed_at: null });
+      return id;
+    },
+    async findLive(email: string, purpose: CodePurpose, nowIso: string, attemptsBelow: number, limit: number) {
+      return rows
+        .filter(
+          (r) =>
+            r.email === email &&
+            r.purpose === purpose &&
+            r.consumed_at === null &&
+            r.expires_at > nowIso &&
+            r.attempts < attemptsBelow,
+        )
+        .sort((a, b) => (a.created_at < b.created_at ? 1 : a.created_at > b.created_at ? -1 : 0))
+        .slice(0, limit)
+        .map((r) => ({ ...r }));
     },
     async findNewestActive(email: string, purpose: CodePurpose) {
       const hits = rows

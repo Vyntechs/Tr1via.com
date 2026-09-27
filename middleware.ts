@@ -13,7 +13,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import type { Database } from "@/lib/supabase/types";
-import { passwordGateRedirect } from "@/lib/auth/password-gate";
+import { PASSWORD_LATER_COOKIE, passwordGateRedirect } from "@/lib/auth/password-gate";
 
 interface SetCookieRequest {
   name: string;
@@ -98,6 +98,8 @@ export async function middleware(request: NextRequest) {
       pathname,
       search: request.nextUrl.search,
       appMetadata: user.app_metadata,
+      // "Not now" since her last sign-in (app/auth/password-later).
+      askedLater: request.cookies.get(PASSWORD_LATER_COOKIE)?.value === "1",
     });
     if (target) {
       const redirect = NextResponse.redirect(new URL(target, request.url));

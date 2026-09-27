@@ -12,7 +12,10 @@
 // dashboard, can be stricter than our 8-character minimum) she gets the
 // rule in plain words and can fix the password and try the SAME code again
 // — no wasted code, no extra email against her hourly limit. They land on /host, which routes them to
-// /host/onboarding because no hosts row exists yet.
+// /host/onboarding because no hosts row exists yet. If the account is made
+// but signing in right after fails, the answer is 409 "account_ready" and
+// the page moves her to the password sign-in step: "Your account is ready.
+// Sign in with your password."
 //
 // Existing accounts are never signed in here — that's /api/auth/login with
 // a password. A duplicate email gets 409 and a "sign in instead" message.
@@ -28,10 +31,12 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
 import { checkNewPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
 import { cleanCode } from "@/lib/auth/email-codes";
-import { checkCode, markCodeUsed, parseEmail } from "@/lib/auth/email-code-flow";
-import { hitIpLimit } from "@/lib/auth/rate-limits";
+import { checkCode, parseEmail, spendCode } from "@/lib/auth/email-code-flow";
+import { clientIp, hitIpLimit } from "@/lib/auth/rate-limits";
+import { forgetPasswordLater } from "@/lib/auth/password-gate";
 import {
   ACCOUNT_EXISTS_MESSAGE,
+  ACCOUNT_READY_MESSAGE,
   BAD_CODE_MESSAGE,
   BAD_EMAIL_MESSAGE,
   RATE_LIMIT_MESSAGE,
@@ -67,7 +72,7 @@ export async function POST(req: NextRequest) {
 
   // Prove the email first. A wrong/expired code never creates anything.
   // consume:false — the code is used up only after the account is created.
-  const verified = await checkCode(email, "signup", code, { consume: false });
+  const verified = await checkCode(email, "signup", code, { ip: clientIp(req), consume: false });
   if (!verified.ok) return fail(verified.status, verified.code, verified.error, "code");
 
   const admin = getSupabaseAdmin();
@@ -81,7 +86,7 @@ export async function POST(req: NextRequest) {
   });
   if (createErr || !created?.user) {
     if (isDuplicateEmail(createErr)) {
-      await markCodeUsed(verified.codeId);
+      await spendCode({ codeId: verified.codeId, email, purpose: "signup" });
       return fail(409, "account_exists", ACCOUNT_EXISTS_MESSAGE);
     }
     if (isWeakPassword(createErr)) {
@@ -90,14 +95,20 @@ export async function POST(req: NextRequest) {
     if (isRateLimited(createErr)) return fail(429, "rate_limited", RATE_LIMIT_MESSAGE);
     return fail(500, "create_failed", TRY_AGAIN_MESSAGE);
   }
-  await markCodeUsed(verified.codeId);
+  // The account exists now, so the code is done either way.
+  await spendCode({ codeId: verified.codeId, email, purpose: "signup" });
 
   const { supabase, applyCookies } = createSessionCookieClient(req);
   const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });
   if (signInErr) {
-    if (isRateLimited(signInErr)) return fail(429, "rate_limited", RATE_LIMIT_MESSAGE);
-    return fail(500, "sign_in_failed", TRY_AGAIN_MESSAGE);
+    // Her account is made and her code is used up, so a code screen would be
+    // a dead end. Send her to the normal password sign-in instead.
+    console.error("[host-access] account created, but sign-in failed", {
+      code: (signInErr as { code?: string }).code,
+      status: (signInErr as { status?: number }).status,
+    });
+    return fail(409, "account_ready", ACCOUNT_READY_MESSAGE);
   }
 
-  return applyCookies(NextResponse.json({ ok: true }, { status: 200 }));
+  return forgetPasswordLater(applyCookies(NextResponse.json({ ok: true }, { status: 200 })));
 }

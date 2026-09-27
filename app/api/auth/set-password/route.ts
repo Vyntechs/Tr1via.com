@@ -14,8 +14,10 @@
 // every session; the user-scoped updateUser ends every session but the
 // current one). There is no setting to turn that off. So her host phone or
 // another computer will ask her to sign in once with the new password —
-// the success screen says so, and the prompt never shows on the in-show
-// pages (/host/live, /host/phone), so it can't be saved from a running show.
+// the success screen says so. The prompt never shows on the in-show pages
+// (/host/live, /host/phone), and this route REFUSES (409 "show_running")
+// while any of her nights is running (lib/auth/live-show.ts), so no path —
+// not even a second tab on /host — can sign a running show out.
 //
 // We keep the admin API (not the user-scoped updateUser) because the
 // user-scoped path can demand a fresh sign-in when Supabase's "secure
@@ -38,13 +40,15 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { createSessionCookieClient } from "@/lib/auth/session-cookies";
+import { createSessionCookieClient, isSupabaseSessionCookie } from "@/lib/auth/session-cookies";
 import { checkNewPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
 import { clearEvents } from "@/lib/auth/rate-limits";
+import { hostHasRunningShow } from "@/lib/auth/live-show";
 import { hostReturnPath } from "@/lib/host/hostReturnPath";
 import {
   PASSWORD_SAVED_SIGN_IN_MESSAGE,
   RATE_LIMIT_MESSAGE,
+  SHOW_RUNNING_MESSAGE,
   SIGNED_OUT_MESSAGE,
   TRY_AGAIN_MESSAGE,
   isRateLimited,
@@ -58,9 +62,6 @@ export const dynamic = "force-dynamic";
 function json(status: number, code: string, error: string, field?: string) {
   return NextResponse.json({ code, error, ...(field ? { field } : {}) }, { status });
 }
-
-// Supabase SSR session cookies: sb-<project>-auth-token, maybe chunked (.0, .1…).
-const SESSION_COOKIE = /^sb-[^-]+-auth-token(?:\.\d+)?$/;
 
 export async function POST(req: NextRequest) {
   // Session check with held-back cookies (see header).
@@ -81,8 +82,17 @@ export async function POST(req: NextRequest) {
   const check = checkNewPassword(password, confirm);
   if (!check.ok) return fail(400, "bad_password", check.error, check.field);
 
+  // Never mid-show: saving signs out every other device, including the
+  // laptop on the venue TV. Refuse while one of her nights is running
+  // (lib/auth/live-show.ts); if we can't tell, refuse too — she can save
+  // it in a minute, but a broken show can't be undone.
+  const admin = getSupabaseAdmin();
+  const running = await hostHasRunningShow(admin, user.id);
+  if (running === null) return fail(503, "try_again", TRY_AGAIN_MESSAGE);
+  if (running) return fail(409, "show_running", SHOW_RUNNING_MESSAGE);
+
   const setAt = new Date().toISOString();
-  const { error } = await getSupabaseAdmin().auth.admin.updateUserById(user.id, {
+  const { error } = await admin.auth.admin.updateUserById(user.id, {
     password,
     // Only the key we change: GoTrue merges app_metadata (checked against
     // the local Supabase Auth), so the founder's switches and Supabase's
@@ -126,7 +136,7 @@ export async function POST(req: NextRequest) {
     { status: 409 },
   );
   for (const { name } of req.cookies.getAll()) {
-    if (SESSION_COOKIE.test(name)) response.cookies.set({ name, value: "", path: "/", maxAge: 0 });
+    if (isSupabaseSessionCookie(name)) response.cookies.set({ name, value: "", path: "/", maxAge: 0 });
   }
   return response;
 }

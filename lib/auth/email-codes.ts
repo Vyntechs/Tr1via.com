@@ -9,16 +9,27 @@
 //   - codes are random (crypto.randomInt), 6 digits
 //   - only an HMAC-SHA256 of purpose + email + code is stored, keyed by the
 //     server's SESSION_SECRET — never the plain code
-//   - a code works for 10 minutes, allows 5 tries, and works once
-//   - sending a new code retires the older ones for that email + purpose
-//   - at most 5 codes per email per hour (every purpose together)
+//   - a code works for 10 minutes and works once; every try (from anyone)
+//     counts against it, and after 10 tries it is locked ("burned")
+//   - sending a new code does NOT cancel the older ones: every live code for
+//     that email + purpose works until it expires, is locked, or one of them
+//     signs her in (then the rest are cancelled). So a stranger asking for a
+//     code for her email can never cancel the one already in her inbox
+//   - per email, per purpose: at most 10 codes an hour — a backstop for her
+//     inbox. Burned codes don't count, so after wrong guesses lock a code
+//     she can always ask for a fresh one
+//   - per email, every purpose together: at most 30 codes an hour, burned
+//     ones included (inbox backstop against many networks at once)
 //   - a site-wide hourly cap on SIGNUP codes only (a flood of fake sign-ups
 //     can't burn through the Zoho mailbox's limits). Login and reset codes
-//     have NO site-wide cap: they only go to existing accounts, so the
-//     per-email cap already bounds them, and a stranger must never be able
-//     to stop a real host getting her code. Per-IP hourly caps (well below
-//     the signup cap) live in lib/auth/rate-limits.ts, checked by
-//     lib/auth/email-code-flow.ts.
+//     have NO site-wide cap: a stranger must never be able to stop a real
+//     host getting her code.
+//   - the real throttle is per network (IP), in lib/auth/rate-limits.ts,
+//     checked by lib/auth/email-code-flow.ts: codes sent per IP per purpose,
+//     codes sent from one IP to one email (5 an hour, half the per-email
+//     cap), and wrong codes from one IP for one email (5 per 15 minutes,
+//     half a code's 10 tries). So one stranger's network can neither use up
+//     her code allowance nor lock the code she is typing.
 //   - the check is constant-time (timingSafeEqual)
 //
 // Storage lives behind the small CodeStore interface (Supabase in
@@ -31,8 +42,14 @@ export const CODE_PURPOSES: readonly CodePurpose[] = ["login", "reset", "signup"
 
 export const CODE_LENGTH = 6;
 export const CODE_TTL_MS = 10 * 60 * 1000;
-export const MAX_ATTEMPTS = 5;
-export const MAX_SENDS_PER_EMAIL_PER_HOUR = 5;
+/** Tries per code, from everyone together; then the code is locked ("burned"). */
+export const MAX_ATTEMPTS = 10;
+/** Per email + purpose per hour, not counting burned codes. */
+export const MAX_SENDS_PER_EMAIL_PER_PURPOSE_PER_HOUR = 10;
+/** Per email per hour, every purpose and burned codes included. */
+export const MAX_SENDS_PER_EMAIL_PER_HOUR_TOTAL = 30;
+// At most this many live codes are checked per guess.
+const MAX_LIVE_CODES = 20;
 /**
  * Site-wide codes per hour, per purpose. null = no site-wide cap.
  * Only signup is capped (a backstop for the mailbox): signup spam fills only
@@ -70,17 +87,30 @@ export interface NewCodeRow {
 export interface CodeStore {
   /**
    * Codes created at/after sinceIso, filtered by email and/or purpose
-   * (a null filter means "any").
+   * (a null filter means "any"). With attemptsBelow, only codes with fewer
+   * tries than that (i.e. not burned).
    */
   countSince(
-    filter: { email: string | null; purpose: CodePurpose | null },
+    filter: { email: string | null; purpose: CodePurpose | null; attemptsBelow?: number },
     sinceIso: string,
   ): Promise<number>;
   /** Mark every unconsumed code for this email + purpose as used. */
   retireActive(email: string, purpose: CodePurpose, nowIso: string): Promise<void>;
-  insert(row: NewCodeRow): Promise<void>;
+  /** Insert and return the new row's id. */
+  insert(row: NewCodeRow): Promise<string>;
   /** The newest unconsumed code for this email + purpose, expired or not. */
   findNewestActive(email: string, purpose: CodePurpose): Promise<CodeRow | null>;
+  /**
+   * Every usable code for this email + purpose: unconsumed, not expired at
+   * nowIso, fewer than attemptsBelow tries. Newest first, at most `limit`.
+   */
+  findLive(
+    email: string,
+    purpose: CodePurpose,
+    nowIso: string,
+    attemptsBelow: number,
+    limit: number,
+  ): Promise<CodeRow[]>;
   /**
    * attempts := expected + 1, only if attempts is still `expected` and the
    * code is unconsumed. False when another request got there first.
@@ -146,7 +176,7 @@ export function maskEmail(email: string): string {
 }
 
 export type IssueResult =
-  | { ok: true; code: string; expiresAt: string }
+  | { ok: true; code: string; codeId: string; expiresAt: string }
   | { ok: false; reason: "too_many_for_email" | "too_many_sitewide" };
 
 export async function issueCode(
@@ -157,7 +187,14 @@ export async function issueCode(
   const now = input.now ?? new Date();
   const hourAgo = new Date(now.getTime() - HOUR_MS).toISOString();
 
-  if ((await store.countSince({ email, purpose: null }, hourAgo)) >= MAX_SENDS_PER_EMAIL_PER_HOUR) {
+  const [unburnedForPurpose, allForEmail] = await Promise.all([
+    store.countSince({ email, purpose: input.purpose, attemptsBelow: MAX_ATTEMPTS }, hourAgo),
+    store.countSince({ email, purpose: null }, hourAgo),
+  ]);
+  if (
+    unburnedForPurpose >= MAX_SENDS_PER_EMAIL_PER_PURPOSE_PER_HOUR ||
+    allForEmail >= MAX_SENDS_PER_EMAIL_PER_HOUR_TOTAL
+  ) {
     return { ok: false, reason: "too_many_for_email" };
   }
   const sitewideCap = MAX_SENDS_PER_HOUR_SITEWIDE[input.purpose];
@@ -171,8 +208,8 @@ export async function issueCode(
   const code = generateCode();
   const nowIso = now.toISOString();
   const expiresAt = new Date(now.getTime() + CODE_TTL_MS).toISOString();
-  await store.retireActive(email, input.purpose, nowIso);
-  await store.insert({
+  // Older codes stay live (see header): no retire here.
+  const codeId = await store.insert({
     email,
     purpose: input.purpose,
     code_hash: hashCode({ email, purpose: input.purpose, code }),
@@ -181,19 +218,25 @@ export async function issueCode(
   });
   // Best effort; a failed cleanup never blocks a sign-in.
   await store.deleteOlderThan(new Date(now.getTime() - KEEP_ROWS_MS).toISOString()).catch(() => {});
-  return { ok: true, code, expiresAt };
+  return { ok: true, code, codeId, expiresAt };
 }
 
 export type VerifyResult =
   | { ok: true; codeId: string }
-  | { ok: false; reason: "no_code" | "expired" | "too_many_attempts" | "wrong_code" | "busy" };
+  | {
+      ok: false;
+      reason: "no_code" | "expired" | "too_many_attempts" | "wrong_code" | "busy";
+      /** True when this guess was counted as a try against a code. */
+      counted: boolean;
+    };
 
 /**
- * Check a code. By default a correct code is used up (consumed) right here.
- * With `consume: false` a correct code is only checked (the try still
- * counts), and the caller uses it up with consumeCode() once the thing it
- * guards has actually happened — sign-up does this so a failed account
- * create (e.g. Supabase's password rules) doesn't waste the code.
+ * Check a code against every live code for this email + purpose. By default
+ * a correct code is used up (consumed) right here, and her other live codes
+ * are cancelled. With `consume: false` a correct code is only checked (the
+ * try still counts), and the caller uses it up with consumeCode() once the
+ * thing it guards has actually happened — sign-up and code sign-in do this
+ * so a failed account create or session start doesn't waste the code.
  */
 export async function verifyCode(
   store: CodeStore,
@@ -201,28 +244,51 @@ export async function verifyCode(
 ): Promise<VerifyResult> {
   const email = normalizeEmail(input.email);
   const now = input.now ?? new Date();
-  const row = await store.findNewestActive(email, input.purpose);
-  if (!row) return { ok: false, reason: "no_code" };
-  if (new Date(row.expires_at).getTime() <= now.getTime()) return { ok: false, reason: "expired" };
-  if (row.attempts >= MAX_ATTEMPTS) return { ok: false, reason: "too_many_attempts" };
+  const nowIso = now.toISOString();
+  const live = await store.findLive(email, input.purpose, nowIso, MAX_ATTEMPTS, MAX_LIVE_CODES);
+  if (live.length === 0) {
+    // Say why, from the newest code she has.
+    const newest = await store.findNewestActive(email, input.purpose);
+    if (!newest) return { ok: false, reason: "no_code", counted: false };
+    if (new Date(newest.expires_at).getTime() <= now.getTime()) {
+      return { ok: false, reason: "expired", counted: false };
+    }
+    return { ok: false, reason: "too_many_attempts", counted: false };
+  }
 
-  // Count this try BEFORE checking it, with a compare-and-set so parallel
-  // guesses can never get more than MAX_ATTEMPTS tries between them.
-  if (!(await store.bumpAttempts(row.id, row.attempts))) return { ok: false, reason: "busy" };
+  // Count this try against EVERY live code BEFORE checking it, each with a
+  // compare-and-set, so parallel guesses can never get more than
+  // MAX_ATTEMPTS tries at any one code. A code whose count moved under us
+  // is skipped for this guess.
+  const bumped = (
+    await Promise.all(live.map(async (row) => ((await store.bumpAttempts(row.id, row.attempts)) ? row : null)))
+  ).filter((r): r is CodeRow => r !== null);
+  if (bumped.length === 0) return { ok: false, reason: "busy", counted: false };
 
   const expected = hashCode({ email, purpose: input.purpose, code: input.code });
-  if (!hashesMatch(expected, row.code_hash)) {
-    return {
-      ok: false,
-      reason: row.attempts + 1 >= MAX_ATTEMPTS ? "too_many_attempts" : "wrong_code",
-    };
+  const match = bumped.find((row) => hashesMatch(expected, row.code_hash));
+  if (!match) {
+    const allLocked = bumped.every((row) => row.attempts + 1 >= MAX_ATTEMPTS) && bumped.length === live.length;
+    return { ok: false, reason: allLocked ? "too_many_attempts" : "wrong_code", counted: true };
   }
-  if (input.consume === false) return { ok: true, codeId: row.id };
-  if (!(await store.consume(row.id, now.toISOString()))) return { ok: false, reason: "no_code" };
-  return { ok: true, codeId: row.id };
+  if (input.consume === false) return { ok: true, codeId: match.id };
+  if (!(await consumeCode(store, { codeId: match.id, email, purpose: input.purpose }, now))) {
+    return { ok: false, reason: "no_code", counted: true };
+  }
+  return { ok: true, codeId: match.id };
 }
 
-/** Use up a code checked with `consume: false`. False if already used. */
-export async function consumeCode(store: CodeStore, codeId: string, now: Date = new Date()): Promise<boolean> {
-  return store.consume(codeId, now.toISOString());
+/**
+ * Use up a code (false if it was already used), then cancel her other live
+ * codes for the same purpose — once one signs her in, the rest are done.
+ */
+export async function consumeCode(
+  store: CodeStore,
+  input: { codeId: string; email: string; purpose: CodePurpose },
+  now: Date = new Date(),
+): Promise<boolean> {
+  const nowIso = now.toISOString();
+  if (!(await store.consume(input.codeId, nowIso))) return false;
+  await store.retireActive(normalizeEmail(input.email), input.purpose, nowIso).catch(() => {});
+  return true;
 }

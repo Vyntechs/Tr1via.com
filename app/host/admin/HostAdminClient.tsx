@@ -660,7 +660,15 @@ function PasswordLine({
       ) : isFounder ? (
         <span>
           <strong style={{ color: t.ink }}>No password yet</strong>
-          {" · "}you&apos;ll be asked to create one on your next visit
+          {" · "}
+          <a
+            href={`/host/set-password?next=${encodeURIComponent("/host/admin")}`}
+            data-testid="founder-create-password"
+            style={{ color: t.accent, fontWeight: 700 }}
+          >
+            Create your password now
+          </a>
+          {" "}(you&apos;ll also be asked the next time you sign in with a code or link)
         </span>
       ) : (
         <>

@@ -19,6 +19,9 @@
 // lockout after too many wrong passwords for one email or from one IP
 // ("Too many tries. Wait 15 minutes or use Forgot password."). The lockout
 // only covers this door — "Forgot password?" still emails a reset code.
+// Only Supabase's real "invalid credentials" answer is a wrong password;
+// any other failure (outage, network, unconfirmed email) is "We couldn't
+// sign you in right now" and never counts toward a lockout.
 //
 // Replaces the email-only /api/auth/founder-login. The prod smoke scripts
 // sign in here with SMOKE_FOUNDER_EMAIL + SMOKE_FOUNDER_PASSWORD.
@@ -27,16 +30,18 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { findAuthUserByEmail } from "@/lib/auth/admin-users";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
-import { hasPassword } from "@/lib/auth/password-gate";
+import { forgetPasswordLater, hasPassword } from "@/lib/auth/password-gate";
 import { clientIp, hitIpLimit, isOverLimit, recordEvent } from "@/lib/auth/rate-limits";
 import {
   LOCKED_OUT_MESSAGE,
   NO_ACCOUNT_MESSAGE,
   NO_PASSWORD_MESSAGE,
   RATE_LIMIT_MESSAGE,
+  SIGN_IN_UNAVAILABLE_MESSAGE,
   TOO_MANY_TRIES_MESSAGE,
   TRY_AGAIN_MESSAGE,
   WRONG_PASSWORD_MESSAGE,
+  isInvalidCredentials,
   isRateLimited,
 } from "@/lib/auth/auth-messages";
 
@@ -92,15 +97,24 @@ export async function POST(req: NextRequest) {
       await supabase.auth.signOut({ scope: "local" }).catch(() => {});
       return fail(403, "no_password", NO_PASSWORD_MESSAGE);
     }
-    return applyCookies(NextResponse.json({ ok: true }, { status: 200 }));
+    return forgetPasswordLater(applyCookies(NextResponse.json({ ok: true }, { status: 200 })));
   }
 
   if (isRateLimited(error)) {
     return fail(429, "rate_limited", RATE_LIMIT_MESSAGE);
   }
+  if (!isInvalidCredentials(error)) {
+    // Outage, network trouble, an account Supabase won't sign in: not her
+    // fault, so it never counts toward a lockout.
+    console.error("[login] sign-in failed (not a wrong password)", {
+      code: (error as { code?: string } | null)?.code,
+      status: (error as { status?: number } | null)?.status,
+    });
+    return fail(503, "sign_in_unavailable", SIGN_IN_UNAVAILABLE_MESSAGE);
+  }
 
-  // A wrong password for a real password account counts against this IP
-  // and that email.
+  // A real wrong password for a real password account counts against this
+  // IP and that email.
   await recordEvent("fail:login-ip", ip);
   await recordEvent("fail:login-email", email);
   return fail(401, "wrong_password", WRONG_PASSWORD_MESSAGE);

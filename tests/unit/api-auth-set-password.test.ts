@@ -9,12 +9,16 @@
 // session's cookies (never a refreshed copy of the old, now-dead session);
 // if that sign-in fails → 409 "sign_in_again" with a /login link and the
 // dead cookies cleared; Supabase rate limits → 429; saving clears a
-// wrong-password lockout on her email.
+// wrong-password lockout on her email; and it REFUSES while one of her
+// nights is running (409 "show_running", nothing written, no session
+// touched) or when that can't be checked (503) — so no path can sign a
+// running show out.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { memoryRateStore } from "./helpers/memory-rate-store";
 import { RATE_LIMITS, isOverLimit, recordEvent } from "@/lib/auth/rate-limits";
+import { fakeShowDb, openedNight, type FakeShowDb } from "./helpers/fake-show-db";
 
 type SetAll = (c: Array<{ name: string; value: string; options?: object }>) => void;
 
@@ -24,6 +28,8 @@ const h = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   setAll: null as null | SetAll,
   rates: null as unknown,
+  db: null as null | FakeShowDb,
+  nights: [] as object[],
 }));
 
 vi.mock("@/lib/auth/rate-limit-store", () => ({
@@ -44,7 +50,10 @@ vi.mock("@supabase/ssr", () => ({
   },
 }));
 vi.mock("@/lib/supabase/admin", () => ({
-  getSupabaseAdmin: () => ({ auth: { admin: { updateUserById: h.updateUserById } } }),
+  getSupabaseAdmin: () => ({
+    from: (t: string) => h.db!.from(t),
+    auth: { admin: { updateUserById: h.updateUserById } },
+  }),
 }));
 
 import { POST } from "@/app/api/auth/set-password/route";
@@ -77,6 +86,13 @@ const USER = {
 beforeEach(() => {
   vi.clearAllMocks();
   h.rates = memoryRateStore();
+  // Heather's host row; last week's night was never closed (like prod).
+  h.nights = [openedNight("host-h", 24 * 7)];
+  h.db = fakeShowDb({
+    hosts: () => [{ id: "host-h", user_id: USER.id }],
+    nights: () => h.nights as never,
+    games: () => [],
+  });
   h.getUser.mockImplementation(async () => ({ data: { user: USER }, error: null }));
   h.updateUserById.mockResolvedValue({ data: { user: USER }, error: null });
   h.signInWithPassword.mockImplementation(async (_creds: unknown, setAll: SetAll) => {
@@ -212,5 +228,36 @@ describe("POST /api/auth/set-password", () => {
     const res = await POST(req({ password: "trivia-night", confirm: "trivia-night" }));
     expect(res.status).toBe(200);
     expect(await isOverLimit("fail:login-email", USER.email)).toBe(false);
+  });
+
+  it("REFUSES while one of her nights is running: nothing saved, no session touched", async () => {
+    h.nights = [openedNight("host-h", 1)];
+    const res = await POST(req({ password: "trivia-night", confirm: "trivia-night" }));
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.code).toBe("show_running");
+    expect(body.error).toBe(
+      "Your show is running right now. Create your password after the show, so your TV screen and phone stay signed in.",
+    );
+    expect(h.updateUserById).not.toHaveBeenCalled();
+    expect(h.signInWithPassword).not.toHaveBeenCalled();
+    // Her session cookie is left alone.
+    expect(setCookies(res, "sb-test-auth-token")).toHaveLength(0);
+  });
+
+  it("works again once the show is closed", async () => {
+    h.nights = [openedNight("host-h", 1, { closed_at: new Date().toISOString() })];
+    const res = await POST(req({ password: "trivia-night", confirm: "trivia-night" }));
+    expect(res.status).toBe(200);
+    expect(h.updateUserById).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses (try again) when it can't check for a running show", async () => {
+    h.db!.fail = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await POST(req({ password: "trivia-night", confirm: "trivia-night" }));
+    log.mockRestore();
+    expect(res.status).toBe(503);
+    expect(h.updateUserById).not.toHaveBeenCalled();
   });
 });

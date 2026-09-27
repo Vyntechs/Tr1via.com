@@ -44,6 +44,18 @@ export const HAS_PASSWORD_MESSAGE =
 export const TOO_MANY_TRIES_MESSAGE =
   "Too many tries. Wait 15 minutes, then try again. Text Brandon if you're stuck.";
 export const LOCKED_OUT_MESSAGE = "Too many tries. Wait 15 minutes or use Forgot password.";
+// Supabase Auth couldn't check the password (outage, network, an account
+// Supabase won't sign in) — NOT a wrong password, so it never counts toward
+// the wrong-password lockout.
+export const SIGN_IN_UNAVAILABLE_MESSAGE = "We couldn't sign you in right now. Try again in a minute.";
+// A new host's account was made but signing her in right after failed.
+export const ACCOUNT_READY_MESSAGE = "Your account is ready. Sign in with your password.";
+// set-password refuses while one of her nights is running (see lib/auth/live-show.ts).
+export const SHOW_RUNNING_MESSAGE =
+  "Your show is running right now. Create your password after the show, so your TV screen and phone stay signed in.";
+// Too many wrong codes from one network for one email (lib/auth/rate-limits.ts).
+export const TOO_MANY_WRONG_CODES_MESSAGE =
+  "Too many wrong codes. Wait 15 minutes, then try again. Text Brandon if you're stuck.";
 export const SIGNED_OUT_MESSAGE =
   "You've been signed out. Please sign in again, then come back here.";
 
@@ -60,6 +72,18 @@ function asAuthError(err: unknown): AuthErrorLike {
 export function isRateLimited(err: unknown): boolean {
   const e = asAuthError(err);
   return e.status === 429 || (typeof e.code === "string" && e.code.startsWith("over_"));
+}
+
+/**
+ * Supabase's answer for a wrong email/password pair. Only this counts as a
+ * wrong password; anything else (outage, network, unconfirmed email) is
+ * "couldn't sign you in right now".
+ */
+export function isInvalidCredentials(err: unknown): boolean {
+  const e = asAuthError(err);
+  if (e.code === "invalid_credentials") return true;
+  // Older GoTrue versions send no code, only this message on a 400.
+  return !e.code && e.status === 400 && /invalid login credentials/i.test(e.message ?? "");
 }
 
 export function isWeakPassword(err: unknown): boolean {

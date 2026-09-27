@@ -21,6 +21,11 @@ export const PASSWORD_SET_AT_KEY = "password_set_at";
 export const PASSWORD_PROMPT_KEY = "password_prompt";
 export const FOUNDER_KEY = "founder";
 export const SET_PASSWORD_PATH = "/host/set-password";
+// "Not now" on the Create-your-password screen (app/auth/password-later).
+// A browser-session cookie: while it's there the middleware gate lets her
+// through; every sign-in clears it, so she is asked again next sign-in.
+export const PASSWORD_LATER_COOKIE = "tr1via_pw_later";
+export const PASSWORD_LATER_PATH = "/auth/password-later";
 
 export const MIN_PASSWORD_LENGTH = 8;
 // Supabase (bcrypt) ignores anything past 72 bytes; cap it so a long
@@ -84,6 +89,7 @@ function isGatedPath(pathname: string): boolean {
  * Shows only when ALL hold:
  *   - it's a /host page that isn't in-show and isn't the prompt itself
  *   - the account has no password marker yet
+ *   - she hasn't tapped "Not now" since she last signed in
  *   - the founder turned the prompt "on" for this host, OR this is the
  *     founder's own account (app_metadata.founder). An explicit "off"
  *     always wins. Existing hosts with no setting are treated as off, so
@@ -94,15 +100,33 @@ export function passwordGateRedirect(input: {
   pathname: string;
   search?: string;
   appMetadata: AppMetadata;
+  /** She tapped "Not now" since she last signed in (PASSWORD_LATER_COOKIE). */
+  askedLater?: boolean;
 }): string | null {
-  const { pathname, search = "", appMetadata } = input;
+  const { pathname, search = "", appMetadata, askedLater = false } = input;
   if (!isGatedPath(pathname)) return null;
+  if (askedLater) return null;
   if (hasPassword(appMetadata)) return null;
   const setting = passwordPromptSetting(appMetadata);
   if (setting === "off") return null;
   if (setting !== "on" && !isFounderAccount(appMetadata)) return null;
   const next = `${pathname}${search}`;
   return `${SET_PASSWORD_PATH}?next=${encodeURIComponent(next)}`;
+}
+
+/** "Not now" link: defer the prompt, then go to `next` (default /host). */
+export function passwordLaterHref(next: string = "/host"): string {
+  return `${PASSWORD_LATER_PATH}?next=${encodeURIComponent(next)}`;
+}
+
+interface CookieSink {
+  cookies: { set(cookie: { name: string; value: string; path: string; maxAge: number }): unknown };
+}
+
+/** Every sign-in calls this: a fresh sign-in asks again. */
+export function forgetPasswordLater<T extends CookieSink>(response: T): T {
+  response.cookies.set({ name: PASSWORD_LATER_COOKIE, value: "", path: "/", maxAge: 0 });
+  return response;
 }
 
 /**

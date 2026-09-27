@@ -43,7 +43,8 @@ function asUser(appMetadata: Record<string, unknown>) {
   h.getUser.mockResolvedValue({ data: { user: { id: "u1", app_metadata: appMetadata } } });
 }
 
-const run = (path: string) => middleware(new NextRequest(`http://test${path}`));
+const run = (path: string, cookie?: string) =>
+  middleware(new NextRequest(`http://test${path}`, cookie ? { headers: { cookie } } : undefined));
 
 function location(res: Response): string | null {
   const loc = res.headers.get("location");
@@ -111,6 +112,15 @@ describe("middleware password gate", () => {
   it("still bounces signed-out visitors to /login", async () => {
     h.getUser.mockResolvedValue({ data: { user: null } });
     expect(location(await run("/host/setup/night-1"))).toBe("/login?next=%2Fhost%2Fsetup%2Fnight-1");
+  });
+
+  it("'Not now' (tr1via_pw_later) lets her through until her next sign-in", async () => {
+    asUser({ password_prompt: "on" });
+    expect(location(await run("/host", "tr1via_pw_later=1"))).toBeNull();
+    asUser({ founder: true });
+    expect(location(await run("/host/setup/night-1", "tr1via_pw_later=1"))).toBeNull();
+    // Without the cookie (a fresh sign-in clears it) she's asked again.
+    expect(location(await run("/host"))).toBe("/host/set-password?next=%2Fhost");
   });
 
   it("leaves API routes alone", async () => {

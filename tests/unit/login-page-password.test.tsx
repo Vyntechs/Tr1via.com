@@ -370,3 +370,51 @@ describe("/login — plain words for a non-technical host", () => {
     expect(check).toHaveTextContent("Use a different email");
   });
 });
+
+describe("/login — never a dead end after a code was already sent", () => {
+  it("Forgot password? with too many codes this hour → shows the code boxes and the message", async () => {
+    respond(200, { step: "password" });
+    render(<HostLoginPage />);
+    await submitEmail("brandon@vyntechs.com");
+    await screen.findByLabelText("Password", { exact: true });
+    respond(429, {
+      code: "too_many_codes",
+      maskedEmail: "b***@vyntechs.com",
+      error:
+        "We've already sent several codes to this email. Use the newest one, or wait an hour and try again. Text Brandon if you're stuck.",
+    });
+    fireEvent.click(screen.getByTestId("login-forgot"));
+    expect(await screen.findByText("RESET YOUR PASSWORD · CHECK YOUR EMAIL")).toBeInTheDocument();
+    expect(screen.getByLabelText("6-digit code")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Use the newest one");
+    expect(screen.queryByLabelText("Password", { exact: true })).toBeNull();
+  });
+
+  it("new account made but not signed in → password sign-in step with 'Your account is ready.'", async () => {
+    respond(200, { step: "signup" });
+    render(<HostLoginPage />);
+    await submitEmail("new@example.com");
+    fireEvent.change(await screen.findByLabelText("Password", { exact: true }), {
+      target: { value: "trivia-night" },
+    });
+    fireEvent.change(screen.getByLabelText("Type it again"), { target: { value: "trivia-night" } });
+    respond(200, { ok: true, maskedEmail: "n***@example.com" });
+    fireEvent.click(screen.getByTestId("login-submit"));
+    await screen.findByText("STEP 2 OF 2 · CHECK YOUR EMAIL");
+
+    respond(409, { code: "account_ready", error: "Your account is ready. Sign in with your password." });
+    fireEvent.change(screen.getByLabelText("6-digit code"), { target: { value: "654321" } });
+    expect(await screen.findByText("Your account is ready. Sign in with your password.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("6-digit code")).toBeNull();
+    expect(screen.queryByLabelText("Type it again")).toBeNull();
+    // Her password is still typed in: one tap signs her in.
+    expect(screen.getByLabelText("Password", { exact: true })).toHaveValue("trivia-night");
+    respond(200, { ok: true });
+    fireEvent.click(screen.getByTestId("login-submit"));
+    await waitFor(() => expect(h.replace).toHaveBeenCalledWith("/host"));
+    expect(call(3)).toEqual({
+      url: "/api/auth/login",
+      body: { email: "new@example.com", password: "trivia-night" },
+    });
+  });
+});

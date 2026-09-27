@@ -8,6 +8,10 @@
 // The page never runs inside a show: the gate skips /host/live and
 // /host/phone, and the done button never returns to them.
 //
+// "Not now" (under the button) skips it for now and goes to /host; she is
+// asked again next sign-in (app/auth/password-later). If one of her nights
+// is running, the page skips itself (page.tsx) and the save route refuses.
+//
 // `from` tunes the words for how she got here:
 //   "code"  — just signed in with an emailed code: "Step 2 of 2"
 //   "reset" — "Forgot password?": "Choose a new password"
@@ -20,7 +24,7 @@ import { LaptopShell } from "@/components/shells";
 import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
 import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { PasswordField, ShowPasswordToggle } from "@/components/host/PasswordField";
-import { checkNewPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth/password-gate";
+import { checkNewPassword, MIN_PASSWORD_LENGTH, passwordLaterHref } from "@/lib/auth/password-gate";
 
 export type SetPasswordFrom = "code" | "reset" | null;
 
@@ -57,18 +61,29 @@ type State =
 export function SetPasswordClient({
   returnPath,
   from = null,
+  laterHref = passwordLaterHref("/host"),
 }: {
   returnPath: string;
   from?: SetPasswordFrom;
+  /** "Not now": skip for now, go to /host, asked again next sign-in. */
+  laterHref?: string;
 }) {
   return (
     <LaptopShell>
-      <Inner returnPath={returnPath} from={from} />
+      <Inner returnPath={returnPath} from={from} laterHref={laterHref} />
     </LaptopShell>
   );
 }
 
-function Inner({ returnPath, from }: { returnPath: string; from: SetPasswordFrom }) {
+function Inner({
+  returnPath,
+  from,
+  laterHref,
+}: {
+  returnPath: string;
+  from: SetPasswordFrom;
+  laterHref: string;
+}) {
   const { t } = useTheme();
   const copy = COPY[from ?? "prompt"];
   const compact = useMediaQuery("(max-width: 640px)");
@@ -250,6 +265,31 @@ function Inner({ returnPath, from }: { returnPath: string; from: SetPasswordFrom
             </BigButton>
             <p style={{ marginTop: 14, fontSize: 16, lineHeight: 1.45, color: t.inkMute, fontWeight: 500 }}>
               This device stays signed in. Your phone or other computers will ask for the new password once.
+            </p>
+            {/* Plain link (full page load): the server remembers "not now"
+                until her next sign-in, then asks again. */}
+            <a
+              href={laterHref}
+              data-testid="set-password-later"
+              aria-disabled={saving || undefined}
+              onClick={(e) => {
+                if (saving) e.preventDefault();
+              }}
+              style={{
+                marginTop: 22,
+                alignSelf: "center",
+                padding: "12px 16px",
+                fontSize: 20,
+                fontWeight: 700,
+                color: t.ink,
+                textDecoration: "underline",
+                textUnderlineOffset: 4,
+              }}
+            >
+              Not now
+            </a>
+            <p style={{ marginTop: 4, textAlign: "center", fontSize: 16, lineHeight: 1.45, color: t.inkMute, fontWeight: 500 }}>
+              We&apos;ll ask again the next time you sign in.
             </p>
           </form>
         )}

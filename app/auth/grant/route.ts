@@ -18,7 +18,7 @@
 // `verifyOtp` server-side (the same SSR exchange the founder bypass
 // uses), and the response carries the auth cookies. We then redirect
 // to /host as a normal authenticated user — or, for an account with no
-// password yet, to /host/set-password first.
+// password yet and no show running, to /host/set-password first.
 //
 // Security: the hashed_token is single-use, scoped to one email, and
 // expires after ~1 hour. Leaking the URL gives someone exactly one
@@ -28,8 +28,10 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
-import { SET_PASSWORD_PATH, walkToPasswordAfterSignIn } from "@/lib/auth/password-gate";
+import { SET_PASSWORD_PATH, forgetPasswordLater, walkToPasswordAfterSignIn } from "@/lib/auth/password-gate";
 import { markFounderIfNeeded } from "@/lib/auth/founder-flag";
+import { hostHasRunningShow } from "@/lib/auth/live-show";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -62,14 +64,19 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
   // The founder's link is the way back in for an account with no password
   // yet. Land that host on "Create your password" so she won't need another
-  // link next time — unless the founder switched her prompt explicitly off.
+  // link next time — unless the founder switched her prompt explicitly off,
+  // or one of her nights is running right now (saving a password would sign
+  // the show's laptop/phone out; null = couldn't tell → don't risk it).
   // (Same rule as a code sign-in at /api/auth/verify-code.)
-  const destination = walkToPasswordAfterSignIn(data.user?.app_metadata)
-    ? `${SET_PASSWORD_PATH}?next=${encodeURIComponent("/host")}`
-    : "/host";
+  const askNow =
+    !!data.user &&
+    walkToPasswordAfterSignIn(data.user.app_metadata) &&
+    (await hostHasRunningShow(getSupabaseAdmin(), data.user.id)) === false;
+  const destination = askNow ? `${SET_PASSWORD_PATH}?next=${encodeURIComponent("/host")}` : "/host";
   if (data.user) await markFounderIfNeeded(data.user);
 
   // verifyOtp handed the session cookies to createSessionCookieClient; they
   // ride on this redirect so the browser carries them on the next request.
-  return applyCookies(NextResponse.redirect(new URL(destination, url.origin)));
+  // A fresh sign-in asks again (clears any earlier "Not now").
+  return forgetPasswordLater(applyCookies(NextResponse.redirect(new URL(destination, url.origin))));
 }

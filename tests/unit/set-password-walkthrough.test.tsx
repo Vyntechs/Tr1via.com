@@ -87,3 +87,37 @@ describe("set-password walkthrough wording", () => {
     expect(sent.next).toBe("/host");
   });
 });
+
+describe("'Not now' on the set-password screen", () => {
+  it.each(["code", "reset", null] as const)("from=%s: a clear 'Not now' link to /host, asked again next sign-in", (from) => {
+    renderFrom(from);
+    const later = screen.getByTestId("set-password-later");
+    expect(later).toHaveTextContent("Not now");
+    expect(later).toHaveAttribute("href", "/auth/password-later?next=%2Fhost");
+    expect(document.body).toHaveTextContent("We'll ask again the next time you sign in.");
+  });
+
+  it("a refused save during a show shows the plain message and keeps 'Not now' there", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            code: "show_running",
+            error:
+              "Your show is running right now. Create your password after the show, so your TV screen and phone stay signed in.",
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } },
+        ),
+      ),
+    );
+    renderFrom("code");
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), { target: { value: "trivia-night" } });
+    fireEvent.change(screen.getByLabelText("Type it again"), { target: { value: "trivia-night" } });
+    fireEvent.click(screen.getByTestId("set-password-submit"));
+    await waitFor(() =>
+      expect(screen.getByTestId("set-password-error")).toHaveTextContent("Create your password after the show"),
+    );
+    expect(screen.getByTestId("set-password-later")).toBeInTheDocument();
+  });
+});

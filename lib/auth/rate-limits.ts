@@ -11,13 +11,22 @@
 //     per IP                 20      Forgot password."
 //   "Forgot password?" (send-code "reset") is NOT blocked by the password
 //   lockout, so a host who is locked out can always get back in by code.
-//   Codes actually sent, per IP per purpose (1-hour window):
+//   Codes actually sent, per IP per purpose (1-hour window) — this is what
+//   protects the Zoho mailbox:
 //     login                  10   (whichever door sends it: start or send-code)
 //     reset                  10
 //     signup                  3   (well below the site-wide signup cap of 20
 //                                   in lib/auth/email-codes.ts, so one IP
 //                                   can't use it up; login/reset have no
 //                                   site-wide cap at all)
+//   Codes sent from one IP to one email (1-hour window, every purpose):
+//                           5    half the per-email cap in email-codes.ts,
+//                                 so one stranger's network can't use up
+//                                 her codes for the hour
+//   Wrong codes from one IP for one email (15-minute window):
+//                           5    half of a code's 10 tries, so one
+//                                 stranger's network can't lock the code
+//                                 she is typing (a code lives 10 minutes)
 //
 // Events live in public.auth_rate_events (lib/auth/rate-limit-store.ts).
 // Keys are HMAC'd with SESSION_SECRET, so no plain IP or email is stored.
@@ -43,7 +52,9 @@ export type RateBucket =
   | "fail:login-ip"
   | "ip:code-login"
   | "ip:code-reset"
-  | "ip:code-signup";
+  | "ip:code-signup"
+  | "send:code-ip-email"
+  | "fail:code-ip-email";
 
 export const RATE_LIMITS: Readonly<Record<RateBucket, number>> = {
   "ip:start": 20,
@@ -55,6 +66,8 @@ export const RATE_LIMITS: Readonly<Record<RateBucket, number>> = {
   "ip:code-login": 10,
   "ip:code-reset": 10,
   "ip:code-signup": 3,
+  "send:code-ip-email": 5,
+  "fail:code-ip-email": 5,
 };
 
 /** How far back each bucket counts. Everything not listed: RATE_WINDOW_MS. */
@@ -62,6 +75,7 @@ export const RATE_WINDOWS_MS: Readonly<Partial<Record<RateBucket, number>>> = {
   "ip:code-login": HOUR_MS,
   "ip:code-reset": HOUR_MS,
   "ip:code-signup": HOUR_MS,
+  "send:code-ip-email": HOUR_MS,
 };
 
 export function rateWindowMs(bucket: RateBucket): number {
@@ -163,6 +177,11 @@ export async function clearEvents(
   } catch (err) {
     logSkip(`clear ${bucket}`, err);
   }
+}
+
+/** Key for the IP + email buckets ("send:code-ip-email", "fail:code-ip-email"). */
+export function ipEmailKey(ip: string, email: string): string {
+  return `${ip}|${email.trim().toLowerCase()}`;
 }
 
 /**

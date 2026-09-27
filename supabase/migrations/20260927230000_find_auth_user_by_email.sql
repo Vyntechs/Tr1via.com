@@ -5,9 +5,11 @@
 -- tools (lib/auth/admin-users.ts). Replaces paging through every account
 -- with the admin listUsers API on each unauthenticated request.
 --
---   - Supabase Auth stores emails lower-cased, so `email = lower(btrim(..))`
---     uses the existing unique index users_email_partial_key
---     (email) WHERE is_sso_user = false. TR1VIA has no SSO accounts.
+--   - Compares lower(email) on BOTH sides, so an address stored with any
+--     capital letters still matches. That skips Supabase's own email index,
+--     which is fine: TR1VIA has a few dozen accounts, and auth.users is
+--     owned by Supabase, so we deliberately add no index there.
+--     TR1VIA has no SSO accounts.
 --   - Returns only id, email and app metadata (our password marker and the
 --     founder's per-host switches). Never passwords or tokens.
 --   - SECURITY DEFINER with an empty search_path (every name is qualified).
@@ -26,7 +28,7 @@ set search_path = ''
 as $$
   select u.id, u.email::text, u.raw_app_meta_data
   from auth.users as u
-  where u.email = lower(btrim(p_email))
+  where lower(u.email) = lower(btrim(p_email))
     and u.is_sso_user = false
   limit 1;
 $$;

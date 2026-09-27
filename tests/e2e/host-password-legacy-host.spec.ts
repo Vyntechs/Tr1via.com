@@ -8,11 +8,15 @@
 // /host/set-password, never signed out.
 //
 // Then the founder flips her switch "on" through the real admin endpoint:
-// the "Create your password" screen must appear on /host but never on the
-// in-show surfaces (/host/live, /host/phone), and once saved she lands on
-// /host normally (this laptop stays signed in), the done screen warns that
-// her phone will ask for the new password once, the password works at
-// /login, and after signing in once the phone goes straight back to the show.
+// the "Create your password" screen never appears on the in-show surfaces
+// (/host/live, /host/phone), and WHILE HER NIGHT IS RUNNING it doesn't
+// appear on /host either — she goes straight in, and the save route
+// refuses (409 show_running), so nothing can sign the show out. Once the
+// night is closed: /host asks, "Not now" goes to /host and stops asking
+// until her next sign-in; when asked again she saves, lands on /host
+// normally (this laptop stays signed in), the done screen warns that her
+// phone will ask for the new password once, the password works at /login,
+// and after signing in once the phone goes straight back to the night.
 //
 // LOCAL ONLY: needs a local Supabase (service-role key in .env.local) to
 // shape the legacy account; skips otherwise.
@@ -229,7 +233,43 @@ test.describe("legacy host (no password) — zero change until the founder asks"
     expect(reveal.status(), await reveal.text()).toBe(200);
     await fastForwardTimer(remote, q2);
 
-    // /host (not in-show) → "Create your password".
+    // /host mid-show: her night is running, so the password step skips
+    // itself — straight to /host, the form never shows.
+    await hostPage.goto("/host");
+    await expect(hostPage).toHaveURL(/\/host$/, { timeout: 15_000 });
+    await expect(hostPage.getByText("HOSTING AS")).toBeVisible({ timeout: 15_000 });
+    await expect(hostPage.getByTestId("set-password-screen")).toHaveCount(0);
+    // Even straight to the save route: refused mid-show, nothing written.
+    const refused = await hostPage.request.post("/api/auth/set-password", {
+      data: { password: NEW_PASSWORD, confirm: NEW_PASSWORD },
+    });
+    expect(refused.status(), await refused.text()).toBe(409);
+    expect((await refused.json()).code).toBe("show_running");
+    expect((await getAuthUser(admin!, heather.userId)).app_metadata?.password_set_at ?? null).toBeNull();
+    // Nothing was signed out: the phone still runs the show.
+    await remote.reload();
+    await expect(remote).toHaveURL(`/host/live/${night.nightId}`);
+    await expect(remote.getByTestId("host-phone-round-controls")).toBeVisible({ timeout: 30_000 });
+    expect(gateOrLogoutHops(remotePaths)).toEqual([]);
+
+    // After the show: she closes the night. Her next sign-in clears the
+    // "not now" she was given mid-show (stand-in: drop that cookie).
+    const closed = await hostPage.request.post(`/api/nights/${night.nightId}/close`);
+    expect(closed.status(), await closed.text()).toBe(200);
+    await laptop.clearCookies({ name: "tr1via_pw_later" });
+
+    // /host (not in-show, no show running) → "Create your password",
+    // with a clear "Not now" that goes to /host and stops asking.
+    await hostPage.goto("/host");
+    await expect(hostPage).toHaveURL(/\/host\/set-password\?next=%2Fhost$/);
+    await hostPage.getByTestId("set-password-later").click();
+    await expect(hostPage).toHaveURL(/\/host$/, { timeout: 15_000 });
+    await expect(hostPage.getByText("HOSTING AS")).toBeVisible({ timeout: 15_000 });
+    await hostPage.goto("/host/setup/" + night.nightId);
+    await expect(hostPage).toHaveURL(`/host/setup/${night.nightId}`);
+
+    // Asked again (as after her next sign-in) — this time she saves.
+    await laptop.clearCookies({ name: "tr1via_pw_later" });
     await hostPage.goto("/host");
     await expect(hostPage).toHaveURL(/\/host\/set-password\?next=%2Fhost$/);
     await expect(hostPage.getByTestId("set-password-screen")).toBeVisible();
@@ -270,9 +310,9 @@ test.describe("legacy host (no password) — zero change until the founder asks"
   //   - her host phone asks her to sign in ONCE with the new password, and
   //     the done screen told her so in plain words,
   //   - after signing in, the phone lands right back in the show.
-  // The prompt itself never appears on /host/live or /host/phone, so this
-  // can't be triggered from inside a show.
-  test("her phone asks for the new password once, then goes straight back to the show", async () => {
+  // The prompt never appears on /host/live or /host/phone, and saving is
+  // refused while a night is running, so this can't happen mid-show.
+  test("her phone asks for the new password once, then goes straight back to the night", async () => {
     expect(remote).toBeDefined();
     await remote.reload();
     await expect(remote).toHaveURL(

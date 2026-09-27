@@ -35,7 +35,7 @@ const h = vi.hoisted(() => ({
   accounts: [] as Array<{ id: string; email: string; app_metadata: object }>,
   createUser: vi.fn(),
   checkCode: vi.fn(),
-  markCodeUsed: vi.fn(),
+  spendCode: vi.fn(),
   setAll: null as null | SetAll,
   rates: null as unknown,
 }));
@@ -60,7 +60,7 @@ vi.mock("@/lib/auth/rate-limit-store", () => ({
 vi.mock("@/lib/auth/email-code-flow", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/email-code-flow")>()),
   checkCode: h.checkCode,
-  markCodeUsed: h.markCodeUsed,
+  spendCode: h.spendCode,
 }));
 
 import { POST as login } from "@/app/api/auth/login/route";
@@ -103,6 +103,7 @@ beforeEach(() => {
   h.setAll = null;
   h.rates = memoryRateStore();
   h.checkCode.mockResolvedValue({ ok: true, codeId: "code-1" });
+  h.spendCode.mockResolvedValue("used");
   h.signOut.mockResolvedValue({ error: null });
   accounts(
     MARKED_USER,
@@ -183,6 +184,25 @@ describe("POST /api/auth/login", () => {
     });
     const res = await login(req("/api/auth/login", { email: "a@x.test", password: "whatever1" }));
     expect(res.status).toBe(429);
+  });
+
+  it.each([
+    ["an outage (500)", { status: 500, code: "unexpected_failure", message: "Database error" }],
+    ["a network failure (no status)", { name: "AuthRetryableFetchError", message: "fetch failed" }],
+    ["an unconfirmed email", { status: 400, code: "email_not_confirmed", message: "Email not confirmed" }],
+  ])("%s → 'couldn't sign you in right now', never counted as a wrong password", async (_label, error) => {
+    h.signInWithPassword.mockResolvedValue({ data: { user: null, session: null }, error });
+    for (let i = 0; i < RATE_LIMITS["fail:login-email"] + 2; i++) {
+      const res = await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "whatever1" }));
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.code).toBe("sign_in_unavailable");
+      expect(body.error).toBe("We couldn't sign you in right now. Try again in a minute.");
+    }
+    // No lockout built up: the right password works as soon as Supabase is back.
+    signInSucceeds(MARKED);
+    const ok = await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "right-one" }));
+    expect(ok.status).toBe(200);
   });
 });
 
@@ -297,7 +317,10 @@ describe("POST /api/auth/host-access (sign-up)", () => {
       }),
     );
     expect(res.status).toBe(200);
-    expect(h.checkCode).toHaveBeenCalledWith("new@x.test", "signup", "123456", { consume: false });
+    expect(h.checkCode).toHaveBeenCalledWith("new@x.test", "signup", "123456", {
+      ip: "203.0.113.7",
+      consume: false,
+    });
     const attrs = h.createUser.mock.calls[0][0];
     expect(attrs).toMatchObject({ email: "new@x.test", password: "trivia-night", email_confirm: true });
     expect(typeof attrs.app_metadata.password_set_at).toBe("string");
@@ -305,7 +328,31 @@ describe("POST /api/auth/host-access (sign-up)", () => {
     expect(res.cookies.get("sb-test-auth-token")?.value).toBe("session");
     expect(h.listUsers).not.toHaveBeenCalled();
     // The code is used up only now that the account exists.
-    expect(h.markCodeUsed).toHaveBeenCalledWith("code-1");
+    expect(h.spendCode).toHaveBeenCalledWith({ codeId: "code-1", email: "new@x.test", purpose: "signup" });
+  });
+
+  it("account made but the sign-in right after fails → 'Your account is ready. Sign in with your password.'", async () => {
+    h.createUser.mockResolvedValue({ data: { user: { id: "n1" } }, error: null });
+    h.signInWithPassword.mockResolvedValue({
+      data: { user: null, session: null },
+      error: { status: 500, code: "unexpected_failure", message: "Database error" },
+    });
+    const res = await signUp(
+      req("/api/auth/host-access", {
+        email: "new@x.test",
+        password: "trivia-night",
+        confirm: "trivia-night",
+        code: "123456",
+      }),
+    );
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({
+      code: "account_ready",
+      error: "Your account is ready. Sign in with your password.",
+    });
+    expect(res.cookies.get("sb-test-auth-token")).toBeUndefined();
+    // The account exists, so the code is used up.
+    expect(h.spendCode).toHaveBeenCalled();
   });
 
   it("a password Supabase refuses keeps the code good and says the rule in plain words", async () => {
@@ -332,7 +379,7 @@ describe("POST /api/auth/host-access (sign-up)", () => {
     expect(body.error).toBe(
       "Please pick a different password. It needs at least 10 characters. It has shown up in a data leak on another website, so it isn't safe.",
     );
-    expect(h.markCodeUsed).not.toHaveBeenCalled();
+    expect(h.spendCode).not.toHaveBeenCalled();
     expect(h.signInWithPassword).not.toHaveBeenCalled();
   });
 

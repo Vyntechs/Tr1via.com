@@ -12,6 +12,14 @@ interface CookieToSet {
   options?: CookieOptions;
 }
 
+// Supabase SSR session cookies: sb-<project>-auth-token, maybe chunked (.0, .1…).
+const SESSION_COOKIE_NAME = /^sb-[^-]+-auth-token(?:\.\d+)?$/;
+
+/** True for a Supabase SSR session cookie name (any chunk). */
+export function isSupabaseSessionCookie(name: string): boolean {
+  return SESSION_COOKIE_NAME.test(name);
+}
+
 export function createSessionCookieClient(req: NextRequest) {
   const pending: CookieToSet[] = [];
   const supabase = createServerClient(

@@ -58,6 +58,13 @@ export async function POST(req: NextRequest) {
   }
 
   const sent = await sendCodeTo(email, purpose, clientIp(req));
-  if (!sent.ok) return fail(sent.status, sent.code, sent.error);
+  if (!sent.ok) {
+    // too_many_codes: she already has recent codes, so the page shows the
+    // code boxes (with this masked email) along with the message.
+    return NextResponse.json(
+      { code: sent.code, error: sent.error, ...(sent.code === "too_many_codes" ? { maskedEmail: sent.maskedEmail } : {}) },
+      { status: sent.status },
+    );
+  }
   return NextResponse.json({ ok: true, maskedEmail: sent.maskedEmail });
 }

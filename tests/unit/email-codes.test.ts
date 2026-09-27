@@ -2,15 +2,19 @@
 //
 // Proves: codes are 6 random digits; only an HMAC (keyed by SESSION_SECRET,
 // bound to email + purpose) is stored; the compare is constant-time; codes
-// expire after 10 minutes, allow 5 tries, work once, and a new code retires
-// the old one; sends are capped at 5 per email per hour and site-wide; and
-// nothing works without the server secret.
+// expire after 10 minutes, allow 10 tries (from everyone), work once; a new
+// code does NOT cancel the one already in her inbox (a stranger can't
+// cancel it), but using one cancels the rest; sends are capped per email
+// per purpose (burned codes don't count, so a fresh code is always allowed
+// after a lock), per email overall, and site-wide for signup; and nothing
+// works without the server secret.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CODE_TTL_MS,
   MAX_ATTEMPTS,
-  MAX_SENDS_PER_EMAIL_PER_HOUR,
+  MAX_SENDS_PER_EMAIL_PER_HOUR_TOTAL,
+  MAX_SENDS_PER_EMAIL_PER_PURPOSE_PER_HOUR,
   MAX_SENDS_PER_HOUR_SITEWIDE,
   consumeCode,
   cleanCode,
@@ -93,7 +97,7 @@ describe("issue + verify", () => {
       ok: true,
     });
     // Single use.
-    expect(await verifyCode(store, { email: EMAIL, purpose: "login", code: issued.code, now: at(2000) })).toEqual({
+    expect(await verifyCode(store, { email: EMAIL, purpose: "login", code: issued.code, now: at(2000) })).toMatchObject({
       ok: false,
       reason: "no_code",
     });
@@ -104,7 +108,7 @@ describe("issue + verify", () => {
     const issued = await issueCode(store, { email: EMAIL, purpose: "reset", now: T0 });
     if (!issued.ok) throw new Error("expected a code");
     const r = await verifyCode(store, { email: EMAIL, purpose: "login", code: issued.code, now: at(1000) });
-    expect(r).toEqual({ ok: false, reason: "no_code" });
+    expect(r).toMatchObject({ ok: false, reason: "no_code" });
   });
 
   it("expires after 10 minutes", async () => {
@@ -112,10 +116,10 @@ describe("issue + verify", () => {
     const issued = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });
     if (!issued.ok) throw new Error("expected a code");
     const r = await verifyCode(store, { email: EMAIL, purpose: "login", code: issued.code, now: at(CODE_TTL_MS) });
-    expect(r).toEqual({ ok: false, reason: "expired" });
+    expect(r).toMatchObject({ ok: false, reason: "expired" });
   });
 
-  it("allows 5 tries, then locks the code even for the right answer", async () => {
+  it("allows 10 tries, then locks the code even for the right answer", async () => {
     const store = memoryCodeStore();
     const issued = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });
     if (!issued.ok) throw new Error("expected a code");
@@ -125,9 +129,9 @@ describe("issue + verify", () => {
       const r = await verifyCode(store, { email: EMAIL, purpose: "login", code: wrong, now: at(1000) });
       reasons.push(r.ok ? "ok" : r.reason);
     }
-    expect(reasons).toEqual(["wrong_code", "wrong_code", "wrong_code", "wrong_code", "too_many_attempts"]);
+    expect(reasons).toEqual([...Array(MAX_ATTEMPTS - 1).fill("wrong_code"), "too_many_attempts"]);
     const r = await verifyCode(store, { email: EMAIL, purpose: "login", code: issued.code, now: at(2000) });
-    expect(r).toEqual({ ok: false, reason: "too_many_attempts" });
+    expect(r).toMatchObject({ ok: false, reason: "too_many_attempts" });
     expect(store.rows[0].attempts).toBe(MAX_ATTEMPTS);
   });
 
@@ -144,33 +148,78 @@ describe("issue + verify", () => {
     expect(store.rows[0].attempts).toBeLessThanOrEqual(MAX_ATTEMPTS);
   });
 
-  it("a new code retires the older one", async () => {
+  it("a newer code (e.g. a stranger asking for one) doesn't cancel the one in her inbox", async () => {
+    const store = memoryCodeStore();
+    const hers = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });
+    const strangers = await issueCode(store, { email: EMAIL, purpose: "login", now: at(60_000) });
+    if (!hers.ok || !strangers.ok) throw new Error("expected codes");
+    const r = await verifyCode(store, { email: EMAIL, purpose: "login", code: hers.code, now: at(61_000) });
+    expect(r).toMatchObject({ ok: true, codeId: hers.codeId });
+  });
+
+  it("once one code signs her in, her other live codes stop working", async () => {
     const store = memoryCodeStore();
     const first = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });
     const second = await issueCode(store, { email: EMAIL, purpose: "login", now: at(60_000) });
     if (!first.ok || !second.ok) throw new Error("expected codes");
+    expect((await verifyCode(store, { email: EMAIL, purpose: "login", code: second.code, now: at(61_000) })).ok).toBe(true);
     if (first.code !== second.code) {
-      const old = await verifyCode(store, { email: EMAIL, purpose: "login", code: first.code, now: at(61_000) });
-      expect(old.ok).toBe(false);
+      const old = await verifyCode(store, { email: EMAIL, purpose: "login", code: first.code, now: at(62_000) });
+      expect(old).toMatchObject({ ok: false, reason: "no_code" });
     }
-    const fresh = await verifyCode(store, { email: EMAIL, purpose: "login", code: second.code, now: at(62_000) });
-    expect(fresh).toMatchObject({ ok: true });
+  });
+
+  it("a wrong guess counts against every live code", async () => {
+    const store = memoryCodeStore();
+    const a = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });
+    const b = await issueCode(store, { email: EMAIL, purpose: "login", now: at(1000) });
+    if (!a.ok || !b.ok) throw new Error("expected codes");
+    const wrong = ["000000", "111111", "222222"].find((c) => c !== a.code && c !== b.code)!;
+    const r = await verifyCode(store, { email: EMAIL, purpose: "login", code: wrong, now: at(2000) });
+    expect(r).toMatchObject({ ok: false, reason: "wrong_code", counted: true });
+    expect(store.rows.map((row) => row.attempts)).toEqual([1, 1]);
   });
 });
 
 describe("send limits", () => {
-  it("caps sends at 5 per email per hour, then allows more an hour later", async () => {
+  it("caps sends per email per purpose per hour, then allows more an hour later", async () => {
     const store = memoryCodeStore();
-    for (let i = 0; i < MAX_SENDS_PER_EMAIL_PER_HOUR; i++) {
-      const r = await issueCode(store, { email: EMAIL, purpose: i % 2 ? "reset" : "login", now: at(i * 1000) });
+    for (let i = 0; i < MAX_SENDS_PER_EMAIL_PER_PURPOSE_PER_HOUR; i++) {
+      const r = await issueCode(store, { email: EMAIL, purpose: "login", now: at(i * 1000) });
       expect(r.ok).toBe(true);
     }
-    const blocked = await issueCode(store, { email: EMAIL, purpose: "login", now: at(10_000) });
+    const blocked = await issueCode(store, { email: EMAIL, purpose: "login", now: at(20_000) });
     expect(blocked).toEqual({ ok: false, reason: "too_many_for_email" });
+    // Another purpose has its own allowance ("Forgot password?" still works).
+    expect((await issueCode(store, { email: EMAIL, purpose: "reset", now: at(20_000) })).ok).toBe(true);
     // Someone else is unaffected.
-    expect((await issueCode(store, { email: "b@example.com", purpose: "login", now: at(10_000) })).ok).toBe(true);
+    expect((await issueCode(store, { email: "b@example.com", purpose: "login", now: at(20_000) })).ok).toBe(true);
     // An hour after the first send, a slot opens up again.
     expect((await issueCode(store, { email: EMAIL, purpose: "login", now: at(60 * 60 * 1000 + 1) })).ok).toBe(true);
+  });
+
+  it("codes locked by wrong guesses don't count: a fresh code is always allowed after a lock", async () => {
+    const store = memoryCodeStore();
+    for (let i = 0; i < MAX_SENDS_PER_EMAIL_PER_PURPOSE_PER_HOUR; i++) {
+      await issueCode(store, { email: EMAIL, purpose: "login", now: at(i * 1000) });
+    }
+    expect((await issueCode(store, { email: EMAIL, purpose: "login", now: at(20_000) })).ok).toBe(false);
+    // Someone burns every live code with wrong guesses.
+    for (const row of store.rows) row.attempts = MAX_ATTEMPTS;
+    expect((await issueCode(store, { email: EMAIL, purpose: "login", now: at(21_000) })).ok).toBe(true);
+  });
+
+  it("an overall per-email backstop counts every purpose and burned codes", async () => {
+    const store = memoryCodeStore();
+    for (let i = 0; i < MAX_SENDS_PER_EMAIL_PER_HOUR_TOTAL; i++) {
+      const r = await issueCode(store, { email: EMAIL, purpose: i % 2 ? "reset" : "login", now: at(i) });
+      expect(r.ok).toBe(true);
+      for (const row of store.rows) row.attempts = MAX_ATTEMPTS;
+    }
+    expect(await issueCode(store, { email: EMAIL, purpose: "login", now: at(5000) })).toEqual({
+      ok: false,
+      reason: "too_many_for_email",
+    });
   });
 
   it("caps signup sends site-wide per hour", async () => {
@@ -213,8 +262,8 @@ describe("send limits", () => {
     const again = await verifyCode(store, { email: EMAIL, purpose: "signup", code: issued.code, now: at(2000), consume: false });
     expect(again.ok).toBe(true);
     if (!again.ok) return;
-    expect(await consumeCode(store, again.codeId, at(3000))).toBe(true);
+    expect(await consumeCode(store, { codeId: again.codeId, email: EMAIL, purpose: "signup" }, at(3000))).toBe(true);
     const after = await verifyCode(store, { email: EMAIL, purpose: "signup", code: issued.code, now: at(4000) });
-    expect(after).toEqual({ ok: false, reason: "no_code" });
+    expect(after).toMatchObject({ ok: false, reason: "no_code" });
   });
 });

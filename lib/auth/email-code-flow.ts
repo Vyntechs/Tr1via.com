@@ -18,7 +18,7 @@ import {
   type CodePurpose,
   type CodeStore,
 } from "@/lib/auth/email-codes";
-import { isOverLimit, recordEvent, type RateStore } from "@/lib/auth/rate-limits";
+import { ipEmailKey, isOverLimit, recordEvent, type RateStore } from "@/lib/auth/rate-limits";
 import { sendCodeEmail, smtpConfigFromEnv } from "@/lib/email/send-code-email";
 import {
   CODE_EXPIRED_MESSAGE,
@@ -27,6 +27,7 @@ import {
   CODE_USED_MESSAGE,
   CODES_PAUSED_MESSAGE,
   TOO_MANY_CODES_MESSAGE,
+  TOO_MANY_WRONG_CODES_MESSAGE,
   TRY_AGAIN_MESSAGE,
   WRONG_CODE_MESSAGE,
 } from "@/lib/auth/auth-messages";
@@ -50,8 +51,9 @@ export type SendOutcome = { ok: true; maskedEmail: string } | (FlowFailure & { m
 
 /**
  * Failure codes:
- *   too_many_codes — this EMAIL already got 5 codes this hour. She may
- *                    still have a working code, so /api/auth/start moves
+ *   too_many_codes — this email already got its hourly codes (from this
+ *                    network, or from everyone). She has recent codes that
+ *                    still work, so /api/auth/start and the login page move
  *                    her to the code screen anyway.
  *   codes_paused   — NO code was sent (this IP's hourly code limit, or the
  *                    site-wide signup cap). The page stays on the email box
@@ -79,6 +81,12 @@ export async function sendCodeTo(
   // Per-IP, per-purpose hourly cap (lib/auth/rate-limits.ts; fails open).
   const ipBucket = `ip:code-${purpose}` as const;
   if (await isOverLimit(ipBucket, ip, { store: opts.rates })) return paused(429);
+  // Codes from this network to this email (every purpose): half the
+  // per-email cap, so one stranger can't use up her codes for the hour.
+  const pairKey = ipEmailKey(ip, email);
+  if (await isOverLimit("send:code-ip-email", pairKey, { store: opts.rates })) {
+    return { ok: false, status: 429, code: "too_many_codes", error: TOO_MANY_CODES_MESSAGE, maskedEmail };
+  }
   let issued;
   let store: CodeStore;
   try {
@@ -93,10 +101,12 @@ export async function sendCodeTo(
     return { ok: false, status: 429, code: "too_many_codes", error: TOO_MANY_CODES_MESSAGE, maskedEmail };
   }
   await recordEvent(ipBucket, ip, { store: opts.rates });
+  await recordEvent("send:code-ip-email", pairKey, { store: opts.rates });
   const sent = await sendCodeEmail(email, issued.code);
   if (!sent.ok) {
-    // A code nobody received shouldn't stay usable.
-    await store.retireActive(email, purpose, new Date().toISOString()).catch(() => {});
+    // A code nobody received shouldn't stay usable (only this one — her
+    // earlier codes still work).
+    await store.consume(issued.codeId, new Date().toISOString()).catch(() => {});
     return { ok: false, status: 503, code: "code_not_sent", error: CODE_NOT_SENT_MESSAGE, maskedEmail };
   }
   return { ok: true, maskedEmail };
@@ -106,14 +116,20 @@ export type CheckOutcome = { ok: true; codeId: string } | FlowFailure;
 
 /**
  * Check a code. `consume: false` only checks it (see verifyCode); use it up
- * afterwards with markCodeUsed().
+ * afterwards with spendCode(). `ip` is the visitor's network: wrong codes
+ * from one network for one email are capped (lib/auth/rate-limits.ts), so
+ * a stranger can't lock the code she is typing.
  */
 export async function checkCode(
   email: string,
   purpose: CodePurpose,
   code: string,
-  opts: { store?: CodeStore; consume?: boolean } = {},
+  opts: { ip: string; store?: CodeStore; rates?: RateStore; consume?: boolean },
 ): Promise<CheckOutcome> {
+  const pairKey = ipEmailKey(opts.ip, email);
+  if (await isOverLimit("fail:code-ip-email", pairKey, { store: opts.rates })) {
+    return { ok: false, status: 429, code: "too_many_wrong_codes", error: TOO_MANY_WRONG_CODES_MESSAGE };
+  }
   let result;
   try {
     result = await verifyCode(opts.store ?? supabaseCodeStore(), {
@@ -127,6 +143,7 @@ export async function checkCode(
     return { ok: false, status: 500, code: "try_again", error: TRY_AGAIN_MESSAGE };
   }
   if (result.ok) return { ok: true, codeId: result.codeId };
+  if (result.counted) await recordEvent("fail:code-ip-email", pairKey, { store: opts.rates });
   switch (result.reason) {
     case "wrong_code":
       return { ok: false, status: 400, code: "wrong_code", error: WRONG_CODE_MESSAGE };
@@ -141,12 +158,21 @@ export async function checkCode(
   }
 }
 
-/** Use up a code checked with `consume: false` (best effort). */
-export async function markCodeUsed(codeId: string, storeArg?: CodeStore): Promise<void> {
+/**
+ * Use up a code checked with `consume: false`, and cancel her other live
+ * codes for that purpose. "already_used" = a parallel request used it
+ * first; "error" = the database couldn't be reached (the code still works,
+ * so a retry with the same code is safe).
+ */
+export async function spendCode(
+  input: { codeId: string; email: string; purpose: CodePurpose },
+  storeArg?: CodeStore,
+): Promise<"used" | "already_used" | "error"> {
   try {
-    await consumeCode(storeArg ?? supabaseCodeStore(), codeId);
+    return (await consumeCode(storeArg ?? supabaseCodeStore(), input)) ? "used" : "already_used";
   } catch (err) {
     console.error("[email-code] could not mark code used", { message: (err as Error)?.message });
+    return "error";
   }
 }
 

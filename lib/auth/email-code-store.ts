@@ -20,10 +20,11 @@ export function supabaseCodeStore(
 ): CodeStore {
   const t = () => client.from(TABLE);
   return {
-    async countSince({ email, purpose }, sinceIso) {
+    async countSince({ email, purpose, attemptsBelow }, sinceIso) {
       let q = t().select("id", { count: "exact", head: true }).gte("created_at", sinceIso);
       if (email) q = q.eq("email", email);
       if (purpose) q = q.eq("purpose", purpose);
+      if (attemptsBelow !== undefined) q = q.lt("attempts", attemptsBelow);
       const { count, error } = await q;
       check(error, "count codes");
       return count ?? 0;
@@ -37,8 +38,10 @@ export function supabaseCodeStore(
       check(error, "retire codes");
     },
     async insert(row: NewCodeRow) {
-      const { error } = await t().insert(row);
+      const { data, error } = await t().insert(row).select("id").single();
       check(error, "insert code");
+      if (!data?.id) throw new CodeStoreError("insert code: no id returned");
+      return data.id;
     },
     async findNewestActive(email: string, purpose: CodePurpose) {
       const { data, error } = await t()
@@ -51,6 +54,19 @@ export function supabaseCodeStore(
         .maybeSingle();
       check(error, "find code");
       return (data as CodeRow | null) ?? null;
+    },
+    async findLive(email: string, purpose: CodePurpose, nowIso: string, attemptsBelow: number, limit: number) {
+      const { data, error } = await t()
+        .select("*")
+        .eq("email", email)
+        .eq("purpose", purpose)
+        .is("consumed_at", null)
+        .gt("expires_at", nowIso)
+        .lt("attempts", attemptsBelow)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      check(error, "find live codes");
+      return (data as CodeRow[] | null) ?? [];
     },
     async bumpAttempts(id: string, expected: number) {
       const { data, error } = await t()
