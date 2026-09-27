@@ -1,7 +1,7 @@
 // lib/email/send-code-email — the Zoho SMTP sender (nodemailer mocked).
 //
 // Proves: nothing is attempted without ZOHO_SMTP_PASSWORD; defaults are
-// smtppro.zoho.com:465 over SSL as support@vyntechs.com; the from name is
+// smtp.zoho.com:465 over SSL as support@vyntechs.com; the from name is
 // TR1VIA; the email says "Your TR1VIA code: 123456" with the 10-minute
 // line in both text and HTML; a failed send reports send_failed and never
 // logs the code or the password.
@@ -40,11 +40,11 @@ describe("sendCodeEmail", () => {
     expect(h.createTransport).not.toHaveBeenCalled();
   });
 
-  it("sends over SSL 465 via smtppro.zoho.com as TR1VIA <support@vyntechs.com>", async () => {
+  it("sends over SSL 465 via smtp.zoho.com as TR1VIA <support@vyntechs.com>", async () => {
     expect(await sendCodeEmail("h@example.com", "123456")).toEqual({ ok: true });
     expect(h.createTransport).toHaveBeenCalledWith(
       expect.objectContaining({
-        host: "smtppro.zoho.com",
+        host: "smtp.zoho.com",
         port: 465,
         secure: true,
         auth: { user: "support@vyntechs.com", pass: "app-password-xyz" },
@@ -61,11 +61,11 @@ describe("sendCodeEmail", () => {
   });
 
   it("uses ZOHO_SMTP_HOST / ZOHO_SMTP_USER when set", async () => {
-    vi.stubEnv("ZOHO_SMTP_HOST", "smtp.zoho.com");
+    vi.stubEnv("ZOHO_SMTP_HOST", "smtppro.zoho.com");
     vi.stubEnv("ZOHO_SMTP_USER", "hello@vyntechs.com");
     await sendCodeEmail("h@example.com", "123456");
     expect(h.createTransport.mock.calls[0][0]).toMatchObject({
-      host: "smtp.zoho.com",
+      host: "smtppro.zoho.com",
       auth: { user: "hello@vyntechs.com" },
     });
     expect(h.sendMail.mock.calls[0][0].from).toEqual({ name: "TR1VIA", address: "hello@vyntechs.com" });

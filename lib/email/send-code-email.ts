@@ -5,9 +5,10 @@
 //   ZOHO_SMTP_PASSWORD  the Zoho app password — required; without it we
 //                       don't try to send and the host is told to text Brandon
 //   ZOHO_SMTP_USER      mailbox to send as (default support@vyntechs.com)
-//   ZOHO_SMTP_HOST      default smtppro.zoho.com — Zoho's server for paid
-//                       organization (custom-domain) accounts. A FREE Zoho
-//                       organization uses smtp.zoho.com instead.
+//   ZOHO_SMTP_HOST      default smtp.zoho.com — Zoho's server for the FREE
+//                       organization plan (what vyntechs.com is on). A paid
+//                       Zoho Mail organization plan can use smtppro.zoho.com
+//                       instead.
 //   Port 465 with SSL.
 //
 // Route handlers must `await` this before responding: Vercel pauses a
@@ -16,7 +17,7 @@
 import "server-only";
 import nodemailer from "nodemailer";
 
-export const DEFAULT_SMTP_HOST = "smtppro.zoho.com";
+export const DEFAULT_SMTP_HOST = "smtp.zoho.com";
 export const DEFAULT_SMTP_USER = "support@vyntechs.com";
 export const SMTP_PORT = 465;
 
