@@ -1,7 +1,8 @@
 // Pure "Create your password" gate rules (lib/auth/password-gate.ts).
 //
 // Proves: in-show routes (/host/live, /host/phone) are never interrupted;
-// the prompt page itself never loops; the founder is always asked; other
+// the prompt page itself never loops; the founder (app_metadata.founder)
+// is always asked; other
 // hosts only when the founder's per-host switch is "on"; explicit "off"
 // always wins; a set password ends the prompt.
 
@@ -10,7 +11,8 @@ import {
   checkNewPassword,
   hasPassword,
   isInShowPath,
-  needsFounderCheck,
+  isFounderAccount,
+  walkToPasswordAfterSignIn,
   passwordGateRedirect,
   passwordPromptSetting,
   setPasswordReturnPath,
@@ -22,6 +24,7 @@ const NO_PW = {};
 const WITH_PW = { password_set_at: SET_AT };
 const PROMPT_ON = { password_prompt: "on" };
 const PROMPT_OFF = { password_prompt: "off" };
+const FOUNDER = { founder: true };
 
 describe("isInShowPath", () => {
   it.each([
@@ -41,7 +44,7 @@ describe("isInShowPath", () => {
 describe("passwordGateRedirect", () => {
   it("sends the founder (no password) from the dashboard to set-password with next", () => {
     expect(
-      passwordGateRedirect({ pathname: "/host", appMetadata: NO_PW, isFounder: true }),
+      passwordGateRedirect({ pathname: "/host", appMetadata: FOUNDER }),
     ).toBe("/host/set-password?next=%2Fhost");
   });
 
@@ -50,8 +53,7 @@ describe("passwordGateRedirect", () => {
       passwordGateRedirect({
         pathname: "/host/setup/n1/topic",
         search: "?slot=2",
-        appMetadata: NO_PW,
-        isFounder: true,
+        appMetadata: FOUNDER,
       }),
     ).toBe(`/host/set-password?next=${encodeURIComponent("/host/setup/n1/topic?slot=2")}`);
   });
@@ -59,43 +61,43 @@ describe("passwordGateRedirect", () => {
   it.each(["/host/live/night-1", "/host/phone/night-1", "/host/live", "/host/phone"])(
     "never interrupts an in-show route (%s), even for the founder or a host switched on",
     (pathname) => {
-      expect(passwordGateRedirect({ pathname, appMetadata: NO_PW, isFounder: true })).toBeNull();
+      expect(passwordGateRedirect({ pathname, appMetadata: FOUNDER })).toBeNull();
       expect(
-        passwordGateRedirect({ pathname, appMetadata: PROMPT_ON, isFounder: false }),
+        passwordGateRedirect({ pathname, appMetadata: PROMPT_ON }),
       ).toBeNull();
     },
   );
 
   it("never redirects the set-password page to itself", () => {
     expect(
-      passwordGateRedirect({ pathname: "/host/set-password", appMetadata: NO_PW, isFounder: true }),
+      passwordGateRedirect({ pathname: "/host/set-password", appMetadata: FOUNDER }),
     ).toBeNull();
   });
 
   it("ignores non-host pages", () => {
-    expect(passwordGateRedirect({ pathname: "/login", appMetadata: NO_PW, isFounder: true })).toBeNull();
-    expect(passwordGateRedirect({ pathname: "/tv/ABC123", appMetadata: NO_PW, isFounder: true })).toBeNull();
-    expect(passwordGateRedirect({ pathname: "/hostile", appMetadata: NO_PW, isFounder: true })).toBeNull();
+    expect(passwordGateRedirect({ pathname: "/login", appMetadata: FOUNDER })).toBeNull();
+    expect(passwordGateRedirect({ pathname: "/tv/ABC123", appMetadata: FOUNDER })).toBeNull();
+    expect(passwordGateRedirect({ pathname: "/hostile", appMetadata: FOUNDER })).toBeNull();
   });
 
   it("leaves an existing host alone when the founder never set the switch (default off)", () => {
     expect(
-      passwordGateRedirect({ pathname: "/host", appMetadata: NO_PW, isFounder: false }),
+      passwordGateRedirect({ pathname: "/host", appMetadata: NO_PW }),
     ).toBeNull();
     expect(
-      passwordGateRedirect({ pathname: "/host", appMetadata: null, isFounder: false }),
+      passwordGateRedirect({ pathname: "/host", appMetadata: null }),
     ).toBeNull();
   });
 
   it("asks a host whose switch is on", () => {
     expect(
-      passwordGateRedirect({ pathname: "/host/setup/n1", appMetadata: PROMPT_ON, isFounder: false }),
+      passwordGateRedirect({ pathname: "/host/setup/n1", appMetadata: PROMPT_ON }),
     ).toBe(`/host/set-password?next=${encodeURIComponent("/host/setup/n1")}`);
   });
 
   it("an explicit off wins, even for the founder", () => {
     expect(
-      passwordGateRedirect({ pathname: "/host", appMetadata: PROMPT_OFF, isFounder: true }),
+      passwordGateRedirect({ pathname: "/host", appMetadata: { ...PROMPT_OFF, ...FOUNDER } }),
     ).toBeNull();
   });
 
@@ -103,22 +105,27 @@ describe("passwordGateRedirect", () => {
     expect(
       passwordGateRedirect({
         pathname: "/host",
-        appMetadata: { ...WITH_PW, ...PROMPT_ON },
-        isFounder: true,
+        appMetadata: { ...WITH_PW, ...PROMPT_ON, ...FOUNDER },
       }),
     ).toBeNull();
   });
 });
 
-describe("needsFounderCheck", () => {
-  it("only asks for the hosts lookup when it can change the answer", () => {
-    expect(needsFounderCheck("/host", NO_PW)).toBe(true);
-    expect(needsFounderCheck("/host", WITH_PW)).toBe(false);
-    expect(needsFounderCheck("/host", PROMPT_ON)).toBe(false);
-    expect(needsFounderCheck("/host", PROMPT_OFF)).toBe(false);
-    expect(needsFounderCheck("/host/live/n1", NO_PW)).toBe(false);
-    expect(needsFounderCheck("/host/phone/n1", NO_PW)).toBe(false);
-    expect(needsFounderCheck("/host/set-password", NO_PW)).toBe(false);
+describe("founder marker", () => {
+  it("only a literal true marks the founder", () => {
+    expect(isFounderAccount(FOUNDER)).toBe(true);
+    expect(isFounderAccount({ founder: "true" })).toBe(false);
+    expect(isFounderAccount(NO_PW)).toBe(false);
+    expect(isFounderAccount(null)).toBe(false);
+  });
+});
+
+describe("walkToPasswordAfterSignIn (code + founder-link sign-in)", () => {
+  it("walks a no-password host to set-password unless her switch is off", () => {
+    expect(walkToPasswordAfterSignIn(NO_PW)).toBe(true);
+    expect(walkToPasswordAfterSignIn(PROMPT_ON)).toBe(true);
+    expect(walkToPasswordAfterSignIn(PROMPT_OFF)).toBe(false);
+    expect(walkToPasswordAfterSignIn({ ...WITH_PW, ...PROMPT_ON })).toBe(false);
   });
 });
 

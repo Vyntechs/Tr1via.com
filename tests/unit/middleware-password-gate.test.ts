@@ -1,12 +1,13 @@
 // @vitest-environment node
 // middleware.ts — the "Create your password" gate as wired into requests.
 //
-// Proves: the founder without a password is sent to /host/set-password
-// (with next); in-show routes pass straight through with NO hosts lookup;
-// an existing host with no switch set passes through; a host whose switch
-// is on is sent; the prompt page itself never loops; API routes untouched.
+// Proves: the founder (app_metadata.founder) without a password is sent to
+// /host/set-password (with next); in-show routes pass straight through; an
+// existing host with no switch set (Heather) passes through; a host whose
+// switch is on is sent; the prompt page itself never loops; API routes
+// untouched. And NO page load ever queries the hosts table.
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const h = vi.hoisted(() => ({
@@ -54,27 +55,28 @@ beforeEach(() => {
   h.hostRole.mockReturnValue({ role: "host" });
 });
 
+afterEach(() => {
+  // No gate decision may cost a database round-trip on a page load.
+  expect(h.from).not.toHaveBeenCalled();
+});
+
 describe("middleware password gate", () => {
   it("sends the founder with no password to set-password, keeping next", async () => {
-    asUser({});
-    h.hostRole.mockReturnValue({ role: "founder" });
+    asUser({ founder: true });
     const res = await run("/host");
     expect(location(res)).toBe("/host/set-password?next=%2Fhost");
-    expect(h.from).toHaveBeenCalledWith("hosts");
   });
 
   it.each(["/host/live/night-1", "/host/phone/night-1"])(
-    "never interrupts %s — and doesn't even look up the host",
+    "never interrupts %s",
     async (path) => {
       asUser({ password_prompt: "on" });
-      h.hostRole.mockReturnValue({ role: "founder" });
       const res = await run(path);
       expect(location(res)).toBeNull();
 
-      asUser({});
+      asUser({ founder: true });
       const res2 = await run(path);
       expect(location(res2)).toBeNull();
-      expect(h.from).not.toHaveBeenCalled();
     },
   );
 
@@ -82,18 +84,17 @@ describe("middleware password gate", () => {
     asUser({});
     const res = await run("/host/setup/night-1");
     expect(location(res)).toBeNull();
+    expect(location(await run("/host"))).toBeNull();
   });
 
   it("sends a host whose switch is on, without a hosts lookup", async () => {
     asUser({ password_prompt: "on" });
     const res = await run("/host/setup/night-1");
     expect(location(res)).toBe(`/host/set-password?next=${encodeURIComponent("/host/setup/night-1")}`);
-    expect(h.from).not.toHaveBeenCalled();
   });
 
   it("switch off wins for everyone", async () => {
-    asUser({ password_prompt: "off" });
-    h.hostRole.mockReturnValue({ role: "founder" });
+    asUser({ password_prompt: "off", founder: true });
     expect(location(await run("/host"))).toBeNull();
   });
 
@@ -103,10 +104,8 @@ describe("middleware password gate", () => {
   });
 
   it("stops once the password marker exists", async () => {
-    asUser({ password_set_at: SET_AT, password_prompt: "on" });
-    h.hostRole.mockReturnValue({ role: "founder" });
+    asUser({ password_set_at: SET_AT, password_prompt: "on", founder: true });
     expect(location(await run("/host"))).toBeNull();
-    expect(h.from).not.toHaveBeenCalled();
   });
 
   it("still bounces signed-out visitors to /login", async () => {

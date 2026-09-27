@@ -28,11 +28,8 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
-import {
-  SET_PASSWORD_PATH,
-  hasPassword,
-  passwordPromptSetting,
-} from "@/lib/auth/password-gate";
+import { SET_PASSWORD_PATH, walkToPasswordAfterSignIn } from "@/lib/auth/password-gate";
+import { markFounderIfNeeded } from "@/lib/auth/founder-flag";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,11 +63,11 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
   // The founder's link is the way back in for an account with no password
   // yet. Land that host on "Create your password" so she won't need another
   // link next time — unless the founder switched her prompt explicitly off.
-  const appMetadata = data.user?.app_metadata;
-  const destination =
-    !hasPassword(appMetadata) && passwordPromptSetting(appMetadata) !== "off"
-      ? `${SET_PASSWORD_PATH}?next=${encodeURIComponent("/host")}`
-      : "/host";
+  // (Same rule as a code sign-in at /api/auth/verify-code.)
+  const destination = walkToPasswordAfterSignIn(data.user?.app_metadata)
+    ? `${SET_PASSWORD_PATH}?next=${encodeURIComponent("/host")}`
+    : "/host";
+  if (data.user) await markFounderIfNeeded(data.user);
 
   // verifyOtp handed the session cookies to createSessionCookieClient; they
   // ride on this redirect so the browser carries them on the next request.

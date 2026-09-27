@@ -3,11 +3,16 @@
 //
 // PATCH /api/admin/hosts/[id] { passwordPrompt }:
 //   - non-founder → 403, nothing written
-//   - founder → writes app_metadata.password_prompt server-side, keeping the
-//     existing keys; the paywall row is untouched
+//   - founder → writes ONLY app_metadata.password_prompt server-side (GoTrue
+//     merges app_metadata, so no stale read-then-write); the paywall row is
+//     untouched
+//   - paywall + switch together: hosts row first, then the switch; if the
+//     switch fails the hosts row is put back (never half-applied)
 // GET /auth/grant:
 //   - a host with no password lands on /host/set-password (unless the
 //     founder switched her prompt explicitly off); with one → /host
+//   - the founder's own account gets app_metadata.founder at sign-in, so
+//     the middleware gate never needs a hosts query
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -19,6 +24,8 @@ const h = vi.hoisted(() => ({
   getUserById: vi.fn(),
   updateUserById: vi.fn(),
   hostsUpdate: vi.fn(),
+  hostsUpdateError: null as null | { message: string },
+  hostRow: null as null | Record<string, unknown>,
   verifyOtp: vi.fn(),
   setAll: null as null | SetAll,
 }));
@@ -30,14 +37,12 @@ vi.mock("@/lib/supabase/admin", () => ({
     from: () => ({
       select: () => ({
         eq: () => ({
-          maybeSingle: async () => ({
-            data: { id: "host-h", user_id: "user-h", is_paywall_bypassed: true, comped_at: null },
-          }),
+          maybeSingle: async () => ({ data: h.hostRow }),
         }),
       }),
       update: (patch: unknown) => {
         h.hostsUpdate(patch);
-        return { eq: async () => ({ error: null }) };
+        return { eq: async () => ({ error: h.hostsUpdateError }) };
       },
     }),
   }),
@@ -70,6 +75,15 @@ beforeEach(() => {
     error: null,
   });
   h.updateUserById.mockResolvedValue({ data: {}, error: null });
+  h.hostsUpdateError = null;
+  h.hostRow = {
+    id: "host-h",
+    user_id: "user-h",
+    role: "host",
+    is_paywall_bypassed: true,
+    comped_at: SET_AT,
+    comped_by: "founder-host",
+  };
 });
 
 describe("PATCH /api/admin/hosts/[id] passwordPrompt", () => {
@@ -80,13 +94,41 @@ describe("PATCH /api/admin/hosts/[id] passwordPrompt", () => {
     expect(h.updateUserById).not.toHaveBeenCalled();
   });
 
-  it("writes password_prompt to the host's app_metadata, keeping other keys", async () => {
+  it("writes only password_prompt to the host's app_metadata (no stale read-then-write)", async () => {
     const res = await PATCH(patchReq({ passwordPrompt: "on" }), ctx);
     expect(res.status).toBe(200);
     expect(h.updateUserById).toHaveBeenCalledWith("user-h", {
-      app_metadata: { provider: "email", password_prompt: "on" },
+      app_metadata: { password_prompt: "on" },
     });
+    expect(h.getUserById).not.toHaveBeenCalled();
     expect(h.hostsUpdate).not.toHaveBeenCalled();
+  });
+
+  it("paywall + switch: hosts row first, then the switch", async () => {
+    const res = await PATCH(patchReq({ isPaywallBypassed: false, passwordPrompt: "off" }), ctx);
+    expect(res.status).toBe(200);
+    expect(h.hostsUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+      h.updateUserById.mock.invocationCallOrder[0],
+    );
+  });
+
+  it("puts the paywall back when the switch can't be saved", async () => {
+    h.updateUserById.mockResolvedValue({ data: null, error: { message: "auth down" } });
+    const res = await PATCH(patchReq({ isPaywallBypassed: false, passwordPrompt: "on" }), ctx);
+    expect(res.status).toBe(500);
+    expect(h.hostsUpdate).toHaveBeenCalledTimes(2);
+    expect(h.hostsUpdate.mock.calls[1][0]).toEqual({
+      is_paywall_bypassed: true,
+      comped_at: SET_AT,
+      comped_by: "founder-host",
+    });
+  });
+
+  it("never touches the switch when the paywall write fails", async () => {
+    h.hostsUpdateError = { message: "db down" };
+    const res = await PATCH(patchReq({ isPaywallBypassed: false, passwordPrompt: "on" }), ctx);
+    expect(res.status).toBe(500);
+    expect(h.updateUserById).not.toHaveBeenCalled();
   });
 
   it("rejects anything but on/off", async () => {
@@ -139,6 +181,23 @@ describe("GET /auth/grant", () => {
     verifiedAs({ password_prompt: "off" });
     const res = await grant(grantReq());
     expect(res.headers.get("location")).toBe("http://test/host");
+  });
+
+  it("marks the founder's own account at sign-in (only the one key)", async () => {
+    h.hostRow = { role: "founder" };
+    verifiedAs({});
+    await grant(grantReq());
+    expect(h.updateUserById).toHaveBeenCalledWith("user-h", { app_metadata: { founder: true } });
+  });
+
+  it("never marks anyone else, and skips the lookup once a password exists", async () => {
+    verifiedAs({});
+    await grant(grantReq());
+    expect(h.updateUserById).not.toHaveBeenCalled();
+    h.hostRow = { role: "founder" };
+    verifiedAs({ password_set_at: SET_AT });
+    await grant(grantReq());
+    expect(h.updateUserById).not.toHaveBeenCalled();
   });
 
   it("an expired link goes back to /login with no session", async () => {

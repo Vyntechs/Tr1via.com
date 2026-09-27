@@ -91,15 +91,21 @@ function Inner({ returnPath, from }: { returnPath: string; from: SetPasswordFrom
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "same-origin",
-        body: JSON.stringify({ password, confirm }),
+        body: JSON.stringify({ password, confirm, next: returnPath }),
       });
       if (res.ok) {
         setState({ kind: "done" });
         return;
       }
       const body = (await res.json().catch(() => null)) as
-        | { error?: string; field?: "password" | "confirm" }
+        | { code?: string; error?: string; field?: "password" | "confirm"; redirect?: string }
         | null;
+      if (body?.code === "sign_in_again" && body.redirect?.startsWith("/login")) {
+        // Saved, but this device couldn't be signed back in. /login says
+        // "Your password is saved. Sign in with it now."
+        window.location.assign(body.redirect);
+        return;
+      }
       setState({
         kind: "error",
         message: body?.error ?? "Something went wrong. Please try again.",

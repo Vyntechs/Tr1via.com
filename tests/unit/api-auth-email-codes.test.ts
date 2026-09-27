@@ -12,11 +12,15 @@ import { NextRequest } from "next/server";
 import { memoryCodeStore } from "./helpers/memory-code-store";
 import { memoryRateStore } from "./helpers/memory-rate-store";
 import { RATE_LIMITS } from "@/lib/auth/rate-limits";
+import { MAX_SENDS_PER_HOUR_SITEWIDE } from "@/lib/auth/email-codes";
 
 type SetAll = (c: Array<{ name: string; value: string; options?: object }>) => void;
 
 const h = vi.hoisted(() => ({
   listUsers: vi.fn(),
+  rpc: vi.fn(),
+  updateUserById: vi.fn(),
+  hostRole: "host" as string,
   generateLink: vi.fn(),
   createUser: vi.fn(),
   verifyOtp: vi.fn(),
@@ -35,7 +39,18 @@ vi.mock("@supabase/ssr", () => ({
 }));
 vi.mock("@/lib/supabase/admin", () => ({
   getSupabaseAdmin: () => ({
-    auth: { admin: { listUsers: h.listUsers, generateLink: h.generateLink, createUser: h.createUser } },
+    rpc: h.rpc,
+    from: () => ({
+      select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { role: h.hostRole } }) }) }),
+    }),
+    auth: {
+      admin: {
+        listUsers: h.listUsers,
+        generateLink: h.generateLink,
+        createUser: h.createUser,
+        updateUserById: h.updateUserById,
+      },
+    },
   }),
 }));
 vi.mock("@/lib/auth/email-code-store", () => ({
@@ -66,9 +81,12 @@ const req = (path: string, body: unknown, ip = "203.0.113.7") =>
 
 const MARKED = { password_set_at: new Date(Date.UTC(2026, 8, 1)).toISOString() };
 
+/** The accounts the indexed lookup (public.find_auth_user_by_email) sees. */
 function users(...list: Array<{ id: string; email: string; app_metadata?: object }>) {
-  h.listUsers.mockImplementation(async ({ page }: { page: number }) => ({
-    data: { users: page === 1 ? list : [] },
+  h.rpc.mockImplementation(async (_fn: string, { p_email }: { p_email: string }) => ({
+    data: list
+      .filter((u) => u.email === p_email)
+      .map((u) => ({ id: u.id, email: u.email, raw_app_meta_data: u.app_metadata ?? {} })),
     error: null,
   }));
 }
@@ -95,6 +113,8 @@ beforeEach(() => {
   h.store = memoryCodeStore();
   h.rates = memoryRateStore();
   h.sendMail.mockResolvedValue({ messageId: "m" });
+  h.hostRole = "host";
+  h.updateUserById.mockResolvedValue({ data: {}, error: null });
   vi.stubEnv("SESSION_SECRET", "route-test-secret");
   vi.stubEnv("ZOHO_SMTP_PASSWORD", "zoho-app-password");
 });
@@ -182,6 +202,42 @@ describe("POST /api/auth/start — step 1, email only", () => {
     expect(body).toMatchObject({ step: "code", purpose: "login", code: "too_many_codes" });
     expect(h.sendMail).toHaveBeenCalledTimes(5);
   });
+
+  it("this network's hourly code limit → NO code screen, 'Text Brandon for a sign-in link'", async () => {
+    const legacy = Array.from({ length: RATE_LIMITS["ip:code-login"] + 1 }, (_, i) => ({
+      id: `l${i}`,
+      email: `legacy${i}@example.com`,
+      app_metadata: {},
+    }));
+    users(...legacy);
+    for (let i = 0; i < RATE_LIMITS["ip:code-login"]; i++) {
+      expect((await start(req("/api/auth/start", { email: legacy[i].email }))).status).toBe(200);
+    }
+    const res = await start(req("/api/auth/start", { email: legacy.at(-1)!.email }));
+    expect(res.status).toBe(429);
+    const body = await res.json();
+    expect(body).toEqual({
+      code: "codes_paused",
+      error: "We couldn't send a code right now. Text Brandon for a sign-in link.",
+    });
+    expect(body.step).toBeUndefined();
+    expect(h.sendMail).toHaveBeenCalledTimes(RATE_LIMITS["ip:code-login"]);
+    // Heather on her own network still gets her code.
+    const other = await start(req("/api/auth/start", { email: legacy.at(-1)!.email }, "198.51.100.20"));
+    expect(other.status).toBe(200);
+  });
+
+  it("login codes have no site-wide cap: many networks can't lock Heather out", async () => {
+    const many = Array.from({ length: 40 }, (_, i) => ({ id: `m${i}`, email: `m${i}@example.com`, app_metadata: {} }));
+    users(...many, { id: "h", email: "heather@example.com", app_metadata: {} });
+    for (let i = 0; i < many.length; i++) {
+      const r = await start(req("/api/auth/start", { email: many[i].email }, `203.0.113.${100 + i}`));
+      expect(r.status).toBe(200);
+    }
+    const res = await start(req("/api/auth/start", { email: "heather@example.com" }, "198.51.100.77"));
+    expect(res.status).toBe(200);
+    expect((await res.json()).step).toBe("code");
+  });
 });
 
 describe("POST /api/auth/send-code — each purpose only for the right account", () => {
@@ -209,6 +265,38 @@ describe("POST /api/auth/send-code — each purpose only for the right account",
   it("400 for an unknown purpose", async () => {
     const res = await sendCode(req("/api/auth/send-code", { email: "a@example.com", purpose: "admin" }));
     expect(res.status).toBe(400);
+  });
+
+  it("one network can't use up the site-wide signup allowance", async () => {
+    users();
+    for (let i = 0; i < RATE_LIMITS["ip:code-signup"]; i++) {
+      expect((await sendCode(req("/api/auth/send-code", { email: `new${i}@x.test`, purpose: "signup" }))).status).toBe(200);
+    }
+    const blocked = await sendCode(req("/api/auth/send-code", { email: "spam@x.test", purpose: "signup" }));
+    expect(blocked.status).toBe(429);
+    expect((await blocked.json()).code).toBe("codes_paused");
+    expect(RATE_LIMITS["ip:code-signup"]).toBeLessThan(MAX_SENDS_PER_HOUR_SITEWIDE.signup!);
+    // A real new host elsewhere still gets her code.
+    const real = await sendCode(req("/api/auth/send-code", { email: "real@x.test", purpose: "signup" }, "198.51.100.30"));
+    expect(real.status).toBe(200);
+  });
+
+  it("site-wide signup cap → 'We couldn't send a code right now', not the code screen", async () => {
+    users();
+    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.signup!; i++) {
+      const r = await sendCode(req("/api/auth/send-code", { email: `s${i}@x.test`, purpose: "signup" }, `203.0.113.${i}`));
+      expect(r.status).toBe(200);
+    }
+    const r = await sendCode(req("/api/auth/send-code", { email: "late@x.test", purpose: "signup" }, "198.51.100.40"));
+    expect(r.status).toBe(503);
+    expect(await r.json()).toEqual({
+      code: "codes_paused",
+      error: "We couldn't send a code right now. Text Brandon for a sign-in link.",
+    });
+    // Existing hosts are unaffected: reset still works.
+    users({ id: "b", email: "brandon@vyntechs.com", app_metadata: MARKED });
+    const reset = await sendCode(req("/api/auth/send-code", { email: "brandon@vyntechs.com", purpose: "reset" }, "198.51.100.41"));
+    expect(reset.status).toBe(200);
   });
 });
 
@@ -295,6 +383,53 @@ describe("POST /api/auth/verify-code", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true, redirect: "/host/live/n1" });
+  });
+
+  it("login code for a host whose prompt the founder switched OFF → straight to next (same as /auth/grant)", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: { password_prompt: "off" } });
+    await start(req("/api/auth/start", { email: "heather@example.com" }));
+    sessionWorks({ password_prompt: "off" });
+    const res = await verify(
+      req("/api/auth/verify-code", {
+        email: "heather@example.com",
+        purpose: "login",
+        code: lastEmailedCode(),
+        next: "/host/setup/n1",
+      }),
+    );
+    expect(await res.json()).toEqual({ ok: true, redirect: "/host/setup/n1" });
+  });
+
+  it("a reset code still goes to 'Choose a new password' even with the switch off", async () => {
+    const meta = { password_set_at: MARKED.password_set_at, password_prompt: "off" };
+    users({ id: "b", email: "brandon@vyntechs.com", app_metadata: meta });
+    await sendCode(req("/api/auth/send-code", { email: "brandon@vyntechs.com", purpose: "reset" }));
+    sessionWorks(meta);
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "brandon@vyntechs.com", purpose: "reset", code: lastEmailedCode() }),
+    );
+    expect((await res.json()).redirect).toBe("/host/set-password?from=reset&next=%2Fhost");
+  });
+
+  it("the founder's account is marked at sign-in so pages never query hosts", async () => {
+    users({ id: "f", email: "founder@example.com", app_metadata: {} });
+    h.hostRole = "founder";
+    await start(req("/api/auth/start", { email: "founder@example.com" }));
+    sessionWorks({});
+    await verify(req("/api/auth/verify-code", { email: "founder@example.com", purpose: "login", code: lastEmailedCode() }));
+    expect(h.updateUserById).toHaveBeenCalledWith("u1", { app_metadata: { founder: true } });
+  });
+
+  it("an account deleted after its code was sent is never re-created", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }));
+    const code = lastEmailedCode();
+    users();
+    sessionWorks({});
+    const res = await verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code }));
+    expect(res.status).toBe(404);
+    // generateLink would create a brand-new account for an unknown email.
+    expect(h.generateLink).not.toHaveBeenCalled();
   });
 
   it("refuses signup codes (those go through host-access)", async () => {

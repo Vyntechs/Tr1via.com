@@ -16,7 +16,7 @@ import { findAuthUserByEmail } from "@/lib/auth/admin-users";
 import { hasPassword } from "@/lib/auth/password-gate";
 import { isCodePurpose } from "@/lib/auth/email-codes";
 import { parseEmail, sendCodeTo } from "@/lib/auth/email-code-flow";
-import { hitIpLimit } from "@/lib/auth/rate-limits";
+import { clientIp, hitIpLimit } from "@/lib/auth/rate-limits";
 import {
   ACCOUNT_EXISTS_MESSAGE,
   BAD_EMAIL_MESSAGE,
@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     return fail(409, "has_password", HAS_PASSWORD_MESSAGE);
   }
 
-  const sent = await sendCodeTo(email, purpose);
+  const sent = await sendCodeTo(email, purpose, clientIp(req));
   if (!sent.ok) return fail(sent.status, sent.code, sent.error);
   return NextResponse.json({ ok: true, maskedEmail: sent.maskedEmail });
 }

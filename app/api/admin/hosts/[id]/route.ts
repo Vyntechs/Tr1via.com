@@ -7,6 +7,13 @@
 // auth app_metadata (service role only — hosts can't write it themselves);
 // the /host password gate reads it (lib/auth/password-gate.ts).
 //
+// Order + safety: the hosts row (paywall) is written first, then the auth
+// switch. Only the one app_metadata key is sent — GoTrue merges
+// app_metadata on an admin update, so nothing else (her password marker,
+// a save happening at the same moment) can be undone by a stale copy. If
+// the switch write fails, the hosts row is put back the way it was, so a
+// request never half-applies.
+//
 // The founder's OWN row can be edited (you can demote yourself technically
 // — but the singleton hosts_single_founder_idx index ensures another founder can't be promoted
 // concurrently, and we refuse role changes through this endpoint).
@@ -59,27 +66,13 @@ export async function PATCH(
 
   const { data: target } = await admin
     .from("hosts")
-    .select("id, user_id, is_paywall_bypassed, comped_at")
+    .select("id, user_id, is_paywall_bypassed, comped_at, comped_by")
     .eq("id", hostId)
     .maybeSingle();
   if (!target) return notFound("host not found");
 
-  if (parsed.data.passwordPrompt !== undefined) {
-    const { data: userData, error: userErr } = await admin.auth.admin.getUserById(
-      target.user_id,
-    );
-    if (userErr || !userData?.user) return serverError("could not load host account");
-    const { error: metaErr } = await admin.auth.admin.updateUserById(target.user_id, {
-      // Spread existing keys (password_set_at, provider info) so they
-      // survive whether GoTrue merges or replaces app_metadata.
-      app_metadata: {
-        ...(userData.user.app_metadata ?? {}),
-        [PASSWORD_PROMPT_KEY]: parsed.data.passwordPrompt,
-      },
-    });
-    if (metaErr) return serverError(metaErr.message);
-  }
-
+  // 1. The hosts row (paywall bypass).
+  let hostsChanged = false;
   if (parsed.data.isPaywallBypassed !== undefined) {
     const nextBypass = parsed.data.isPaywallBypassed;
     const flippingOn = nextBypass && !target.is_paywall_bypassed;
@@ -101,6 +94,33 @@ export async function PATCH(
 
     const { error } = await admin.from("hosts").update(patch).eq("id", hostId);
     if (error) return serverError(error.message);
+    hostsChanged = true;
+  }
+
+  // 2. The "Ask to create password" switch — only this key.
+  if (parsed.data.passwordPrompt !== undefined) {
+    const { error: metaErr } = await admin.auth.admin.updateUserById(target.user_id, {
+      app_metadata: { [PASSWORD_PROMPT_KEY]: parsed.data.passwordPrompt },
+    });
+    if (metaErr) {
+      if (hostsChanged) {
+        // Put the paywall back so the request is all-or-nothing.
+        const { error: undoErr } = await admin
+          .from("hosts")
+          .update({
+            is_paywall_bypassed: target.is_paywall_bypassed,
+            comped_at: target.comped_at,
+            comped_by: target.comped_by,
+          })
+          .eq("id", hostId);
+        if (undoErr) {
+          return serverError(
+            `password switch not saved (${metaErr.message}); paywall change could not be undone (${undoErr.message})`,
+          );
+        }
+      }
+      return serverError(metaErr.message);
+    }
   }
 
   return ok({ updated: true });

@@ -7,11 +7,19 @@
 //
 //   app_metadata.password_set_at  ISO time the host chose a password
 //   app_metadata.password_prompt  "on" | "off" — founder's per-host switch
+//   app_metadata.founder          true on the founder's own account, stamped
+//                                 by the server when she signs in by code or
+//                                 link (lib/auth/founder-flag.ts), so the
+//                                 middleware gate never has to query the
+//                                 hosts table on a page load
 //
 // Pure functions only: imported by middleware.ts, route handlers and tests.
 
+import { hostReturnPath } from "@/lib/host/hostReturnPath";
+
 export const PASSWORD_SET_AT_KEY = "password_set_at";
 export const PASSWORD_PROMPT_KEY = "password_prompt";
+export const FOUNDER_KEY = "founder";
 export const SET_PASSWORD_PATH = "/host/set-password";
 
 export const MIN_PASSWORD_LENGTH = 8;
@@ -47,14 +55,19 @@ export function passwordPromptSetting(appMetadata: AppMetadata): PasswordPrompt 
   return v === "on" || v === "off" ? v : null;
 }
 
+/** The founder's own account (see FOUNDER_KEY). */
+export function isFounderAccount(appMetadata: AppMetadata): boolean {
+  return appMetadata?.[FOUNDER_KEY] === true;
+}
+
 /**
- * Whether the gate still needs to know if this user is the founder.
- * Lets middleware skip the hosts-table lookup for everyone else.
+ * After a sign-in by emailed code or the founder's link: walk a host with no
+ * password through "Create your password", unless the founder switched her
+ * prompt explicitly "off". Used by /api/auth/verify-code and /auth/grant so
+ * both doors agree.
  */
-export function needsFounderCheck(pathname: string, appMetadata: AppMetadata): boolean {
-  if (!isGatedPath(pathname)) return false;
-  if (hasPassword(appMetadata)) return false;
-  return passwordPromptSetting(appMetadata) === null;
+export function walkToPasswordAfterSignIn(appMetadata: AppMetadata): boolean {
+  return !hasPassword(appMetadata) && passwordPromptSetting(appMetadata) !== "off";
 }
 
 function isGatedPath(pathname: string): boolean {
@@ -72,22 +85,22 @@ function isGatedPath(pathname: string): boolean {
  *   - it's a /host page that isn't in-show and isn't the prompt itself
  *   - the account has no password marker yet
  *   - the founder turned the prompt "on" for this host, OR this is the
- *     founder's own account. An explicit "off" always wins. Existing hosts
- *     with no setting are treated as off, so nothing changes for them until
- *     the founder flips the switch.
+ *     founder's own account (app_metadata.founder). An explicit "off"
+ *     always wins. Existing hosts with no setting are treated as off, so
+ *     nothing changes for them until the founder flips the switch.
+ * Reads app_metadata only — no database query on a page load.
  */
 export function passwordGateRedirect(input: {
   pathname: string;
   search?: string;
   appMetadata: AppMetadata;
-  isFounder: boolean;
 }): string | null {
-  const { pathname, search = "", appMetadata, isFounder } = input;
+  const { pathname, search = "", appMetadata } = input;
   if (!isGatedPath(pathname)) return null;
   if (hasPassword(appMetadata)) return null;
   const setting = passwordPromptSetting(appMetadata);
   if (setting === "off") return null;
-  if (setting !== "on" && !isFounder) return null;
+  if (setting !== "on" && !isFounderAccount(appMetadata)) return null;
   const next = `${pathname}${search}`;
   return `${SET_PASSWORD_PATH}?next=${encodeURIComponent(next)}`;
 }
@@ -99,14 +112,12 @@ export function passwordGateRedirect(input: {
  * entirely — even a hand-typed ?next= can't route through it.
  */
 export function setPasswordReturnPath(next: string | null): string {
-  if (!next || next.startsWith("//")) return "/host";
-  const path = next.split("?")[0];
+  // Same open-redirect rules as every other host return path.
+  const safe = hostReturnPath(next);
+  const path = safe.split("?")[0];
   if (matchesPrefix(path, SET_PASSWORD_PATH)) return "/host";
   if (isInShowPath(path)) return "/host";
-  if (next === "/host" || next.startsWith("/host/") || next.startsWith("/host?")) {
-    return next;
-  }
-  return "/host";
+  return safe;
 }
 
 export type PasswordCheck =

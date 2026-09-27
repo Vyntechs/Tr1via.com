@@ -9,10 +9,11 @@
 // Supabase password nobody knows; /api/auth/start emails them a 6-digit
 // code instead (and the founder's /host/admin link still works).
 //
-// No user lookup on the happy path. Only when Supabase says "invalid
-// credentials" do we look the email up (paged, no cap) to tell the host
-// which of three things went wrong: no account / no password yet / wrong
-// password.
+// The account is looked up FIRST (one indexed row, lib/auth/admin-users.ts),
+// so an account with no password marker is refused before Supabase ever
+// checks a password — no session is created for it at all. The lookup also
+// lets us tell the host which of three things went wrong: no account / no
+// password yet / wrong password.
 //
 // Abuse limits (lib/auth/rate-limits.ts): a per-IP request cap, and a
 // lockout after too many wrong passwords for one email or from one IP
@@ -65,13 +66,30 @@ export async function POST(req: NextRequest) {
   ]);
   if (emailLocked || ipLocked) return fail(429, "locked_out", LOCKED_OUT_MESSAGE);
 
+  const lookup = await findAuthUserByEmail(getSupabaseAdmin(), email);
+  if (!lookup.ok) return fail(500, "lookup_failed", TRY_AGAIN_MESSAGE);
+  if (!lookup.user) {
+    // Every failed try counts against this IP.
+    await recordEvent("fail:login-ip", ip);
+    return fail(404, "no_account", NO_ACCOUNT_MESSAGE);
+  }
+  if (!hasPassword(lookup.user.app_metadata)) {
+    // Accounts made before passwords have a random password nobody knows.
+    // Refuse before signInWithPassword so a guessed old password can never
+    // start a session.
+    await recordEvent("fail:login-ip", ip);
+    return fail(403, "no_password", NO_PASSWORD_MESSAGE);
+  }
+
   const { supabase, applyCookies } = createSessionCookieClient(req);
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
   if (!error && data.user) {
     if (!hasPassword(data.user.app_metadata)) {
-      // Only reachable if someone guessed an old random password. Don't
-      // hand out the session — the marker is the source of truth.
+      // Only if the marker vanished between the lookup and now. End JUST
+      // this new session on the server (scope "local" = this session only;
+      // her other devices stay signed in) and hand out no cookies.
+      await supabase.auth.signOut({ scope: "local" }).catch(() => {});
       return fail(403, "no_password", NO_PASSWORD_MESSAGE);
     }
     return applyCookies(NextResponse.json({ ok: true }, { status: 200 }));
@@ -81,15 +99,9 @@ export async function POST(req: NextRequest) {
     return fail(429, "rate_limited", RATE_LIMIT_MESSAGE);
   }
 
-  const lookup = await findAuthUserByEmail(getSupabaseAdmin(), email);
-  if (!lookup.ok) return fail(500, "lookup_failed", TRY_AGAIN_MESSAGE);
-  // Every failed try counts against this IP; a wrong password for a real
-  // password account also counts against that email.
+  // A wrong password for a real password account counts against this IP
+  // and that email.
   await recordEvent("fail:login-ip", ip);
-  if (!lookup.user) return fail(404, "no_account", NO_ACCOUNT_MESSAGE);
-  if (!hasPassword(lookup.user.app_metadata)) {
-    return fail(403, "no_password", NO_PASSWORD_MESSAGE);
-  }
   await recordEvent("fail:login-email", email);
   return fail(401, "wrong_password", WRONG_PASSWORD_MESSAGE);
 }

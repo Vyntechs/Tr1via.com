@@ -29,6 +29,7 @@ import { hostReturnPath } from "@/lib/host/hostReturnPath";
 import { PasswordField, ShowPasswordToggle } from "@/components/host/PasswordField";
 import { CodeBoxes, CODE_BOX_COUNT } from "@/components/host/CodeBoxes";
 import { checkNewPassword } from "@/lib/auth/password-gate";
+import { PASSWORD_SAVED_SIGN_IN_MESSAGE } from "@/lib/auth/auth-messages";
 
 type Step = "email" | "password" | "code" | "signup";
 type CodePurpose = "login" | "reset" | "signup";
@@ -81,6 +82,11 @@ function HostLoginInner() {
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [code, setCode] = useState("");
+  // A new host's signup code that checked out but whose password Supabase
+  // refused (its own password rules). The server didn't use the code up,
+  // so after she picks a better password we try the same code again
+  // instead of emailing a new one.
+  const [signupCode, setSignupCode] = useState<string | null>(null);
   const [revealed, setRevealed] = useState(false);
   const [state, setState] = useState<FormState>({ kind: "idle" });
   // If the visitor already has a session, show "signed in as X" with a
@@ -94,10 +100,22 @@ function HostLoginInner() {
   }
 
   useEffect(() => {
+    // Sent here by /host/set-password when the password saved but this
+    // device couldn't be signed back in.
+    const passwordSaved =
+      new URLSearchParams(window.location.search).get("notice") === "password-saved";
     const supabase = getSupabaseBrowser();
-    supabase.auth.getUser().then(({ data }) => {
-      setSignedInAs(data.user?.email ?? null);
-    });
+    supabase.auth
+      .getUser()
+      .then(({ data }) => setSignedInAs(data.user?.email ?? null))
+      .catch(() => {})
+      .finally(() => {
+        if (passwordSaved) {
+          setState((s) =>
+            s.kind === "idle" ? { kind: "notice", message: PASSWORD_SAVED_SIGN_IN_MESSAGE } : s,
+          );
+        }
+      });
   }, []);
 
   async function handleSignOut() {
@@ -127,6 +145,7 @@ function HostLoginInner() {
   }
 
   function goToCode(nextPurpose: CodePurpose, masked: string | undefined) {
+    setSignupCode(null);
     setPurpose(nextPurpose);
     setMaskedEmail(masked ?? "");
     setCode("");
@@ -134,6 +153,7 @@ function HostLoginInner() {
   }
 
   function startOver() {
+    setSignupCode(null);
     setStep("email");
     setPassword("");
     setConfirm("");
@@ -229,6 +249,10 @@ function HostLoginInner() {
       setState({ kind: "error", message: check.error });
       return;
     }
+    if (signupCode) {
+      await submitCode(signupCode);
+      return;
+    }
     await sendCode("signup");
   }
 
@@ -252,12 +276,17 @@ function HostLoginInner() {
           return;
         }
         if (body?.code === "account_exists") {
+          setSignupCode(null);
           setStep("password");
           setPassword("");
         } else if (body?.field === "password" || body?.field === "confirm") {
+          // The code was right and is still good; only the password needs fixing.
+          setSignupCode(digits);
           setStep("signup");
         } else {
+          setSignupCode(null);
           setCode("");
+          setStep("code");
         }
         setState({ kind: "error", message: body?.error ?? `Something went wrong (${res.status})` });
         return;

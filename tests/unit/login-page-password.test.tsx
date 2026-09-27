@@ -195,9 +195,78 @@ describe("/login — account with no password yet (Heather)", () => {
     );
     expect(screen.getByLabelText("Email", { exact: true })).toBeInTheDocument();
   });
+
+  it("when no code could be sent right now, stays on step 1 with 'Text Brandon for a sign-in link'", async () => {
+    respond(429, {
+      code: "codes_paused",
+      error: "We couldn't send a code right now. Text Brandon for a sign-in link.",
+    });
+    render(<HostLoginPage />);
+    await submitEmail("heather@example.com");
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "We couldn't send a code right now. Text Brandon for a sign-in link.",
+    );
+    expect(screen.getByLabelText("Email", { exact: true })).toBeInTheDocument();
+    expect(screen.queryByTestId("login-code-sent")).toBeNull();
+  });
+});
+
+describe("/login — after saving a password on a device that couldn't sign back in", () => {
+  it("says 'Your password is saved. Sign in with it now.'", async () => {
+    window.history.replaceState(null, "", "/login?notice=password-saved&next=%2Fhost");
+    try {
+      render(<HostLoginPage />);
+      expect(await screen.findByTestId("login-notice")).toHaveTextContent(
+        "Your password is saved. Sign in with it now.",
+      );
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
 });
 
 describe("/login — brand-new host", () => {
+  it("a password Supabase refuses: fix it and the SAME code is tried again — no new email", async () => {
+    respond(200, { step: "signup" });
+    render(<HostLoginPage />);
+    await submitEmail("new@example.com");
+    fireEvent.change(await screen.findByLabelText("Password", { exact: true }), {
+      target: { value: "trivia-night" },
+    });
+    fireEvent.change(screen.getByLabelText("Type it again"), { target: { value: "trivia-night" } });
+    respond(200, { ok: true, maskedEmail: "n***@example.com" });
+    fireEvent.click(screen.getByTestId("login-submit"));
+    await screen.findByText("STEP 2 OF 2 · CHECK YOUR EMAIL");
+
+    respond(400, {
+      code: "weak_password",
+      field: "password",
+      error: "Please pick a different password. It needs at least 10 characters.",
+    });
+    fireEvent.change(screen.getByLabelText("6-digit code"), { target: { value: "654321" } });
+    expect(await screen.findByRole("alert")).toHaveTextContent("It needs at least 10 characters.");
+    expect(screen.getByText("STEP 1 OF 2 · CREATE YOUR PASSWORD")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), {
+      target: { value: "trivia-night-long" },
+    });
+    fireEvent.change(screen.getByLabelText("Type it again"), { target: { value: "trivia-night-long" } });
+    respond(200, { ok: true });
+    fireEvent.click(screen.getByTestId("login-submit"));
+    await waitFor(() => expect(h.replace).toHaveBeenCalledWith("/host"));
+    expect(call(3)).toEqual({
+      url: "/api/auth/host-access",
+      body: {
+        email: "new@example.com",
+        password: "trivia-night-long",
+        confirm: "trivia-night-long",
+        code: "654321",
+      },
+    });
+    // Only one code was ever emailed.
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/auth/send-code")).toHaveLength(1);
+  });
+
   it("picks a password, proves the email with a code, then the account is created", async () => {
     respond(200, { step: "signup" });
     render(<HostLoginPage />);

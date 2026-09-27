@@ -3,12 +3,16 @@
 //
 // Proves:
 //   - email alone never signs anyone in
-//   - a correct password + marker → 200 with session cookies, no user lookup
+//   - the account is looked up FIRST with one indexed row (never paging
+//     listUsers); a correct password + marker → 200 with session cookies
 //   - no marker (every pre-password account) → 403 "we'll email you a code"
-//     and no cookies
-//   - wrong password / unknown email are told apart via an uncapped lookup
-//     (a user on page 2 of listUsers is still found)
-//   - sign-up needs a correct emailed "signup" code before anything is made
+//     BEFORE any password check, so no session is ever created
+//   - if the marker is somehow missing on the signed-in user, just that new
+//     session is signed out (scope "local") and no cookies are sent
+//   - wrong password / unknown email are told apart
+//   - sign-up needs a correct emailed "signup" code before anything is made,
+//     and only uses the code up once the account exists (a password
+//     Supabase refuses keeps the code good, with the rule in plain words)
 //   - sign-up creates the account WITH password + marker, then signs in
 //   - sign-up for an existing email → 409, no session
 //   - 10 wrong passwords for one email (or 20 from one IP) lock that door
@@ -25,9 +29,13 @@ type SetAll = (c: Array<{ name: string; value: string; options?: object }>) => v
 
 const h = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
+  signOut: vi.fn(),
   listUsers: vi.fn(),
+  rpc: vi.fn(),
+  accounts: [] as Array<{ id: string; email: string; app_metadata: object }>,
   createUser: vi.fn(),
   checkCode: vi.fn(),
+  markCodeUsed: vi.fn(),
   setAll: null as null | SetAll,
   rates: null as unknown,
 }));
@@ -35,11 +43,12 @@ const h = vi.hoisted(() => ({
 vi.mock("@supabase/ssr", () => ({
   createServerClient: (_u: string, _k: string, opts: { cookies: { setAll: SetAll } }) => {
     h.setAll = opts.cookies.setAll;
-    return { auth: { signInWithPassword: h.signInWithPassword } };
+    return { auth: { signInWithPassword: h.signInWithPassword, signOut: h.signOut } };
   },
 }));
 vi.mock("@/lib/supabase/admin", () => ({
   getSupabaseAdmin: () => ({
+    rpc: h.rpc,
     auth: { admin: { listUsers: h.listUsers, createUser: h.createUser } },
   }),
 }));
@@ -51,6 +60,7 @@ vi.mock("@/lib/auth/rate-limit-store", () => ({
 vi.mock("@/lib/auth/email-code-flow", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth/email-code-flow")>()),
   checkCode: h.checkCode,
+  markCodeUsed: h.markCodeUsed,
 }));
 
 import { POST as login } from "@/app/api/auth/login/route";
@@ -81,22 +91,31 @@ function signInFails() {
   });
 }
 
-function usersPages(...pages: Array<Array<{ id: string; email: string; app_metadata?: object }>>) {
-  h.listUsers.mockImplementation(async ({ page }: { page: number }) => ({
-    data: { users: pages[page - 1] ?? [] },
-    error: null,
-  }));
+/** The accounts the indexed lookup (public.find_auth_user_by_email) sees. */
+function accounts(...list: Array<{ id: string; email: string; app_metadata: object }>) {
+  h.accounts = list;
 }
 
-function filler(n: number) {
-  return Array.from({ length: n }, (_, i) => ({ id: `f${i}`, email: `filler${i}@x.test` }));
-}
+const MARKED_USER = { id: "b", email: "brandon@vyntechs.com", app_metadata: MARKED };
 
 beforeEach(() => {
   vi.clearAllMocks();
   h.setAll = null;
   h.rates = memoryRateStore();
-  h.checkCode.mockResolvedValue({ ok: true });
+  h.checkCode.mockResolvedValue({ ok: true, codeId: "code-1" });
+  h.signOut.mockResolvedValue({ error: null });
+  accounts(
+    MARKED_USER,
+    { id: "h", email: "heather@x.test", app_metadata: MARKED },
+    { id: "bx", email: "b@x.test", app_metadata: MARKED },
+    { id: "a", email: "a@x.test", app_metadata: MARKED },
+  );
+  h.rpc.mockImplementation(async (_fn: string, { p_email }: { p_email: string }) => ({
+    data: h.accounts
+      .filter((u) => u.email === p_email)
+      .map((u) => ({ id: u.id, email: u.email, raw_app_meta_data: u.app_metadata })),
+    error: null,
+  }));
 });
 
 describe("POST /api/auth/login", () => {
@@ -106,7 +125,7 @@ describe("POST /api/auth/login", () => {
     expect(h.signInWithPassword).not.toHaveBeenCalled();
   });
 
-  it("200 with session cookies for the right password on a marked account, no lookup", async () => {
+  it("200 with session cookies for the right password on a marked account (one indexed lookup)", async () => {
     signInSucceeds(MARKED);
     const res = await login(req("/api/auth/login", { email: " Brandon@Vyntechs.com ", password: "pw-12345678" }));
     expect(res.status).toBe(200);
@@ -115,63 +134,61 @@ describe("POST /api/auth/login", () => {
       password: "pw-12345678",
     });
     expect(res.cookies.get("sb-test-auth-token")?.value).toBe("session");
+    expect(h.rpc).toHaveBeenCalledTimes(1);
+    expect(h.rpc).toHaveBeenCalledWith("find_auth_user_by_email", { p_email: "brandon@vyntechs.com" });
     expect(h.listUsers).not.toHaveBeenCalled();
   });
 
-  it("403 'we'll email you a code' and NO cookies when the account has no marker", async () => {
+  it("403 'we'll email you a code' for a no-marker account — refused BEFORE any password check", async () => {
+    accounts({ id: "old", email: "old@x.test", app_metadata: { provider: "email" } });
     signInSucceeds({ provider: "email" });
     const res = await login(req("/api/auth/login", { email: "old@x.test", password: "whatever1" }));
     expect(res.status).toBe(403);
-    const error = (await res.json()).error;
-    expect(error).toBe(NO_PASSWORD_MESSAGE);
-    expect(error).toContain('Tap "Use a different email"');
+    const body = await res.json();
+    expect(body.code).toBe("no_password");
+    expect(body.error).toBe(NO_PASSWORD_MESSAGE);
+    expect(body.error).toContain('Tap "Use a different email"');
+    // No password check → no session was ever created.
+    expect(h.signInWithPassword).not.toHaveBeenCalled();
     expect(res.cookies.get("sb-test-auth-token")).toBeUndefined();
   });
 
-  it("403 no_password for a pre-password account found on page 2", async () => {
-    signInFails();
-    usersPages(filler(1000), [{ id: "heather", email: "heather@x.test", app_metadata: {} }]);
-    const res = await login(req("/api/auth/login", { email: "heather@x.test", password: "guess-123" }));
+  it("if the marker is missing on the signed-in user, ends only that new session and sends no cookies", async () => {
+    signInSucceeds({ provider: "email" });
+    const res = await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "pw-12345678" }));
     expect(res.status).toBe(403);
-    const body = await res.json();
-    expect(body.code).toBe("no_password");
-    expect(body.error).toMatch(/email you a code/);
-    expect(h.listUsers).toHaveBeenCalledTimes(2);
+    expect(h.signOut).toHaveBeenCalledWith({ scope: "local" });
+    expect(res.cookies.get("sb-test-auth-token")).toBeUndefined();
   });
 
   it("401 wrong password for a marked account", async () => {
     signInFails();
-    usersPages([{ id: "b", email: "brandon@vyntechs.com", app_metadata: MARKED }]);
     const res = await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "nope-nope" }));
     expect(res.status).toBe(401);
     expect((await res.json()).code).toBe("wrong_password");
   });
 
-  it("404 no_account for an unknown email", async () => {
+  it("404 no_account for an unknown email, without a password check", async () => {
     signInFails();
-    usersPages([{ id: "b", email: "brandon@vyntechs.com", app_metadata: MARKED }]);
     const res = await login(req("/api/auth/login", { email: "new@x.test", password: "whatever1" }));
     expect(res.status).toBe(404);
     expect((await res.json()).code).toBe("no_account");
+    expect(h.signInWithPassword).not.toHaveBeenCalled();
   });
 
-  it("429 when Supabase rate limits, without a lookup", async () => {
+  it("429 when Supabase rate limits", async () => {
     h.signInWithPassword.mockResolvedValue({
       data: { user: null },
       error: { status: 429, code: "over_request_rate_limit", message: "slow down" },
     });
     const res = await login(req("/api/auth/login", { email: "a@x.test", password: "whatever1" }));
     expect(res.status).toBe(429);
-    expect(h.listUsers).not.toHaveBeenCalled();
   });
 });
 
 describe("POST /api/auth/login — wrong-password lockout", () => {
-  const MARKED_USER = { id: "b", email: "brandon@vyntechs.com", app_metadata: MARKED };
-
   it("locks one email after 10 wrong passwords — even the right one is refused", async () => {
     signInFails();
-    usersPages([MARKED_USER]);
     for (let i = 0; i < RATE_LIMITS["fail:login-email"]; i++) {
       // Spread over IPs so only the per-email lock can trip.
       const r = await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "nope" }, `198.51.100.${i}`));
@@ -193,7 +210,6 @@ describe("POST /api/auth/login — wrong-password lockout", () => {
 
   it("locks one IP after 20 failed tries across many emails", async () => {
     signInFails();
-    usersPages([]);
     for (let i = 0; i < RATE_LIMITS["fail:login-ip"]; i++) {
       const r = await login(req("/api/auth/login", { email: `guess${i}@x.test`, password: "nope" }));
       expect(r.status).toBe(404);
@@ -222,7 +238,6 @@ describe("POST /api/auth/login — wrong-password lockout", () => {
     try {
       vi.setSystemTime(new Date(Date.UTC(2026, 8, 27, 20, 0)));
       signInFails();
-      usersPages([MARKED_USER]);
       for (let i = 0; i < RATE_LIMITS["fail:login-email"]; i++) {
         await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "nope" }, `198.51.100.${i}`));
       }
@@ -282,13 +297,43 @@ describe("POST /api/auth/host-access (sign-up)", () => {
       }),
     );
     expect(res.status).toBe(200);
-    expect(h.checkCode).toHaveBeenCalledWith("new@x.test", "signup", "123456");
+    expect(h.checkCode).toHaveBeenCalledWith("new@x.test", "signup", "123456", { consume: false });
     const attrs = h.createUser.mock.calls[0][0];
     expect(attrs).toMatchObject({ email: "new@x.test", password: "trivia-night", email_confirm: true });
     expect(typeof attrs.app_metadata.password_set_at).toBe("string");
     expect(h.signInWithPassword).toHaveBeenCalledWith({ email: "new@x.test", password: "trivia-night" });
     expect(res.cookies.get("sb-test-auth-token")?.value).toBe("session");
     expect(h.listUsers).not.toHaveBeenCalled();
+    // The code is used up only now that the account exists.
+    expect(h.markCodeUsed).toHaveBeenCalledWith("code-1");
+  });
+
+  it("a password Supabase refuses keeps the code good and says the rule in plain words", async () => {
+    h.createUser.mockResolvedValue({
+      data: { user: null },
+      error: {
+        status: 422,
+        code: "weak_password",
+        message: "Password should be at least 10 characters.",
+        reasons: ["length", "pwned"],
+      },
+    });
+    const res = await signUp(
+      req("/api/auth/host-access", {
+        email: "new@x.test",
+        password: "trivia-nt",
+        confirm: "trivia-nt",
+        code: "123456",
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body).toMatchObject({ code: "weak_password", field: "password" });
+    expect(body.error).toBe(
+      "Please pick a different password. It needs at least 10 characters. It has shown up in a data leak on another website, so it isn't safe.",
+    );
+    expect(h.markCodeUsed).not.toHaveBeenCalled();
+    expect(h.signInWithPassword).not.toHaveBeenCalled();
   });
 
   it("409 'sign in instead' for an existing email, and no session", async () => {

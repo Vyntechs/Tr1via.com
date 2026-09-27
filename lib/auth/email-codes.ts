@@ -11,9 +11,14 @@
 //     server's SESSION_SECRET — never the plain code
 //   - a code works for 10 minutes, allows 5 tries, and works once
 //   - sending a new code retires the older ones for that email + purpose
-//   - at most 5 codes per email per hour, and a site-wide hourly cap PER
-//     PURPOSE (so a flood of fake sign-ups can't burn through the Zoho
-//     mailbox's limits, and can't use up the login/reset codes either)
+//   - at most 5 codes per email per hour (every purpose together)
+//   - a site-wide hourly cap on SIGNUP codes only (a flood of fake sign-ups
+//     can't burn through the Zoho mailbox's limits). Login and reset codes
+//     have NO site-wide cap: they only go to existing accounts, so the
+//     per-email cap already bounds them, and a stranger must never be able
+//     to stop a real host getting her code. Per-IP hourly caps (well below
+//     the signup cap) live in lib/auth/rate-limits.ts, checked by
+//     lib/auth/email-code-flow.ts.
 //   - the check is constant-time (timingSafeEqual)
 //
 // Storage lives behind the small CodeStore interface (Supabase in
@@ -29,14 +34,15 @@ export const CODE_TTL_MS = 10 * 60 * 1000;
 export const MAX_ATTEMPTS = 5;
 export const MAX_SENDS_PER_EMAIL_PER_HOUR = 5;
 /**
- * Site-wide codes per hour, separately for each purpose (60 in all, the
- * old single cap). Signup spam fills only the signup allowance; hosts can
- * still get login and reset codes.
+ * Site-wide codes per hour, per purpose. null = no site-wide cap.
+ * Only signup is capped (a backstop for the mailbox): signup spam fills only
+ * the signup allowance, and existing hosts can ALWAYS get a login or reset
+ * code unless their own email or IP is over its limit.
  */
-export const MAX_SENDS_PER_HOUR_SITEWIDE: Readonly<Record<CodePurpose, number>> = {
-  login: 30,
-  reset: 20,
-  signup: 10,
+export const MAX_SENDS_PER_HOUR_SITEWIDE: Readonly<Record<CodePurpose, number | null>> = {
+  login: null,
+  reset: null,
+  signup: 20,
 };
 const HOUR_MS = 60 * 60 * 1000;
 // Rows older than this are deleted opportunistically when a new code is sent.
@@ -154,8 +160,11 @@ export async function issueCode(
   if ((await store.countSince({ email, purpose: null }, hourAgo)) >= MAX_SENDS_PER_EMAIL_PER_HOUR) {
     return { ok: false, reason: "too_many_for_email" };
   }
-  const sitewide = await store.countSince({ email: null, purpose: input.purpose }, hourAgo);
-  if (sitewide >= MAX_SENDS_PER_HOUR_SITEWIDE[input.purpose]) {
+  const sitewideCap = MAX_SENDS_PER_HOUR_SITEWIDE[input.purpose];
+  if (
+    sitewideCap !== null &&
+    (await store.countSince({ email: null, purpose: input.purpose }, hourAgo)) >= sitewideCap
+  ) {
     return { ok: false, reason: "too_many_sitewide" };
   }
 
@@ -176,12 +185,19 @@ export async function issueCode(
 }
 
 export type VerifyResult =
-  | { ok: true }
+  | { ok: true; codeId: string }
   | { ok: false; reason: "no_code" | "expired" | "too_many_attempts" | "wrong_code" | "busy" };
 
+/**
+ * Check a code. By default a correct code is used up (consumed) right here.
+ * With `consume: false` a correct code is only checked (the try still
+ * counts), and the caller uses it up with consumeCode() once the thing it
+ * guards has actually happened — sign-up does this so a failed account
+ * create (e.g. Supabase's password rules) doesn't waste the code.
+ */
 export async function verifyCode(
   store: CodeStore,
-  input: { email: string; purpose: CodePurpose; code: string; now?: Date },
+  input: { email: string; purpose: CodePurpose; code: string; now?: Date; consume?: boolean },
 ): Promise<VerifyResult> {
   const email = normalizeEmail(input.email);
   const now = input.now ?? new Date();
@@ -201,6 +217,12 @@ export async function verifyCode(
       reason: row.attempts + 1 >= MAX_ATTEMPTS ? "too_many_attempts" : "wrong_code",
     };
   }
+  if (input.consume === false) return { ok: true, codeId: row.id };
   if (!(await store.consume(row.id, now.toISOString()))) return { ok: false, reason: "no_code" };
-  return { ok: true };
+  return { ok: true, codeId: row.id };
+}
+
+/** Use up a code checked with `consume: false`. False if already used. */
+export async function consumeCode(store: CodeStore, codeId: string, now: Date = new Date()): Promise<boolean> {
+  return store.consume(codeId, now.toISOString());
 }

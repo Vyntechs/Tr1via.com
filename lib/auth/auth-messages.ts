@@ -19,6 +19,12 @@ export const TRY_AGAIN_MESSAGE =
   "Something went wrong on our end. Please try again in a minute.";
 export const CODE_NOT_SENT_MESSAGE =
   "We couldn't send the code. Text Brandon for a sign-in link.";
+// No code was sent (site-wide signup cap, or this network's hourly code
+// limit), so the page stays on the email step with this message.
+export const CODES_PAUSED_MESSAGE =
+  "We couldn't send a code right now. Text Brandon for a sign-in link.";
+// set-password saved the new password but couldn't sign this device back in.
+export const PASSWORD_SAVED_SIGN_IN_MESSAGE = "Your password is saved. Sign in with it now.";
 export const TOO_MANY_CODES_MESSAGE =
   "We've already sent several codes to this email. Use the newest one, or wait an hour and try again. Text Brandon if you're stuck.";
 export const WRONG_CODE_MESSAGE =
@@ -58,6 +64,31 @@ export function isRateLimited(err: unknown): boolean {
 
 export function isWeakPassword(err: unknown): boolean {
   return asAuthError(err).code === "weak_password";
+}
+
+/**
+ * Plain words for Supabase's own password rules (set in the Supabase
+ * dashboard, so they can be stricter than ours). GoTrue's weak_password
+ * error lists which rule failed in `reasons`: "length", "characters"
+ * (must mix letter cases / numbers / symbols) or "pwned" (found in a
+ * known data leak).
+ */
+export function weakPasswordMessage(err: unknown): string {
+  const e = err && typeof err === "object" ? (err as { reasons?: unknown; message?: unknown }) : {};
+  const reasons = Array.isArray(e.reasons) ? e.reasons.map(String) : [];
+  const parts: string[] = [];
+  if (reasons.includes("length")) {
+    const n = typeof e.message === "string" ? /at least (\d+) characters/i.exec(e.message)?.[1] : undefined;
+    parts.push(n ? `It needs at least ${n} characters.` : "It needs to be longer.");
+  }
+  if (reasons.includes("characters")) {
+    parts.push("Mix in lowercase letters, capital letters, numbers and a symbol like ! or #.");
+  }
+  if (reasons.includes("pwned")) {
+    parts.push("It has shown up in a data leak on another website, so it isn't safe.");
+  }
+  if (parts.length === 0) return WEAK_PASSWORD_MESSAGE;
+  return `Please pick a different password. ${parts.join(" ")}`;
 }
 
 export function isDuplicateEmail(err: unknown): boolean {

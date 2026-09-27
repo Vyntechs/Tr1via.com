@@ -11,6 +11,13 @@
 //     per IP                 20      Forgot password."
 //   "Forgot password?" (send-code "reset") is NOT blocked by the password
 //   lockout, so a host who is locked out can always get back in by code.
+//   Codes actually sent, per IP per purpose (1-hour window):
+//     login                  10   (whichever door sends it: start or send-code)
+//     reset                  10
+//     signup                  3   (well below the site-wide signup cap of 20
+//                                   in lib/auth/email-codes.ts, so one IP
+//                                   can't use it up; login/reset have no
+//                                   site-wide cap at all)
 //
 // Events live in public.auth_rate_events (lib/auth/rate-limit-store.ts).
 // Keys are HMAC'd with SESSION_SECRET, so no plain IP or email is stored.
@@ -25,6 +32,7 @@ import type { NextRequest } from "next/server";
 import { supabaseRateStore } from "@/lib/auth/rate-limit-store";
 
 export const RATE_WINDOW_MS = 15 * 60 * 1000;
+const HOUR_MS = 60 * 60 * 1000;
 
 export type RateBucket =
   | "ip:start"
@@ -32,7 +40,10 @@ export type RateBucket =
   | "ip:verify-code"
   | "ip:login"
   | "fail:login-email"
-  | "fail:login-ip";
+  | "fail:login-ip"
+  | "ip:code-login"
+  | "ip:code-reset"
+  | "ip:code-signup";
 
 export const RATE_LIMITS: Readonly<Record<RateBucket, number>> = {
   "ip:start": 20,
@@ -41,7 +52,21 @@ export const RATE_LIMITS: Readonly<Record<RateBucket, number>> = {
   "ip:login": 30,
   "fail:login-email": 10,
   "fail:login-ip": 20,
+  "ip:code-login": 10,
+  "ip:code-reset": 10,
+  "ip:code-signup": 3,
 };
+
+/** How far back each bucket counts. Everything not listed: RATE_WINDOW_MS. */
+export const RATE_WINDOWS_MS: Readonly<Partial<Record<RateBucket, number>>> = {
+  "ip:code-login": HOUR_MS,
+  "ip:code-reset": HOUR_MS,
+  "ip:code-signup": HOUR_MS,
+};
+
+export function rateWindowMs(bucket: RateBucket): number {
+  return RATE_WINDOWS_MS[bucket] ?? RATE_WINDOW_MS;
+}
 
 // Rows older than this are deleted as we go.
 const KEEP_MS = 24 * 60 * 60 * 1000;
@@ -98,7 +123,7 @@ export async function isOverLimit(
   if (!store) return false;
   const now = opts.now ?? new Date();
   try {
-    const since = new Date(now.getTime() - RATE_WINDOW_MS).toISOString();
+    const since = new Date(now.getTime() - rateWindowMs(bucket)).toISOString();
     return (await store.count(bucket, rateKeyHash(bucket, key), since)) >= RATE_LIMITS[bucket];
   } catch (err) {
     logSkip(`count ${bucket}`, err);

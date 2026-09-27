@@ -3,8 +3,12 @@
 // Proves: no session → 401 and nothing written; bad input → 400 with a
 // plain-English message; success writes the password AND the
 // password_set_at marker server-side while keeping existing app_metadata
-// (the founder's password_prompt switch), then refreshes the session with
-// the new password; Supabase rate limits → 429; saving clears a
+// (only the marker key is sent — GoTrue merges app_metadata — so the
+// founder's password_prompt switch can't be undone by a stale copy), then
+// signs this device in again with the new password and sends ONLY that new
+// session's cookies (never a refreshed copy of the old, now-dead session);
+// if that sign-in fails → 409 "sign_in_again" with a /login link and the
+// dead cookies cleared; Supabase rate limits → 429; saving clears a
 // wrong-password lockout on her email.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,15 +30,18 @@ vi.mock("@/lib/auth/rate-limit-store", () => ({
   supabaseRateStore: () => h.rates,
 }));
 
+// Every route-handler client gets its own cookie sink, handed to the mocks
+// so a test can make getUser() "refresh" the old session.
 vi.mock("@supabase/ssr", () => ({
   createServerClient: (_u: string, _k: string, opts: { cookies: { setAll: SetAll } }) => {
-    h.setAll = opts.cookies.setAll;
-    return { auth: { signInWithPassword: h.signInWithPassword } };
+    const setAll = opts.cookies.setAll;
+    return {
+      auth: {
+        getUser: () => h.getUser(setAll),
+        signInWithPassword: (creds: unknown) => h.signInWithPassword(creds, setAll),
+      },
+    };
   },
-}));
-
-vi.mock("@/lib/supabase/server", () => ({
-  getSupabaseServer: async () => ({ auth: { getUser: h.getUser } }),
 }));
 vi.mock("@/lib/supabase/admin", () => ({
   getSupabaseAdmin: () => ({ auth: { admin: { updateUserById: h.updateUserById } } }),
@@ -45,9 +52,21 @@ import { POST } from "@/app/api/auth/set-password/route";
 const req = (body: unknown) =>
   new NextRequest("http://test/api/auth/set-password", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", cookie: "sb-test-auth-token=old-session" },
     body: JSON.stringify(body),
   });
+
+/** getUser() refreshes the old session's tokens, as supabase-js does near expiry. */
+function oldSessionRefreshes() {
+  h.getUser.mockImplementation(async (setAll: SetAll) => {
+    setAll([{ name: "sb-test-auth-token", value: "refreshed-old-session", options: { path: "/" } }]);
+    return { data: { user: USER }, error: null };
+  });
+}
+
+function setCookies(res: Response, name: string): string[] {
+  return res.headers.getSetCookie().filter((c) => c.startsWith(`${name}=`));
+}
 
 const USER = {
   id: "user-1",
@@ -58,10 +77,10 @@ const USER = {
 beforeEach(() => {
   vi.clearAllMocks();
   h.rates = memoryRateStore();
-  h.getUser.mockResolvedValue({ data: { user: USER }, error: null });
+  h.getUser.mockImplementation(async () => ({ data: { user: USER }, error: null }));
   h.updateUserById.mockResolvedValue({ data: { user: USER }, error: null });
-  h.signInWithPassword.mockImplementation(async () => {
-    h.setAll?.([{ name: "sb-test-auth-token", value: "fresh-session", options: { path: "/" } }]);
+  h.signInWithPassword.mockImplementation(async (_creds: unknown, setAll: SetAll) => {
+    setAll([{ name: "sb-test-auth-token", value: "fresh-session", options: { path: "/" } }]);
     return { data: { user: USER }, error: null };
   });
 });
@@ -101,33 +120,73 @@ describe("POST /api/auth/set-password", () => {
     expect((await POST(bad)).status).toBe(400);
   });
 
-  it("saves the password + marker server-side and keeps existing app_metadata", async () => {
+  it("saves the password + marker server-side, sending only the marker key", async () => {
     const res = await POST(req({ password: "trivia-night", confirm: "trivia-night" }));
     expect(res.status).toBe(200);
     expect(h.updateUserById).toHaveBeenCalledTimes(1);
     const [id, attrs] = h.updateUserById.mock.calls[0];
     expect(id).toBe("user-1");
     expect(attrs.password).toBe("trivia-night");
-    expect(attrs.app_metadata).toMatchObject({ provider: "email", password_prompt: "on" });
-    expect(typeof attrs.app_metadata.password_set_at).toBe("string");
+    // GoTrue merges app_metadata: sending a stale copy of password_prompt
+    // could undo a switch the founder flipped a moment ago.
+    expect(Object.keys(attrs.app_metadata)).toEqual(["password_set_at"]);
     expect(Number.isNaN(Date.parse(attrs.app_metadata.password_set_at))).toBe(false);
   });
 
   it("signs the host in again with the new password so she stays signed in", async () => {
     const res = await POST(req({ password: "trivia-night", confirm: "trivia-night" }));
     expect(res.status).toBe(200);
-    expect(h.signInWithPassword).toHaveBeenCalledWith({
+    expect(h.signInWithPassword.mock.calls[0][0]).toEqual({
       email: "heather@example.com",
       password: "trivia-night",
     });
     expect(res.cookies.get("sb-test-auth-token")?.value).toBe("fresh-session");
   });
 
-  it("still reports success if the fresh sign-in fails (password is saved)", async () => {
-    h.signInWithPassword.mockResolvedValue({ data: { user: null }, error: { status: 500 } });
+  it("sends ONLY the new session's cookies, even when the session check refreshed the old one", async () => {
+    oldSessionRefreshes();
     const res = await POST(req({ password: "trivia-night", confirm: "trivia-night" }));
     expect(res.status).toBe(200);
-    expect(res.cookies.get("sb-test-auth-token")).toBeUndefined();
+    const sent = setCookies(res, "sb-test-auth-token");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/^sb-test-auth-token=fresh-session;/);
+  });
+
+  it("409 'Your password is saved. Sign in with it now.' + /login link when signing back in fails", async () => {
+    oldSessionRefreshes();
+    h.signInWithPassword.mockResolvedValue({ data: { user: null }, error: { status: 500, message: "down" } });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await POST(req({ password: "trivia-night", confirm: "trivia-night", next: "/host/setup/n1" }));
+    log.mockRestore();
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body).toMatchObject({
+      code: "sign_in_again",
+      error: "Your password is saved. Sign in with it now.",
+      redirect: `/login?notice=password-saved&next=${encodeURIComponent("/host/setup/n1")}`,
+    });
+    // The password WAS saved.
+    expect(h.updateUserById).toHaveBeenCalledTimes(1);
+    // The old session is dead: its cookie is cleared, never refreshed.
+    const sent = setCookies(res, "sb-test-auth-token");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatch(/^sb-test-auth-token=;/);
+    expect(sent[0]).toMatch(/Max-Age=0/i);
+  });
+
+  it("the /login link never leaves the host pages", async () => {
+    h.signInWithPassword.mockResolvedValue({ data: { user: null }, error: { status: 500 } });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await POST(req({ password: "trivia-night", confirm: "trivia-night", next: "https://evil.test" }));
+    log.mockRestore();
+    expect((await res.json()).redirect).toBe("/login?notice=password-saved&next=%2Fhost");
+  });
+
+  it("keeps a refreshed old session on an early error (the old session is still alive then)", async () => {
+    oldSessionRefreshes();
+    const res = await POST(req({ password: "short", confirm: "short" }));
+    expect(res.status).toBe(400);
+    expect(res.cookies.get("sb-test-auth-token")?.value).toBe("refreshed-old-session");
   });
 
   it("429 with a wait-a-minute message when Supabase rate limits", async () => {

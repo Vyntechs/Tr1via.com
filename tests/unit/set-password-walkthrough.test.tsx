@@ -4,7 +4,7 @@
 //   (none)     → the in-app prompt, unchanged
 
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { OTHER_DEVICES_NOTE, SetPasswordClient } from "@/app/host/set-password/SetPasswordClient";
 import { ThemeProvider } from "@/components/system";
 
@@ -60,5 +60,30 @@ describe("set-password walkthrough wording", () => {
       "If TR1VIA is open on your phone or another computer, it will ask you to sign in once with this new password.",
     );
     expect(OTHER_DEVICES_NOTE).toContain("sign in once with this new password");
+  });
+
+  it("saved but not signed back in → goes to /login, which says to sign in with the new password", async () => {
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            code: "sign_in_again",
+            error: "Your password is saved. Sign in with it now.",
+            redirect: "/login?notice=password-saved&next=%2Fhost",
+          }),
+          { status: 409 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    renderFrom("code");
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), { target: { value: "trivia-night" } });
+    fireEvent.change(screen.getByLabelText("Type it again"), { target: { value: "trivia-night" } });
+    fireEvent.click(screen.getByTestId("set-password-submit"));
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login?notice=password-saved&next=%2Fhost"));
+    const sent = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string);
+    expect(sent.next).toBe("/host");
   });
 });

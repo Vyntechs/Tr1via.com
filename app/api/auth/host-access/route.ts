@@ -5,7 +5,13 @@
 // owns the email, so nobody can claim someone else's. Only after the code
 // checks out do we create the Supabase account WITH a password and our
 // app_metadata.password_set_at marker, then sign the new host in (session
-// cookies on the 200 response). They land on /host, which routes them to
+// cookies on the 200 response).
+//
+// The code is checked first but only USED UP once the account exists. If
+// Supabase refuses the password (its own rules, set in the Supabase
+// dashboard, can be stricter than our 8-character minimum) she gets the
+// rule in plain words and can fix the password and try the SAME code again
+// — no wasted code, no extra email against her hourly limit. They land on /host, which routes them to
 // /host/onboarding because no hosts row exists yet.
 //
 // Existing accounts are never signed in here — that's /api/auth/login with
@@ -22,7 +28,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
 import { checkNewPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
 import { cleanCode } from "@/lib/auth/email-codes";
-import { checkCode, parseEmail } from "@/lib/auth/email-code-flow";
+import { checkCode, markCodeUsed, parseEmail } from "@/lib/auth/email-code-flow";
 import { hitIpLimit } from "@/lib/auth/rate-limits";
 import {
   ACCOUNT_EXISTS_MESSAGE,
@@ -31,10 +37,10 @@ import {
   RATE_LIMIT_MESSAGE,
   TOO_MANY_TRIES_MESSAGE,
   TRY_AGAIN_MESSAGE,
-  WEAK_PASSWORD_MESSAGE,
   isDuplicateEmail,
   isRateLimited,
   isWeakPassword,
+  weakPasswordMessage,
 } from "@/lib/auth/auth-messages";
 
 export const runtime = "nodejs";
@@ -60,7 +66,8 @@ export async function POST(req: NextRequest) {
   if (!code) return fail(400, "bad_code", BAD_CODE_MESSAGE, "code");
 
   // Prove the email first. A wrong/expired code never creates anything.
-  const verified = await checkCode(email, "signup", code);
+  // consume:false — the code is used up only after the account is created.
+  const verified = await checkCode(email, "signup", code, { consume: false });
   if (!verified.ok) return fail(verified.status, verified.code, verified.error, "code");
 
   const admin = getSupabaseAdmin();
@@ -73,13 +80,17 @@ export async function POST(req: NextRequest) {
     app_metadata: { [PASSWORD_SET_AT_KEY]: new Date().toISOString() },
   });
   if (createErr || !created?.user) {
-    if (isDuplicateEmail(createErr)) return fail(409, "account_exists", ACCOUNT_EXISTS_MESSAGE);
+    if (isDuplicateEmail(createErr)) {
+      await markCodeUsed(verified.codeId);
+      return fail(409, "account_exists", ACCOUNT_EXISTS_MESSAGE);
+    }
     if (isWeakPassword(createErr)) {
-      return fail(400, "weak_password", WEAK_PASSWORD_MESSAGE, "password");
+      return fail(400, "weak_password", weakPasswordMessage(createErr), "password");
     }
     if (isRateLimited(createErr)) return fail(429, "rate_limited", RATE_LIMIT_MESSAGE);
     return fail(500, "create_failed", TRY_AGAIN_MESSAGE);
   }
+  await markCodeUsed(verified.codeId);
 
   const { supabase, applyCookies } = createSessionCookieClient(req);
   const { error: signInErr } = await supabase.auth.signInWithPassword({ email, password });

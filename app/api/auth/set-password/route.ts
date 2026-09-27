@@ -5,7 +5,9 @@
 // the token with Supabase Auth, not just the cookie). The password and our
 // app_metadata.password_set_at marker are written together, server-side,
 // with the service-role key — app_metadata can't be written from a browser,
-// so the marker can't be faked.
+// so the marker can't be faked. Only the marker key is sent: GoTrue merges
+// app_metadata on an admin update, so a switch the founder flips at the
+// same moment is never overwritten by a stale copy.
 //
 // Supabase Auth ALWAYS signs a user out of her other sessions when her
 // password changes (GoTrue models.User.UpdatePassword: the admin API ends
@@ -22,41 +24,57 @@
 // password and put that fresh session's cookies on the 200, so the host
 // carries on exactly where she was.
 //
+// Cookies: the session check uses a client whose cookie writes are held
+// back (not next/headers, which would put a refreshed OLD session on the
+// response). A refresh from that check is only sent on the early error
+// answers, where the old session is still alive. On success ONLY the new
+// session's cookies go out. If signing back in fails, the old session is
+// already dead, so its cookies are cleared and the answer is 409
+// "sign_in_again" with a /login link: "Your password is saved. Sign in with
+// it now."
+//
 // Saving also clears any wrong-password lockout on her email
 // (lib/auth/rate-limits.ts), so the new password works everywhere at once.
 
 import { NextResponse, type NextRequest } from "next/server";
-import { getSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
 import { checkNewPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
 import { clearEvents } from "@/lib/auth/rate-limits";
+import { hostReturnPath } from "@/lib/host/hostReturnPath";
 import {
+  PASSWORD_SAVED_SIGN_IN_MESSAGE,
   RATE_LIMIT_MESSAGE,
   SIGNED_OUT_MESSAGE,
   TRY_AGAIN_MESSAGE,
-  WEAK_PASSWORD_MESSAGE,
   isRateLimited,
   isWeakPassword,
+  weakPasswordMessage,
 } from "@/lib/auth/auth-messages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function fail(status: number, code: string, error: string, field?: string) {
+function json(status: number, code: string, error: string, field?: string) {
   return NextResponse.json({ code, error, ...(field ? { field } : {}) }, { status });
 }
 
+// Supabase SSR session cookies: sb-<project>-auth-token, maybe chunked (.0, .1…).
+const SESSION_COOKIE = /^sb-[^-]+-auth-token(?:\.\d+)?$/;
+
 export async function POST(req: NextRequest) {
-  const supa = await getSupabaseServer();
+  // Session check with held-back cookies (see header).
+  const current = createSessionCookieClient(req);
+  const fail = (status: number, code: string, error: string, field?: string) =>
+    current.applyCookies(json(status, code, error, field));
   const {
     data: { user },
     error: userErr,
-  } = await supa.auth.getUser();
+  } = await current.supabase.auth.getUser();
   if (userErr || !user) return fail(401, "signed_out", SIGNED_OUT_MESSAGE);
 
   const body = (await req.json().catch(() => null)) as
-    | { password?: unknown; confirm?: unknown }
+    | { password?: unknown; confirm?: unknown; next?: unknown }
     | null;
   const password = typeof body?.password === "string" ? body.password : "";
   const confirm = typeof body?.confirm === "string" ? body.confirm : "";
@@ -66,29 +84,49 @@ export async function POST(req: NextRequest) {
   const setAt = new Date().toISOString();
   const { error } = await getSupabaseAdmin().auth.admin.updateUserById(user.id, {
     password,
-    // Spread what's there so the founder's password_prompt switch (and
-    // Supabase's own provider keys) survive whether GoTrue merges or
-    // replaces app_metadata.
-    app_metadata: { ...(user.app_metadata ?? {}), [PASSWORD_SET_AT_KEY]: setAt },
+    // Only the key we change: GoTrue merges app_metadata (checked against
+    // the local Supabase Auth), so the founder's switches and Supabase's
+    // own provider keys stay as they are right now in the database.
+    app_metadata: { [PASSWORD_SET_AT_KEY]: setAt },
   });
   if (error) {
     if (isRateLimited(error)) return fail(429, "rate_limited", RATE_LIMIT_MESSAGE);
-    if (isWeakPassword(error)) return fail(400, "weak_password", WEAK_PASSWORD_MESSAGE, "password");
+    if (isWeakPassword(error)) return fail(400, "weak_password", weakPasswordMessage(error), "password");
     return fail(500, "save_failed", TRY_AGAIN_MESSAGE);
   }
 
   if (user.email) await clearEvents("fail:login-email", user.email);
 
-  // Refresh the session with the new password (see header). If this fails
-  // the password is still saved; the worst case is one normal sign-in.
-  const { supabase, applyCookies } = createSessionCookieClient(req);
-  const response = NextResponse.json({ ok: true, passwordSetAt: setAt }, { status: 200 });
+  // Every session she had is now ended (see header). Sign THIS device in
+  // with the new password; only that new session's cookies go out.
+  const fresh = createSessionCookieClient(req);
   if (user.email) {
-    const { error: signInErr } = await supabase.auth.signInWithPassword({
+    const { error: signInErr } = await fresh.supabase.auth.signInWithPassword({
       email: user.email,
       password,
     });
-    if (!signInErr) return applyCookies(response);
+    if (!signInErr) {
+      return fresh.applyCookies(NextResponse.json({ ok: true, passwordSetAt: setAt }, { status: 200 }));
+    }
+    console.error("[set-password] saved, but could not sign back in", { message: signInErr.message });
+  }
+
+  // Saved, but this device is signed out. Clear the dead session's cookies
+  // and send her to /login with a plain next step.
+  const next = hostReturnPath(typeof body?.next === "string" ? body.next : null);
+  const redirect = `/login?notice=password-saved&next=${encodeURIComponent(next)}`;
+  const response = NextResponse.json(
+    {
+      ok: false,
+      code: "sign_in_again",
+      error: PASSWORD_SAVED_SIGN_IN_MESSAGE,
+      passwordSetAt: setAt,
+      redirect,
+    },
+    { status: 409 },
+  );
+  for (const { name } of req.cookies.getAll()) {
+    if (SESSION_COOKIE.test(name)) response.cookies.set({ name, value: "", path: "/", maxAge: 0 });
   }
   return response;
 }

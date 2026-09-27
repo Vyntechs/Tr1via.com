@@ -1,11 +1,14 @@
-// lib/auth/admin-users — reading every Supabase auth user, no 200 cap.
+// lib/auth/admin-users — reading Supabase auth users.
 //
-// Proves: walks past page 1; honours the x-total-count total when the server
-// hands back fewer than requested per page; stops on a short or empty page
-// when no total is given; surfaces errors instead of a partial list.
+// Proves: listAllAuthUsers walks past page 1; honours the x-total-count
+// total when the server hands back fewer than requested per page; stops on
+// a short or empty page when no total is given; surfaces errors instead of
+// a partial list. findAuthUserByEmail asks the indexed SQL function for one
+// row and never pages listUsers — unless that function isn't there yet
+// (migration not applied), when it falls back to the paged walk.
 
 import { describe, expect, it, vi } from "vitest";
-import { findAuthUserByEmail, listAllAuthUsers } from "@/lib/auth/admin-users";
+import { findAuthUserByEmail, findAuthUserByEmailPaged, listAllAuthUsers } from "@/lib/auth/admin-users";
 
 type U = { id: string; email: string };
 const users = (from: number, n: number): U[] =>
@@ -42,16 +45,53 @@ describe("listAllAuthUsers", () => {
 });
 
 describe("findAuthUserByEmail", () => {
+  it("asks the indexed function for one row, lower-cased, and never pages", async () => {
+    const rpc = vi.fn(async () => ({
+      data: [{ id: "heather", email: "heather@example.com", raw_app_meta_data: { password_prompt: "on" } }],
+      error: null,
+    }));
+    const listUsers = vi.fn();
+    const res = await findAuthUserByEmail({ rpc, auth: { admin: { listUsers } } } as never, " Heather@Example.com ");
+    expect(res).toEqual({
+      ok: true,
+      user: { id: "heather", email: "heather@example.com", app_metadata: { password_prompt: "on" } },
+    });
+    expect(rpc).toHaveBeenCalledWith("find_auth_user_by_email", { p_email: "heather@example.com" });
+    expect(listUsers).not.toHaveBeenCalled();
+  });
+
+  it("returns null when nobody matches", async () => {
+    const rpc = vi.fn(async () => ({ data: [], error: null }));
+    const res = await findAuthUserByEmail({ rpc, auth: { admin: { listUsers: vi.fn() } } } as never, "nobody@x.test");
+    expect(res).toEqual({ ok: true, user: null });
+  });
+
+  it("surfaces a database error", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: { code: "57014", message: "timeout" } }));
+    const res = await findAuthUserByEmail({ rpc, auth: { admin: { listUsers: vi.fn() } } } as never, "a@x.test");
+    expect(res).toEqual({ ok: false, error: "timeout" });
+  });
+
+  it("falls back to paging when the function isn't deployed yet", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: { code: "PGRST202", message: "not found" } }));
+    const { listUsers } = adminWith([users(0, 1000), [{ id: "heather", email: "Heather@Example.com" }]]);
+    const res = await findAuthUserByEmail({ rpc, auth: { admin: { listUsers } } } as never, "heather@example.com");
+    expect(res.ok && res.user?.id).toBe("heather");
+    expect(listUsers).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("findAuthUserByEmailPaged (fallback)", () => {
   it("finds a user past the old 200 cap, case-insensitively", async () => {
     const pages = [users(0, 1000), [{ id: "heather", email: "Heather@Example.com" }]];
     const { admin } = adminWith(pages);
-    const res = await findAuthUserByEmail(admin, " heather@example.com ");
+    const res = await findAuthUserByEmailPaged(admin, " heather@example.com ");
     expect(res.ok && res.user?.id).toBe("heather");
   });
 
   it("returns null when nobody matches", async () => {
     const { admin, listUsers } = adminWith([users(0, 3)]);
-    const res = await findAuthUserByEmail(admin, "nobody@x.test");
+    const res = await findAuthUserByEmailPaged(admin, "nobody@x.test");
     expect(res).toEqual({ ok: true, user: null });
     expect(listUsers).toHaveBeenCalledTimes(1);
   });

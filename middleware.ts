@@ -13,7 +13,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import type { Database } from "@/lib/supabase/types";
-import { needsFounderCheck, passwordGateRedirect } from "@/lib/auth/password-gate";
+import { passwordGateRedirect } from "@/lib/auth/password-gate";
 
 interface SetCookieRequest {
   name: string;
@@ -91,26 +91,13 @@ export async function middleware(request: NextRequest) {
   // "Create your password" gate (lib/auth/password-gate.ts). Never fires on
   // the in-show surfaces (/host/live, /host/phone). getUser() above asked
   // Supabase Auth directly, so app_metadata is fresh the moment a password
-  // is saved. The hosts lookup only runs for an account with no password
-  // AND no founder switch set — everyone else skips it.
+  // is saved. The decision reads app_metadata only (the founder is marked
+  // there too), so this adds no database query to any page load.
   if (user && isHostPath(pathname)) {
-    const appMetadata = user.app_metadata;
-    let isFounder = false;
-    if (needsFounderCheck(pathname, appMetadata)) {
-      const { data: hostRow } = await supabase
-        .from("hosts")
-        .select("role")
-        .eq("user_id", user.id)
-        .maybeSingle();
-      // @supabase/ssr@0.5's generic doesn't carry Database through (see
-      // lib/supabase/server.ts), so narrow the one column we read.
-      isFounder = (hostRow as { role?: string } | null)?.role === "founder";
-    }
     const target = passwordGateRedirect({
       pathname,
       search: request.nextUrl.search,
-      appMetadata,
-      isFounder,
+      appMetadata: user.app_metadata,
     });
     if (target) {
       const redirect = NextResponse.redirect(new URL(target, request.url));

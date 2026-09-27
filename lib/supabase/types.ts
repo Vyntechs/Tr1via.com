@@ -199,6 +199,27 @@ export type Database = {
         }
         Relationships: []
       }
+      auth_rate_events: {
+        Row: {
+          bucket: string
+          created_at: string
+          id: string
+          key_hash: string
+        }
+        Insert: {
+          bucket: string
+          created_at?: string
+          id?: string
+          key_hash: string
+        }
+        Update: {
+          bucket?: string
+          created_at?: string
+          id?: string
+          key_hash?: string
+        }
+        Relationships: []
+      }
       categories: {
         Row: {
           color: string | null
@@ -1709,6 +1730,14 @@ export type Database = {
       finalize_current_play_if_due: {
         Args: { p_play_id: string; p_room_code: string; p_run_id: string }
         Returns: Json
+      }
+      find_auth_user_by_email: {
+        Args: { p_email: string }
+        Returns: {
+          email: string
+          id: string
+          raw_app_meta_data: Json
+        }[]
       }
       is_night_host: { Args: { p_night_id: string }; Returns: boolean }
       observe_surface_delivery: {

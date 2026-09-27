@@ -12,6 +12,7 @@ import {
   MAX_ATTEMPTS,
   MAX_SENDS_PER_EMAIL_PER_HOUR,
   MAX_SENDS_PER_HOUR_SITEWIDE,
+  consumeCode,
   cleanCode,
   generateCode,
   hashCode,
@@ -88,7 +89,7 @@ describe("issue + verify", () => {
     expect(JSON.stringify(store.rows[0])).not.toContain(issued.code);
     expect(store.rows[0].expires_at).toBe(at(CODE_TTL_MS).toISOString());
 
-    expect(await verifyCode(store, { email: EMAIL, purpose: "login", code: issued.code, now: at(1000) })).toEqual({
+    expect(await verifyCode(store, { email: EMAIL, purpose: "login", code: issued.code, now: at(1000) })).toMatchObject({
       ok: true,
     });
     // Single use.
@@ -153,7 +154,7 @@ describe("issue + verify", () => {
       expect(old.ok).toBe(false);
     }
     const fresh = await verifyCode(store, { email: EMAIL, purpose: "login", code: second.code, now: at(62_000) });
-    expect(fresh).toEqual({ ok: true });
+    expect(fresh).toMatchObject({ ok: true });
   });
 });
 
@@ -172,9 +173,9 @@ describe("send limits", () => {
     expect((await issueCode(store, { email: EMAIL, purpose: "login", now: at(60 * 60 * 1000 + 1) })).ok).toBe(true);
   });
 
-  it("caps sends site-wide per hour", async () => {
+  it("caps signup sends site-wide per hour", async () => {
     const store = memoryCodeStore();
-    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.signup; i++) {
+    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.signup!; i++) {
       await issueCode(store, { email: `u${i}@example.com`, purpose: "signup", now: at(i) });
     }
     const r = await issueCode(store, { email: "late@example.com", purpose: "signup", now: at(5000) });
@@ -183,7 +184,7 @@ describe("send limits", () => {
 
   it("signup spam can't use up the login or reset codes", async () => {
     const store = memoryCodeStore();
-    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.signup; i++) {
+    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.signup!; i++) {
       await issueCode(store, { email: `spam${i}@example.com`, purpose: "signup", now: at(i) });
     }
     expect((await issueCode(store, { email: "x@example.com", purpose: "signup", now: at(100) })).ok).toBe(false);
@@ -191,15 +192,29 @@ describe("send limits", () => {
     expect((await issueCode(store, { email: "brandon@example.com", purpose: "reset", now: at(300) })).ok).toBe(true);
   });
 
-  it("each purpose has its own site-wide cap", async () => {
+  it("login and reset codes have no site-wide cap — only per email", async () => {
+    expect(MAX_SENDS_PER_HOUR_SITEWIDE.login).toBeNull();
+    expect(MAX_SENDS_PER_HOUR_SITEWIDE.reset).toBeNull();
     const store = memoryCodeStore();
-    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.login; i++) {
-      await issueCode(store, { email: `l${i}@example.com`, purpose: "login", now: at(i) });
+    // Far more than any old site-wide cap, spread over many accounts.
+    for (let i = 0; i < 200; i++) {
+      const r = await issueCode(store, { email: `l${i}@example.com`, purpose: i % 2 ? "reset" : "login", now: at(i) });
+      expect(r.ok).toBe(true);
     }
-    expect(await issueCode(store, { email: "late@example.com", purpose: "login", now: at(5000) })).toEqual({
-      ok: false,
-      reason: "too_many_sitewide",
-    });
-    expect((await issueCode(store, { email: "late@example.com", purpose: "reset", now: at(5001) })).ok).toBe(true);
+    expect((await issueCode(store, { email: "heather@example.com", purpose: "login", now: at(5000) })).ok).toBe(true);
+  });
+
+  it("checking without using up: the same code works until consumed", async () => {
+    const store = memoryCodeStore();
+    const issued = await issueCode(store, { email: EMAIL, purpose: "signup", now: at(0) });
+    if (!issued.ok) throw new Error("expected a code");
+    const first = await verifyCode(store, { email: EMAIL, purpose: "signup", code: issued.code, now: at(1000), consume: false });
+    expect(first.ok).toBe(true);
+    const again = await verifyCode(store, { email: EMAIL, purpose: "signup", code: issued.code, now: at(2000), consume: false });
+    expect(again.ok).toBe(true);
+    if (!again.ok) return;
+    expect(await consumeCode(store, again.codeId, at(3000))).toBe(true);
+    const after = await verifyCode(store, { email: EMAIL, purpose: "signup", code: issued.code, now: at(4000) });
+    expect(after).toEqual({ ok: false, reason: "no_code" });
   });
 });
