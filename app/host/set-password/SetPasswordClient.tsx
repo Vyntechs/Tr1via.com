@@ -1,15 +1,43 @@
 // "Create your password" — deliberately dead simple for a non-technical
 // host: one title, one sentence, two big boxes, one big button, plain
 // errors, then a clear "you're all set" screen.
+//
+// `from` tunes the words for how she got here:
+//   "code"  — just signed in with an emailed code: "Step 2 of 2"
+//   "reset" — "Forgot password?": "Choose a new password"
+//   null    — the in-app prompt or the founder's sign-in link
 
 "use client";
 
 import { useState, type FormEvent, type ReactNode } from "react";
 import { LaptopShell } from "@/components/shells";
-import { Display, Wordmark, useTheme } from "@/components/system";
+import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
 import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { PasswordField, ShowPasswordToggle } from "@/components/host/PasswordField";
-import { checkNewPassword } from "@/lib/auth/password-gate";
+import { checkNewPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth/password-gate";
+
+export type SetPasswordFrom = "code" | "reset" | null;
+
+const COPY = {
+  code: {
+    eyebrow: "STEP 2 OF 2 · CREATE YOUR PASSWORD",
+    title: "Create your password",
+    lead: "You're signed in. Now pick a password, so next time you can sign in with your email and password.",
+    button: "Save my password",
+  },
+  reset: {
+    eyebrow: "LAST STEP · NEW PASSWORD",
+    title: "Choose a new password",
+    lead: "You're signed in. Pick a new password. It replaces your old one.",
+    button: "Save my new password",
+  },
+  prompt: {
+    eyebrow: null,
+    title: "Create your password",
+    lead: "So only you can open your trivia nights.",
+    button: "Save my password",
+  },
+} as const;
 
 type State =
   | { kind: "idle" }
@@ -17,16 +45,23 @@ type State =
   | { kind: "error"; message: string; field?: "password" | "confirm" }
   | { kind: "done" };
 
-export function SetPasswordClient({ returnPath }: { returnPath: string }) {
+export function SetPasswordClient({
+  returnPath,
+  from = null,
+}: {
+  returnPath: string;
+  from?: SetPasswordFrom;
+}) {
   return (
     <LaptopShell>
-      <Inner returnPath={returnPath} />
+      <Inner returnPath={returnPath} from={from} />
     </LaptopShell>
   );
 }
 
-function Inner({ returnPath }: { returnPath: string }) {
+function Inner({ returnPath, from }: { returnPath: string; from: SetPasswordFrom }) {
   const { t } = useTheme();
+  const copy = COPY[from ?? "prompt"];
   const compact = useMediaQuery("(max-width: 640px)");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -105,14 +140,23 @@ function Inner({ returnPath }: { returnPath: string }) {
               You&apos;re all set.
             </Display>
             <p style={{ marginTop: 20, fontSize: 22, lineHeight: 1.45, color: t.inkMid, fontWeight: 500 }}>
-              Next time, sign in with your email and this password.
+              Your password is saved. Next time, sign in with your email and this password.
             </p>
             <BigButton onClick={goBack} testId="set-password-continue">
-              Continue &nbsp;→
+              Go to my trivia nights &nbsp;→
             </BigButton>
           </div>
         ) : (
           <form onSubmit={handleSubmit} noValidate style={{ marginTop: 36, display: "flex", flexDirection: "column" }}>
+            {copy.eyebrow && (
+              <Eyebrow
+                color={t.accent}
+                size={compact ? 12 : 13}
+                style={{ display: "block", marginBottom: 14 }}
+              >
+                <span data-testid="set-password-step">{copy.eyebrow}</span>
+              </Eyebrow>
+            )}
             <Display
               size={compact ? 44 : 64}
               color={t.ink}
@@ -120,10 +164,13 @@ function Inner({ returnPath }: { returnPath: string }) {
               tracking={-0.035}
               style={{ display: "block", lineHeight: 1 }}
             >
-              Create your password
+              {copy.title}
             </Display>
             <p style={{ marginTop: 18, fontSize: 22, lineHeight: 1.45, color: t.inkMid, fontWeight: 500 }}>
-              So only you can open your trivia nights.
+              {copy.lead}
+            </p>
+            <p style={{ marginTop: 10, fontSize: 18, lineHeight: 1.45, color: t.inkMute, fontWeight: 500 }}>
+              Use at least {MIN_PASSWORD_LENGTH} letters or numbers. Type it twice so we know it&apos;s right.
             </p>
 
             <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 20 }}>
@@ -178,7 +225,7 @@ function Inner({ returnPath }: { returnPath: string }) {
             )}
 
             <BigButton type="submit" disabled={saving} testId="set-password-submit">
-              {saving ? "Saving…" : "Save my password"}
+              {saving ? "Saving…" : copy.button}
             </BigButton>
           </form>
         )}

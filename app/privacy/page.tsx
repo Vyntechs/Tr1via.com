@@ -72,9 +72,10 @@ export default function PrivacyPolicyPage() {
             <B>Hosts</B> — venue staff or organizers who run games. A host signs
             in with their email address and a password they choose; our server
             checks them with our sign-in provider and creates a login session.
-            We do not send a magic-link or one-time-code email as part of normal
-            sign-in. New hosts create an account with a password, or are added
-            by the operator, who may share a one-time sign-in link directly.
+            When a host creates an account, has not set a password yet, or
+            forgets their password, we email them a one-time 6-digit code to
+            confirm the email is theirs. The operator may also share a one-time
+            sign-in link directly.
           </li>
         </UL>
       </Section>
@@ -159,8 +160,10 @@ export default function PrivacyPolicyPage() {
         <P>
           When a host account is created, we store the host’s email address to
           identify the account and to create a login session when they sign in.
-          We do not use host email addresses for marketing, and we do not send
-          host emails through a third-party email-delivery provider.
+          We use it to email one-time sign-in codes when a host asks for one.
+          We do not use host email addresses for marketing. Sign-in code emails
+          are sent from our own Zoho Mail mailbox; we store only a scrambled
+          (hashed) copy of each code, and it stops working after 10 minutes.
         </P>
         <H3>Login session</H3>
         <P>
@@ -223,6 +226,12 @@ export default function PrivacyPolicyPage() {
               "Database, authentication & live connection",
               "Host email; player display names; the device identifier; answers, timing, and scores; and player IP / connection timing through the live game connection.",
               "supabase.com/privacy",
+            ],
+            [
+              "Zoho Mail (US)",
+              "Sending sign-in code emails",
+              "A host’s email address and the one-time code in the email.",
+              "zoho.com/privacy.html",
             ],
             [
               "Pexels (US)",

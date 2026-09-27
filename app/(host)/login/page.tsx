@@ -1,21 +1,25 @@
-// HOST LOGIN — email + password. Wrapped in the shared host shell so the
-// same account-first door works on any device.
+// HOST LOGIN — email first. Step 1 looks exactly like the page hosts
+// already know: one email field, one "Sign in or start free" button.
+// Wrapped in the shared host shell so the same door works on any device.
 //
-// Two modes on one page:
-//   - Sign in (default): POST /api/auth/login. Only accounts that have
-//     created a password (app_metadata.password_set_at) get in. Older
-//     accounts see "This account doesn't have a password yet. Text Brandon
-//     for a sign-in link." — the founder's /host/admin link is the way back.
-//   - New here: POST /api/auth/host-access with email + password + confirm.
-//     Creates the account with its password and starts the free trial via
-//     /host/onboarding (app/host/page.tsx redirects there when there's no
-//     hosts row yet).
-// Either way the server writes the session cookies on its 200 response and
-// the client returns to a safe intended /host path.
+// POST /api/auth/start decides step 2 on the server:
+//   - "password": the account has a password → password box, "Show
+//     password", "Forgot password?" (emails a 6-digit reset code).
+//     Sign-in: POST /api/auth/login.
+//   - "code": the account has no password yet → the server just emailed a
+//     6-digit code. Step 1 of 2 · Check your email → POST
+//     /api/auth/verify-code → signed in → Step 2 of 2 · Create your
+//     password (/host/set-password).
+//   - "signup": no account → pick a password (+ type it again), then we
+//     email a code to prove the address (POST /api/auth/send-code), then
+//     POST /api/auth/host-access creates the account. The new host lands on
+//     /host → /host/onboarding (no hosts row yet).
+// The server writes the session cookies on its 200 response; the page then
+// goes to a safe intended /host path.
 
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { LaptopShell } from "@/components/shells";
 import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
@@ -23,15 +27,29 @@ import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { hostReturnPath } from "@/lib/host/hostReturnPath";
 import { PasswordField, ShowPasswordToggle } from "@/components/host/PasswordField";
+import { CodeBoxes, CODE_BOX_COUNT } from "@/components/host/CodeBoxes";
 import { checkNewPassword } from "@/lib/auth/password-gate";
 
-type Mode = "signin" | "signup";
+type Step = "email" | "password" | "code" | "signup";
+type CodePurpose = "login" | "reset" | "signup";
 
 type FormState =
   | { kind: "idle" }
   | { kind: "sending" }
   | { kind: "notice"; message: string }
   | { kind: "error"; message: string };
+
+interface ApiBody {
+  step?: Step;
+  purpose?: CodePurpose;
+  maskedEmail?: string;
+  redirect?: string;
+  code?: string;
+  error?: string;
+  field?: string;
+}
+
+const OFFLINE_MESSAGE = "We couldn't reach TR1VIA. Check your internet, then try again.";
 
 export default function HostLoginPage() {
   return (
@@ -47,10 +65,13 @@ function HostLoginInner() {
   // Below ~640px the two-column "pitch | form" splits into a single stacked
   // column so the email field + submit button are fully on-screen and tappable.
   const compact = useMediaQuery("(max-width: 640px)");
-  const [mode, setMode] = useState<Mode>("signin");
+  const [step, setStep] = useState<Step>("email");
+  const [purpose, setPurpose] = useState<CodePurpose>("login");
   const [email, setEmail] = useState("");
+  const [maskedEmail, setMaskedEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [code, setCode] = useState("");
   const [revealed, setRevealed] = useState(false);
   const [state, setState] = useState<FormState>({ kind: "idle" });
   // If the visitor already has a session, show "signed in as X" with a
@@ -86,69 +107,173 @@ function HostLoginInner() {
     router.refresh();
   }
 
-  function switchMode(next: Mode) {
-    setMode(next);
+  async function post(path: string, body: unknown): Promise<{ res: Response; body: ApiBody | null }> {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+      body: JSON.stringify(body),
+    });
+    return { res, body: (await res.json().catch(() => null)) as ApiBody | null };
+  }
+
+  function goToCode(nextPurpose: CodePurpose, masked: string | undefined) {
+    setPurpose(nextPurpose);
+    setMaskedEmail(masked ?? "");
+    setCode("");
+    setStep("code");
+  }
+
+  function startOver() {
+    setStep("email");
+    setPassword("");
     setConfirm("");
+    setCode("");
     setState({ kind: "idle" });
   }
 
-  async function handleSubmit(e: FormEvent<HTMLFormElement>) {
+  // Step 1 — email only.
+  async function handleEmailSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const trimmed = email.trim();
-    if (!trimmed || !password) {
-      setState({ kind: "error", message: "Please type your email and your password." });
-      return;
-    }
-    if (mode === "signup") {
-      const check = checkNewPassword(password, confirm);
-      if (!check.ok) {
-        setState({ kind: "error", message: check.error });
-        return;
-      }
-    }
-
+    if (!trimmed) return;
     setState({ kind: "sending" });
     try {
-      const res = await fetch(mode === "signin" ? "/api/auth/login" : "/api/auth/host-access", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(
-          mode === "signin"
-            ? { email: trimmed, password }
-            : { email: trimmed, password, confirm },
-        ),
-      });
+      const { res, body } = await post("/api/auth/start", { email: trimmed });
+      if (body?.step === "code") {
+        // 200 = code just sent. 429 = too many codes this hour; she can
+        // still use the newest one she already has.
+        goToCode("login", body.maskedEmail);
+        setState(res.ok ? { kind: "idle" } : { kind: "error", message: body.error ?? "" });
+        return;
+      }
+      if (res.ok && body?.step === "password") {
+        setStep("password");
+        setState({ kind: "idle" });
+        return;
+      }
+      if (res.ok && body?.step === "signup") {
+        setStep("signup");
+        setState({ kind: "idle" });
+        return;
+      }
+      setState({ kind: "error", message: body?.error ?? `Sign-in failed (${res.status})` });
+    } catch {
+      setState({ kind: "error", message: OFFLINE_MESSAGE });
+    }
+  }
+
+  // Step 2 — password.
+  async function handlePasswordSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!password) {
+      setState({ kind: "error", message: "Please type your password." });
+      return;
+    }
+    setState({ kind: "sending" });
+    try {
+      const { res, body } = await post("/api/auth/login", { email: email.trim(), password });
       if (res.ok) {
         router.replace(intendedHostPath());
         return;
       }
-      const body = (await res.json().catch(() => null)) as
-        | { error?: string; code?: string }
-        | null;
-      if (mode === "signin" && body?.code === "no_account") {
-        // Unknown email → offer to create the account right here, keeping
-        // what they typed.
-        setMode("signup");
-        setConfirm("");
-        setState({ kind: "notice", message: body.error ?? "Create your free account below." });
-        return;
-      }
-      if (mode === "signup" && body?.code === "account_exists") {
-        setMode("signin");
-        setState({ kind: "error", message: body.error ?? "Please sign in instead." });
-        return;
-      }
-      setState({
-        kind: "error",
-        message: body?.error ?? `Sign-in failed (${res.status})`,
-      });
+      setState({ kind: "error", message: body?.error ?? `Sign-in failed (${res.status})` });
     } catch {
-      setState({
-        kind: "error",
-        message: "We couldn't reach TR1VIA. Check your internet, then try again.",
-      });
+      setState({ kind: "error", message: OFFLINE_MESSAGE });
     }
+  }
+
+  // "Forgot password?", "Send a new code", and the new-account code.
+  async function sendCode(nextPurpose: CodePurpose) {
+    setState({ kind: "sending" });
+    try {
+      const { res, body } = await post("/api/auth/send-code", {
+        email: email.trim(),
+        purpose: nextPurpose,
+      });
+      if (res.ok) {
+        const alreadyOnCode = step === "code" && purpose === nextPurpose;
+        goToCode(nextPurpose, body?.maskedEmail);
+        setState(
+          alreadyOnCode
+            ? { kind: "notice", message: "We sent a new code. Use the one in the newest email." }
+            : { kind: "idle" },
+        );
+        return;
+      }
+      if (body?.code === "account_exists") {
+        setStep("password");
+        setPassword("");
+      }
+      setState({ kind: "error", message: body?.error ?? `Something went wrong (${res.status})` });
+    } catch {
+      setState({ kind: "error", message: OFFLINE_MESSAGE });
+    }
+  }
+
+  // New account — pick a password, then prove the email with a code.
+  async function handleSignupSubmit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const check = checkNewPassword(password, confirm);
+    if (!check.ok) {
+      setState({ kind: "error", message: check.error });
+      return;
+    }
+    await sendCode("signup");
+  }
+
+  async function submitCode(digits: string) {
+    if (state.kind === "sending") return;
+    if (digits.length !== CODE_BOX_COUNT) {
+      setState({ kind: "error", message: "Please type all 6 numbers from the email." });
+      return;
+    }
+    setState({ kind: "sending" });
+    try {
+      if (purpose === "signup") {
+        const { res, body } = await post("/api/auth/host-access", {
+          email: email.trim(),
+          password,
+          confirm,
+          code: digits,
+        });
+        if (res.ok) {
+          router.replace(intendedHostPath());
+          return;
+        }
+        if (body?.code === "account_exists") {
+          setStep("password");
+          setPassword("");
+        } else if (body?.field === "password" || body?.field === "confirm") {
+          setStep("signup");
+        } else {
+          setCode("");
+        }
+        setState({ kind: "error", message: body?.error ?? `Something went wrong (${res.status})` });
+        return;
+      }
+      const { res, body } = await post("/api/auth/verify-code", {
+        email: email.trim(),
+        purpose,
+        code: digits,
+        next: intendedHostPath(),
+      });
+      if (res.ok) {
+        router.replace(body?.redirect ?? intendedHostPath());
+        return;
+      }
+      setCode("");
+      setState({ kind: "error", message: body?.error ?? `Something went wrong (${res.status})` });
+    } catch {
+      setState({ kind: "error", message: OFFLINE_MESSAGE });
+    }
+  }
+
+  function handleCodeChange(digits: string) {
+    setCode(digits);
+    if (state.kind === "error") setState({ kind: "idle" });
+    // Typing (or pasting) the 6th number sends it — one less tap.
+    if (digits.length === CODE_BOX_COUNT) void submitCode(digits);
   }
 
   const isSending = state.kind === "sending";
@@ -194,12 +319,12 @@ function HostLoginInner() {
             fontWeight: 500,
           }}
         >
-          Sign in with your email and password &mdash; or start a free
-          30-day trial if you&apos;re new.
+          Type your email to sign in &mdash; or to start a free 30-day
+          trial if you&apos;re new.
         </p>
       </div>
 
-      {/* Right — the form, the sent-confirmation, or the signed-in panel */}
+      {/* Right — the current step, or the signed-in panel */}
       <div style={{ display: "flex", flexDirection: "column", justifyContent: "center" }}>
         {signedInAs ? (
           <SignedInPanel
@@ -208,27 +333,9 @@ function HostLoginInner() {
             onSignOut={handleSignOut}
             signingOut={signingOut}
           />
-        ) : (
-          <form
-            onSubmit={handleSubmit}
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              gap: 14,
-              maxWidth: 380,
-            }}
-          >
-            <label
-              htmlFor="email"
-              style={{
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                letterSpacing: "0.16em",
-                textTransform: "uppercase",
-                color: t.inkMute,
-                fontWeight: 600,
-              }}
-            >
+        ) : step === "email" ? (
+          <form onSubmit={handleEmailSubmit} style={formStyle}>
+            <label htmlFor="email" style={labelStyle(t.inkMute)}>
               Email
             </label>
             <input
@@ -254,149 +361,309 @@ function HostLoginInner() {
               }}
             />
 
+            <PrimaryButton disabled={isSending || !email.trim()} dim={isSending}>
+              {isSending ? "Signing in…" : "Sign in or start free  →"}
+            </PrimaryButton>
+
+            <Message state={state} />
+
+            <Eyebrow color={t.inkMute} size={10} style={{ display: "block", marginTop: 10 }}>
+              NEW HERE? JUST TYPE YOUR EMAIL TO START YOUR FREE TRIAL.
+            </Eyebrow>
+            <LegalLinks />
+          </form>
+        ) : step === "password" ? (
+          <form onSubmit={handlePasswordSubmit} style={formStyle}>
+            <SigningInAs email={email.trim()} onChange={startOver} disabled={isSending} />
             <PasswordField
               id="password"
               label="Password"
               value={password}
               onChange={setPassword}
               revealed={revealed}
-              autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              autoComplete="current-password"
               disabled={isSending}
+              autoFocus
             />
-            {mode === "signup" && (
-              <PasswordField
-                id="confirm-password"
-                label="Type it again"
-                value={confirm}
-                onChange={setConfirm}
-                revealed={revealed}
-                autoComplete="new-password"
-                disabled={isSending}
-              />
-            )}
             <ShowPasswordToggle
               revealed={revealed}
               onToggle={() => setRevealed((v) => !v)}
               disabled={isSending}
             />
-
-            <button
-              type="submit"
-              data-testid="login-submit"
-              disabled={isSending || !email.trim() || !password}
-              style={{
-                marginTop: 4,
-                padding: "18px 22px",
-                background: t.accent,
-                color: "#FFF",
-                border: "none",
-                borderRadius: 14,
-                fontFamily: "var(--font-sans)",
-                fontSize: 16,
-                fontWeight: 700,
-                cursor: isSending ? "default" : "pointer",
-                opacity: isSending ? 0.7 : 1,
-                boxShadow: `0 14px 28px -12px ${t.accent}66`,
-                letterSpacing: "-0.005em",
-              }}
-            >
-              {isSending
-                ? mode === "signin"
-                  ? "Signing in…"
-                  : "Creating your account…"
-                : mode === "signin"
-                  ? "Sign in  →"
-                  : "Create my free account  →"}
-            </button>
-
-            {state.kind === "notice" && (
-              <div
-                role="status"
-                data-testid="login-notice"
-                style={{
-                  marginTop: 6,
-                  padding: "12px 14px",
-                  borderRadius: 10,
-                  background: t.surface,
-                  color: t.ink,
-                  fontSize: 14,
-                  fontWeight: 500,
-                  lineHeight: 1.4,
-                }}
-              >
-                {state.message}
-              </div>
-            )}
-
-            {state.kind === "error" && (
-              <div
-                role="alert"
-                data-testid="login-error"
-                style={{
-                  marginTop: 6,
-                  padding: "12px 14px",
-                  borderRadius: 10,
-                  background: t.surface,
-                  color: t.wrong,
-                  fontSize: 13,
-                  fontWeight: 500,
-                  lineHeight: 1.4,
-                }}
-              >
-                {state.message}
-              </div>
-            )}
-
-            <button
-              type="button"
-              data-testid="login-mode-switch"
-              onClick={() => switchMode(mode === "signin" ? "signup" : "signin")}
+            <PrimaryButton disabled={isSending || !password} dim={isSending}>
+              {isSending ? "Signing in…" : "Sign in  →"}
+            </PrimaryButton>
+            <Message state={state} />
+            <LinkButton testId="login-forgot" onClick={() => sendCode("reset")} disabled={isSending}>
+              Forgot password?
+            </LinkButton>
+          </form>
+        ) : step === "signup" ? (
+          <form onSubmit={handleSignupSubmit} style={formStyle}>
+            <Eyebrow color={t.accent} size={11} style={{ display: "block" }}>
+              STEP 1 OF 2 · CREATE YOUR PASSWORD
+            </Eyebrow>
+            <p style={leadStyle(t.ink)}>
+              Welcome! Pick a password for your new account. Then we&apos;ll email you a
+              6-digit code to make sure the email is yours.
+            </p>
+            <SigningInAs
+              email={email.trim()}
+              onChange={startOver}
               disabled={isSending}
-              style={{
-                alignSelf: "flex-start",
-                marginTop: 10,
-                padding: 0,
-                background: "transparent",
-                border: "none",
-                color: t.accent,
-                fontFamily: "var(--font-sans)",
-                fontSize: 14,
-                fontWeight: 700,
-                textDecoration: "underline",
-                textUnderlineOffset: 3,
-                cursor: isSending ? "default" : "pointer",
-              }}
-            >
-              {mode === "signin"
-                ? "New here? Create a free account"
-                : "Already have an account? Sign in"}
-            </button>
-            <div
-              style={{
-                display: "block",
-                marginTop: 14,
-                fontSize: 12,
-                fontWeight: 500,
-                color: t.inkMute,
-              }}
-            >
-              <a
-                href="/terms"
-                style={{ color: t.inkMute, textDecoration: "underline", textUnderlineOffset: 3 }}
-              >
-                Terms of Service
-              </a>
-              {" · "}
-              <a
-                href="/privacy"
-                style={{ color: t.inkMute, textDecoration: "underline", textUnderlineOffset: 3 }}
-              >
-                Privacy Policy
-              </a>
-            </div>
+              label="NEW ACCOUNT FOR"
+            />
+            <PasswordField
+              id="password"
+              label="Password"
+              value={password}
+              onChange={setPassword}
+              revealed={revealed}
+              autoComplete="new-password"
+              disabled={isSending}
+              autoFocus
+            />
+            <PasswordField
+              id="confirm-password"
+              label="Type it again"
+              value={confirm}
+              onChange={setConfirm}
+              revealed={revealed}
+              autoComplete="new-password"
+              disabled={isSending}
+            />
+            <ShowPasswordToggle
+              revealed={revealed}
+              onToggle={() => setRevealed((v) => !v)}
+              disabled={isSending}
+            />
+            <PrimaryButton disabled={isSending || !password || !confirm} dim={isSending}>
+              {isSending ? "Sending your code…" : "Continue  →"}
+            </PrimaryButton>
+            <Message state={state} />
+          </form>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void submitCode(code);
+            }}
+            style={formStyle}
+          >
+            <Eyebrow color={t.accent} size={11} style={{ display: "block" }}>
+              {purpose === "login"
+                ? "STEP 1 OF 2 · CHECK YOUR EMAIL"
+                : purpose === "signup"
+                  ? "STEP 2 OF 2 · CHECK YOUR EMAIL"
+                  : "RESET YOUR PASSWORD · CHECK YOUR EMAIL"}
+            </Eyebrow>
+            <p data-testid="login-code-sent" style={leadStyle(t.ink)}>
+              We emailed a 6-digit code to{" "}
+              <strong style={{ overflowWrap: "anywhere" }}>{maskedEmail || "your email"}</strong>.
+              Type it here.
+            </p>
+            <CodeBoxes
+              value={code}
+              onChange={handleCodeChange}
+              disabled={isSending}
+              invalid={state.kind === "error"}
+              autoFocus
+              compact={compact}
+            />
+            <PrimaryButton disabled={isSending || code.length !== CODE_BOX_COUNT} dim={isSending}>
+              {isSending
+                ? "Checking…"
+                : purpose === "signup"
+                  ? "Create my free account  →"
+                  : "Continue  →"}
+            </PrimaryButton>
+            <Message state={state} />
+            <LinkButton testId="login-resend" onClick={() => sendCode(purpose)} disabled={isSending}>
+              Send a new code
+            </LinkButton>
+            <p style={{ margin: 0, fontSize: 14, lineHeight: 1.5, color: t.inkMid, fontWeight: 500 }}>
+              Didn&apos;t get it? Check spam, or text Brandon.
+            </p>
+            <LinkButton testId="login-start-over" onClick={startOver} disabled={isSending} muted>
+              Use a different email
+            </LinkButton>
           </form>
         )}
       </div>
+    </div>
+  );
+}
+
+const formStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: 14,
+  maxWidth: 380,
+} as const;
+
+function labelStyle(color: string) {
+  return {
+    fontFamily: "var(--font-mono)",
+    fontSize: 11,
+    letterSpacing: "0.16em",
+    textTransform: "uppercase",
+    color,
+    fontWeight: 600,
+  } as const;
+}
+
+function leadStyle(color: string) {
+  return { margin: 0, fontSize: 18, lineHeight: 1.5, color, fontWeight: 500 } as const;
+}
+
+function PrimaryButton({
+  children,
+  disabled,
+  dim,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  dim: boolean;
+}) {
+  const { t } = useTheme();
+  return (
+    <button
+      type="submit"
+      data-testid="login-submit"
+      disabled={disabled}
+      style={{
+        marginTop: 4,
+        padding: "18px 22px",
+        background: t.accent,
+        color: "#FFF",
+        border: "none",
+        borderRadius: 14,
+        fontFamily: "var(--font-sans)",
+        fontSize: 16,
+        fontWeight: 700,
+        cursor: dim ? "default" : "pointer",
+        opacity: dim ? 0.7 : 1,
+        boxShadow: `0 14px 28px -12px ${t.accent}66`,
+        letterSpacing: "-0.005em",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function LinkButton({
+  children,
+  onClick,
+  disabled,
+  testId,
+  muted = false,
+}: {
+  children: ReactNode;
+  onClick: () => void;
+  disabled: boolean;
+  testId: string;
+  muted?: boolean;
+}) {
+  const { t } = useTheme();
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        alignSelf: "flex-start",
+        padding: 0,
+        background: "transparent",
+        border: "none",
+        color: muted ? t.inkMid : t.accent,
+        fontFamily: "var(--font-sans)",
+        fontSize: 15,
+        fontWeight: 700,
+        textDecoration: "underline",
+        textUnderlineOffset: 3,
+        cursor: disabled ? "default" : "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SigningInAs({
+  email,
+  onChange,
+  disabled,
+  label = "SIGNING IN AS",
+}: {
+  email: string;
+  onChange: () => void;
+  disabled: boolean;
+  label?: string;
+}) {
+  const { t } = useTheme();
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+      <Eyebrow color={t.inkMute} size={10}>
+        {label}
+      </Eyebrow>
+      <div
+        data-testid="login-email-shown"
+        style={{ fontSize: 18, fontWeight: 700, color: t.ink, wordBreak: "break-all" }}
+      >
+        {email}
+      </div>
+      <LinkButton testId="login-change-email" onClick={onChange} disabled={disabled} muted>
+        Not you? Use a different email
+      </LinkButton>
+    </div>
+  );
+}
+
+function Message({ state }: { state: FormState }) {
+  const { t } = useTheme();
+  if (state.kind !== "notice" && state.kind !== "error") return null;
+  const isError = state.kind === "error";
+  return (
+    <div
+      role={isError ? "alert" : "status"}
+      data-testid={isError ? "login-error" : "login-notice"}
+      style={{
+        marginTop: 6,
+        padding: "12px 14px",
+        borderRadius: 10,
+        background: t.surface,
+        color: isError ? t.wrong : t.ink,
+        fontSize: isError ? 13 : 14,
+        fontWeight: 500,
+        lineHeight: 1.4,
+      }}
+    >
+      {state.message}
+    </div>
+  );
+}
+
+function LegalLinks() {
+  const { t } = useTheme();
+  return (
+    <div
+      style={{
+        display: "block",
+        marginTop: 14,
+        fontSize: 12,
+        fontWeight: 500,
+        color: t.inkMute,
+      }}
+    >
+      <a href="/terms" style={{ color: t.inkMute, textDecoration: "underline", textUnderlineOffset: 3 }}>
+        Terms of Service
+      </a>
+      {" · "}
+      <a href="/privacy" style={{ color: t.inkMute, textDecoration: "underline", textUnderlineOffset: 3 }}>
+        Privacy Policy
+      </a>
     </div>
   );
 }

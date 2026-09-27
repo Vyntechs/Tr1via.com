@@ -15,6 +15,8 @@ const PHONE_VIEWPORTS = [
   { name: "landscape", width: 844, height: 390 },
 ] as const;
 const HOST_EMAIL = `mobile-parity-${Date.now()}@tr1via.test`;
+// Test-only password for a throwaway @tr1via.test account (local e2e only).
+const HOST_PASSWORD = "mobile-parity-pass";
 const INTERACTIVE_SELECTOR = [
   "button:visible",
   "a[href]:visible",
@@ -94,11 +96,14 @@ test.describe.serial("phone-first host parity", () => {
   test("real email form signs in a known host on a phone", async ({ page }) => {
     // Create the known host through the guarded fixture, clear its session,
     // then enter through the same email form a real host uses.
-    await loginAsHost(page, HOST_EMAIL, "Mobile Host");
+    await loginAsHost(page, HOST_EMAIL, "Mobile Host", HOST_PASSWORD);
     await page.context().clearCookies();
     await page.setViewportSize(PHONE_VIEWPORTS[0]);
     await page.goto("/login");
     await page.getByLabel("Email").fill(HOST_EMAIL);
+    await page.getByTestId(TID.login.submit).click();
+    // Step 2: the account has a password, so the password box appears.
+    await page.getByLabel("Password", { exact: true }).fill(HOST_PASSWORD);
     await page.getByTestId(TID.login.submit).click();
     await expect(page).toHaveURL(/\/host(?:\/|$)/, { timeout: 30_000 });
     await expectPhoneFit(page);

@@ -45,7 +45,7 @@ Three surfaces, one game. State lives in Postgres; live updates fan out two ways
 - Game lifecycle: `games/[id]/{start,reveal,resolve(via questions),end,end-early,undo,locks}`, `questions/[id]/{resolve,photo,photos,route}`, `answers`, `adjustments`.
 - Setup/content: `categories` (+ `[id]/{generate,manual,pick,reorder}`), `topic-suggestions`, `founder/build-game`, `images/upload`.
 - Nights/room: `nights` (+ `[id]/{open,close,theme,reset-to-setup,players}`, `by-code/[code]`), `room/[code]/snapshot`, `tv/[code]/snapshot`, `players` (+ `[id]/{heartbeat,join-game}`).
-- Auth/session: `session/init` (mints device cookie), `auth/{login,host-access,set-password,logout}` (email + password; host-access = sign-up), `admin/{hosts,grant-magic-link}`. Password marker + "Create your password" gate: `lib/auth/password-gate.ts` (enforced in `middleware.ts`, never on `/host/live` or `/host/phone`).
+- Auth/session: `session/init` (mints device cookie), `auth/{start,login,send-code,verify-code,host-access,set-password,logout}` (email-first: `start` picks password / emailed 6-digit code / sign-up; `host-access` = sign-up, needs a signup code; codes in `lib/auth/email-codes.ts` + table `auth_email_codes`, emailed via Zoho SMTP in `lib/email/send-code-email.ts`), `admin/{hosts,grant-magic-link}`. Password marker + "Create your password" gate: `lib/auth/password-gate.ts` (enforced in `middleware.ts`, never on `/host/live` or `/host/phone`).
 - Billing: `stripe/{checkout,portal,webhook}`.
 - Test-only: `api/_test/{login,reset,seed-night,fast-forward}` — gated, see Gotchas.
 
@@ -71,7 +71,7 @@ Host taps an action → Route Handler writes to Postgres (service-role `admin` c
 - `supabase/migrations/` — 14 SQL migrations; schema source of truth.
 
 ## Environment
-Copy `.env.example` → `.env.local`. Keys: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `PEXELS_API_KEY`, `SESSION_SECRET` (`openssl rand -base64 48`), `NEXT_PUBLIC_SITE_URL`, Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`). Prod smoke scripts/workflow: `SMOKE_FOUNDER_EMAIL` + `SMOKE_FOUNDER_PASSWORD` (founder sign-in; never commit the password — GitHub Actions secret / `.env.local` only). Test/mocks: `TEST_AUTH_ENABLED`, `TEST_SECRET`, `MOCK_EXTERNAL`, `ANTHROPIC_BASE_URL`, `PEXELS_BASE_URL` (orchestration-only — never set in prod).
+Copy `.env.example` → `.env.local`. Keys: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `PEXELS_API_KEY`, `SESSION_SECRET` (`openssl rand -base64 48`), `NEXT_PUBLIC_SITE_URL`, Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`). Sign-in code email (Zoho SMTP, server only): `ZOHO_SMTP_PASSWORD` (required to send), `ZOHO_SMTP_USER` (default support@vyntechs.com), `ZOHO_SMTP_HOST` (default smtppro.zoho.com; free Zoho org plans use smtp.zoho.com); codes are HMAC'd with `SESSION_SECRET`. Prod smoke scripts/workflow: `SMOKE_FOUNDER_EMAIL` + `SMOKE_FOUNDER_PASSWORD` (founder sign-in; never commit the password — GitHub Actions secret / `.env.local` only). Test/mocks: `TEST_AUTH_ENABLED`, `TEST_SECRET`, `MOCK_EXTERNAL`, `ANTHROPIC_BASE_URL`, `PEXELS_BASE_URL` (orchestration-only — never set in prod).
 
 LLM models (from `lib/ai/`): generation `DEFAULT_MODEL = "claude-sonnet-4-6"`; verification `VERIFIER_MODEL = "claude-opus-4-8"`.
 

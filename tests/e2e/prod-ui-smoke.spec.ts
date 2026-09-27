@@ -4,9 +4,10 @@
 // validation.
 //
 // What this proves (and the API-only smoke doesn't):
-//   1. /login renders its device-neutral promise and the email + password
-//      inputs accept text
-//   2. Clicking "Sign in" fires the submit handler → /api/auth/login
+//   1. /login renders its device-neutral promise and the email input
+//      accepts text (step 1 is email only)
+//   2. Submitting the email (/api/auth/start) shows the password step; the
+//      password submit fires /api/auth/login
 //      (via the page's wired-in fetch) and, on 200, the client navigates to
 //      /host. Needs SMOKE_FOUNDER_PASSWORD (GitHub Actions secret).
 //   3. /host renders without crashing — either the returning-host dashboard
@@ -52,15 +53,29 @@ test.describe("prod UI smoke — login → dashboard", () => {
     const emailInput = page.getByLabel("Email", { exact: true });
     await expect(emailInput).toBeVisible();
 
-    // 2. Submit the form
+    // 2. Step 1: email only (the page looks like it always has)
     await emailInput.fill(FOUNDER_EMAIL);
-    await page.getByLabel("Password", { exact: true }).fill(FOUNDER_PASSWORD);
     await page.getByTestId(TID.login.submit).click();
 
-    // 3. Bypass should route us to /host
+    // 3. Step 2: the founder account has a password, so the password box
+    //    appears. If the emailed-code step shows instead, the founder
+    //    account has no password yet — set one first (Forgot password? or
+    //    /host/set-password), and put it in SMOKE_FOUNDER_PASSWORD.
+    const passwordInput = page.getByLabel("Password", { exact: true });
+    const codeStep = page.getByTestId("login-code-sent");
+    await expect(passwordInput.or(codeStep)).toBeVisible({ timeout: 15_000 });
+    if (await codeStep.isVisible()) {
+      throw new Error(
+        "The founder account has no password yet, so /login asked for an emailed code. Set a password first.",
+      );
+    }
+    await passwordInput.fill(FOUNDER_PASSWORD);
+    await page.getByTestId(TID.login.submit).click();
+
+    // 4. Password sign-in routes us to /host
     await page.waitForURL(/\/host\b/, { timeout: 30_000 });
 
-    // 4. Either dashboard variant must render. First-time hosts (no completed
+    // 5. Either dashboard variant must render. First-time hosts (no completed
     //    night yet) get the OnboardingFirstDashboard; returning hosts get the
     //    regular HostDashboard. Both prove the host page actually mounted
     //    without crashing.

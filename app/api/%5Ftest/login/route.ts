@@ -25,7 +25,9 @@ export async function POST(req: NextRequest) {
   if (!isTestModeEnabled(req)) {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  const body = (await req.json().catch(() => null)) as { email?: string; displayName?: string } | null;
+  const body = (await req.json().catch(() => null)) as
+    | { email?: string; displayName?: string; password?: string }
+    | null;
   if (!body?.email) {
     return NextResponse.json({ error: "email required" }, { status: 400 });
   }
@@ -43,11 +45,15 @@ export async function POST(req: NextRequest) {
   }
   const existingUser = lookup.user;
   const passwordSetAt = new Date().toISOString();
+  // Optional known password, so e2e can drive the real /login password step.
+  const password =
+    typeof body.password === "string" && body.password.length >= 8 ? body.password : undefined;
   let userId: string;
   if (existingUser) {
     userId = existingUser.id;
-    if (!hasPassword(existingUser.app_metadata)) {
+    if (!hasPassword(existingUser.app_metadata) || password) {
       const { error } = await admin.auth.admin.updateUserById(userId, {
+        ...(password ? { password } : {}),
         app_metadata: {
           ...(existingUser.app_metadata ?? {}),
           [PASSWORD_SET_AT_KEY]: passwordSetAt,
@@ -61,6 +67,7 @@ export async function POST(req: NextRequest) {
     const { data, error } = await admin.auth.admin.createUser({
       email: body.email,
       email_confirm: true,
+      ...(password ? { password } : {}),
       user_metadata: { display_name: body.displayName ?? "Test Host" },
       app_metadata: { [PASSWORD_SET_AT_KEY]: passwordSetAt },
     });
