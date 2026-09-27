@@ -4,9 +4,11 @@
 // Proves:
 //   - email alone never signs anyone in
 //   - a correct password + marker → 200 with session cookies, no user lookup
-//   - no marker (every pre-password account) → 403 "Text Brandon" and no cookies
+//   - no marker (every pre-password account) → 403 "we'll email you a code"
+//     and no cookies
 //   - wrong password / unknown email are told apart via an uncapped lookup
 //     (a user on page 2 of listUsers is still found)
+//   - sign-up needs a correct emailed "signup" code before anything is made
 //   - sign-up creates the account WITH password + marker, then signs in
 //   - sign-up for an existing email → 409, no session
 
@@ -19,6 +21,7 @@ const h = vi.hoisted(() => ({
   signInWithPassword: vi.fn(),
   listUsers: vi.fn(),
   createUser: vi.fn(),
+  checkCode: vi.fn(),
   setAll: null as null | SetAll,
 }));
 
@@ -32,6 +35,11 @@ vi.mock("@/lib/supabase/admin", () => ({
   getSupabaseAdmin: () => ({
     auth: { admin: { listUsers: h.listUsers, createUser: h.createUser } },
   }),
+}));
+
+vi.mock("@/lib/auth/email-code-flow", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth/email-code-flow")>()),
+  checkCode: h.checkCode,
 }));
 
 import { POST as login } from "@/app/api/auth/login/route";
@@ -76,6 +84,7 @@ function filler(n: number) {
 beforeEach(() => {
   vi.clearAllMocks();
   h.setAll = null;
+  h.checkCode.mockResolvedValue({ ok: true });
 });
 
 describe("POST /api/auth/login", () => {
@@ -97,24 +106,24 @@ describe("POST /api/auth/login", () => {
     expect(h.listUsers).not.toHaveBeenCalled();
   });
 
-  it("403 'Text Brandon' and NO cookies when the account has no marker", async () => {
+  it("403 'we'll email you a code' and NO cookies when the account has no marker", async () => {
     signInSucceeds({ provider: "email" });
     const res = await login(req("/api/auth/login", { email: "old@x.test", password: "whatever1" }));
     expect(res.status).toBe(403);
     expect((await res.json()).error).toBe(
-      "This account doesn't have a password yet. Text Brandon for a sign-in link.",
+      "This account doesn't have a password yet. Go back, type your email, and we'll email you a code.",
     );
     expect(res.cookies.get("sb-test-auth-token")).toBeUndefined();
   });
 
-  it("403 'Text Brandon' for a pre-password account found on page 2", async () => {
+  it("403 no_password for a pre-password account found on page 2", async () => {
     signInFails();
     usersPages(filler(1000), [{ id: "heather", email: "heather@x.test", app_metadata: {} }]);
     const res = await login(req("/api/auth/login", { email: "heather@x.test", password: "guess-123" }));
     expect(res.status).toBe(403);
     const body = await res.json();
     expect(body.code).toBe("no_password");
-    expect(body.error).toMatch(/Text Brandon for a sign-in link/);
+    expect(body.error).toMatch(/email you a code/);
     expect(h.listUsers).toHaveBeenCalledTimes(2);
   });
 
@@ -169,9 +178,11 @@ describe("POST /api/auth/host-access (sign-up)", () => {
         email: "New@X.test",
         password: "trivia-night",
         confirm: "trivia-night",
+        code: "123456",
       }),
     );
     expect(res.status).toBe(200);
+    expect(h.checkCode).toHaveBeenCalledWith("new@x.test", "signup", "123456");
     const attrs = h.createUser.mock.calls[0][0];
     expect(attrs).toMatchObject({ email: "new@x.test", password: "trivia-night", email_confirm: true });
     expect(typeof attrs.app_metadata.password_set_at).toBe("string");
@@ -190,10 +201,39 @@ describe("POST /api/auth/host-access (sign-up)", () => {
         email: "heather@x.test",
         password: "trivia-night",
         confirm: "trivia-night",
+        code: "123456",
       }),
     );
     expect(res.status).toBe(409);
     expect((await res.json()).code).toBe("account_exists");
+    expect(h.signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it("400 without an emailed code — nothing is created", async () => {
+    const res = await signUp(
+      req("/api/auth/host-access", { email: "new@x.test", password: "trivia-night", confirm: "trivia-night" }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("bad_code");
+    expect(h.checkCode).not.toHaveBeenCalled();
+    expect(h.createUser).not.toHaveBeenCalled();
+  });
+
+  it("a wrong code never creates the account or a session", async () => {
+    h.checkCode.mockResolvedValue({ ok: false, status: 400, code: "wrong_code", error: "nope" });
+    const res = await signUp(
+      req("/api/auth/host-access", {
+        email: "new@x.test",
+        password: "trivia-night",
+        confirm: "trivia-night",
+        code: "000000",
+      }),
+    );
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("wrong_code");
+    expect(body.field).toBe("code");
+    expect(h.createUser).not.toHaveBeenCalled();
     expect(h.signInWithPassword).not.toHaveBeenCalled();
   });
 });

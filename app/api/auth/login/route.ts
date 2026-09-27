@@ -3,10 +3,11 @@
 // Body: { email, password }. On success the Supabase session cookies ride
 // back on the 200 response (same SSR cookie pattern as the rest of the app).
 //
-// Only accounts carrying our app_metadata.password_set_at marker can sign in.
-// Accounts made before passwords existed have a random Supabase password
-// nobody knows; they get NO_PASSWORD_MESSAGE and the founder sends them a
-// one-time link from /host/admin, after which they create a password.
+// This is step 2 of the email-first /login page (after /api/auth/start
+// said "password"). Only accounts carrying our app_metadata.password_set_at
+// marker can sign in. Accounts made before passwords existed have a random
+// Supabase password nobody knows; /api/auth/start emails them a 6-digit
+// code instead (and the founder's /host/admin link still works).
 //
 // No user lookup on the happy path. Only when Supabase says "invalid
 // credentials" do we look the email up (paged, no cap) to tell the host
