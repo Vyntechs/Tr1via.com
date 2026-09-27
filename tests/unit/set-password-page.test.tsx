@@ -44,12 +44,12 @@ describe("set-password page: 'Not now' target", () => {
     expect(await laterHrefFor("/host/setup/n1?slot=2")).toBe(later("/host/setup/n1?slot=2"));
   });
 
-  it.each([
-    [undefined, "no next"],
-    ["https://evil.example/x", "off-site"],
-    ["/host/live/n1", "in-show"],
-    ["/host/set-password", "itself"],
-  ] as const)("falls back to /host (%s: %s)", async (next: string | undefined, _why: string) => {
+  it.each<{ next: string | undefined; why: string }>([
+    { next: undefined, why: "no next" },
+    { next: "https://evil.example/x", why: "off-site" },
+    { next: "/host/live/n1", why: "in-show" },
+    { next: "/host/set-password", why: "itself" },
+  ])("falls back to /host ($why)", async ({ next }) => {
     expect(await laterHrefFor(next)).toBe(later("/host"));
   });
 

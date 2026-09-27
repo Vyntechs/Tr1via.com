@@ -317,6 +317,11 @@ test.describe("email-first sign-in — codes, passwords, closed doors", () => {
     // host-access used to sign in any known email with just the address.
     const hostAccess = await page.request.post("/api/auth/host-access", { data: { email: legacy } });
     expect(hostAccess.status()).toBe(400);
+    // …and an old /login tab still posting that gets "please refresh".
+    expect(await hostAccess.json()).toMatchObject({
+      code: "reload_page",
+      error: "TR1VIA was updated. Please refresh this page and try again.",
+    });
 
     // A no-password account can't sign in with a guessed password.
     const guess = await page.request.post("/api/auth/login", {

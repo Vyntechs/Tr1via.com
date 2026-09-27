@@ -256,6 +256,15 @@ test.describe("legacy host (no password) — zero change until the founder asks"
     // "not now" she was given mid-show (stand-in: drop that cookie).
     const closed = await hostPage.request.post(`/api/nights/${night.nightId}/close`);
     expect(closed.status(), await closed.text()).toBe(200);
+    // The extra night she set up earlier today (never opened) counts as
+    // show day too (lib/auth/live-show.ts errs toward "running"), so the
+    // test closes it as well — standing in for "the next day".
+    const setupClosed = await admin!
+      .from("nights")
+      .update({ closed_at: new Date().toISOString() })
+      .eq("host_id", heather.hostId)
+      .is("closed_at", null);
+    expect(setupClosed.error).toBeNull();
     await laptop.clearCookies({ name: "tr1via_pw_later" });
 
     // /host (not in-show, no show running) → "Create your password",
