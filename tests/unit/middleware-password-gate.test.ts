@@ -1,0 +1,122 @@
+// @vitest-environment node
+// middleware.ts — the "Create your password" gate as wired into requests.
+//
+// Proves: the founder without a password is sent to /host/set-password
+// (with next); in-show routes pass straight through with NO hosts lookup;
+// an existing host with no switch set passes through; a host whose switch
+// is on is sent; the prompt page itself never loops; API routes untouched.
+
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest } from "next/server";
+
+const h = vi.hoisted(() => ({
+  getUser: vi.fn(),
+  hostRole: vi.fn(),
+  from: vi.fn(),
+}));
+
+vi.mock("@supabase/ssr", () => ({
+  createServerClient: () => ({
+    auth: { getUser: h.getUser },
+    from: (table: string) => {
+      h.from(table);
+      return {
+        select: () => ({
+          eq: () => ({
+            maybeSingle: async () => ({ data: h.hostRole(), error: null }),
+          }),
+        }),
+      };
+    },
+  }),
+}));
+
+import { middleware } from "@/middleware";
+
+process.env.NEXT_PUBLIC_SUPABASE_URL = "http://supabase.test";
+process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = "anon";
+
+// A fixed "password saved at" time for the marker (built, not a literal).
+const SET_AT = new Date(Date.UTC(2026, 8, 27, 12)).toISOString();
+function asUser(appMetadata: Record<string, unknown>) {
+  h.getUser.mockResolvedValue({ data: { user: { id: "u1", app_metadata: appMetadata } } });
+}
+
+const run = (path: string) => middleware(new NextRequest(`http://test${path}`));
+
+function location(res: Response): string | null {
+  const loc = res.headers.get("location");
+  return loc ? loc.replace("http://test", "") : null;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  h.hostRole.mockReturnValue({ role: "host" });
+});
+
+describe("middleware password gate", () => {
+  it("sends the founder with no password to set-password, keeping next", async () => {
+    asUser({});
+    h.hostRole.mockReturnValue({ role: "founder" });
+    const res = await run("/host");
+    expect(location(res)).toBe("/host/set-password?next=%2Fhost");
+    expect(h.from).toHaveBeenCalledWith("hosts");
+  });
+
+  it.each(["/host/live/night-1", "/host/phone/night-1"])(
+    "never interrupts %s — and doesn't even look up the host",
+    async (path) => {
+      asUser({ password_prompt: "on" });
+      h.hostRole.mockReturnValue({ role: "founder" });
+      const res = await run(path);
+      expect(location(res)).toBeNull();
+
+      asUser({});
+      const res2 = await run(path);
+      expect(location(res2)).toBeNull();
+      expect(h.from).not.toHaveBeenCalled();
+    },
+  );
+
+  it("lets an existing host through when the founder hasn't switched her prompt on", async () => {
+    asUser({});
+    const res = await run("/host/setup/night-1");
+    expect(location(res)).toBeNull();
+  });
+
+  it("sends a host whose switch is on, without a hosts lookup", async () => {
+    asUser({ password_prompt: "on" });
+    const res = await run("/host/setup/night-1");
+    expect(location(res)).toBe(`/host/set-password?next=${encodeURIComponent("/host/setup/night-1")}`);
+    expect(h.from).not.toHaveBeenCalled();
+  });
+
+  it("switch off wins for everyone", async () => {
+    asUser({ password_prompt: "off" });
+    h.hostRole.mockReturnValue({ role: "founder" });
+    expect(location(await run("/host"))).toBeNull();
+  });
+
+  it("never redirects the set-password page to itself", async () => {
+    asUser({ password_prompt: "on" });
+    expect(location(await run("/host/set-password"))).toBeNull();
+  });
+
+  it("stops once the password marker exists", async () => {
+    asUser({ password_set_at: SET_AT, password_prompt: "on" });
+    h.hostRole.mockReturnValue({ role: "founder" });
+    expect(location(await run("/host"))).toBeNull();
+    expect(h.from).not.toHaveBeenCalled();
+  });
+
+  it("still bounces signed-out visitors to /login", async () => {
+    h.getUser.mockResolvedValue({ data: { user: null } });
+    expect(location(await run("/host/setup/night-1"))).toBe("/login?next=%2Fhost%2Fsetup%2Fnight-1");
+  });
+
+  it("leaves API routes alone", async () => {
+    asUser({ password_prompt: "on" });
+    expect(location(await run("/api/nights"))).toBeNull();
+    expect(h.getUser).not.toHaveBeenCalled();
+  });
+});

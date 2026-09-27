@@ -1,9 +1,11 @@
-// Root middleware. Two jobs:
+// Root middleware. Three jobs:
 //   1. Refresh the Supabase auth cookies on every request (the SSR pattern
 //      from supabase.com/docs/guides/auth/server-side/nextjs — keeps the
 //      session alive without round-trips to Supabase from Server Components).
 //   2. Gate the host surfaces (/host and the (host) route group) behind a
 //      signed-in user; bounce anonymous visitors to /login.
+//   3. Send a signed-in host who still needs a password to
+//      /host/set-password (never during a show — see lib/auth/password-gate).
 //
 // Player routes are intentionally untouched — anonymous device sessions are
 // handled by /api/session/init + the tr1via_device cookie, not Supabase Auth.
@@ -11,6 +13,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import type { Database } from "@/lib/supabase/types";
+import { needsFounderCheck, passwordGateRedirect } from "@/lib/auth/password-gate";
 
 interface SetCookieRequest {
   name: string;
@@ -83,6 +86,38 @@ export async function middleware(request: NextRequest) {
     // Preserve where they were headed so /auth/callback can route them back.
     redirect.searchParams.set("next", pathname);
     return NextResponse.redirect(redirect);
+  }
+
+  // "Create your password" gate (lib/auth/password-gate.ts). Never fires on
+  // the in-show surfaces (/host/live, /host/phone). getUser() above asked
+  // Supabase Auth directly, so app_metadata is fresh the moment a password
+  // is saved. The hosts lookup only runs for an account with no password
+  // AND no founder switch set — everyone else skips it.
+  if (user && isHostPath(pathname)) {
+    const appMetadata = user.app_metadata;
+    let isFounder = false;
+    if (needsFounderCheck(pathname, appMetadata)) {
+      const { data: hostRow } = await supabase
+        .from("hosts")
+        .select("role")
+        .eq("user_id", user.id)
+        .maybeSingle();
+      // @supabase/ssr@0.5's generic doesn't carry Database through (see
+      // lib/supabase/server.ts), so narrow the one column we read.
+      isFounder = (hostRow as { role?: string } | null)?.role === "founder";
+    }
+    const target = passwordGateRedirect({
+      pathname,
+      search: request.nextUrl.search,
+      appMetadata,
+      isFounder,
+    });
+    if (target) {
+      const redirect = NextResponse.redirect(new URL(target, request.url));
+      // Carry any refreshed auth cookies onto the redirect.
+      for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
+      return redirect;
+    }
   }
 
   // /login deliberately renders even when the user is already signed in
