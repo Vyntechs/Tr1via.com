@@ -2,6 +2,12 @@
 // host: one title, one sentence, two big boxes, one big button, plain
 // errors, then a clear "you're all set" screen.
 //
+// Saving a password signs TR1VIA out on her OTHER devices (Supabase always
+// does this on a password change — see app/api/auth/set-password/route.ts).
+// This device stays signed in; the form and the done screen say so plainly.
+// The page never runs inside a show: the gate skips /host/live and
+// /host/phone, and the done button never returns to them.
+//
 // `from` tunes the words for how she got here:
 //   "code"  — just signed in with an emailed code: "Step 2 of 2"
 //   "reset" — "Forgot password?": "Choose a new password"
@@ -17,6 +23,9 @@ import { PasswordField, ShowPasswordToggle } from "@/components/host/PasswordFie
 import { checkNewPassword, MIN_PASSWORD_LENGTH } from "@/lib/auth/password-gate";
 
 export type SetPasswordFrom = "code" | "reset" | null;
+
+export const OTHER_DEVICES_NOTE =
+  "If TR1VIA is open on your phone or another computer, it will ask you to sign in once with this new password.";
 
 const COPY = {
   code: {
@@ -142,6 +151,12 @@ function Inner({ returnPath, from }: { returnPath: string; from: SetPasswordFrom
             <p style={{ marginTop: 20, fontSize: 22, lineHeight: 1.45, color: t.inkMid, fontWeight: 500 }}>
               Your password is saved. Next time, sign in with your email and this password.
             </p>
+            <p
+              data-testid="set-password-other-devices"
+              style={{ marginTop: 14, fontSize: 19, lineHeight: 1.45, color: t.ink, fontWeight: 600 }}
+            >
+              {OTHER_DEVICES_NOTE}
+            </p>
             <BigButton onClick={goBack} testId="set-password-continue">
               Go to my trivia nights &nbsp;→
             </BigButton>
@@ -170,7 +185,7 @@ function Inner({ returnPath, from }: { returnPath: string; from: SetPasswordFrom
               {copy.lead}
             </p>
             <p style={{ marginTop: 10, fontSize: 18, lineHeight: 1.45, color: t.inkMute, fontWeight: 500 }}>
-              Use at least {MIN_PASSWORD_LENGTH} letters or numbers. Type it twice so we know it&apos;s right.
+              Use at least {MIN_PASSWORD_LENGTH} characters. Type it twice so we know it&apos;s right.
             </p>
 
             <div style={{ marginTop: 28, display: "flex", flexDirection: "column", gap: 20 }}>
@@ -227,6 +242,9 @@ function Inner({ returnPath, from }: { returnPath: string; from: SetPasswordFrom
             <BigButton type="submit" disabled={saving} testId="set-password-submit">
               {saving ? "Saving…" : copy.button}
             </BigButton>
+            <p style={{ marginTop: 14, fontSize: 16, lineHeight: 1.45, color: t.inkMute, fontWeight: 500 }}>
+              This device stays signed in. Your phone or other computers will ask for the new password once.
+            </p>
           </form>
         )}
       </div>

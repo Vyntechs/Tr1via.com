@@ -3,12 +3,15 @@
 //   from=reset → "Choose a new password"
 //   (none)     → the in-app prompt, unchanged
 
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
-import { SetPasswordClient } from "@/app/host/set-password/SetPasswordClient";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { OTHER_DEVICES_NOTE, SetPasswordClient } from "@/app/host/set-password/SetPasswordClient";
 import { ThemeProvider } from "@/components/system";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function renderFrom(from: "code" | "reset" | null) {
   render(
@@ -32,9 +35,30 @@ describe("set-password walkthrough wording", () => {
     expect(screen.getByTestId("set-password-submit")).toHaveTextContent("Save my new password");
   });
 
+  it("says 'at least 8 characters' and warns about other devices before saving", () => {
+    renderFrom(null);
+    expect(document.body).toHaveTextContent("Use at least 8 characters.");
+    expect(document.body).not.toHaveTextContent("letters or numbers");
+    expect(document.body).toHaveTextContent(
+      "This device stays signed in. Your phone or other computers will ask for the new password once.",
+    );
+  });
+
   it("the in-app prompt has no step label", () => {
     renderFrom(null);
     expect(screen.queryByTestId("set-password-step")).toBeNull();
     expect(document.body).toHaveTextContent("So only you can open your trivia nights.");
+  });
+
+  it("done screen says plainly that other devices will ask for the new password once", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 })));
+    renderFrom(null);
+    fireEvent.change(screen.getByLabelText("Password", { exact: true }), { target: { value: "trivia-night" } });
+    fireEvent.change(screen.getByLabelText("Type it again"), { target: { value: "trivia-night" } });
+    fireEvent.click(screen.getByTestId("set-password-submit"));
+    expect(await screen.findByTestId("set-password-other-devices")).toHaveTextContent(
+      "If TR1VIA is open on your phone or another computer, it will ask you to sign in once with this new password.",
+    );
+    expect(OTHER_DEVICES_NOTE).toContain("sign in once with this new password");
   });
 });

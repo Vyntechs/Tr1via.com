@@ -147,6 +147,11 @@ describe("setPasswordReturnPath", () => {
     ["//evil.test/host", "/host"],
     ["https://evil.test/host", "/host"],
     ["/pricing", "/host"],
+    // Never back into a show: saving a password signs other devices out.
+    ["/host/live/n1", "/host"],
+    ["/host/live", "/host"],
+    ["/host/phone/n1", "/host"],
+    ["/host/phone/n1?x=1", "/host"],
   ])("%s → %s", (next, expected) => {
     expect(setPasswordReturnPath(next)).toBe(expected);
   });

@@ -10,8 +10,9 @@
 // Then the founder flips her switch "on" through the real admin endpoint:
 // the "Create your password" screen must appear on /host but never on the
 // in-show surfaces (/host/live, /host/phone), and once saved she lands on
-// /host normally, her other device stays signed in, and the password works
-// at /login.
+// /host normally (this laptop stays signed in), the done screen warns that
+// her phone will ask for the new password once, the password works at
+// /login, and after signing in once the phone goes straight back to the show.
 //
 // LOCAL ONLY: needs a local Supabase (service-role key in .env.local) to
 // shape the legacy account; skips otherwise.
@@ -236,6 +237,9 @@ test.describe("legacy host (no password) — zero change until the founder asks"
     await hostPage.getByLabel("Type it again").fill(NEW_PASSWORD);
     await hostPage.getByTestId("set-password-submit").click();
     await expect(hostPage.getByTestId("set-password-done")).toBeVisible({ timeout: 15_000 });
+    await expect(hostPage.getByTestId("set-password-other-devices")).toHaveText(
+      "If TR1VIA is open on your phone or another computer, it will ask you to sign in once with this new password.",
+    );
     await hostPage.getByTestId("set-password-continue").click();
     await expect(hostPage).toHaveURL(/\/host$/, { timeout: 15_000 });
     await expect(hostPage.getByText("HOSTING AS")).toBeVisible({ timeout: 15_000 });
@@ -257,22 +261,42 @@ test.describe("legacy host (no password) — zero change until the founder asks"
     await fresh.close();
   });
 
-  // KNOWN ISSUE (found 2026-09-27, local GoTrue): /api/auth/set-password saves
-  // the password with admin.updateUserById, and Supabase Auth then ends EVERY
-  // session for that user. The route re-signs the laptop in, but her host
-  // phone — still on /host/live mid-show — is bounced to /login on its next
-  // load. test.fail() keeps the suite green while the bug stands and turns red
-  // the day it's fixed, so this marker gets removed.
-  test.fail("her phone stays signed in after she saves a password on the laptop", async () => {
+  // ACCEPTED BEHAVIOR (was a test.fail() "known issue"): Supabase Auth
+  // always ends a user's OTHER sessions when her password changes — the admin
+  // API ends all of them, the user-scoped updateUser all but the current one,
+  // and no setting turns that off (GoTrue models.User.UpdatePassword). So:
+  //   - the laptop that saved the password stays signed in (the route signs
+  //     it in again with the new password),
+  //   - her host phone asks her to sign in ONCE with the new password, and
+  //     the done screen told her so in plain words,
+  //   - after signing in, the phone lands right back in the show.
+  // The prompt itself never appears on /host/live or /host/phone, so this
+  // can't be triggered from inside a show.
+  test("her phone asks for the new password once, then goes straight back to the show", async () => {
     expect(remote).toBeDefined();
     await remote.reload();
-    await expect(remote).toHaveURL(`/host/live/${night.nightId}`, { timeout: 15_000 });
+    await expect(remote).toHaveURL(
+      new RegExp(`/login\\?next=${encodeURIComponent(`/host/live/${night.nightId}`)}$`),
+      { timeout: 15_000 },
+    );
+    // Never the password prompt — just the normal sign-in.
+    expect(remotePaths.filter((p) => p.startsWith(SET_PASSWORD))).toEqual([]);
+
+    await remote.getByLabel("Email").fill(HEATHER_EMAIL);
+    await remote.getByTestId(TID.login.submit).click();
+    await remote.getByLabel("Password", { exact: true }).fill(NEW_PASSWORD);
+    await remote.getByTestId(TID.login.submit).click();
+    await expect(remote).toHaveURL(`/host/live/${night.nightId}`, { timeout: 30_000 });
     await expect(remote.getByTestId("host-phone-round-controls")).toBeVisible({ timeout: 30_000 });
     const q3 = night.categories[0]!.question_ids[2]!;
     const reveal3 = await remote.request.post(`/api/games/${night.game1.id}/reveal`, {
       data: { questionId: q3 },
     });
     expect(reveal3.status(), await reveal3.text()).toBe(200);
-    expect(gateOrLogoutHops(remotePaths)).toEqual([]);
+
+    // The laptop that saved the password never left.
+    await hostPage.goto("/host");
+    await expect(hostPage).toHaveURL(/\/host$/);
+    await expect(hostPage.getByText("HOSTING AS")).toBeVisible({ timeout: 15_000 });
   });
 });

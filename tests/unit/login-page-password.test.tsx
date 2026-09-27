@@ -252,3 +252,52 @@ describe("/login — brand-new host", () => {
     expect(screen.queryByLabelText("Password", { exact: true })).toBeNull();
   });
 });
+
+describe("/login — plain words for a non-technical host", () => {
+  function pending() {
+    let resolve!: (r: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => (resolve = r)));
+    return (status: number, body: unknown) =>
+      resolve(new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } }));
+  }
+
+  it("the trial line says what actually happens", () => {
+    render(<HostLoginPage />);
+    expect(document.body).toHaveTextContent(
+      "NEW HERE? TYPE YOUR EMAIL, THEN PICK A PASSWORD TO START YOUR FREE TRIAL.",
+    );
+    expect(document.body).not.toHaveTextContent(/JUST TYPE YOUR EMAIL/);
+  });
+
+  it("'Forgot password?' shows 'Sending your code…', not 'Signing in…'", async () => {
+    respond(200, { step: "password" });
+    render(<HostLoginPage />);
+    await submitEmail("brandon@vyntechs.com");
+    await screen.findByLabelText("Password", { exact: true });
+    const finish = pending();
+    fireEvent.click(screen.getByTestId("login-forgot"));
+    expect(await screen.findByTestId("login-submit")).toHaveTextContent("Sending your code…");
+    expect(screen.getByTestId("login-submit")).not.toHaveTextContent("Signing in");
+    finish(200, { ok: true, maskedEmail: "b***@vyntechs.com" });
+    expect(await screen.findByText("RESET YOUR PASSWORD · CHECK YOUR EMAIL")).toBeInTheDocument();
+  });
+
+  it("the email step never claims to be signing in while it looks the email up", async () => {
+    render(<HostLoginPage />);
+    const finish = pending();
+    await submitEmail("heather@example.com");
+    expect(screen.getByTestId("login-submit")).toHaveTextContent("One moment…");
+    finish(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com" });
+    expect(await screen.findByTestId("login-code-sent")).toBeInTheDocument();
+  });
+
+  it("new-account screen: 'Is this right? <email>' with 'Use a different email' right there", async () => {
+    respond(200, { step: "signup" });
+    render(<HostLoginPage />);
+    await submitEmail("heahter@example.com");
+    const check = await screen.findByTestId("login-signup-email-check");
+    expect(check).toHaveTextContent("Is this right?");
+    expect(check).toHaveTextContent("heahter@example.com");
+    expect(check).toHaveTextContent("Use a different email");
+  });
+});

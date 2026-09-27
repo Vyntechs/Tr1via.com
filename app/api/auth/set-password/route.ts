@@ -7,16 +7,30 @@
 // with the service-role key — app_metadata can't be written from a browser,
 // so the marker can't be faked.
 //
-// Right after saving, we sign the host in again with the new password and
-// put that fresh session's cookies on the 200. Supabase may end a user's
-// other sessions when the password changes; this way the host carries on
-// exactly where she was either way.
+// Supabase Auth ALWAYS signs a user out of her other sessions when her
+// password changes (GoTrue models.User.UpdatePassword: the admin API ends
+// every session; the user-scoped updateUser ends every session but the
+// current one). There is no setting to turn that off. So her host phone or
+// another computer will ask her to sign in once with the new password —
+// the success screen says so, and the prompt never shows on the in-show
+// pages (/host/live, /host/phone), so it can't be saved from a running show.
+//
+// We keep the admin API (not the user-scoped updateUser) because the
+// user-scoped path can demand a fresh sign-in when Supabase's "secure
+// password change" setting is on, which a host with an old session would
+// hit. Right after saving, we sign THIS device in again with the new
+// password and put that fresh session's cookies on the 200, so the host
+// carries on exactly where she was.
+//
+// Saving also clears any wrong-password lockout on her email
+// (lib/auth/rate-limits.ts), so the new password works everywhere at once.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
 import { checkNewPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
+import { clearEvents } from "@/lib/auth/rate-limits";
 import {
   RATE_LIMIT_MESSAGE,
   SIGNED_OUT_MESSAGE,
@@ -62,6 +76,8 @@ export async function POST(req: NextRequest) {
     if (isWeakPassword(error)) return fail(400, "weak_password", WEAK_PASSWORD_MESSAGE, "password");
     return fail(500, "save_failed", TRY_AGAIN_MESSAGE);
   }
+
+  if (user.email) await clearEvents("fail:login-email", user.email);
 
   // Refresh the session with the new password (see header). If this fails
   // the password is still saved; the worst case is one normal sign-in.

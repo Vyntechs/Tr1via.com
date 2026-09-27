@@ -92,10 +92,17 @@ export function passwordGateRedirect(input: {
   return `${SET_PASSWORD_PATH}?next=${encodeURIComponent(next)}`;
 }
 
-/** Where the "Save my password" success button goes. Never back to itself. */
+/**
+ * Where the "Save my password" success button goes. Never back to itself,
+ * and never into a show (/host/live, /host/phone): saving a password signs
+ * her other devices out, so the prompt is kept away from in-show pages
+ * entirely — even a hand-typed ?next= can't route through it.
+ */
 export function setPasswordReturnPath(next: string | null): string {
   if (!next || next.startsWith("//")) return "/host";
-  if (matchesPrefix(next.split("?")[0], SET_PASSWORD_PATH)) return "/host";
+  const path = next.split("?")[0];
+  if (matchesPrefix(path, SET_PASSWORD_PATH)) return "/host";
+  if (isInShowPath(path)) return "/host";
   if (next === "/host" || next.startsWith("/host/") || next.startsWith("/host?")) {
     return next;
   }
@@ -112,7 +119,7 @@ export function checkNewPassword(password: string, confirm: string): PasswordChe
     return {
       ok: false,
       field: "password",
-      error: `Your password needs at least ${MIN_PASSWORD_LENGTH} letters or numbers.`,
+      error: `Your password needs at least ${MIN_PASSWORD_LENGTH} characters.`,
     };
   }
   if (password.length > MAX_PASSWORD_LENGTH) {

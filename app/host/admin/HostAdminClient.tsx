@@ -633,6 +633,8 @@ function PasswordLine({
 }) {
   const { t } = useTheme();
   const promptOn = host.password_prompt === "on";
+  // Turning the prompt ON gets a confirm step (turning it off doesn't).
+  const [confirming, setConfirming] = useState(false);
   return (
     <div
       data-testid={`host-password-line-${host.id}`}
@@ -641,6 +643,7 @@ function PasswordLine({
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
+        flexWrap: "wrap",
         gap: 16,
         paddingTop: 12,
         borderTop: `1px solid ${t.line}`,
@@ -665,12 +668,79 @@ function PasswordLine({
             <strong style={{ color: t.ink }}>No password yet</strong>
             {" · "}Ask to create password: <strong style={{ color: t.ink }}>{promptOn ? "on" : "off"}</strong>
           </span>
-          {onPasswordPrompt && (
+          {onPasswordPrompt && !confirming && (
             <Toggle
               value={promptOn}
               label={`Ask ${host.display_name} to create a password`}
-              onChange={(v) => void onPasswordPrompt(v ? "on" : "off")}
+              onChange={(v) => {
+                if (v) setConfirming(true);
+                else void onPasswordPrompt("off");
+              }}
             />
+          )}
+          {onPasswordPrompt && confirming && (
+            <div
+              role="alertdialog"
+              aria-label={`Turn on the password prompt for ${host.display_name}?`}
+              data-testid={`host-password-confirm-${host.id}`}
+              style={{
+                flexBasis: "100%",
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                padding: "12px 14px",
+                borderRadius: 10,
+                background: t.surface,
+                border: `1px solid ${t.accent}`,
+                color: t.ink,
+                fontSize: 14,
+                lineHeight: 1.45,
+              }}
+            >
+              <span>
+                <strong>Turn on for {host.display_name}?</strong> Next time she opens TR1VIA (not
+                during a show) she&apos;ll be asked to create a password.
+              </span>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  data-testid={`host-password-confirm-yes-${host.id}`}
+                  onClick={() => {
+                    setConfirming(false);
+                    void onPasswordPrompt("on");
+                  }}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: t.accent,
+                    color: "#FFF",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  Yes, turn it on
+                </button>
+                <button
+                  type="button"
+                  data-testid={`host-password-confirm-cancel-${host.id}`}
+                  onClick={() => setConfirming(false)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${t.line}`,
+                    background: "transparent",
+                    color: t.inkMid,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
           )}
         </>
       )}

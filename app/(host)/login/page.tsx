@@ -33,9 +33,18 @@ import { checkNewPassword } from "@/lib/auth/password-gate";
 type Step = "email" | "password" | "code" | "signup";
 type CodePurpose = "login" | "reset" | "signup";
 
+// While a request is out, the button says what's actually happening.
+type Busy = "checking" | "signing-in" | "sending-code" | "checking-code";
+const BUSY_LABEL: Record<Busy, string> = {
+  checking: "One moment…",
+  "signing-in": "Signing in…",
+  "sending-code": "Sending your code…",
+  "checking-code": "Checking…",
+};
+
 type FormState =
   | { kind: "idle" }
-  | { kind: "sending" }
+  | { kind: "sending"; busy: Busy }
   | { kind: "notice"; message: string }
   | { kind: "error"; message: string };
 
@@ -137,7 +146,8 @@ function HostLoginInner() {
     e.preventDefault();
     const trimmed = email.trim();
     if (!trimmed) return;
-    setState({ kind: "sending" });
+    // Might send a code (no password yet) or not — the server decides.
+    setState({ kind: "sending", busy: "checking" });
     try {
       const { res, body } = await post("/api/auth/start", { email: trimmed });
       if (body?.step === "code") {
@@ -170,7 +180,7 @@ function HostLoginInner() {
       setState({ kind: "error", message: "Please type your password." });
       return;
     }
-    setState({ kind: "sending" });
+    setState({ kind: "sending", busy: "signing-in" });
     try {
       const { res, body } = await post("/api/auth/login", { email: email.trim(), password });
       if (res.ok) {
@@ -185,7 +195,7 @@ function HostLoginInner() {
 
   // "Forgot password?", "Send a new code", and the new-account code.
   async function sendCode(nextPurpose: CodePurpose) {
-    setState({ kind: "sending" });
+    setState({ kind: "sending", busy: "sending-code" });
     try {
       const { res, body } = await post("/api/auth/send-code", {
         email: email.trim(),
@@ -228,7 +238,7 @@ function HostLoginInner() {
       setState({ kind: "error", message: "Please type all 6 numbers from the email." });
       return;
     }
-    setState({ kind: "sending" });
+    setState({ kind: "sending", busy: "checking-code" });
     try {
       if (purpose === "signup") {
         const { res, body } = await post("/api/auth/host-access", {
@@ -277,6 +287,7 @@ function HostLoginInner() {
   }
 
   const isSending = state.kind === "sending";
+  const busyLabel = state.kind === "sending" ? BUSY_LABEL[state.busy] : "";
 
   return (
     <div
@@ -362,13 +373,13 @@ function HostLoginInner() {
             />
 
             <PrimaryButton disabled={isSending || !email.trim()} dim={isSending}>
-              {isSending ? "Signing in…" : "Sign in or start free  →"}
+              {isSending ? busyLabel : "Sign in or start free  →"}
             </PrimaryButton>
 
             <Message state={state} />
 
             <Eyebrow color={t.inkMute} size={10} style={{ display: "block", marginTop: 10 }}>
-              NEW HERE? JUST TYPE YOUR EMAIL TO START YOUR FREE TRIAL.
+              NEW HERE? TYPE YOUR EMAIL, THEN PICK A PASSWORD TO START YOUR FREE TRIAL.
             </Eyebrow>
             <LegalLinks />
           </form>
@@ -391,7 +402,7 @@ function HostLoginInner() {
               disabled={isSending}
             />
             <PrimaryButton disabled={isSending || !password} dim={isSending}>
-              {isSending ? "Signing in…" : "Sign in  →"}
+              {isSending ? busyLabel : "Sign in  →"}
             </PrimaryButton>
             <Message state={state} />
             <LinkButton testId="login-forgot" onClick={() => sendCode("reset")} disabled={isSending}>
@@ -400,19 +411,16 @@ function HostLoginInner() {
           </form>
         ) : step === "signup" ? (
           <form onSubmit={handleSignupSubmit} style={formStyle}>
-            <Eyebrow color={t.accent} size={11} style={{ display: "block" }}>
+            {/* A regular host who mistyped her email lands here too — so the
+                email comes first, big, with the way back right under it. */}
+            <EmailCheck email={email.trim()} onChange={startOver} disabled={isSending} />
+            <Eyebrow color={t.accent} size={11} style={{ display: "block", marginTop: 6 }}>
               STEP 1 OF 2 · CREATE YOUR PASSWORD
             </Eyebrow>
             <p style={leadStyle(t.ink)}>
-              Welcome! Pick a password for your new account. Then we&apos;ll email you a
+              New to TR1VIA? Pick a password for your new account. Then we&apos;ll email you a
               6-digit code to make sure the email is yours.
             </p>
-            <SigningInAs
-              email={email.trim()}
-              onChange={startOver}
-              disabled={isSending}
-              label="NEW ACCOUNT FOR"
-            />
             <PasswordField
               id="password"
               label="Password"
@@ -438,7 +446,7 @@ function HostLoginInner() {
               disabled={isSending}
             />
             <PrimaryButton disabled={isSending || !password || !confirm} dim={isSending}>
-              {isSending ? "Sending your code…" : "Continue  →"}
+              {isSending ? busyLabel : "Continue  →"}
             </PrimaryButton>
             <Message state={state} />
           </form>
@@ -472,7 +480,7 @@ function HostLoginInner() {
             />
             <PrimaryButton disabled={isSending || code.length !== CODE_BOX_COUNT} dim={isSending}>
               {isSending
-                ? "Checking…"
+                ? busyLabel
                 : purpose === "signup"
                   ? "Create my free account  →"
                   : "Continue  →"}
@@ -595,18 +603,16 @@ function SigningInAs({
   email,
   onChange,
   disabled,
-  label = "SIGNING IN AS",
 }: {
   email: string;
   onChange: () => void;
   disabled: boolean;
-  label?: string;
 }) {
   const { t } = useTheme();
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
       <Eyebrow color={t.inkMute} size={10}>
-        {label}
+        SIGNING IN AS
       </Eyebrow>
       <div
         data-testid="login-email-shown"
@@ -616,6 +622,51 @@ function SigningInAs({
       </div>
       <LinkButton testId="login-change-email" onClick={onChange} disabled={disabled} muted>
         Not you? Use a different email
+      </LinkButton>
+    </div>
+  );
+}
+
+/**
+ * New-account screen: "Is this right? <email> — Use a different email".
+ * Nobody has an account with this email, which for a regular host almost
+ * always means a typo — so make the email impossible to miss.
+ */
+function EmailCheck({
+  email,
+  onChange,
+  disabled,
+}: {
+  email: string;
+  onChange: () => void;
+  disabled: boolean;
+}) {
+  const { t } = useTheme();
+  return (
+    <div
+      data-testid="login-signup-email-check"
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: 8,
+        padding: "16px 18px",
+        borderRadius: 14,
+        background: t.surface,
+        border: `2px solid ${t.accent}`,
+      }}
+    >
+      <div style={{ fontSize: 17, fontWeight: 700, color: t.ink }}>Is this right?</div>
+      <div
+        data-testid="login-email-shown"
+        style={{ fontSize: 22, fontWeight: 800, color: t.ink, overflowWrap: "anywhere", letterSpacing: "-0.01em" }}
+      >
+        {email}
+      </div>
+      <p style={{ margin: 0, fontSize: 15, lineHeight: 1.45, color: t.inkMid, fontWeight: 500 }}>
+        No TR1VIA account uses this email yet. Already a host? Check it for typos.
+      </p>
+      <LinkButton testId="login-change-email" onClick={onChange} disabled={disabled}>
+        Use a different email
       </LinkButton>
     </div>
   );
