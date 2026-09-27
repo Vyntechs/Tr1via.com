@@ -11,7 +11,11 @@
 //                                 by the server when she signs in by code or
 //                                 link (lib/auth/founder-flag.ts), so the
 //                                 middleware gate never has to query the
-//                                 hosts table on a page load
+//                                 hosts table on a page load. It only asks
+//                                 on a device that signed in recently
+//                                 (SIGNED_IN_HERE_COOKIE), so stamping it on
+//                                 one sign-in never prompts her other,
+//                                 already-open devices.
 //
 // Pure functions only: imported by middleware.ts, route handlers and tests.
 
@@ -26,6 +30,11 @@ export const SET_PASSWORD_PATH = "/host/set-password";
 // through; every sign-in clears it, so she is asked again next sign-in.
 export const PASSWORD_LATER_COOKIE = "tr1via_pw_later";
 export const PASSWORD_LATER_PATH = "/auth/password-later";
+// "This browser just signed in" — set by every sign-in door (see
+// forgetPasswordLater). The founder's prompt needs it, so it appears only on
+// the device she signed in on, never on her other open devices.
+export const SIGNED_IN_HERE_COOKIE = "tr1via_signed_in_here";
+export const SIGNED_IN_HERE_MAX_AGE_S = 12 * 60 * 60;
 
 export const MIN_PASSWORD_LENGTH = 8;
 // Supabase (bcrypt) ignores anything past 72 bytes; cap it so a long
@@ -91,8 +100,8 @@ function isGatedPath(pathname: string): boolean {
  *   - the account has no password marker yet
  *   - she hasn't tapped "Not now" since she last signed in
  *   - the founder turned the prompt "on" for this host, OR this is the
- *     founder's own account (app_metadata.founder). An explicit "off"
- *     always wins. Existing hosts with no setting are treated as off, so
+ *     founder's own account (app_metadata.founder) AND this browser signed
+ *     in recently (SIGNED_IN_HERE_COOKIE). An explicit "off" always wins. Existing hosts with no setting are treated as off, so
  *     nothing changes for them until the founder flips the switch.
  * Reads app_metadata only — no database query on a page load.
  */
@@ -102,14 +111,16 @@ export function passwordGateRedirect(input: {
   appMetadata: AppMetadata;
   /** She tapped "Not now" since she last signed in (PASSWORD_LATER_COOKIE). */
   askedLater?: boolean;
+  /** This browser signed in recently (SIGNED_IN_HERE_COOKIE). */
+  signedInHere?: boolean;
 }): string | null {
-  const { pathname, search = "", appMetadata, askedLater = false } = input;
+  const { pathname, search = "", appMetadata, askedLater = false, signedInHere = false } = input;
   if (!isGatedPath(pathname)) return null;
   if (askedLater) return null;
   if (hasPassword(appMetadata)) return null;
   const setting = passwordPromptSetting(appMetadata);
   if (setting === "off") return null;
-  if (setting !== "on" && !isFounderAccount(appMetadata)) return null;
+  if (setting !== "on" && !(isFounderAccount(appMetadata) && signedInHere)) return null;
   const next = `${pathname}${search}`;
   return `${SET_PASSWORD_PATH}?next=${encodeURIComponent(next)}`;
 }
@@ -120,12 +131,34 @@ export function passwordLaterHref(next: string = "/host"): string {
 }
 
 interface CookieSink {
-  cookies: { set(cookie: { name: string; value: string; path: string; maxAge: number }): unknown };
+  cookies: {
+    set(cookie: {
+      name: string;
+      value: string;
+      path: string;
+      maxAge: number;
+      httpOnly?: boolean;
+      sameSite?: "lax";
+      secure?: boolean;
+    }): unknown;
+  };
 }
 
-/** Every sign-in calls this: a fresh sign-in asks again. */
+/**
+ * Every sign-in calls this: a fresh sign-in asks again (clears "Not now"),
+ * and marks THIS browser as just signed in (SIGNED_IN_HERE_COOKIE).
+ */
 export function forgetPasswordLater<T extends CookieSink>(response: T): T {
   response.cookies.set({ name: PASSWORD_LATER_COOKIE, value: "", path: "/", maxAge: 0 });
+  response.cookies.set({
+    name: SIGNED_IN_HERE_COOKIE,
+    value: "1",
+    path: "/",
+    maxAge: SIGNED_IN_HERE_MAX_AGE_S,
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
   return response;
 }
 

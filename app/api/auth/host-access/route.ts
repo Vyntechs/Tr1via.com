@@ -40,6 +40,7 @@ import {
   BAD_CODE_MESSAGE,
   BAD_EMAIL_MESSAGE,
   RATE_LIMIT_MESSAGE,
+  RELOAD_PAGE_MESSAGE,
   TOO_MANY_TRIES_MESSAGE,
   TRY_AGAIN_MESSAGE,
   isDuplicateEmail,
@@ -55,12 +56,29 @@ function fail(status: number, code: string, error: string, field?: string) {
   return NextResponse.json({ code, error, ...(field ? { field } : {}) }, { status });
 }
 
+/** An old /login tab (from before passwords) posts `{ email }` only. */
+function isLegacyEmailOnlyBody(body: unknown): boolean {
+  if (!body || typeof body !== "object") return false;
+  const b = body as Record<string, unknown>;
+  return (
+    typeof b.email === "string" &&
+    b.password === undefined &&
+    b.confirm === undefined &&
+    b.code === undefined
+  );
+}
+
 export async function POST(req: NextRequest) {
-  // Shares the per-IP code-check cap with /api/auth/verify-code.
-  if (await hitIpLimit("ip:verify-code", req)) return fail(429, "too_many_tries", TOO_MANY_TRIES_MESSAGE);
   const body = (await req.json().catch(() => null)) as
     | { email?: unknown; password?: unknown; confirm?: unknown; code?: unknown }
     | null;
+  // A /login tab left open from before this update still posts `{ email }`
+  // only. Tell her to refresh instead of a confusing password error. The old
+  // page shows `error` from any non-OK answer, so this reads right there.
+  // Checked before the per-IP cap so a stale tab can't use up her tries.
+  if (isLegacyEmailOnlyBody(body)) return fail(400, "reload_page", RELOAD_PAGE_MESSAGE);
+  // Shares the per-IP code-check cap with /api/auth/verify-code.
+  if (await hitIpLimit("ip:verify-code", req)) return fail(429, "too_many_tries", TOO_MANY_TRIES_MESSAGE);
   const email = parseEmail(body?.email);
   if (!email) return fail(400, "bad_email", BAD_EMAIL_MESSAGE, "email");
   const password = typeof body?.password === "string" ? body.password : "";

@@ -470,6 +470,28 @@ describe("sign-up proves the email with a code before the account exists", () =>
     expect(res.cookies.get("sb-test-auth-token")?.value).toBe("session");
   });
 
+  it("an old /login tab (email only) is told to refresh, not a password error", async () => {
+    users();
+    const res = await signUp(req("/api/auth/host-access", { email: "heather@example.com" }));
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    // The pre-update page shows `error` from any non-OK answer.
+    expect(body).toMatchObject({
+      code: "reload_page",
+      error: "TR1VIA was updated. Please refresh this page and try again.",
+    });
+    expect(h.createUser).not.toHaveBeenCalled();
+  });
+
+  it("the new form with an empty password still gets the plain password rule", async () => {
+    users();
+    const res = await signUp(
+      req("/api/auth/host-access", { email: "new@example.com", password: "", confirm: "", code: "" }),
+    );
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("bad_password");
+  });
+
   it("someone else's email can't be claimed without its code", async () => {
     users();
     await sendCode(req("/api/auth/send-code", { email: "victim@example.com", purpose: "signup" }));
@@ -546,6 +568,12 @@ describe("verify-code never walks her into a password step during a show", () =>
       req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: lastEmailedCode() }),
     );
     expect(res.headers.getSetCookie().some((c) => /^tr1via_pw_later=;.*Max-Age=0/i.test(c))).toBe(true);
+    // …and marks THIS browser as just signed in (the founder's prompt shows
+    // only on the device that signed in, never her other open ones).
+    const here = res.headers.getSetCookie().find((c) => c.startsWith("tr1via_signed_in_here="));
+    expect(here).toMatch(/^tr1via_signed_in_here=1;/);
+    expect(here).toMatch(/Max-Age=43200/i);
+    expect(here).toMatch(/HttpOnly/i);
   });
 });
 

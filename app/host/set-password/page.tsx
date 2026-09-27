@@ -11,7 +11,8 @@
 // again next sign-in. (The save route refuses mid-show too.)
 //
 // Server wrapper resolves the safe return path and the running-show check;
-// the form is client-side.
+// the form is client-side. "Not now" goes back to that same safe return
+// path (the page the gate interrupted), falling back to /host.
 
 import { redirect } from "next/navigation";
 import { passwordLaterHref, setPasswordReturnPath } from "@/lib/auth/password-gate";
@@ -42,5 +43,5 @@ export default async function SetPasswordPage({
     redirect(passwordLaterHref(returnPath));
   }
 
-  return <SetPasswordClient returnPath={returnPath} from={arrivedVia} laterHref={passwordLaterHref("/host")} />;
+  return <SetPasswordClient returnPath={returnPath} from={arrivedVia} laterHref={passwordLaterHref(returnPath)} />;
 }

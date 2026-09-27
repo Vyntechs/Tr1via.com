@@ -8,7 +8,8 @@
 // The page never runs inside a show: the gate skips /host/live and
 // /host/phone, and the done button never returns to them.
 //
-// "Not now" (under the button) skips it for now and goes to /host; she is
+// "Not now" (under the button) skips it for now and goes back to the page
+// she was headed to (the safe return path, default /host); she is
 // asked again next sign-in (app/auth/password-later). If one of her nights
 // is running, the page skips itself (page.tsx) and the save route refuses.
 //
@@ -61,11 +62,11 @@ type State =
 export function SetPasswordClient({
   returnPath,
   from = null,
-  laterHref = passwordLaterHref("/host"),
+  laterHref = passwordLaterHref(returnPath),
 }: {
   returnPath: string;
   from?: SetPasswordFrom;
-  /** "Not now": skip for now, go to /host, asked again next sign-in. */
+  /** "Not now": skip for now, go back to returnPath, asked again next sign-in. */
   laterHref?: string;
 }) {
   return (

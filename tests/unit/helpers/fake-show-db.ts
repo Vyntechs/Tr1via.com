@@ -43,12 +43,17 @@ export function fakeShowDb(tables: Record<string, () => Row[]> = {}): FakeShowDb
   return self;
 }
 
-/** A night opened `hoursAgo` hours before now (closed_at empty unless given). */
+/**
+ * A night created and opened `hoursAgo` hours before now (closed_at empty
+ * unless given; `extra` can override created_at / opened_at).
+ */
 export function openedNight(hostId: string, hoursAgo: number, extra: Row = {}): Row {
+  const at = new Date(Date.now() - hoursAgo * 3600_000).toISOString();
   return {
     id: `night-${hostId}-${hoursAgo}`,
     host_id: hostId,
-    opened_at: new Date(Date.now() - hoursAgo * 3600_000).toISOString(),
+    created_at: at,
+    opened_at: at,
     closed_at: null,
     ...extra,
   };

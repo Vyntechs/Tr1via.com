@@ -2,6 +2,11 @@
 // middleware "Create your password" gate can tell it's her without a hosts
 // query on every page load (lib/auth/password-gate.ts).
 //
+// The mark alone never prompts: the gate also needs this browser's
+// "just signed in" cookie (SIGNED_IN_HERE_COOKIE, set by every sign-in
+// door), so marking her on one sign-in doesn't pop the prompt on her other
+// devices that were already open.
+//
 // Called when a host with no password signs in by emailed code
 // (/api/auth/verify-code) or by the founder's link (/auth/grant) — the only
 // doors a no-password account can use. One hosts read at sign-in, and only

@@ -50,6 +50,8 @@ export const LOCKED_OUT_MESSAGE = "Too many tries. Wait 15 minutes or use Forgot
 export const SIGN_IN_UNAVAILABLE_MESSAGE = "We couldn't sign you in right now. Try again in a minute.";
 // A new host's account was made but signing her in right after failed.
 export const ACCOUNT_READY_MESSAGE = "Your account is ready. Sign in with your password.";
+// An old /login tab (opened before this update) posted the email only.
+export const RELOAD_PAGE_MESSAGE = "TR1VIA was updated. Please refresh this page and try again.";
 // set-password refuses while one of her nights is running (see lib/auth/live-show.ts).
 export const SHOW_RUNNING_MESSAGE =
   "Your show is running right now. Create your password after the show, so your TV screen and phone stay signed in.";

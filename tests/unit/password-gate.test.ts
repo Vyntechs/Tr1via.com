@@ -2,7 +2,8 @@
 //
 // Proves: in-show routes (/host/live, /host/phone) are never interrupted;
 // the prompt page itself never loops; the founder (app_metadata.founder)
-// is always asked; other
+// is asked only on the browser that just signed in (never on her other
+// open devices); other
 // hosts only when the founder's per-host switch is "on"; explicit "off"
 // always wins; a set password ends the prompt.
 
@@ -44,8 +45,19 @@ describe("isInShowPath", () => {
 describe("passwordGateRedirect", () => {
   it("sends the founder (no password) from the dashboard to set-password with next", () => {
     expect(
-      passwordGateRedirect({ pathname: "/host", appMetadata: FOUNDER }),
+      passwordGateRedirect({ pathname: "/host", appMetadata: FOUNDER, signedInHere: true }),
     ).toBe("/host/set-password?next=%2Fhost");
+  });
+
+  it("never asks the founder on her other open devices (marked, but not signed in there)", () => {
+    expect(passwordGateRedirect({ pathname: "/host", appMetadata: FOUNDER })).toBeNull();
+    expect(
+      passwordGateRedirect({ pathname: "/host", appMetadata: FOUNDER, signedInHere: false }),
+    ).toBeNull();
+  });
+
+  it("a fresh-sign-in cookie alone never asks a host who isn't the founder", () => {
+    expect(passwordGateRedirect({ pathname: "/host", appMetadata: NO_PW, signedInHere: true })).toBeNull();
   });
 
   it("keeps the query string in next", () => {
@@ -54,6 +66,7 @@ describe("passwordGateRedirect", () => {
         pathname: "/host/setup/n1/topic",
         search: "?slot=2",
         appMetadata: FOUNDER,
+        signedInHere: true,
       }),
     ).toBe(`/host/set-password?next=${encodeURIComponent("/host/setup/n1/topic?slot=2")}`);
   });
@@ -61,7 +74,7 @@ describe("passwordGateRedirect", () => {
   it.each(["/host/live/night-1", "/host/phone/night-1", "/host/live", "/host/phone"])(
     "never interrupts an in-show route (%s), even for the founder or a host switched on",
     (pathname) => {
-      expect(passwordGateRedirect({ pathname, appMetadata: FOUNDER })).toBeNull();
+      expect(passwordGateRedirect({ pathname, appMetadata: FOUNDER, signedInHere: true })).toBeNull();
       expect(
         passwordGateRedirect({ pathname, appMetadata: PROMPT_ON }),
       ).toBeNull();
@@ -70,7 +83,7 @@ describe("passwordGateRedirect", () => {
 
   it("never redirects the set-password page to itself", () => {
     expect(
-      passwordGateRedirect({ pathname: "/host/set-password", appMetadata: FOUNDER }),
+      passwordGateRedirect({ pathname: "/host/set-password", appMetadata: FOUNDER, signedInHere: true }),
     ).toBeNull();
   });
 
@@ -97,7 +110,11 @@ describe("passwordGateRedirect", () => {
 
   it("an explicit off wins, even for the founder", () => {
     expect(
-      passwordGateRedirect({ pathname: "/host", appMetadata: { ...PROMPT_OFF, ...FOUNDER } }),
+      passwordGateRedirect({
+        pathname: "/host",
+        appMetadata: { ...PROMPT_OFF, ...FOUNDER },
+        signedInHere: true,
+      }),
     ).toBeNull();
   });
 
@@ -106,6 +123,7 @@ describe("passwordGateRedirect", () => {
       passwordGateRedirect({
         pathname: "/host",
         appMetadata: { ...WITH_PW, ...PROMPT_ON, ...FOUNDER },
+        signedInHere: true,
       }),
     ).toBeNull();
   });

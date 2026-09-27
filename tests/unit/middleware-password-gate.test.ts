@@ -2,7 +2,8 @@
 // middleware.ts — the "Create your password" gate as wired into requests.
 //
 // Proves: the founder (app_metadata.founder) without a password is sent to
-// /host/set-password (with next); in-show routes pass straight through; an
+// /host/set-password (with next) — only on the browser that just signed in
+// (tr1via_signed_in_here), never on her other open devices; in-show routes pass straight through; an
 // existing host with no switch set (Heather) passes through; a host whose
 // switch is on is sent; the prompt page itself never loops; API routes
 // untouched. And NO page load ever queries the hosts table.
@@ -43,6 +44,8 @@ function asUser(appMetadata: Record<string, unknown>) {
   h.getUser.mockResolvedValue({ data: { user: { id: "u1", app_metadata: appMetadata } } });
 }
 
+// The "this browser just signed in" cookie every sign-in door sets.
+const HERE = "tr1via_signed_in_here=1";
 const run = (path: string, cookie?: string) =>
   middleware(new NextRequest(`http://test${path}`, cookie ? { headers: { cookie } } : undefined));
 
@@ -64,8 +67,15 @@ afterEach(() => {
 describe("middleware password gate", () => {
   it("sends the founder with no password to set-password, keeping next", async () => {
     asUser({ founder: true });
-    const res = await run("/host");
+    const res = await run("/host", HERE);
     expect(location(res)).toBe("/host/set-password?next=%2Fhost");
+  });
+
+  it("never asks the founder on another device that was already open", async () => {
+    // Marked founder by a sign-in elsewhere; this browser didn't sign in.
+    asUser({ founder: true });
+    expect(location(await run("/host"))).toBeNull();
+    expect(location(await run("/host/setup/night-1"))).toBeNull();
   });
 
   it.each(["/host/live/night-1", "/host/phone/night-1"])(
@@ -76,7 +86,7 @@ describe("middleware password gate", () => {
       expect(location(res)).toBeNull();
 
       asUser({ founder: true });
-      const res2 = await run(path);
+      const res2 = await run(path, HERE);
       expect(location(res2)).toBeNull();
     },
   );
@@ -96,7 +106,7 @@ describe("middleware password gate", () => {
 
   it("switch off wins for everyone", async () => {
     asUser({ password_prompt: "off", founder: true });
-    expect(location(await run("/host"))).toBeNull();
+    expect(location(await run("/host", HERE))).toBeNull();
   });
 
   it("never redirects the set-password page to itself", async () => {
@@ -106,7 +116,7 @@ describe("middleware password gate", () => {
 
   it("stops once the password marker exists", async () => {
     asUser({ password_set_at: SET_AT, password_prompt: "on", founder: true });
-    expect(location(await run("/host"))).toBeNull();
+    expect(location(await run("/host", HERE))).toBeNull();
   });
 
   it("still bounces signed-out visitors to /login", async () => {
@@ -118,9 +128,9 @@ describe("middleware password gate", () => {
     asUser({ password_prompt: "on" });
     expect(location(await run("/host", "tr1via_pw_later=1"))).toBeNull();
     asUser({ founder: true });
-    expect(location(await run("/host/setup/night-1", "tr1via_pw_later=1"))).toBeNull();
+    expect(location(await run("/host/setup/night-1", `tr1via_pw_later=1; ${HERE}`))).toBeNull();
     // Without the cookie (a fresh sign-in clears it) she's asked again.
-    expect(location(await run("/host"))).toBe("/host/set-password?next=%2Fhost");
+    expect(location(await run("/host", HERE))).toBe("/host/set-password?next=%2Fhost");
   });
 
   it("leaves API routes alone", async () => {

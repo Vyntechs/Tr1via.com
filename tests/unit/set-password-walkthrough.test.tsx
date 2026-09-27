@@ -97,6 +97,18 @@ describe("'Not now' on the set-password screen", () => {
     expect(document.body).toHaveTextContent("We'll ask again the next time you sign in.");
   });
 
+  it("goes back to the page the prompt interrupted (not always /host)", () => {
+    render(
+      <ThemeProvider themeKey="house">
+        <SetPasswordClient returnPath="/host/setup/n1?slot=2" from={null} />
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId("set-password-later")).toHaveAttribute(
+      "href",
+      `/auth/password-later?next=${encodeURIComponent("/host/setup/n1?slot=2")}`,
+    );
+  });
+
   it("a refused save during a show shows the plain message and keeps 'Not now' there", async () => {
     vi.stubGlobal(
       "fetch",
