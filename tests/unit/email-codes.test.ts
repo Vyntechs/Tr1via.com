@@ -174,10 +174,32 @@ describe("send limits", () => {
 
   it("caps sends site-wide per hour", async () => {
     const store = memoryCodeStore();
-    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE; i++) {
+    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.signup; i++) {
       await issueCode(store, { email: `u${i}@example.com`, purpose: "signup", now: at(i) });
     }
     const r = await issueCode(store, { email: "late@example.com", purpose: "signup", now: at(5000) });
     expect(r).toEqual({ ok: false, reason: "too_many_sitewide" });
+  });
+
+  it("signup spam can't use up the login or reset codes", async () => {
+    const store = memoryCodeStore();
+    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.signup; i++) {
+      await issueCode(store, { email: `spam${i}@example.com`, purpose: "signup", now: at(i) });
+    }
+    expect((await issueCode(store, { email: "x@example.com", purpose: "signup", now: at(100) })).ok).toBe(false);
+    expect((await issueCode(store, { email: "heather@example.com", purpose: "login", now: at(200) })).ok).toBe(true);
+    expect((await issueCode(store, { email: "brandon@example.com", purpose: "reset", now: at(300) })).ok).toBe(true);
+  });
+
+  it("each purpose has its own site-wide cap", async () => {
+    const store = memoryCodeStore();
+    for (let i = 0; i < MAX_SENDS_PER_HOUR_SITEWIDE.login; i++) {
+      await issueCode(store, { email: `l${i}@example.com`, purpose: "login", now: at(i) });
+    }
+    expect(await issueCode(store, { email: "late@example.com", purpose: "login", now: at(5000) })).toEqual({
+      ok: false,
+      reason: "too_many_sitewide",
+    });
+    expect((await issueCode(store, { email: "late@example.com", purpose: "reset", now: at(5001) })).ok).toBe(true);
   });
 });

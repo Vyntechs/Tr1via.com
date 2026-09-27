@@ -16,11 +16,14 @@ import { findAuthUserByEmail } from "@/lib/auth/admin-users";
 import { hasPassword } from "@/lib/auth/password-gate";
 import { isCodePurpose } from "@/lib/auth/email-codes";
 import { parseEmail, sendCodeTo } from "@/lib/auth/email-code-flow";
+import { hitIpLimit } from "@/lib/auth/rate-limits";
 import {
   ACCOUNT_EXISTS_MESSAGE,
   BAD_EMAIL_MESSAGE,
+  HAS_PASSWORD_MESSAGE,
   NO_ACCOUNT_MESSAGE,
   START_OVER_MESSAGE,
+  TOO_MANY_TRIES_MESSAGE,
   TRY_AGAIN_MESSAGE,
 } from "@/lib/auth/auth-messages";
 
@@ -34,6 +37,8 @@ function fail(status: number, code: string, error: string) {
 }
 
 export async function POST(req: NextRequest) {
+  // Per-IP cap (lib/auth/rate-limits.ts) — every call here emails a code.
+  if (await hitIpLimit("ip:send-code", req)) return fail(429, "too_many_tries", TOO_MANY_TRIES_MESSAGE);
   const body = (await req.json().catch(() => null)) as
     | { email?: unknown; purpose?: unknown }
     | null;
@@ -49,7 +54,7 @@ export async function POST(req: NextRequest) {
   if (purpose === "signup" && user) return fail(409, "account_exists", ACCOUNT_EXISTS_MESSAGE);
   if (purpose !== "signup" && !user) return fail(404, "no_account", NO_ACCOUNT_MESSAGE);
   if (purpose === "login" && user && hasPassword(user.app_metadata)) {
-    return fail(409, "has_password", START_OVER_MESSAGE);
+    return fail(409, "has_password", HAS_PASSWORD_MESSAGE);
   }
 
   const sent = await sendCodeTo(email, purpose);

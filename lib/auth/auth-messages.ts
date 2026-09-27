@@ -1,12 +1,14 @@
 // Plain-English messages + Supabase error classification for host sign-in.
 // Hosts are not technical: every error they can see is written here.
 
+// Every "start again" message names the real link on the page:
+// "Use a different email" (shown on every step after the email box).
 export const NO_PASSWORD_MESSAGE =
-  "This account doesn't have a password yet. Go back, type your email, and we'll email you a code.";
+  "This account doesn't have a password yet. Tap \"Use a different email\", type your email again, and we'll email you a code to sign in.";
 export const WRONG_PASSWORD_MESSAGE =
   "That password doesn't match this email. Please try again.";
 export const NO_ACCOUNT_MESSAGE =
-  "We don't have an account for that email yet. Go back to create one.";
+  "We don't have an account for that email. Tap \"Use a different email\" to check it for typos, or to create a new account.";
 export const ACCOUNT_EXISTS_MESSAGE =
   "You already have an account with that email. Sign in with your password instead.";
 export const RATE_LIMIT_MESSAGE =
@@ -30,7 +32,12 @@ export const CODE_USED_MESSAGE =
 export const BAD_CODE_MESSAGE = "Please type the 6 numbers from the email.";
 export const BAD_EMAIL_MESSAGE = "Please type a real email address.";
 export const START_OVER_MESSAGE =
-  "Something changed with this account. Please go back and type your email again.";
+  "Let's start this sign-in over. Tap \"Use a different email\", then type your email again.";
+export const HAS_PASSWORD_MESSAGE =
+  "This account already has a password. Tap \"Use a different email\", type your email again, and sign in with your password. Forgot it? Tap \"Forgot password?\" on the next screen.";
+export const TOO_MANY_TRIES_MESSAGE =
+  "Too many tries. Wait 15 minutes, then try again. Text Brandon if you're stuck.";
+export const LOCKED_OUT_MESSAGE = "Too many tries. Wait 15 minutes or use Forgot password.";
 export const SIGNED_OUT_MESSAGE =
   "You've been signed out. Please sign in again, then come back here.";
 

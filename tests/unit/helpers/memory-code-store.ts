@@ -8,8 +8,13 @@ export function memoryCodeStore(): CodeStore & { rows: CodeRow[] } {
   let n = 0;
   return {
     rows,
-    async countSince(email, sinceIso) {
-      return rows.filter((r) => r.created_at >= sinceIso && (email === null || r.email === email)).length;
+    async countSince({ email, purpose }, sinceIso) {
+      return rows.filter(
+        (r) =>
+          r.created_at >= sinceIso &&
+          (email === null || r.email === email) &&
+          (purpose === null || r.purpose === purpose),
+      ).length;
     },
     async retireActive(email: string, purpose: CodePurpose, nowIso: string) {
       for (const r of rows) {

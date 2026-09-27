@@ -10,6 +10,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { memoryCodeStore } from "./helpers/memory-code-store";
+import { memoryRateStore } from "./helpers/memory-rate-store";
+import { RATE_LIMITS } from "@/lib/auth/rate-limits";
 
 type SetAll = (c: Array<{ name: string; value: string; options?: object }>) => void;
 
@@ -22,6 +24,7 @@ const h = vi.hoisted(() => ({
   sendMail: vi.fn(),
   setAll: null as null | SetAll,
   store: null as unknown,
+  rates: null as unknown,
 }));
 
 vi.mock("@supabase/ssr", () => ({
@@ -38,6 +41,9 @@ vi.mock("@/lib/supabase/admin", () => ({
 vi.mock("@/lib/auth/email-code-store", () => ({
   supabaseCodeStore: () => h.store,
 }));
+vi.mock("@/lib/auth/rate-limit-store", () => ({
+  supabaseRateStore: () => h.rates,
+}));
 vi.mock("nodemailer", () => {
   const createTransport = () => ({ sendMail: h.sendMail, close: () => {} });
   return { default: { createTransport }, createTransport };
@@ -51,10 +57,10 @@ import { POST as signUp } from "@/app/api/auth/host-access/route";
 type Store = ReturnType<typeof memoryCodeStore>;
 const store = () => h.store as Store;
 
-const req = (path: string, body: unknown) =>
+const req = (path: string, body: unknown, ip = "203.0.113.7") =>
   new NextRequest(`http://test${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", "x-real-ip": ip },
     body: JSON.stringify(body),
   });
 
@@ -87,6 +93,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.setAll = null;
   h.store = memoryCodeStore();
+  h.rates = memoryRateStore();
   h.sendMail.mockResolvedValue({ messageId: "m" });
   vi.stubEnv("SESSION_SECRET", "route-test-secret");
   vi.stubEnv("ZOHO_SMTP_PASSWORD", "zoho-app-password");
@@ -270,6 +277,26 @@ describe("POST /api/auth/verify-code", () => {
     expect((await res.json()).redirect).toBe("/host/set-password?from=reset&next=%2Fhost");
   });
 
+  it.each([
+    ["login", {}],
+    ["reset", MARKED],
+  ] as const)("%s code with an in-show next → straight back to the show, no password step", async (purpose, meta) => {
+    users({ id: "h", email: "heather@example.com", app_metadata: meta });
+    if (purpose === "login") await start(req("/api/auth/start", { email: "heather@example.com" }));
+    else await sendCode(req("/api/auth/send-code", { email: "heather@example.com", purpose: "reset" }));
+    sessionWorks(meta);
+    const res = await verify(
+      req("/api/auth/verify-code", {
+        email: "heather@example.com",
+        purpose,
+        code: lastEmailedCode(),
+        next: "/host/live/n1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, redirect: "/host/live/n1" });
+  });
+
   it("refuses signup codes (those go through host-access)", async () => {
     const res = await verify(req("/api/auth/verify-code", { email: "a@example.com", purpose: "signup", code: "123456" }));
     expect(res.status).toBe(400);
@@ -328,5 +355,40 @@ describe("sign-up proves the email with a code before the account exists", () =>
     );
     expect(res.status).toBe(400);
     expect(h.createUser).not.toHaveBeenCalled();
+  });
+});
+
+describe("per-IP limits on the code doors", () => {
+  it("start: refuses after the per-IP cap, other IPs unaffected", async () => {
+    users({ id: "b", email: "brandon@vyntechs.com", app_metadata: MARKED });
+    for (let i = 0; i < RATE_LIMITS["ip:start"]; i++) {
+      expect((await start(req("/api/auth/start", { email: "brandon@vyntechs.com" }))).status).toBe(200);
+    }
+    const r = await start(req("/api/auth/start", { email: "brandon@vyntechs.com" }));
+    expect(r.status).toBe(429);
+    expect((await r.json()).code).toBe("too_many_tries");
+    expect((await start(req("/api/auth/start", { email: "brandon@vyntechs.com" }, "192.0.2.1"))).status).toBe(200);
+  });
+
+  it("send-code: refuses after the per-IP cap without sending", async () => {
+    users();
+    for (let i = 0; i < RATE_LIMITS["ip:send-code"]; i++) {
+      await sendCode(req("/api/auth/send-code", { email: `new${i}@x.test`, purpose: "signup" }));
+    }
+    const sent = h.sendMail.mock.calls.length;
+    const r = await sendCode(req("/api/auth/send-code", { email: "late@x.test", purpose: "signup" }));
+    expect(r.status).toBe(429);
+    expect((await r.json()).code).toBe("too_many_tries");
+    expect(h.sendMail.mock.calls.length).toBe(sent);
+  });
+
+  it("verify-code: refuses after the per-IP cap", async () => {
+    users({ id: "h", email: "heather@x.test", app_metadata: {} });
+    for (let i = 0; i < RATE_LIMITS["ip:verify-code"]; i++) {
+      await verify(req("/api/auth/verify-code", { email: "heather@x.test", purpose: "login", code: "000000" }));
+    }
+    const r = await verify(req("/api/auth/verify-code", { email: "heather@x.test", purpose: "login", code: "000000" }));
+    expect(r.status).toBe(429);
+    expect((await r.json()).code).toBe("too_many_tries");
   });
 });

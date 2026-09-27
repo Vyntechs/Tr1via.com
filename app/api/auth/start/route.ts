@@ -21,7 +21,8 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { findAuthUserByEmail } from "@/lib/auth/admin-users";
 import { hasPassword } from "@/lib/auth/password-gate";
 import { parseEmail, sendCodeTo } from "@/lib/auth/email-code-flow";
-import { BAD_EMAIL_MESSAGE, TRY_AGAIN_MESSAGE } from "@/lib/auth/auth-messages";
+import { hitIpLimit } from "@/lib/auth/rate-limits";
+import { BAD_EMAIL_MESSAGE, TOO_MANY_TRIES_MESSAGE, TRY_AGAIN_MESSAGE } from "@/lib/auth/auth-messages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,6 +30,10 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
+  // Per-IP cap (lib/auth/rate-limits.ts) — this door looks up emails.
+  if (await hitIpLimit("ip:start", req)) {
+    return NextResponse.json({ code: "too_many_tries", error: TOO_MANY_TRIES_MESSAGE }, { status: 429 });
+  }
   const body = (await req.json().catch(() => null)) as { email?: unknown } | null;
   const email = parseEmail(body?.email);
   if (!email) {

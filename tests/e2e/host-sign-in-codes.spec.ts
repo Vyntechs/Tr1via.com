@@ -64,6 +64,10 @@ test.describe("email-first sign-in — codes, passwords, closed doors", () => {
     await ctx.close();
     // Keep the site-wide hourly code cap from tripping across local reruns.
     await admin!.from("auth_email_codes").delete().like("email", "%@tr1via.test");
+    // Same for the per-IP / wrong-password limits (every local run is one
+    // IP). The table only exists once its migration is applied locally;
+    // without it the limits fail open, so a missing table is fine here.
+    await admin!.from("auth_rate_events").delete().gte("created_at", "1970-01-01T00:00:00Z");
   });
 
   test.afterAll(async ({ browser }) => {

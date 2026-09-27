@@ -23,11 +23,13 @@ import { createSessionCookieClient } from "@/lib/auth/session-cookies";
 import { checkNewPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
 import { cleanCode } from "@/lib/auth/email-codes";
 import { checkCode, parseEmail } from "@/lib/auth/email-code-flow";
+import { hitIpLimit } from "@/lib/auth/rate-limits";
 import {
   ACCOUNT_EXISTS_MESSAGE,
   BAD_CODE_MESSAGE,
   BAD_EMAIL_MESSAGE,
   RATE_LIMIT_MESSAGE,
+  TOO_MANY_TRIES_MESSAGE,
   TRY_AGAIN_MESSAGE,
   WEAK_PASSWORD_MESSAGE,
   isDuplicateEmail,
@@ -43,6 +45,8 @@ function fail(status: number, code: string, error: string, field?: string) {
 }
 
 export async function POST(req: NextRequest) {
+  // Shares the per-IP code-check cap with /api/auth/verify-code.
+  if (await hitIpLimit("ip:verify-code", req)) return fail(429, "too_many_tries", TOO_MANY_TRIES_MESSAGE);
   const body = (await req.json().catch(() => null)) as
     | { email?: unknown; password?: unknown; confirm?: unknown; code?: unknown }
     | null;

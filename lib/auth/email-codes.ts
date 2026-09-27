@@ -11,8 +11,9 @@
 //     server's SESSION_SECRET — never the plain code
 //   - a code works for 10 minutes, allows 5 tries, and works once
 //   - sending a new code retires the older ones for that email + purpose
-//   - at most 5 codes per email per hour, and a site-wide hourly cap so a
-//     flood of fake sign-ups can't burn through the Zoho mailbox's limits
+//   - at most 5 codes per email per hour, and a site-wide hourly cap PER
+//     PURPOSE (so a flood of fake sign-ups can't burn through the Zoho
+//     mailbox's limits, and can't use up the login/reset codes either)
 //   - the check is constant-time (timingSafeEqual)
 //
 // Storage lives behind the small CodeStore interface (Supabase in
@@ -27,7 +28,16 @@ export const CODE_LENGTH = 6;
 export const CODE_TTL_MS = 10 * 60 * 1000;
 export const MAX_ATTEMPTS = 5;
 export const MAX_SENDS_PER_EMAIL_PER_HOUR = 5;
-export const MAX_SENDS_PER_HOUR_SITEWIDE = 60;
+/**
+ * Site-wide codes per hour, separately for each purpose (60 in all, the
+ * old single cap). Signup spam fills only the signup allowance; hosts can
+ * still get login and reset codes.
+ */
+export const MAX_SENDS_PER_HOUR_SITEWIDE: Readonly<Record<CodePurpose, number>> = {
+  login: 30,
+  reset: 20,
+  signup: 10,
+};
 const HOUR_MS = 60 * 60 * 1000;
 // Rows older than this are deleted opportunistically when a new code is sent.
 const KEEP_ROWS_MS = 24 * HOUR_MS;
@@ -52,8 +62,14 @@ export interface NewCodeRow {
 }
 
 export interface CodeStore {
-  /** Codes created at/after sinceIso — for one email, or site-wide when email is null. */
-  countSince(email: string | null, sinceIso: string): Promise<number>;
+  /**
+   * Codes created at/after sinceIso, filtered by email and/or purpose
+   * (a null filter means "any").
+   */
+  countSince(
+    filter: { email: string | null; purpose: CodePurpose | null },
+    sinceIso: string,
+  ): Promise<number>;
   /** Mark every unconsumed code for this email + purpose as used. */
   retireActive(email: string, purpose: CodePurpose, nowIso: string): Promise<void>;
   insert(row: NewCodeRow): Promise<void>;
@@ -135,10 +151,11 @@ export async function issueCode(
   const now = input.now ?? new Date();
   const hourAgo = new Date(now.getTime() - HOUR_MS).toISOString();
 
-  if ((await store.countSince(email, hourAgo)) >= MAX_SENDS_PER_EMAIL_PER_HOUR) {
+  if ((await store.countSince({ email, purpose: null }, hourAgo)) >= MAX_SENDS_PER_EMAIL_PER_HOUR) {
     return { ok: false, reason: "too_many_for_email" };
   }
-  if ((await store.countSince(null, hourAgo)) >= MAX_SENDS_PER_HOUR_SITEWIDE) {
+  const sitewide = await store.countSince({ email: null, purpose: input.purpose }, hourAgo);
+  if (sitewide >= MAX_SENDS_PER_HOUR_SITEWIDE[input.purpose]) {
     return { ok: false, reason: "too_many_sitewide" };
   }
 
