@@ -148,6 +148,60 @@ describe("issue + verify", () => {
     expect(store.rows[0].attempts).toBeLessThanOrEqual(MAX_ATTEMPTS);
   });
 
+  it("two correct guesses at once: neither is told 'wrong' (losing the count race isn't a wrong code)", async () => {
+    const store = memoryCodeStore();
+    const issued = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });
+    if (!issued.ok) throw new Error("expected a code");
+    const both = await Promise.all(
+      [0, 1].map(() =>
+        verifyCode(store, { email: EMAIL, purpose: "login", code: issued.code, now: at(1000), consume: false }),
+      ),
+    );
+    expect(both).toEqual([
+      { ok: true, codeId: issued.codeId },
+      { ok: true, codeId: issued.codeId },
+    ]);
+    expect(store.rows[0].attempts).toBe(2);
+  });
+
+  it("her correct code still works when a stranger's wrong guess moves the count first", async () => {
+    const store = memoryCodeStore();
+    const issued = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });
+    if (!issued.ok) throw new Error("expected a code");
+    // Between her read of the code and her count, a parallel guess counts.
+    const racing: typeof store = {
+      ...store,
+      async bumpAttempts(id, expected) {
+        store.rows[0].attempts += 1;
+        racing.bumpAttempts = store.bumpAttempts;
+        return store.bumpAttempts(id, expected);
+      },
+    };
+    const r = await verifyCode(racing, { email: EMAIL, purpose: "login", code: issued.code, now: at(1000) });
+    expect(r).toEqual({ ok: true, codeId: issued.codeId });
+    expect(store.rows[0].attempts).toBe(2);
+    expect(store.rows[0].consumed_at).not.toBeNull();
+  });
+
+  it("the race retry still respects the limit: a code locked mid-guess isn't checked", async () => {
+    const store = memoryCodeStore();
+    const issued = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });
+    if (!issued.ok) throw new Error("expected a code");
+    store.rows[0].attempts = MAX_ATTEMPTS - 1;
+    const racing: typeof store = {
+      ...store,
+      async bumpAttempts(id, expected) {
+        store.rows[0].attempts = MAX_ATTEMPTS; // other guesses used the last try
+        racing.bumpAttempts = store.bumpAttempts;
+        return store.bumpAttempts(id, expected);
+      },
+    };
+    const r = await verifyCode(racing, { email: EMAIL, purpose: "login", code: issued.code, now: at(1000) });
+    expect(r).toMatchObject({ ok: false, reason: "too_many_attempts", counted: false });
+    expect(store.rows[0].attempts).toBe(MAX_ATTEMPTS);
+    expect(store.rows[0].consumed_at).toBeNull();
+  });
+
   it("a newer code (e.g. a stranger asking for one) doesn't cancel the one in her inbox", async () => {
     const store = memoryCodeStore();
     const hers = await issueCode(store, { email: EMAIL, purpose: "login", now: T0 });

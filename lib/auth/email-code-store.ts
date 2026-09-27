@@ -78,6 +78,12 @@ export function supabaseCodeStore(
       check(error, "count try");
       return Array.isArray(data) && data.length === 1;
     },
+    async readAttempts(id: string) {
+      const { data, error } = await t().select("attempts, consumed_at").eq("id", id).maybeSingle();
+      check(error, "read tries");
+      if (!data) return null;
+      return { attempts: data.attempts, consumed: data.consumed_at !== null };
+    },
     async consume(id: string, nowIso: string) {
       const { data, error } = await t()
         .update({ consumed_at: nowIso })

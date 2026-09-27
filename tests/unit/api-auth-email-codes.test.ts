@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   generateLink: vi.fn(),
   createUser: vi.fn(),
   verifyOtp: vi.fn(),
+  adminSignOut: vi.fn(),
   signInWithPassword: vi.fn(),
   sendMail: vi.fn(),
   setAll: null as null | SetAll,
@@ -50,6 +51,7 @@ vi.mock("@/lib/supabase/admin", () => ({
         generateLink: h.generateLink,
         createUser: h.createUser,
         updateUserById: h.updateUserById,
+        signOut: h.adminSignOut,
       },
     },
   }),
@@ -104,7 +106,10 @@ function sessionWorks(appMetadata: object) {
   h.generateLink.mockResolvedValue({ data: { properties: { hashed_token: "hashed-tok" } }, error: null });
   h.verifyOtp.mockImplementation(async () => {
     h.setAll?.([{ name: "sb-test-auth-token", value: "session", options: { path: "/" } }]);
-    return { data: { user: { id: "u1", app_metadata: appMetadata } }, error: null };
+    return {
+      data: { user: { id: "u1", app_metadata: appMetadata }, session: { access_token: "new-session-jwt" } },
+      error: null,
+    };
   });
 }
 
@@ -124,6 +129,7 @@ beforeEach(() => {
     games: () => [],
   });
   h.updateUserById.mockResolvedValue({ data: {}, error: null });
+  h.adminSignOut.mockResolvedValue({ data: null, error: null });
   vi.stubEnv("SESSION_SECRET", "route-test-secret");
   vi.stubEnv("ZOHO_SMTP_PASSWORD", "zoho-app-password");
 });
@@ -606,12 +612,57 @@ describe("verify-code uses the code up only after her session starts", () => {
     });
     h.verifyOtp.mockImplementation(async () => {
       h.setAll?.([{ name: "sb-test-auth-token", value: "session", options: { path: "/" } }]);
-      return { data: { user: { id: "u1", app_metadata: {} } }, error: null };
+      return {
+        data: { user: { id: "u1", app_metadata: {} }, session: { access_token: "new-session-jwt" } },
+        error: null,
+      };
     });
     const res = await verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code }));
     expect(res.status).toBe(400);
     expect((await res.json()).code).toBe("code_used");
     expect(res.cookies.get("sb-test-auth-token")).toBeUndefined();
+    // The session this request started is ended — that one only.
+    expect(h.adminSignOut).toHaveBeenCalledWith("new-session-jwt", "local");
+  });
+
+  it("couldn't mark the code used → the new session is ended (local scope), no cookies, code still works", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }));
+    const code = lastEmailedCode();
+    sessionWorks({});
+    const realConsume = store().consume;
+    store().consume = async () => {
+      throw new Error("database down");
+    };
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code }));
+    log.mockRestore();
+    expect(res.status).toBe(500);
+    expect(res.cookies.get("sb-test-auth-token")).toBeUndefined();
+    expect(h.adminSignOut).toHaveBeenCalledTimes(1);
+    expect(h.adminSignOut).toHaveBeenCalledWith("new-session-jwt", "local");
+
+    store().consume = realConsume;
+    const retry = await verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code }));
+    expect(retry.status).toBe(200);
+    expect(h.adminSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it("if ending the unused session fails, she still gets the friendly error", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }));
+    const code = lastEmailedCode();
+    sessionWorks({});
+    h.generateLink.mockImplementation(async () => {
+      store().rows[0].consumed_at = new Date().toISOString();
+      return { data: { properties: { hashed_token: "hashed-tok" } }, error: null };
+    });
+    h.adminSignOut.mockRejectedValueOnce(new Error("auth down"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    const res = await verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code }));
+    log.mockRestore();
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("code_used");
   });
 });
 

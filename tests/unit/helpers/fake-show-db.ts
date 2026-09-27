@@ -1,6 +1,7 @@
 // Tiny stand-in for the admin client's query builder, enough for
 // lib/auth/live-show.ts (hosts → nights → games) and the founder-flag
-// hosts lookup: select / eq / is / not(col, "is", null) / in / gte / limit,
+// hosts lookup: select / eq / is / not(col, "is", null) / in / gte / limit /
+// or("a.gte.X,b.gte.Y") (gte terms only),
 // awaited directly or via maybeSingle(). Rows are read at query time, so a
 // test can change them between requests. `fail` makes every query error.
 
@@ -29,6 +30,15 @@ export function fakeShowDb(tables: Record<string, () => Row[]> = {}): FakeShowDb
         in: (col: string, vs: unknown[]) => (filters.push((r) => vs.includes(r[col])), q),
         gte: (col: string, v: string) =>
           (filters.push((r) => typeof r[col] === "string" && (r[col] as string) >= v), q),
+        or: (expr: string) => {
+          const terms = expr.split(",").map((t) => {
+            const [col, op, ...rest] = t.split(".");
+            if (op !== "gte") throw new Error(`fake-show-db: unsupported or() term ${t}`);
+            return { col, v: rest.join(".") };
+          });
+          filters.push((r) => terms.some(({ col, v }) => typeof r[col] === "string" && (r[col] as string) >= v));
+          return q;
+        },
         limit: () => q,
         maybeSingle: async () => {
           const a = answer();

@@ -116,6 +116,8 @@ export interface CodeStore {
    * code is unconsumed. False when another request got there first.
    */
   bumpAttempts(id: string, expected: number): Promise<boolean>;
+  /** One code's current try count, and whether it's been used. Null if gone. */
+  readAttempts(id: string): Promise<{ attempts: number; consumed: boolean } | null>;
   /** consumed_at := now, only if still unconsumed. False if already used. */
   consume(id: string, nowIso: string): Promise<boolean>;
   /** Housekeeping: delete rows created before beforeIso. */
@@ -258,17 +260,29 @@ export async function verifyCode(
 
   // Count this try against EVERY live code BEFORE checking it, each with a
   // compare-and-set, so parallel guesses can never get more than
-  // MAX_ATTEMPTS tries at any one code. A code whose count moved under us
-  // is skipped for this guess.
-  const bumped = (
-    await Promise.all(live.map(async (row) => ((await store.bumpAttempts(row.id, row.attempts)) ? row : null)))
-  ).filter((r): r is CodeRow => r !== null);
-  if (bumped.length === 0) return { ok: false, reason: "busy", counted: false };
+  // MAX_ATTEMPTS tries at any one code. When a parallel guess moved a
+  // code's count first, re-read it and count again (countTry), so losing
+  // that race never turns a correct code into "wrong". A guess is only
+  // compared against codes it was counted against.
+  const tries = await Promise.all(live.map((row) => countTry(store, row)));
+  const counted = live.filter((_, i) => tries[i].status === "counted");
 
   const expected = hashCode({ email, purpose: input.purpose, code: input.code });
-  const match = bumped.find((row) => hashesMatch(expected, row.code_hash));
+  const match = counted.find((row) => hashesMatch(expected, row.code_hash));
   if (!match) {
-    const allLocked = bumped.every((row) => row.attempts + 1 >= MAX_ATTEMPTS) && bumped.length === live.length;
+    // Couldn't count it against some code (heavy contention): say nothing
+    // about that code — "try again", never "wrong".
+    if (tries.some((t) => t.status === "busy")) {
+      return { ok: false, reason: "busy", counted: counted.length > 0 };
+    }
+    if (counted.length === 0) {
+      // Every code was locked or used while this guess was being counted.
+      const anyUsed = tries.some((t) => t.status === "used");
+      return { ok: false, reason: anyUsed ? "no_code" : "too_many_attempts", counted: false };
+    }
+    const allLocked = tries.every(
+      (t) => t.status === "locked" || t.status === "used" || (t.status === "counted" && t.attempts >= MAX_ATTEMPTS),
+    );
     return { ok: false, reason: allLocked ? "too_many_attempts" : "wrong_code", counted: true };
   }
   if (input.consume === false) return { ok: true, codeId: match.id };
@@ -276,6 +290,29 @@ export async function verifyCode(
     return { ok: false, reason: "no_code", counted: true };
   }
   return { ok: true, codeId: match.id };
+}
+
+type TryCount =
+  | { status: "counted"; attempts: number }
+  | { status: "locked" | "used" | "busy" };
+
+/**
+ * Count one try against one code: attempts + 1 with a compare-and-set,
+ * re-reading the count and trying again when a parallel guess got there
+ * first. Every lost race means the count went up (it never goes past
+ * MAX_ATTEMPTS) or the code was used, so the loop ends within
+ * MAX_ATTEMPTS + 1 rounds; "busy" only if the store misbehaves.
+ */
+async function countTry(store: CodeStore, row: CodeRow): Promise<TryCount> {
+  let attempts = row.attempts;
+  for (let round = 0; round <= MAX_ATTEMPTS + 1; round++) {
+    if (attempts >= MAX_ATTEMPTS) return { status: "locked" };
+    if (await store.bumpAttempts(row.id, attempts)) return { status: "counted", attempts: attempts + 1 };
+    const now = await store.readAttempts(row.id);
+    if (!now || now.consumed) return { status: "used" };
+    attempts = now.attempts;
+  }
+  return { status: "busy" };
 }
 
 /**

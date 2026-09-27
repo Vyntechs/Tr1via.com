@@ -1,7 +1,9 @@
 // Six big boxes for the emailed 6-digit code. Under the boxes is ONE real
 // input (numbers only, autocomplete="one-time-code"), so pasting the whole
 // code or letting the phone fill it from the email both just work; the
-// boxes only draw what's typed.
+// boxes only draw what's typed. No maxLength on the input: a paste like
+// "123 456" or "Your code: 123456" must reach onChange whole, which keeps
+// only the digits and then the first six.
 
 "use client";
 
@@ -9,6 +11,11 @@ import { useRef, type ChangeEvent } from "react";
 import { useTheme } from "@/components/system";
 
 export const CODE_BOX_COUNT = 6;
+
+/** Digits only, then the first six ("Your code: 123 456" → "123456"). */
+export function codeDigits(raw: string): string {
+  return raw.replace(/\D/g, "").slice(0, CODE_BOX_COUNT);
+}
 
 export function CodeBoxes({
   value,
@@ -78,14 +85,11 @@ export function CodeBoxes({
         inputMode="numeric"
         autoComplete="one-time-code"
         pattern="[0-9]*"
-        maxLength={CODE_BOX_COUNT}
         autoFocus={autoFocus}
         disabled={disabled}
         aria-invalid={invalid || undefined}
         value={value}
-        onChange={(e: ChangeEvent<HTMLInputElement>) =>
-          onChange(e.target.value.replace(/\D/g, "").slice(0, CODE_BOX_COUNT))
-        }
+        onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(codeDigits(e.target.value))}
         style={{
           position: "absolute",
           inset: 0,

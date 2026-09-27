@@ -22,7 +22,8 @@
 // The code is checked first but only USED UP after her session has
 // started, so a hiccup starting the session can be retried with the same
 // code. If two requests race with one code, only the one that uses it up
-// gets the session cookies.
+// gets the session cookies; a session started for a code that then can't
+// be used up is signed out again (that session only).
 //
 // The account lookup is NOT redundant: generateLink creates a brand-new
 // account for an unknown email, so we must confirm the account exists
@@ -88,10 +89,15 @@ export async function POST(req: NextRequest) {
   if (!session.ok) return fail(500, "sign_in_failed", TRY_AGAIN_MESSAGE);
 
   const used = await spendCode({ codeId: checked.codeId, email, purpose });
-  // Another request used this code first: that one gets the session.
-  if (used === "already_used") return fail(400, "code_used", CODE_USED_MESSAGE);
-  // Couldn't mark it used: send no cookies; the same code still works.
-  if (used === "error") return fail(500, "try_again", TRY_AGAIN_MESSAGE);
+  if (used !== "used") {
+    // The session just started goes unused: end it (this session only —
+    // her other devices stay signed in) before sending no cookies.
+    await session.endSession();
+    // Another request used this code first: that one gets the session.
+    if (used === "already_used") return fail(400, "code_used", CODE_USED_MESSAGE);
+    // Couldn't mark it used: the same code still works.
+    return fail(500, "try_again", TRY_AGAIN_MESSAGE);
+  }
 
   let redirect = next;
   if (isInShowPath(next.split("?")[0])) {

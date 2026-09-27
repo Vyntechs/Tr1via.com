@@ -7,8 +7,10 @@
 --
 --   - code_hash is an HMAC-SHA256 of purpose + email + code keyed by the
 --     server's SESSION_SECRET. The plain code is never stored.
---   - A code works for 10 minutes, allows 5 tries, and is single use
---     (consumed_at). Sending a new code retires the older ones.
+--   - A code works for 10 minutes, allows 10 tries, and is single use
+--     (consumed_at). Sending a new code does NOT retire the older ones:
+--     older codes stay valid until they expire (or are locked, or one of
+--     them signs her in, which retires the rest).
 --   - Sends are rate-limited per email (and overall) by counting recent rows.
 --
 -- RLS is on with NO policies, and anon/authenticated have no grants, so the

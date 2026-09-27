@@ -50,8 +50,22 @@ async function legacyHost(page: Page, addr: string): Promise<string> {
   return userId;
 }
 
-async function typeCode(page: Page, code: string) {
-  await page.getByTestId("login-code-input").fill(code, { force: true });
+/**
+ * Put the code in the box the way a paste does (one insertText, which the
+ * browser would cut at a maxLength), wrapped the way it might come out of
+ * an email: "Your code: 123456", " 123456" or "123 456".
+ */
+async function typeCode(page: Page, code: string, wrap: "plain" | "sentence" | "space" | "split" = "plain") {
+  const text =
+    wrap === "sentence"
+      ? `Your code: ${code}`
+      : wrap === "space"
+        ? ` ${code}`
+        : wrap === "split"
+          ? `${code.slice(0, 3)} ${code.slice(3)}`
+          : code;
+  await page.getByTestId("login-code-input").focus();
+  await page.keyboard.insertText(text);
 }
 
 test.describe.configure({ mode: "serial" });
@@ -93,7 +107,7 @@ test.describe("email-first sign-in — codes, passwords, closed doors", () => {
     // No password box for an account that has none.
     await expect(page.getByLabel("Password", { exact: true })).toHaveCount(0);
 
-    await typeCode(page, await latestCode(addr, since));
+    await typeCode(page, await latestCode(addr, since), "sentence");
     await expect(page).toHaveURL(/\/host\/set-password\?from=code&next=%2Fhost$/, { timeout: 30_000 });
     await expect(page.getByTestId("set-password-step")).toHaveText("STEP 2 OF 2 · CREATE YOUR PASSWORD");
     await page.getByLabel("Password", { exact: true }).fill(PASSWORD);
@@ -187,7 +201,7 @@ test.describe("email-first sign-in — codes, passwords, closed doors", () => {
       await page.getByLabel("Email").fill(addr);
       await page.getByTestId(TID.login.submit).click();
       await expect(page.getByTestId("login-code-sent")).toBeVisible({ timeout: 30_000 });
-      await typeCode(page, await latestCode(addr, since));
+      await typeCode(page, await latestCode(addr, since), "space");
     };
 
     await signInByCode();
@@ -262,7 +276,7 @@ test.describe("email-first sign-in — codes, passwords, closed doors", () => {
     const since = new Date().toISOString();
     await page.getByTestId("login-forgot").click();
     await expect(page.getByText("RESET YOUR PASSWORD · CHECK YOUR EMAIL")).toBeVisible({ timeout: 30_000 });
-    await typeCode(page, await latestCode(addr, since));
+    await typeCode(page, await latestCode(addr, since), "split");
     await expect(page).toHaveURL(/\/host\/set-password\?from=reset&next=%2Fhost$/, { timeout: 30_000 });
     const NEW = `${PASSWORD}-new`;
     await page.getByLabel("Password", { exact: true }).fill(NEW);

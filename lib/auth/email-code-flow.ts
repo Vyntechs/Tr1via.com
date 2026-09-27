@@ -181,15 +181,25 @@ export async function spendCode(
  * /auth/grant: the admin API mints a one-time magic-link token (no email is
  * sent), and verifyOtp exchanges it for session cookies held on
  * `applyCookies` until the route picks its response.
+ *
+ * `endSession()` revokes just this new session (scope "local": her other
+ * devices stay signed in) — for when the route decides not to hand it out
+ * after all, so it isn't left alive on the server with no cookies anywhere.
  */
 export async function startSessionForEmail(
   req: NextRequest,
   email: string,
 ): Promise<
-  | { ok: true; user: User; applyCookies: ReturnType<typeof createSessionCookieClient>["applyCookies"] }
+  | {
+      ok: true;
+      user: User;
+      applyCookies: ReturnType<typeof createSessionCookieClient>["applyCookies"];
+      endSession: () => Promise<void>;
+    }
   | { ok: false }
 > {
-  const { data: link, error: linkErr } = await getSupabaseAdmin().auth.admin.generateLink({
+  const admin = getSupabaseAdmin();
+  const { data: link, error: linkErr } = await admin.auth.admin.generateLink({
     type: "magiclink",
     email,
   });
@@ -198,5 +208,16 @@ export async function startSessionForEmail(
   const { supabase, applyCookies } = createSessionCookieClient(req);
   const { data, error } = await supabase.auth.verifyOtp({ type: "magiclink", token_hash: tokenHash });
   if (error || !data.user) return { ok: false };
-  return { ok: true, user: data.user, applyCookies };
+  const accessToken = data.session?.access_token;
+  const endSession = async () => {
+    if (!accessToken) return;
+    try {
+      const { error: outErr } = await admin.auth.admin.signOut(accessToken, "local");
+      if (outErr) throw outErr;
+    } catch (err) {
+      // Best effort: the session got no cookies, so nobody holds it.
+      console.error("[email-code] could not end the unused session", { message: (err as Error)?.message });
+    }
+  };
+  return { ok: true, user: data.user, applyCookies, endSession };
 }

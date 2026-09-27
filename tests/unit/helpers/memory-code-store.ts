@@ -53,6 +53,10 @@ export function memoryCodeStore(): CodeStore & { rows: CodeRow[] } {
       r.attempts = expected + 1;
       return true;
     },
+    async readAttempts(id: string) {
+      const r = rows.find((x) => x.id === id);
+      return r ? { attempts: r.attempts, consumed: r.consumed_at !== null } : null;
+    },
     async consume(id: string, nowIso: string) {
       const r = rows.find((x) => x.id === id);
       if (!r || r.consumed_at !== null) return false;

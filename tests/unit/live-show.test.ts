@@ -9,6 +9,10 @@
 //   - opened long ago but a category is being built in the window → running
 //   - an old night that was never closed (every past production night),
 //     with nothing recent → NOT running
+//   - scheduled for today (venue time, America/Chicago) or within 12h of
+//     now, even if made long ago and never opened → running
+//   - only the last week's nights are looked at: an unclosed night from
+//     weeks ago is ignored, even with game activity
 //   - a closed night, another host's night, no host row → not running
 //   - a database error → null (callers decide)
 
@@ -88,6 +92,57 @@ describe("hostHasRunningShow", () => {
     const night = openedNight("host-h", 30, { closed_at: hoursAgo(20) });
     const job = { id: "j", host_id: "host-h", night_id: night.id, updated_at: hoursAgo(1) };
     expect(await ask(db([night], [], [job]))).toBe(false);
+  });
+
+  it("scheduled for tonight, made 10 days ago, never opened → running", async () => {
+    const night = {
+      id: "n",
+      host_id: "host-h",
+      created_at: hoursAgo(240),
+      opened_at: null,
+      scheduled_at: hoursAgo(-3),
+      closed_at: null,
+    };
+    expect(await ask(db([night]))).toBe(true);
+  });
+
+  it("scheduled for today in Chicago, 14h away (morning check for a late show) → running", async () => {
+    // 2026-09-30 08:00 Chicago (13:00Z); show at 22:00 Chicago (03:00Z next UTC day).
+    const now = new Date("2026-09-30T13:00:00Z");
+    const night = {
+      id: "n",
+      host_id: "host-h",
+      created_at: "2026-09-01T00:00:00Z",
+      opened_at: null,
+      scheduled_at: "2026-10-01T03:00:00Z",
+      closed_at: null,
+    };
+    expect(await hostHasRunningShow(db([night]) as never, "user-h", now)).toBe(true);
+  });
+
+  it("scheduled for another day (and nothing recent) → not running", async () => {
+    const now = new Date("2026-09-30T13:00:00Z");
+    const night = {
+      id: "n",
+      host_id: "host-h",
+      created_at: "2026-09-25T00:00:00Z",
+      opened_at: null,
+      scheduled_at: "2026-10-02T00:30:00Z", // Oct 1, 19:30 Chicago
+      closed_at: null,
+    };
+    expect(await hostHasRunningShow(db([night]) as never, "user-h", now)).toBe(false);
+  });
+
+  it("an unclosed night from weeks ago is ignored, even with a game started an hour ago", async () => {
+    const night = openedNight("host-h", 24 * 21);
+    const game = { id: "g1", night_id: night.id, state: "live", started_at: hoursAgo(1) };
+    expect(await ask(db([night], [game]))).toBe(false);
+  });
+
+  it("a 3-day-old night with a game started an hour ago still counts", async () => {
+    const night = openedNight("host-h", 72);
+    const game = { id: "g1", night_id: night.id, state: "live", started_at: hoursAgo(1) };
+    expect(await ask(db([night], [game]))).toBe(true);
   });
 
   it("another host's show doesn't count", async () => {

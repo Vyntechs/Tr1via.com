@@ -30,6 +30,11 @@ export const SET_PASSWORD_PATH = "/host/set-password";
 // through; every sign-in clears it, so she is asked again next sign-in.
 export const PASSWORD_LATER_COOKIE = "tr1via_pw_later";
 export const PASSWORD_LATER_PATH = "/auth/password-later";
+// Added to the return path when /host/set-password skips itself because a
+// show is running, so the page she lands on can say why (a small note:
+// components/host/PasswordAfterShowNote.tsx).
+export const PASSWORD_AFTER_SHOW_PARAM = "pw";
+export const PASSWORD_AFTER_SHOW_VALUE = "after-show";
 // "This browser just signed in" — set by every sign-in door (see
 // forgetPasswordLater). The founder's prompt needs it, so it appears only on
 // the device she signed in on, never on her other open devices.
@@ -37,9 +42,16 @@ export const SIGNED_IN_HERE_COOKIE = "tr1via_signed_in_here";
 export const SIGNED_IN_HERE_MAX_AGE_S = 12 * 60 * 60;
 
 export const MIN_PASSWORD_LENGTH = 8;
-// Supabase (bcrypt) ignores anything past 72 bytes; cap it so a long
-// password can't silently turn into a shorter one.
-export const MAX_PASSWORD_LENGTH = 72;
+// Supabase (bcrypt) ignores anything past 72 BYTES (UTF-8), not 72
+// characters: an emoji or accented letter takes 2-4 bytes. Cap the bytes so
+// a long password can't silently turn into a shorter one.
+export const MAX_PASSWORD_BYTES = 72;
+
+/** A password's size the way Supabase/bcrypt counts it (UTF-8 bytes). */
+export function passwordBytes(password: string): number {
+  // TextEncoder, not Buffer: this file also runs in middleware (Edge).
+  return new TextEncoder().encode(password).length;
+}
 
 // In-show surfaces. The live console is mirrored to the venue TV and the
 // host phone is the in-hand remote — a full-screen password prompt there
@@ -125,6 +137,14 @@ export function passwordGateRedirect(input: {
   return `${SET_PASSWORD_PATH}?next=${encodeURIComponent(next)}`;
 }
 
+/** `path` with ?pw=after-show added (see PASSWORD_AFTER_SHOW_PARAM). */
+export function withAfterShowNote(path: string): string {
+  const [base, query = ""] = path.split("?");
+  const params = new URLSearchParams(query);
+  params.set(PASSWORD_AFTER_SHOW_PARAM, PASSWORD_AFTER_SHOW_VALUE);
+  return `${base}?${params.toString()}`;
+}
+
 /** "Not now" link: defer the prompt, then go to `next` (default /host). */
 export function passwordLaterHref(next: string = "/host"): string {
   return `${PASSWORD_LATER_PATH}?next=${encodeURIComponent(next)}`;
@@ -190,11 +210,11 @@ export function checkNewPassword(password: string, confirm: string): PasswordChe
       error: `Your password needs at least ${MIN_PASSWORD_LENGTH} characters.`,
     };
   }
-  if (password.length > MAX_PASSWORD_LENGTH) {
+  if (passwordBytes(password) > MAX_PASSWORD_BYTES) {
     return {
       ok: false,
       field: "password",
-      error: `That password is too long. Please keep it under ${MAX_PASSWORD_LENGTH} characters.`,
+      error: `That password is too long. Please use a shorter one: at most ${MAX_PASSWORD_BYTES} plain letters and numbers (emoji and accented letters count as more than one).`,
     };
   }
   if (password !== confirm) {

@@ -3,7 +3,8 @@
 //
 // Proves: "Not now" goes back to the page the gate interrupted (the safe
 // `next`), falling back to /host for a missing, unsafe or in-show `next`;
-// and while a show is running the page skips itself to that same place.
+// and while a show is running the page skips itself to that same place,
+// with ?pw=after-show so that page can say why.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -53,9 +54,21 @@ describe("set-password page: 'Not now' target", () => {
     expect(await laterHrefFor(next)).toBe(later("/host"));
   });
 
-  it("a running show skips the page to that same place", async () => {
+  it("a running show skips the page to that same place, flagged so it can say why", async () => {
     h.running = true;
     await expect(laterHrefFor("/host/setup/n1")).rejects.toThrow("NEXT_REDIRECT");
-    expect(h.redirect).toHaveBeenCalledWith(later("/host/setup/n1"));
+    expect(h.redirect).toHaveBeenCalledWith(later("/host/setup/n1?pw=after-show"));
+  });
+
+  it("keeps her own query when adding the flag", async () => {
+    h.running = true;
+    await expect(laterHrefFor("/host/setup/n1?slot=2")).rejects.toThrow("NEXT_REDIRECT");
+    expect(h.redirect).toHaveBeenCalledWith(later("/host/setup/n1?slot=2&pw=after-show"));
+  });
+
+  it("couldn't tell (null) counts as running too", async () => {
+    h.running = null;
+    await expect(laterHrefFor(undefined)).rejects.toThrow("NEXT_REDIRECT");
+    expect(h.redirect).toHaveBeenCalledWith(later("/host?pw=after-show"));
   });
 });

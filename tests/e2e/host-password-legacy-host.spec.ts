@@ -234,11 +234,18 @@ test.describe("legacy host (no password) — zero change until the founder asks"
     await fastForwardTimer(remote, q2);
 
     // /host mid-show: her night is running, so the password step skips
-    // itself — straight to /host, the form never shows.
+    // itself — straight to /host, the form never shows; a small note says
+    // why, and the ?pw=after-show flag is dropped from the address bar.
     await hostPage.goto("/host");
+    await expect(hostPage.getByTestId("password-after-show-note")).toHaveText(
+      /Your show is running — you can create a password after the show\./,
+      { timeout: 15_000 },
+    );
     await expect(hostPage).toHaveURL(/\/host$/, { timeout: 15_000 });
     await expect(hostPage.getByText("HOSTING AS")).toBeVisible({ timeout: 15_000 });
     await expect(hostPage.getByTestId("set-password-screen")).toHaveCount(0);
+    await hostPage.getByTestId("password-after-show-ok").click();
+    await expect(hostPage.getByTestId("password-after-show-note")).toHaveCount(0);
     // Even straight to the save route: refused mid-show, nothing written.
     const refused = await hostPage.request.post("/api/auth/set-password", {
       data: { password: NEW_PASSWORD, confirm: NEW_PASSWORD },

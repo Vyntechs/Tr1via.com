@@ -10,6 +10,7 @@
 import { describe, expect, it } from "vitest";
 import {
   checkNewPassword,
+  passwordBytes,
   hasPassword,
   isInShowPath,
   isFounderAccount,
@@ -191,6 +192,23 @@ describe("checkNewPassword", () => {
   });
   it("rejects more than 72 characters", () => {
     const long = "a".repeat(73);
+    expect(checkNewPassword(long, long)).toMatchObject({ ok: false, field: "password" });
+  });
+  it("accepts exactly 72 plain characters", () => {
+    const max = "a".repeat(72);
+    expect(checkNewPassword(max, max)).toEqual({ ok: true });
+  });
+  it("counts bytes the way Supabase does: 24 euro signs (72 bytes) ok, 25 (75 bytes) too long", () => {
+    expect(passwordBytes("€")).toBe(3);
+    const ok = "€".repeat(24);
+    expect(checkNewPassword(ok, ok)).toEqual({ ok: true });
+    const long = "€".repeat(25); // only 25 characters, but 75 bytes
+    const r = checkNewPassword(long, long);
+    expect(r).toMatchObject({ ok: false, field: "password" });
+    expect(r.ok ? "" : r.error).toMatch(/too long/);
+  });
+  it("an emoji password under 72 characters but over 72 bytes is refused", () => {
+    const long = "🎉".repeat(19); // 38 UTF-16 units, 76 bytes
     expect(checkNewPassword(long, long)).toMatchObject({ ok: false, field: "password" });
   });
   it("accepts a matching 8+ character password", () => {

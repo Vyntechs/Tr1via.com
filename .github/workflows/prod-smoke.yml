@@ -56,17 +56,17 @@ jobs:
       - name: Wait for Vercel deploy to settle (push trigger only)
         if: github.event_name == 'push'
         run: |
-          # Vercel typically deploys in 30-60s. Poll the site's health for
-          # up to 5 minutes before giving up. We hit a known route to
-          # confirm the deploy is responding.
+          # Vercel typically deploys in 30-60s. Poll the site for up to 5
+          # minutes before going on. The probe loads the /login PAGE (GET,
+          # no sign-in attempt): it must NOT hit /api/auth/login, whose
+          # per-IP cap (lib/auth/rate-limits.ts, 30 per 15 min) would count
+          # every probe and could lock the smoke's own sign-in out.
           for i in $(seq 1 30); do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" https://tr1via.com/api/auth/login -X POST -H "Content-Type: application/json" -d '{}')
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" https://tr1via.com/login)
             echo "[$i] health probe -> $CODE"
-            # 400 = our route is live and correctly rejecting an empty sign-in
-            #       (no email/password → no Supabase call, no lookup)
-            # 404/405 = route not deployed yet
-            # 500/502/503 = backend issue
-            if [ "$CODE" = "400" ]; then echo "deploy live"; break; fi
+            # 200 = the site is up and rendering pages
+            # 404/5xx = not deployed yet / backend issue
+            if [ "$CODE" = "200" ]; then echo "deploy live"; break; fi
             sleep 10
           done
 

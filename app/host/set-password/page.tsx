@@ -8,14 +8,17 @@
 // skips /host/live and /host/phone, and if one of her nights is running
 // right now (lib/auth/live-show.ts) this page skips itself — the same
 // "Not now" as the link on the form — so she goes straight in and is asked
-// again next sign-in. (The save route refuses mid-show too.)
+// again next sign-in, with a small note on that page saying why
+// ("…you can create a password after the show": ?pw=after-show,
+// components/host/PasswordAfterShowNote.tsx). (The save route refuses
+// mid-show too.)
 //
 // Server wrapper resolves the safe return path and the running-show check;
 // the form is client-side. "Not now" goes back to that same safe return
 // path (the page the gate interrupted), falling back to /host.
 
 import { redirect } from "next/navigation";
-import { passwordLaterHref, setPasswordReturnPath } from "@/lib/auth/password-gate";
+import { passwordLaterHref, setPasswordReturnPath, withAfterShowNote } from "@/lib/auth/password-gate";
 import { hostHasRunningShow } from "@/lib/auth/live-show";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { getSupabaseServer } from "@/lib/supabase/server";
@@ -40,7 +43,7 @@ export default async function SetPasswordPage({
   } = await (await getSupabaseServer()).auth.getUser();
   // null (couldn't tell) counts as running: never risk a show.
   if (user && (await hostHasRunningShow(getSupabaseAdmin(), user.id)) !== false) {
-    redirect(passwordLaterHref(returnPath));
+    redirect(passwordLaterHref(withAfterShowNote(returnPath)));
   }
 
   return <SetPasswordClient returnPath={returnPath} from={arrivedVia} laterHref={passwordLaterHref(returnPath)} />;
