@@ -4,10 +4,11 @@
 // validation.
 //
 // What this proves (and the API-only smoke doesn't):
-//   1. /login renders its device-neutral promise and the email input accepts text
-//   2. Clicking "Sign in" fires the submit handler → /api/auth/host-access
+//   1. /login renders its device-neutral promise and the email + password
+//      inputs accept text
+//   2. Clicking "Sign in" fires the submit handler → /api/auth/login
 //      (via the page's wired-in fetch) and, on 200, the client navigates to
-//      /host
+//      /host. Needs SMOKE_FOUNDER_PASSWORD (GitHub Actions secret).
 //   3. /host renders without crashing — either the returning-host dashboard
 //      (host-dashboard) or the first-time onboarding (host-onboarding-first)
 //      mounts, and no console errors fire on the page
@@ -27,11 +28,15 @@ import { test, expect } from "@playwright/test";
 import { TID } from "./helpers/selectors";
 
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
+const FOUNDER_PASSWORD = process.env.SMOKE_FOUNDER_PASSWORD ?? "";
 
 test.describe("prod UI smoke — login → dashboard", () => {
   test.setTimeout(60_000);
 
-  test("founder lands on /host after submitting email", async ({ page }) => {
+  test("founder lands on /host after signing in with email + password", async ({ page }) => {
+    if (!FOUNDER_PASSWORD) {
+      throw new Error("Missing SMOKE_FOUNDER_PASSWORD (the founder account password)");
+    }
     const errors: string[] = [];
     page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));
     page.on("console", (msg) => {
@@ -49,6 +54,7 @@ test.describe("prod UI smoke — login → dashboard", () => {
 
     // 2. Submit the form
     await emailInput.fill(FOUNDER_EMAIL);
+    await page.getByLabel("Password", { exact: true }).fill(FOUNDER_PASSWORD);
     await page.getByTestId(TID.login.submit).click();
 
     // 3. Bypass should route us to /host

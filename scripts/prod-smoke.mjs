@@ -5,7 +5,7 @@
 //   - real prod Supabase
 //
 // Flow:
-//   1. Founder bypass login → session cookie
+//   1. Founder password login (SMOKE_FOUNDER_EMAIL + SMOKE_FOUNDER_PASSWORD) → session cookie
 //   2. Create a night (auto-creates 2 game shells)
 //   3. Look up game 1 id via Supabase admin
 //   4. Create a category in game 1
@@ -24,6 +24,13 @@ import { genTimeoutFromEnv } from './prod-smoke-config.mjs';
 
 const BASE = process.env.SMOKE_BASE_URL ?? 'https://tr1via.com';
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? 'brandon@vyntechs.com';
+// Host sign-in needs a password (email-only login was removed). Never commit
+// it: set SMOKE_FOUNDER_PASSWORD in .env.local / the GitHub Actions secret.
+const FOUNDER_PASSWORD = process.env.SMOKE_FOUNDER_PASSWORD;
+if (!FOUNDER_PASSWORD) {
+  console.error('Missing SMOKE_FOUNDER_PASSWORD (the founder account password)');
+  process.exit(1);
+}
 const TOPIC = process.argv[2] ?? 'classic movie quotes';
 const GEN_TIMEOUT_MS = genTimeoutFromEnv();
 const POLL_MS = 2000;
@@ -85,8 +92,8 @@ let startedAt = Date.now();
 
 try {
   // 1. Login
-  step('1. founder bypass login');
-  const loginRes = await call(jar, '/api/auth/founder-login', { method: 'POST', body: JSON.stringify({ email: FOUNDER_EMAIL }) });
+  step('1. founder password login');
+  const loginRes = await call(jar, '/api/auth/login', { method: 'POST', body: JSON.stringify({ email: FOUNDER_EMAIL, password: FOUNDER_PASSWORD }) });
   if (!loginRes.ok) throw new Error(`login failed: ${loginRes.status} ${await loginRes.text()}`);
   pass(`logged in as founder (${loginRes.status})`);
   if (jar.cookies.size === 0) throw new Error('no auth cookies set on response');

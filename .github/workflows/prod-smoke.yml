@@ -9,11 +9,14 @@ name: Prod smoke
 # Silence means green. If anything turns red GitHub emails the repo owner.
 # That's the entire UX — Brandon never runs a check manually.
 #
-# One-time setup: add three secrets at Settings → Secrets and variables →
+# One-time setup: add four secrets at Settings → Secrets and variables →
 # Actions:
 #   NEXT_PUBLIC_SUPABASE_URL     (e.g. https://citweuctcnuxmqjxcbiz.supabase.co)
 #   SUPABASE_SERVICE_ROLE_KEY    (the prod key, NOT the anon key)
 #   SMOKE_FOUNDER_EMAIL          (brandon@vyntechs.com)
+#   SMOKE_FOUNDER_PASSWORD       (the founder's TR1VIA password — host sign-in
+#                                 needs email + password; set it at
+#                                 /host/set-password first)
 
 on:
   push:
@@ -57,12 +60,13 @@ jobs:
           # up to 5 minutes before giving up. We hit a known route to
           # confirm the deploy is responding.
           for i in $(seq 1 30); do
-            CODE=$(curl -s -o /dev/null -w "%{http_code}" https://tr1via.com/api/auth/founder-login -X POST -H "Content-Type: application/json" -d '{"email":"smoke-check@invalid.invalid"}')
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" https://tr1via.com/api/auth/login -X POST -H "Content-Type: application/json" -d '{}')
             echo "[$i] health probe -> $CODE"
-            # 404 = our route is live and correctly rejecting the non-founder email
-            # 405 = method not allowed (route not deployed yet)
+            # 400 = our route is live and correctly rejecting an empty sign-in
+            #       (no email/password → no Supabase call, no lookup)
+            # 404/405 = route not deployed yet
             # 500/502/503 = backend issue
-            if [ "$CODE" = "404" ]; then echo "deploy live"; break; fi
+            if [ "$CODE" = "400" ]; then echo "deploy live"; break; fi
             sleep 10
           done
 
@@ -72,6 +76,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
+          SMOKE_FOUNDER_PASSWORD: ${{ secrets.SMOKE_FOUNDER_PASSWORD }}
           SMOKE_BASE_URL: https://tr1via.com
           SMOKE_GEN_TIMEOUT_MS: 240000
         run: node scripts/prod-smoke.mjs "smoke check $(date +%s)"
@@ -79,6 +84,7 @@ jobs:
       - name: UI smoke (real browser → tr1via.com)
         env:
           SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
+          SMOKE_FOUNDER_PASSWORD: ${{ secrets.SMOKE_FOUNDER_PASSWORD }}
           SMOKE_BASE_URL: https://tr1via.com
         run: npx playwright test --config=playwright-prod.config.ts
 
@@ -99,6 +105,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
+          SMOKE_FOUNDER_PASSWORD: ${{ secrets.SMOKE_FOUNDER_PASSWORD }}
           SMOKE_BASE_URL: https://tr1via.com
           SMOKE_THEME_SINGLE: may
           CATEGORIES_PER_GAME: 1

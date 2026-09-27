@@ -18,6 +18,13 @@ import { createClient } from "@supabase/supabase-js";
 
 const BASE = process.env.SMOKE_BASE_URL ?? "https://tr1via.com";
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
+// Host sign-in needs a password (email-only login was removed). Never commit
+// it: set SMOKE_FOUNDER_PASSWORD in .env.local / the GitHub Actions secret.
+const FOUNDER_PASSWORD = process.env.SMOKE_FOUNDER_PASSWORD;
+if (!FOUNDER_PASSWORD) {
+  console.error("Missing SMOKE_FOUNDER_PASSWORD (the founder account's TR1VIA password)");
+  process.exit(1);
+}
 const TOPIC = process.argv[2] ?? "Famous lighthouses of the world";
 const GEN_TIMEOUT_MS = 100_000;
 const POLL_MS = 2_000;
@@ -105,9 +112,9 @@ try {
 
   step("1. founder login");
   {
-    const res = await call(founderJar, "/api/auth/founder-login", {
+    const res = await call(founderJar, "/api/auth/login", {
       method: "POST",
-      body: JSON.stringify({ email: FOUNDER_EMAIL }),
+      body: JSON.stringify({ email: FOUNDER_EMAIL, password: FOUNDER_PASSWORD }),
     });
     if (!res.ok) throw new Error(`login: ${res.status} ${await res.text()}`);
     if (founderJar.cookies.size === 0) throw new Error("no auth cookies");

@@ -45,7 +45,7 @@ Three surfaces, one game. State lives in Postgres; live updates fan out two ways
 - Game lifecycle: `games/[id]/{start,reveal,resolve(via questions),end,end-early,undo,locks}`, `questions/[id]/{resolve,photo,photos,route}`, `answers`, `adjustments`.
 - Setup/content: `categories` (+ `[id]/{generate,manual,pick,reorder}`), `topic-suggestions`, `founder/build-game`, `images/upload`.
 - Nights/room: `nights` (+ `[id]/{open,close,theme,reset-to-setup,players}`, `by-code/[code]`), `room/[code]/snapshot`, `tv/[code]/snapshot`, `players` (+ `[id]/{heartbeat,join-game}`).
-- Auth/session: `session/init` (mints device cookie), `auth/{founder-login,host-access,logout}`, `admin/{hosts,grant-magic-link}`.
+- Auth/session: `session/init` (mints device cookie), `auth/{login,host-access,set-password,logout}` (email + password; host-access = sign-up), `admin/{hosts,grant-magic-link}`. Password marker + "Create your password" gate: `lib/auth/password-gate.ts` (enforced in `middleware.ts`, never on `/host/live` or `/host/phone`).
 - Billing: `stripe/{checkout,portal,webhook}`.
 - Test-only: `api/_test/{login,reset,seed-night,fast-forward}` — gated, see Gotchas.
 
@@ -71,7 +71,7 @@ Host taps an action → Route Handler writes to Postgres (service-role `admin` c
 - `supabase/migrations/` — 14 SQL migrations; schema source of truth.
 
 ## Environment
-Copy `.env.example` → `.env.local`. Keys: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `PEXELS_API_KEY`, `SESSION_SECRET` (`openssl rand -base64 48`), `NEXT_PUBLIC_SITE_URL`, Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`). Test/mocks: `TEST_AUTH_ENABLED`, `TEST_SECRET`, `MOCK_EXTERNAL`, `ANTHROPIC_BASE_URL`, `PEXELS_BASE_URL` (orchestration-only — never set in prod).
+Copy `.env.example` → `.env.local`. Keys: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `ANTHROPIC_API_KEY`, `PEXELS_API_KEY`, `SESSION_SECRET` (`openssl rand -base64 48`), `NEXT_PUBLIC_SITE_URL`, Stripe (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_MONTHLY`). Prod smoke scripts/workflow: `SMOKE_FOUNDER_EMAIL` + `SMOKE_FOUNDER_PASSWORD` (founder sign-in; never commit the password — GitHub Actions secret / `.env.local` only). Test/mocks: `TEST_AUTH_ENABLED`, `TEST_SECRET`, `MOCK_EXTERNAL`, `ANTHROPIC_BASE_URL`, `PEXELS_BASE_URL` (orchestration-only — never set in prod).
 
 LLM models (from `lib/ai/`): generation `DEFAULT_MODEL = "claude-sonnet-4-6"`; verification `VERIFIER_MODEL = "claude-opus-4-8"`.
 
