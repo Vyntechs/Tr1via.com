@@ -26,6 +26,8 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Room for a user lookup plus a slow SMTP handshake (8s connect timeout).
+export const maxDuration = 30;
 
 function fail(status: number, code: string, error: string) {
   return NextResponse.json({ code, error }, { status });

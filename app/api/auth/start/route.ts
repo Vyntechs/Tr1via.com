@@ -25,6 +25,8 @@ import { BAD_EMAIL_MESSAGE, TRY_AGAIN_MESSAGE } from "@/lib/auth/auth-messages";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Room for a user lookup plus a slow SMTP handshake (8s connect timeout).
+export const maxDuration = 30;
 
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => null)) as { email?: unknown } | null;
