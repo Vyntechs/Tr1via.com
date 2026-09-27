@@ -1,6 +1,7 @@
 // Test-only host login. Returns 404 to anyone without the secret header.
-// Otherwise: get-or-create auth.users row for the given email, get-or-create
-// hosts row, mint a Supabase session via generateLink + verifyOtp, return
+// Otherwise: get-or-create auth.users row for the given email (with the
+// app_metadata.password_set_at marker so the password gate stays out of the
+// way), get-or-create hosts row, mint a Supabase session via generateLink + verifyOtp, return
 // {hostId, userId}. Caller is now signed in (auth cookies set on response).
 //
 // Hard refusal: only @tr1via.test emails permitted through this route, even
@@ -11,6 +12,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isTestModeEnabled, isTestEmail } from "@/lib/api/require-test-mode";
+import { findAuthUserByEmail } from "@/lib/auth/admin-users";
+import { hasPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
 
 interface CookieToSet {
   name: string;
@@ -32,17 +35,34 @@ export async function POST(req: NextRequest) {
 
   const admin = getSupabaseAdmin();
 
-  // 1. Get-or-create auth user
-  const { data: existing } = await admin.auth.admin.listUsers({ perPage: 200 });
-  const existingUser = existing?.users.find((u) => u.email === body.email);
+  // 1. Get-or-create auth user, always carrying the password marker so the
+  //    /host "Create your password" gate never interrupts local e2e runs.
+  const lookup = await findAuthUserByEmail(admin, body.email);
+  if (!lookup.ok) {
+    return NextResponse.json({ error: lookup.error }, { status: 500 });
+  }
+  const existingUser = lookup.user;
+  const passwordSetAt = new Date().toISOString();
   let userId: string;
   if (existingUser) {
     userId = existingUser.id;
+    if (!hasPassword(existingUser.app_metadata)) {
+      const { error } = await admin.auth.admin.updateUserById(userId, {
+        app_metadata: {
+          ...(existingUser.app_metadata ?? {}),
+          [PASSWORD_SET_AT_KEY]: passwordSetAt,
+        },
+      });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+    }
   } else {
     const { data, error } = await admin.auth.admin.createUser({
       email: body.email,
       email_confirm: true,
       user_metadata: { display_name: body.displayName ?? "Test Host" },
+      app_metadata: { [PASSWORD_SET_AT_KEY]: passwordSetAt },
     });
     if (error || !data.user) {
       return NextResponse.json({ error: error?.message ?? "createUser failed" }, { status: 500 });

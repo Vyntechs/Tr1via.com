@@ -8,6 +8,7 @@
 
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { listAllAuthUsers } from "@/lib/auth/admin-users";
 import { isTestModeEnabled, isTestEmail } from "@/lib/api/require-test-mode";
 
 export async function POST(req: NextRequest) {
@@ -16,8 +17,8 @@ export async function POST(req: NextRequest) {
   }
 
   const admin = getSupabaseAdmin();
-  const { data: usersList } = await admin.auth.admin.listUsers({ perPage: 200 });
-  const testUsers = (usersList?.users ?? []).filter((u) => isTestEmail(u.email));
+  const usersList = await listAllAuthUsers(admin);
+  const testUsers = (usersList.ok ? usersList.users : []).filter((u) => isTestEmail(u.email));
 
   const deleted: string[] = [];
   for (const u of testUsers) {

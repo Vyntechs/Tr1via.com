@@ -2,16 +2,18 @@
 //
 // GET  → list every host in the DB, joined with auth.users for email +
 //        sorted newest-first. Used by /host/admin to render the table.
-// POST → "comp a host": create their auth.users row (with email_confirm
-//        so the magic-link flow works immediately) and their hosts row
-//        with is_paywall_bypassed=true + audit fields. They land in the
-//        DB as an already-comped host; next time they hit /login and
-//        type their email, the magic-link flow signs them in.
+// POST → "comp a host": create their auth.users row (with email_confirm)
+//        and their hosts row with is_paywall_bypassed=true + audit fields.
+//        The account has no password yet: the founder texts them a
+//        sign-in link (grant-magic-link) and they create one on arrival.
 
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 import { requireFounder } from "@/lib/api/auth";
+import { PASSWORD_SET_AT_KEY, passwordPromptSetting } from "@/lib/auth/password-gate";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { findAuthUserByEmail } from "@/lib/auth/admin-users";
+import { loadAdminHostRows, type AdminHostRow } from "@/lib/admin/admin-host-rows";
 import {
   badRequest,
   forbidden,
@@ -20,19 +22,7 @@ import {
   unauthorized,
 } from "@/lib/api/responses";
 
-export interface AdminHostRow {
-  id: string;
-  user_id: string;
-  email: string;
-  display_name: string;
-  default_venue: string | null;
-  role: "host" | "founder";
-  is_paywall_bypassed: boolean;
-  comped_at: string | null;
-  comped_by: string | null;
-  comped_by_name: string | null;
-  created_at: string;
-}
+export type { AdminHostRow };
 
 export async function GET() {
   const auth = await requireFounder();
@@ -41,45 +31,9 @@ export async function GET() {
     return forbidden(auth.error);
   }
 
-  const admin = getSupabaseAdmin();
-
-  // Fetch every host row
-  const { data: hosts, error: hostsErr } = await admin
-    .from("hosts")
-    .select("*")
-    .order("created_at", { ascending: false });
-  if (hostsErr || !hosts) return serverError(hostsErr?.message ?? "hosts query failed");
-
-  // Pull the matching auth.users emails in one call
-  const { data: usersList } = await admin.auth.admin.listUsers({ perPage: 200 });
-  const emailByUserId = new Map<string, string>();
-  for (const u of usersList?.users ?? []) {
-    if (u.email) emailByUserId.set(u.id, u.email);
-  }
-
-  // Pull founder display names for the comped_by foreign key
-  const compedByIds = Array.from(new Set(hosts.map((h) => h.comped_by).filter((v): v is string => !!v)));
-  const compedByName = new Map<string, string>();
-  if (compedByIds.length > 0) {
-    const { data: compers } = await admin.from("hosts").select("id, display_name").in("id", compedByIds);
-    for (const c of compers ?? []) compedByName.set(c.id, c.display_name);
-  }
-
-  const rows: AdminHostRow[] = hosts.map((h) => ({
-    id: h.id,
-    user_id: h.user_id,
-    email: emailByUserId.get(h.user_id) ?? "(unknown)",
-    display_name: h.display_name,
-    default_venue: h.default_venue,
-    role: (h.role === "founder" ? "founder" : "host") as "host" | "founder",
-    is_paywall_bypassed: h.is_paywall_bypassed,
-    comped_at: h.comped_at,
-    comped_by: h.comped_by,
-    comped_by_name: h.comped_by ? compedByName.get(h.comped_by) ?? null : null,
-    created_at: h.created_at,
-  }));
-
-  return ok({ hosts: rows });
+  const result = await loadAdminHostRows(getSupabaseAdmin());
+  if (!result.ok) return serverError(result.error);
+  return ok({ hosts: result.rows });
 }
 
 const CompSchema = z.object({
@@ -106,13 +60,21 @@ export async function POST(req: NextRequest) {
 
   const admin = getSupabaseAdmin();
 
-  // 1. Find or create the auth user. email_confirm so the magic-link
-  //    flow works on first sign-in without a separate confirmation step.
-  const { data: existing } = await admin.auth.admin.listUsers({ perPage: 200 });
-  const existingUser = existing?.users.find((u) => u.email === parsed.data.email);
+  // 1. Find or create the auth user. email_confirm so the founder's
+  //    sign-in link works without a separate confirmation step. The new
+  //    account has no password yet: the founder sends a sign-in link from
+  //    /host/admin and the host creates her password on arrival.
+  const existing = await findAuthUserByEmail(admin, parsed.data.email);
+  if (!existing.ok) return serverError("could not look up users");
+  const existingUser = existing.user;
   let userId: string;
+  let passwordSetAt: string | null = null;
+  let passwordPrompt: AdminHostRow["password_prompt"] = null;
   if (existingUser) {
     userId = existingUser.id;
+    const setAt = existingUser.app_metadata?.[PASSWORD_SET_AT_KEY];
+    passwordSetAt = typeof setAt === "string" && setAt ? setAt : null;
+    passwordPrompt = passwordPromptSetting(existingUser.app_metadata);
   } else {
     const { data, error } = await admin.auth.admin.createUser({
       email: parsed.data.email,
@@ -159,6 +121,8 @@ export async function POST(req: NextRequest) {
         comped_by: hostRow.comped_by,
         comped_by_name: auth.host.display_name,
         created_at: hostRow.created_at,
+        password_set_at: passwordSetAt,
+        password_prompt: passwordPrompt,
       } satisfies AdminHostRow,
     },
     201,

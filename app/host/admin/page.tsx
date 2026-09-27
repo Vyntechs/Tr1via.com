@@ -12,7 +12,8 @@
 import { notFound, redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { HostAdminClient, type AdminHostRow } from "./HostAdminClient";
+import { loadAdminHostRows, type AdminHostRow } from "@/lib/admin/admin-host-rows";
+import { HostAdminClient } from "./HostAdminClient";
 
 export const dynamic = "force-dynamic";
 
@@ -35,38 +36,10 @@ export default async function HostAdminPage() {
     notFound();
   }
 
-  // Fetch every host row, sorted newest-first
-  const { data: hosts } = await admin
-    .from("hosts")
-    .select("*")
-    .order("created_at", { ascending: false });
-
-  const { data: usersList } = await admin.auth.admin.listUsers({ perPage: 200 });
-  const emailByUserId = new Map<string, string>();
-  for (const u of usersList?.users ?? []) {
-    if (u.email) emailByUserId.set(u.id, u.email);
-  }
-
-  const compedByIds = Array.from(new Set((hosts ?? []).map((h) => h.comped_by).filter((v): v is string => !!v)));
-  const compedByName = new Map<string, string>();
-  if (compedByIds.length > 0) {
-    const { data: compers } = await admin.from("hosts").select("id, display_name").in("id", compedByIds);
-    for (const c of compers ?? []) compedByName.set(c.id, c.display_name);
-  }
-
-  const rows: AdminHostRow[] = (hosts ?? []).map((h) => ({
-    id: h.id,
-    user_id: h.user_id,
-    email: emailByUserId.get(h.user_id) ?? "(unknown)",
-    display_name: h.display_name,
-    default_venue: h.default_venue,
-    role: (h.role === "founder" ? "founder" : "host") as "host" | "founder",
-    is_paywall_bypassed: h.is_paywall_bypassed,
-    comped_at: h.comped_at,
-    comped_by: h.comped_by,
-    comped_by_name: h.comped_by ? compedByName.get(h.comped_by) ?? null : null,
-    created_at: h.created_at,
-  }));
+  // Every host row + its account's email and password state (all pages of
+  // auth users, no 200 cap).
+  const result = await loadAdminHostRows(admin);
+  const rows: AdminHostRow[] = result.ok ? result.rows : [];
 
   return <HostAdminClient meDisplayName={meHost.display_name} initialHosts={rows} />;
 }
