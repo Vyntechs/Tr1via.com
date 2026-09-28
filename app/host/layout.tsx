@@ -25,9 +25,10 @@
 // untyped theme. The root layout's <ThemeProvider> at the document level
 // is what handles the truly-pre-auth surfaces (/login, /).
 
-import type { CSSProperties, ReactNode } from "react";
+import { Suspense, type CSSProperties, type ReactNode } from "react";
 import { ThemeProvider } from "@/components/system";
 import { AccountChip } from "@/components/host/AccountChip";
+import { PasswordAfterShowNote } from "@/components/host/PasswordAfterShowNote";
 import { getAuthedHost } from "@/lib/api/auth";
 import { getSupabaseServer } from "@/lib/supabase/server";
 import { resolveTheme, SYSTEM_DEFAULT_THEME } from "@/lib/theme/resolveTheme";
@@ -85,6 +86,10 @@ export default async function HostLayout({ children }: { children: ReactNode }) 
       >
         {children}
         {email && <AccountChip email={email} />}
+        {/* "You can create a password after the show" (?pw=after-show). */}
+        <Suspense fallback={null}>
+          <PasswordAfterShowNote />
+        </Suspense>
       </div>
     </ThemeProvider>
   );

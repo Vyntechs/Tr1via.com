@@ -21,13 +21,14 @@ export async function loginAsHost(
   page: Page,
   email: string,
   displayName = "Test Host",
+  password?: string,
 ): Promise<{ hostId: string; userId: string }> {
   if (!email.endsWith("@tr1via.test")) {
     throw new Error(`loginAsHost: email must end in @tr1via.test, got ${email}`);
   }
   const res = await page.request.post("/api/_test/login", {
     headers: { "x-test-secret": TEST_SECRET },
-    data: { email, displayName },
+    data: { email, displayName, ...(password ? { password } : {}) },
   });
   if (!res.ok()) {
     throw new Error(`loginAsHost failed: ${res.status()} ${await res.text()}`);

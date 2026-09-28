@@ -19,6 +19,7 @@ import { getSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { cookies } from "next/headers";
 import { verifyDeviceCookie } from "@/lib/auth/device-cookie";
+import { isSupabaseSessionCookie } from "@/lib/auth/session-cookies";
 import { presentationKey } from "@/lib/room/presentationKey";
 import type {
   CategoryRow,
@@ -40,9 +41,7 @@ const DEVICE_COOKIE = "tr1via_device";
  */
 export async function hasHostSessionCookie(): Promise<boolean> {
   const jar = await cookies();
-  return jar.getAll().some(({ name }) =>
-    /^sb-[^-]+-auth-token(?:\.\d+)?$/.test(name),
-  );
+  return jar.getAll().some(({ name }) => isSupabaseSessionCookie(name));
 }
 
 export type HostAuthResult =

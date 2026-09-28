@@ -8,12 +8,19 @@
 //   node --env-file=.env.local scripts/validate-build-full-game.mjs
 //
 // Requires: a running app with Anthropic + Pexels keys, and the founder
-// account (SMOKE_FOUNDER_EMAIL) present in public.hosts.
+// account (SMOKE_FOUNDER_EMAIL + SMOKE_FOUNDER_PASSWORD) present in public.hosts.
 
 import { createClient } from "@supabase/supabase-js";
 
 const BASE = process.env.SMOKE_BASE_URL ?? "http://localhost:3050";
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
+// Host sign-in needs a password (email-only login was removed). Never commit
+// it: set SMOKE_FOUNDER_PASSWORD in .env.local / the GitHub Actions secret.
+const FOUNDER_PASSWORD = process.env.SMOKE_FOUNDER_PASSWORD;
+if (!FOUNDER_PASSWORD) {
+  console.error("Missing SMOKE_FOUNDER_PASSWORD (the founder account's TR1VIA password)");
+  process.exit(1);
+}
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const admin = createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -58,11 +65,11 @@ async function main() {
   console.log(`build-full-game validation @ ${BASE}`);
 
   // 1. Founder login.
-  const login = await call("/api/auth/founder-login", {
+  const login = await call("/api/auth/login", {
     method: "POST",
-    body: JSON.stringify({ email: FOUNDER_EMAIL }),
+    body: JSON.stringify({ email: FOUNDER_EMAIL, password: FOUNDER_PASSWORD }),
   });
-  assert(login.ok, `founder-login ok (${login.status})`);
+  assert(login.ok, `founder login ok (${login.status})`);
 
   // 2. Build.
   const buildRes = await call("/api/founder/build-game", { method: "POST" });

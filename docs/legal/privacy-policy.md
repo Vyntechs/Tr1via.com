@@ -17,7 +17,7 @@ TR1VIA is operated by Vyntechs, based in Cleburne, Texas, United States. Mailing
 ## Who this policy covers
 
 - **Players** — anyone who joins a game by entering a 6-character room code on their phone. No account, email, or password is required. You may type a display name so others can see your score; that name, and a device identifier we set (see "Cookies and your device"), are stored with your game data.
-- **Hosts** — venue staff or organizers who run games. A host signs in by entering their email address; our server checks it against the list of host accounts and creates a login session. We do not send a magic-link or one-time-code email as part of normal sign-in. New hosts are added by the operator, who may share a one-time sign-in link directly.
+- **Hosts** — venue staff or organizers who run games. A host signs in with their email address and a password they choose; our server checks them with our sign-in provider and creates a login session. When a host creates an account, has not set a password yet, or forgets their password, we email them a one-time 6-digit code to confirm the email is theirs. The operator may also share a one-time sign-in link directly.
 
 ## Children under 13
 
@@ -43,7 +43,7 @@ To be clear about what TR1VIA does *not* do: we do not use Google Analytics, Ver
 
 ## What we collect — hosts only
 
-**Email address.** When a host account is created, we store the host's email address to identify the account and to create a login session when they sign in. We do not use host email addresses for marketing, and we do not send host emails through a third-party email-delivery provider.
+**Email address.** When a host account is created, we store the host's email address to identify the account and to create a login session when they sign in. We use it to email one-time sign-in codes when a host asks for one. We do not use host email addresses for marketing. Sign-in code emails are sent from our own Zoho Mail mailbox; we store only a scrambled (hashed) copy of each code, and it stops working after 10 minutes.
 
 **Login session.** When a host signs in, our authentication provider Supabase sets a session cookie in the browser to keep them logged in. It refreshes automatically and is cleared when the host signs out. It is used only for authentication, not for tracking or analytics.
 
@@ -66,6 +66,7 @@ We do not sell your personal information, and we do not use it for advertising o
 | --- | --- | --- | --- |
 | Vercel (US) | Hosting & server logs | IP address, User-Agent, page requests, timestamps. | vercel.com/legal/privacy-policy |
 | Supabase (US) | Database, authentication & live connection | Host email; player display names; the device identifier; answers, timing, and scores; and player IP / connection timing through the live game connection. | supabase.com/privacy |
+| Zoho Mail (US) | Sending sign-in code emails | A host's email address and the one-time code in the email. | zoho.com/privacy.html |
 | Pexels (US) | Question images | Image-search text from our server, and — because question images load directly from Pexels in your browser — your IP address and browser type when an image is shown. | pexels.com/privacy-policy |
 | Anthropic (US) | AI question generation | The trivia topic and instructions a host types, used to generate questions. No player or host personal information is sent. | anthropic.com/legal/privacy |
 

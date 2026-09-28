@@ -17,7 +17,8 @@
 // When the host clicks it, this route receives the token, calls
 // `verifyOtp` server-side (the same SSR exchange the founder bypass
 // uses), and the response carries the auth cookies. We then redirect
-// to /host as a normal authenticated user.
+// to /host as a normal authenticated user — or, for an account with no
+// password yet and no show running, to /host/set-password first.
 //
 // Security: the hashed_token is single-use, scoped to one email, and
 // expires after ~1 hour. Leaking the URL gives someone exactly one
@@ -26,16 +27,14 @@
 // requireFounder() on the generator endpoint).
 
 import { NextResponse, type NextRequest } from "next/server";
-import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createSessionCookieClient } from "@/lib/auth/session-cookies";
+import { SET_PASSWORD_PATH, forgetPasswordLater, walkToPasswordAfterSignIn } from "@/lib/auth/password-gate";
+import { markFounderIfNeeded } from "@/lib/auth/founder-flag";
+import { hostHasRunningShow } from "@/lib/auth/live-show";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-interface CookieToSet {
-  name: string;
-  value: string;
-  options?: CookieOptions;
-}
 
 export async function GET(req: NextRequest): Promise<NextResponse> {
   const url = new URL(req.url);
@@ -51,25 +50,9 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  const response = NextResponse.redirect(new URL("/host", url.origin));
+  const { supabase, applyCookies } = createSessionCookieClient(req);
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll: () =>
-          req.cookies.getAll().map((c) => ({ name: c.name, value: c.value })),
-        setAll: (toSet: CookieToSet[]) => {
-          for (const { name, value, options } of toSet) {
-            response.cookies.set({ name, value, ...options });
-          }
-        },
-      },
-    },
-  );
-
-  const { error } = await supabase.auth.verifyOtp({
+  const { data, error } = await supabase.auth.verifyOtp({
     type: "magiclink",
     token_hash: token,
   });
@@ -79,7 +62,21 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
     );
   }
 
-  // verifyOtp wrote the auth cookies onto `response` via the SSR client's
-  // setAll callback. The browser will carry them on the next request.
-  return response;
+  // The founder's link is the way back in for an account with no password
+  // yet. Land that host on "Create your password" so she won't need another
+  // link next time — unless the founder switched her prompt explicitly off,
+  // or one of her nights is running right now (saving a password would sign
+  // the show's laptop/phone out; null = couldn't tell → don't risk it).
+  // (Same rule as a code sign-in at /api/auth/verify-code.)
+  const askNow =
+    !!data.user &&
+    walkToPasswordAfterSignIn(data.user.app_metadata) &&
+    (await hostHasRunningShow(getSupabaseAdmin(), data.user.id)) === false;
+  const destination = askNow ? `${SET_PASSWORD_PATH}?next=${encodeURIComponent("/host")}` : "/host";
+  if (data.user) await markFounderIfNeeded(data.user);
+
+  // verifyOtp handed the session cookies to createSessionCookieClient; they
+  // ride on this redirect so the browser carries them on the next request.
+  // A fresh sign-in asks again (clears any earlier "Not now").
+  return forgetPasswordLater(applyCookies(NextResponse.redirect(new URL(destination, url.origin))));
 }

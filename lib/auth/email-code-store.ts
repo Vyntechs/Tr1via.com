@@ -1,0 +1,101 @@
+// Supabase-backed CodeStore for lib/auth/email-codes.ts. Service role only:
+// public.auth_email_codes has RLS on, no policies, and no browser grants
+// (migration 20260927194103_auth_email_codes.sql). Every other file goes
+// through the CodeStore interface.
+
+import "server-only";
+import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import type { CodePurpose, CodeRow, CodeStore, NewCodeRow } from "@/lib/auth/email-codes";
+
+const TABLE = "auth_email_codes" as const;
+
+export class CodeStoreError extends Error {}
+
+function check(error: { message: string } | null, what: string) {
+  if (error) throw new CodeStoreError(`${what}: ${error.message}`);
+}
+
+export function supabaseCodeStore(
+  client: ReturnType<typeof getSupabaseAdmin> = getSupabaseAdmin(),
+): CodeStore {
+  const t = () => client.from(TABLE);
+  return {
+    async countSince({ email, purpose, attemptsBelow }, sinceIso) {
+      let q = t().select("id", { count: "exact", head: true }).gte("created_at", sinceIso);
+      if (email) q = q.eq("email", email);
+      if (purpose) q = q.eq("purpose", purpose);
+      if (attemptsBelow !== undefined) q = q.lt("attempts", attemptsBelow);
+      const { count, error } = await q;
+      check(error, "count codes");
+      return count ?? 0;
+    },
+    async retireActive(email: string, purpose: CodePurpose, nowIso: string) {
+      const { error } = await t()
+        .update({ consumed_at: nowIso })
+        .eq("email", email)
+        .eq("purpose", purpose)
+        .is("consumed_at", null);
+      check(error, "retire codes");
+    },
+    async insert(row: NewCodeRow) {
+      const { data, error } = await t().insert(row).select("id").single();
+      check(error, "insert code");
+      if (!data?.id) throw new CodeStoreError("insert code: no id returned");
+      return data.id;
+    },
+    async findNewestActive(email: string, purpose: CodePurpose) {
+      const { data, error } = await t()
+        .select("*")
+        .eq("email", email)
+        .eq("purpose", purpose)
+        .is("consumed_at", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      check(error, "find code");
+      return (data as CodeRow | null) ?? null;
+    },
+    async findLive(email: string, purpose: CodePurpose, nowIso: string, attemptsBelow: number, limit: number) {
+      const { data, error } = await t()
+        .select("*")
+        .eq("email", email)
+        .eq("purpose", purpose)
+        .is("consumed_at", null)
+        .gt("expires_at", nowIso)
+        .lt("attempts", attemptsBelow)
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      check(error, "find live codes");
+      return (data as CodeRow[] | null) ?? [];
+    },
+    async bumpAttempts(id: string, expected: number) {
+      const { data, error } = await t()
+        .update({ attempts: expected + 1 })
+        .eq("id", id)
+        .eq("attempts", expected)
+        .is("consumed_at", null)
+        .select("id");
+      check(error, "count try");
+      return Array.isArray(data) && data.length === 1;
+    },
+    async readAttempts(id: string) {
+      const { data, error } = await t().select("attempts, consumed_at").eq("id", id).maybeSingle();
+      check(error, "read tries");
+      if (!data) return null;
+      return { attempts: data.attempts, consumed: data.consumed_at !== null };
+    },
+    async consume(id: string, nowIso: string) {
+      const { data, error } = await t()
+        .update({ consumed_at: nowIso })
+        .eq("id", id)
+        .is("consumed_at", null)
+        .select("id");
+      check(error, "use code");
+      return Array.isArray(data) && data.length === 1;
+    },
+    async deleteOlderThan(beforeIso: string) {
+      const { error } = await t().delete().lt("created_at", beforeIso);
+      check(error, "clean up codes");
+    },
+  };
+}

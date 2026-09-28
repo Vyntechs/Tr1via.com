@@ -18,6 +18,10 @@
 //   4. Returns { url, email, displayName } so the UI can render a Copy
 //      button + a "Text this to Linda" hint.
 //
+// This is the way back in for a host whose account has no password yet
+// (every account made before passwords existed). /auth/grant lands such a
+// host on /host/set-password so she creates one and won't need a link again.
+//
 // The returned URL contains a single-use token. Once the host clicks it,
 // the token is consumed; subsequent clicks fail. So leaking the URL is
 // limited blast radius.
@@ -34,6 +38,7 @@ import {
 } from "@/lib/api/responses";
 import { requireFounder } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { findAuthUserByEmail } from "@/lib/auth/admin-users";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -73,15 +78,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   const admin = getSupabaseAdmin();
 
   // Look up the target user. auth.users isn't directly queryable from
-  // the JS client; listUsers is the documented path. We have <20 hosts
-  // so a single page covers everyone.
-  const { data: usersList, error: listErr } = await admin.auth.admin.listUsers({
-    perPage: 200,
-  });
-  if (listErr) return serverError("could not look up users");
-  const target = usersList?.users.find(
-    (u) => u.email?.toLowerCase() === parsed.email,
-  );
+  // the JS client; findAuthUserByEmail walks every listUsers page.
+  const lookup = await findAuthUserByEmail(admin, parsed.email);
+  if (!lookup.ok) return serverError("could not look up users");
+  const target = lookup.user;
   if (!target) {
     return notFound(`no host with email ${parsed.email}`);
   }

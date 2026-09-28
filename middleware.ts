@@ -1,9 +1,11 @@
-// Root middleware. Two jobs:
+// Root middleware. Three jobs:
 //   1. Refresh the Supabase auth cookies on every request (the SSR pattern
 //      from supabase.com/docs/guides/auth/server-side/nextjs — keeps the
 //      session alive without round-trips to Supabase from Server Components).
 //   2. Gate the host surfaces (/host and the (host) route group) behind a
 //      signed-in user; bounce anonymous visitors to /login.
+//   3. Send a signed-in host who still needs a password to
+//      /host/set-password (never during a show — see lib/auth/password-gate).
 //
 // Player routes are intentionally untouched — anonymous device sessions are
 // handled by /api/session/init + the tr1via_device cookie, not Supabase Auth.
@@ -11,6 +13,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import type { Database } from "@/lib/supabase/types";
+import {
+  PASSWORD_LATER_COOKIE,
+  SIGNED_IN_HERE_COOKIE,
+  passwordGateRedirect,
+} from "@/lib/auth/password-gate";
 
 interface SetCookieRequest {
   name: string;
@@ -83,6 +90,30 @@ export async function middleware(request: NextRequest) {
     // Preserve where they were headed so /auth/callback can route them back.
     redirect.searchParams.set("next", pathname);
     return NextResponse.redirect(redirect);
+  }
+
+  // "Create your password" gate (lib/auth/password-gate.ts). Never fires on
+  // the in-show surfaces (/host/live, /host/phone). getUser() above asked
+  // Supabase Auth directly, so app_metadata is fresh the moment a password
+  // is saved. The decision reads app_metadata only (the founder is marked
+  // there too), so this adds no database query to any page load.
+  if (user && isHostPath(pathname)) {
+    const target = passwordGateRedirect({
+      pathname,
+      search: request.nextUrl.search,
+      appMetadata: user.app_metadata,
+      // "Not now" since her last sign-in (app/auth/password-later).
+      askedLater: request.cookies.get(PASSWORD_LATER_COOKIE)?.value === "1",
+      // Signed in on THIS browser recently: the founder's own prompt shows
+      // only here, never on her other open devices.
+      signedInHere: request.cookies.get(SIGNED_IN_HERE_COOKIE)?.value === "1",
+    });
+    if (target) {
+      const redirect = NextResponse.redirect(new URL(target, request.url));
+      // Carry any refreshed auth cookies onto the redirect.
+      for (const cookie of response.cookies.getAll()) redirect.cookies.set(cookie);
+      return redirect;
+    }
   }
 
   // /login deliberately renders even when the user is already signed in

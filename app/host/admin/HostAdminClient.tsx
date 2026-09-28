@@ -7,10 +7,16 @@
 //   2. Hosts table. Per-row toggle PATCHes /api/admin/hosts/[id]. Founder
 //      row is rendered first with a special "FOUNDER" badge and no toggle
 //      (paywall doesn't apply to the founder by definition).
+//   3. Per-host password line: "Password set" or, when the host has none
+//      yet, an "Ask to create password: on/off" switch (PATCH
+//      { passwordPrompt }). Off by default for existing hosts, so nothing
+//      changes for them until the founder flips it. The founder is always
+//      asked, so his own card shows status only.
 
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
+import type { AdminHostRow } from "@/lib/admin/admin-host-rows";
 import { LaptopShell } from "@/components/shells";
 import {
   Display,
@@ -19,19 +25,7 @@ import {
   useTheme,
 } from "@/components/system";
 
-export interface AdminHostRow {
-  id: string;
-  user_id: string;
-  email: string;
-  display_name: string;
-  default_venue: string | null;
-  role: "host" | "founder";
-  is_paywall_bypassed: boolean;
-  comped_at: string | null;
-  comped_by: string | null;
-  comped_by_name: string | null;
-  created_at: string;
-}
+export type { AdminHostRow };
 
 export function HostAdminClient({
   meDisplayName,
@@ -103,7 +97,7 @@ function Inner({ meDisplayName, initialHosts }: { meDisplayName: string; initial
         <section>
           <Eyebrow color={t.inkMid} size={10}>YOU</Eyebrow>
           <div style={{ marginTop: 10 }}>
-            <HostCard host={founder} onToggle={null} />
+            <HostCard host={founder} onToggle={null} onPasswordPrompt={null} />
           </div>
         </section>
       )}
@@ -140,6 +134,20 @@ function Inner({ meDisplayName, initialHosts }: { meDisplayName: string; initial
                     method: "PATCH",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ isPaywallBypassed: next }),
+                  });
+                  if (!res.ok) {
+                    setHosts(prev);
+                  }
+                }}
+                onPasswordPrompt={async (next) => {
+                  const prev = hosts;
+                  setHosts((curr) =>
+                    curr.map((c) => (c.id === h.id ? { ...c, password_prompt: next } : c)),
+                  );
+                  const res = await fetch(`/api/admin/hosts/${h.id}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ passwordPrompt: next }),
                   });
                   if (!res.ok) {
                     setHosts(prev);
@@ -213,8 +221,8 @@ function CompForm({ onCreated }: { onCreated: (row: AdminHostRow) => void }) {
     >
       <Eyebrow color={t.accent} size={11}>COMP A HOST</Eyebrow>
       <p style={{ color: t.inkMid, fontSize: 14, lineHeight: 1.5, marginTop: 8, marginBottom: 18 }}>
-        Create the host&apos;s account with the paywall bypassed. They sign in at
-        tr1via.com/login with this email — magic link, no extra confirmation.
+        Create the host&apos;s account with the paywall bypassed. Then send them
+        a sign-in link below — they&apos;ll create their password when they open it.
       </p>
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr 1fr auto", gap: 12, alignItems: "end" }}>
@@ -276,7 +284,7 @@ function CompForm({ onCreated }: { onCreated: (row: AdminHostRow) => void }) {
             lineHeight: 1.4,
           }}
         >
-          ✓ Comped <strong>{state.email}</strong>. They can sign in at tr1via.com/login now.
+          ✓ Comped <strong>{state.email}</strong>. Send them a sign-in link below to get started.
         </div>
       )}
       {state.kind === "error" && (
@@ -382,8 +390,8 @@ function GrantLinkForm() {
       <Eyebrow color={t.accent} size={11}>SEND A SIGN-IN LINK</Eyebrow>
       <p style={{ color: t.inkMid, fontSize: 14, lineHeight: 1.5, marginTop: 8, marginBottom: 18 }}>
         Generate a one-click URL for any host. Text it to them — they
-        click it and land on their dashboard signed in. No email check,
-        no rate limit. Link expires in about an hour.
+        click it and land signed in. If they don&apos;t have a password yet,
+        they&apos;re asked to create one first. Link expires in about an hour.
       </p>
 
       <form onSubmit={handleSubmit} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "end" }}>
@@ -548,9 +556,11 @@ function Field({
 function HostCard({
   host,
   onToggle,
+  onPasswordPrompt,
 }: {
   host: AdminHostRow;
   onToggle: ((next: boolean) => Promise<void>) | null;
+  onPasswordPrompt: ((next: "on" | "off") => Promise<void>) | null;
 }) {
   const { t } = useTheme();
   const compedDate = host.comped_at ? new Date(host.comped_at).toLocaleDateString() : null;
@@ -606,6 +616,142 @@ function HostCard({
           <div style={{ width: 56, height: 30 }} />
         )}
       </div>
+
+      <PasswordLine host={host} isFounder={isFounder} onPasswordPrompt={onPasswordPrompt} />
+    </div>
+  );
+}
+
+function PasswordLine({
+  host,
+  isFounder,
+  onPasswordPrompt,
+}: {
+  host: AdminHostRow;
+  isFounder: boolean;
+  onPasswordPrompt: ((next: "on" | "off") => Promise<void>) | null;
+}) {
+  const { t } = useTheme();
+  const promptOn = host.password_prompt === "on";
+  // Turning the prompt ON gets a confirm step (turning it off doesn't).
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <div
+      data-testid={`host-password-line-${host.id}`}
+      style={{
+        gridColumn: "1 / -1",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 16,
+        paddingTop: 12,
+        borderTop: `1px solid ${t.line}`,
+        fontSize: 13,
+        color: t.inkMid,
+      }}
+    >
+      {host.password_set_at ? (
+        <span>
+          <strong style={{ color: t.ink }}>Password set</strong>
+          {" · "}
+          {new Date(host.password_set_at).toLocaleDateString()}
+        </span>
+      ) : isFounder ? (
+        <span>
+          <strong style={{ color: t.ink }}>No password yet</strong>
+          {" · "}
+          <a
+            href={`/host/set-password?next=${encodeURIComponent("/host/admin")}`}
+            data-testid="founder-create-password"
+            style={{ color: t.accent, fontWeight: 700 }}
+          >
+            Create your password now
+          </a>
+          {" "}(you&apos;ll also be asked the next time you sign in with a code or link)
+        </span>
+      ) : (
+        <>
+          <span>
+            <strong style={{ color: t.ink }}>No password yet</strong>
+            {" · "}Ask to create password: <strong style={{ color: t.ink }}>{promptOn ? "on" : "off"}</strong>
+          </span>
+          {onPasswordPrompt && !confirming && (
+            <Toggle
+              value={promptOn}
+              label={`Ask ${host.display_name} to create a password`}
+              onChange={(v) => {
+                if (v) setConfirming(true);
+                else void onPasswordPrompt("off");
+              }}
+            />
+          )}
+          {onPasswordPrompt && confirming && (
+            <div
+              role="alertdialog"
+              aria-label={`Turn on the password prompt for ${host.display_name}?`}
+              data-testid={`host-password-confirm-${host.id}`}
+              style={{
+                flexBasis: "100%",
+                display: "flex",
+                flexDirection: "column",
+                gap: 10,
+                padding: "12px 14px",
+                borderRadius: 10,
+                background: t.surface,
+                border: `1px solid ${t.accent}`,
+                color: t.ink,
+                fontSize: 14,
+                lineHeight: 1.45,
+              }}
+            >
+              <span>
+                <strong>Turn on for {host.display_name}?</strong> Next time she opens TR1VIA (not
+                during a show) she&apos;ll be asked to create a password.
+              </span>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  data-testid={`host-password-confirm-yes-${host.id}`}
+                  onClick={() => {
+                    setConfirming(false);
+                    void onPasswordPrompt("on");
+                  }}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: t.accent,
+                    color: "#FFF",
+                    fontWeight: 700,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  Yes, turn it on
+                </button>
+                <button
+                  type="button"
+                  data-testid={`host-password-confirm-cancel-${host.id}`}
+                  onClick={() => setConfirming(false)}
+                  style={{
+                    padding: "8px 14px",
+                    borderRadius: 8,
+                    border: `1px solid ${t.line}`,
+                    background: "transparent",
+                    color: t.inkMid,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -630,13 +776,22 @@ function RoleBadge({ label, color }: { label: string; color: string }) {
   );
 }
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (next: boolean) => void }) {
+function Toggle({
+  value,
+  onChange,
+  label,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+  label?: string;
+}) {
   const { t } = useTheme();
   return (
     <button
       type="button"
       role="switch"
       aria-checked={value}
+      aria-label={label}
       onClick={() => onChange(!value)}
       style={{
         width: 56,

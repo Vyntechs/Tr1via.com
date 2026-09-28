@@ -19,6 +19,13 @@ const BASE = process.env.SMOKE_BASE_URL ?? "https://tr1via.com";
 // Optional Vercel deployment-protection bypass (share URL) for protected previews.
 const SHARE_URL = process.env.VERCEL_SHARE_URL ?? null;
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
+// Host sign-in needs a password (email-only login was removed). Never commit
+// it: set SMOKE_FOUNDER_PASSWORD in .env.local / the GitHub Actions secret.
+const FOUNDER_PASSWORD = process.env.SMOKE_FOUNDER_PASSWORD;
+if (!FOUNDER_PASSWORD) {
+  console.error("Missing SMOKE_FOUNDER_PASSWORD (the founder account's TR1VIA password)");
+  process.exit(1);
+}
 const TOPIC = process.argv[2] ?? "world geography";
 const GEN_TIMEOUT_MS = Number(process.env.SMOKE_GEN_TIMEOUT_MS ?? 260_000);
 const POLL_MS = 3000;
@@ -92,7 +99,7 @@ try {
     console.log(c.g(`  ✓ Vercel preview bypass established (status ${st})`));
   }
   // 1. login
-  const login = await call(jar, "/api/auth/founder-login", { method: "POST", body: JSON.stringify({ email: FOUNDER_EMAIL }) });
+  const login = await call(jar, "/api/auth/login", { method: "POST", body: JSON.stringify({ email: FOUNDER_EMAIL, password: FOUNDER_PASSWORD }) });
   if (!login.ok) throw new Error(`login ${login.status}: ${await login.text()}`);
   console.log(c.g("  ✓ logged in"));
 
