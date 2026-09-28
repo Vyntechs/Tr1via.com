@@ -48,10 +48,6 @@ function setPhoneViewport(matches: boolean) {
 
 beforeEach(() => {
   push.mockReset();
-  window.localStorage.setItem(
-    "tr1via-host-whats-new-original-v2",
-    "dismissed",
-  );
 });
 
 afterEach(() => {

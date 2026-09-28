@@ -211,6 +211,61 @@ describe("/login — account with no password yet (Heather)", () => {
   });
 });
 
+describe("/login — What's new: why she's asked for a code and a password", () => {
+  it("opens right after the code is emailed, with the approved words", async () => {
+    respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com" });
+    render(<HostLoginPage />);
+    await submitEmail("heather@example.com");
+    const dialog = await screen.findByRole("dialog", { name: "TR1VIA now uses a password." });
+    expect(dialog).toHaveTextContent("What's new · Signing in");
+    expect(dialog).toHaveTextContent(
+      "It keeps your trivia nights safe, so only you can open them. Running your night hasn't changed at all.",
+    );
+    expect(dialog).toHaveTextContent(
+      "Check your email.We just sent you a 6-digit code from TR1VIA. Type it on the next screen.",
+    );
+    expect(dialog).toHaveTextContent(
+      "Create your password.Pick one you'll remember. You only do this once.",
+    );
+    expect(dialog).toHaveTextContent(
+      "That's it.From then on, sign in with your email and password. No more codes.",
+    );
+    expect(dialog).toHaveTextContent("Stuck? Text Brandon.");
+  });
+
+  it("'Got it' closes it and puts her in the code boxes", async () => {
+    respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com" });
+    render(<HostLoginPage />);
+    await submitEmail("heather@example.com");
+    await screen.findByRole("dialog");
+    fireEvent.click(screen.getByRole("button", { name: /got it/i }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("6-digit code")));
+  });
+
+  it("never opens for a host who already has a password", async () => {
+    respond(200, { step: "password" });
+    render(<HostLoginPage />);
+    await submitEmail("heather@example.com");
+    await screen.findByLabelText("Password", { exact: true });
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("doesn't claim 'we just sent you a code' when no new code went out", async () => {
+    respond(429, {
+      step: "code",
+      purpose: "login",
+      maskedEmail: "h***@example.com",
+      code: "too_many_codes",
+      error: "We've already sent several codes to this email.",
+    });
+    render(<HostLoginPage />);
+    await submitEmail("heather@example.com");
+    await screen.findByLabelText("6-digit code");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
 describe("/login — after saving a password on a device that couldn't sign back in", () => {
   it("says 'Your password is saved. Sign in with it now.'", async () => {
     window.history.replaceState(null, "", "/login?notice=password-saved&next=%2Fhost");
