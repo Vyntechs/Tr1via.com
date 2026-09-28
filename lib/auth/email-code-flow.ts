@@ -18,7 +18,7 @@ import {
   type CodePurpose,
   type CodeStore,
 } from "@/lib/auth/email-codes";
-import { forgetEvent, ipEmailKey, isOverLimit, recordEvent, type RateStore } from "@/lib/auth/rate-limits";
+import { claimEvent, forgetEvent, ipEmailKey, isOverLimit, recordEvent, type RateStore } from "@/lib/auth/rate-limits";
 import { sendCodeEmail, smtpConfigFromEnv } from "@/lib/email/send-code-email";
 import {
   CODE_EXPIRED_MESSAGE,
@@ -100,10 +100,10 @@ export async function sendCodeTo(
     if (issued.reason === "too_many_sitewide") return paused(503);
     return { ok: false, status: 429, code: "too_many_codes", error: TOO_MANY_CODES_MESSAGE, maskedEmail };
   }
-  // Counted BEFORE sending (mail can take seconds; a burst from one network
+  // Counted before sending (mail can take seconds; a burst from one network
   // mustn't all slip past the caps meanwhile), taken back below on failure.
-  const ipAt = await recordEvent(ipBucket, ip, { store: opts.rates });
-  const pairAt = await recordEvent("send:code-ip-email", pairKey, { store: opts.rates });
+  const ipEvent = await recordEvent(ipBucket, ip, { store: opts.rates });
+  const pairEvent = await recordEvent("send:code-ip-email", pairKey, { store: opts.rates });
   const sent = await sendCodeEmail(email, issued.code);
   if (!sent.ok) {
     // A code that never went out doesn't count against her: delete it (so
@@ -113,8 +113,8 @@ export async function sendCodeTo(
     await store.remove(issued.codeId).catch(() =>
       store.consume(issued.codeId, new Date().toISOString()).catch(() => {}),
     );
-    await forgetEvent(ipBucket, ip, ipAt, { store: opts.rates });
-    await forgetEvent("send:code-ip-email", pairKey, pairAt, { store: opts.rates });
+    await forgetEvent(ipEvent, { store: opts.rates });
+    await forgetEvent(pairEvent, { store: opts.rates });
     return { ok: false, status: 503, code: "code_not_sent", error: CODE_NOT_SENT_MESSAGE, maskedEmail };
   }
   return { ok: true, maskedEmail };
@@ -136,15 +136,24 @@ export async function checkCode(
   opts: { ip: string; store?: CodeStore; rates?: RateStore; consume?: boolean },
 ): Promise<CheckOutcome> {
   const pairKey = ipEmailKey(opts.ip, email);
-  // This network's wrong codes for her email, and everyone's together
-  // (the many-network backstop).
-  const [pairOver, emailOver] = await Promise.all([
-    isOverLimit("fail:code-ip-email", pairKey, { store: opts.rates }),
-    isOverLimit("fail:code-email", email, { store: opts.rates }),
-  ]);
-  if (pairOver || emailOver) {
-    return { ok: false, status: 429, code: "too_many_wrong_codes", error: TOO_MANY_WRONG_CODES_MESSAGE };
+  const rates = { store: opts.rates };
+  const tooMany = { ok: false, status: 429, code: "too_many_wrong_codes", error: TOO_MANY_WRONG_CODES_MESSAGE } as const;
+  // Count this guess as wrong BEFORE checking it — this network's wrong
+  // codes for her email, then everyone's together (the many-network
+  // backstop) — so guesses fired at the same moment can't all slip past
+  // the caps (claimEvent). Taken back below when it wasn't a counted wrong
+  // guess.
+  const pair = await claimEvent("fail:code-ip-email", pairKey, rates);
+  if (pair.over) return tooMany;
+  const all = await claimEvent("fail:code-email", email, rates);
+  if (all.over) {
+    await forgetEvent(pair.id, rates);
+    return tooMany;
   }
+  const takeBack = async () => {
+    await forgetEvent(pair.id, rates);
+    await forgetEvent(all.id, rates);
+  };
   let result;
   try {
     result = await verifyCode(opts.store ?? supabaseCodeStore(), {
@@ -155,13 +164,12 @@ export async function checkCode(
     });
   } catch (err) {
     console.error("[email-code] could not check code", { purpose, message: (err as Error)?.message });
+    await takeBack();
     return { ok: false, status: 500, code: "try_again", error: TRY_AGAIN_MESSAGE };
   }
+  // Only a wrong guess that was counted against a code stays counted.
+  if (result.ok || !result.counted) await takeBack();
   if (result.ok) return { ok: true, codeId: result.codeId };
-  if (result.counted) {
-    await recordEvent("fail:code-ip-email", pairKey, { store: opts.rates });
-    await recordEvent("fail:code-email", email, { store: opts.rates });
-  }
   switch (result.reason) {
     case "wrong_code":
       return { ok: false, status: 400, code: "wrong_code", error: WRONG_CODE_MESSAGE };

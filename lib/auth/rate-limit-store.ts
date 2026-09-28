@@ -28,15 +28,20 @@ export function supabaseRateStore(
       return count ?? 0;
     },
     async record(bucket, keyHash, nowIso) {
-      const { error } = await t().insert({ bucket, key_hash: keyHash, created_at: nowIso });
+      const { data, error } = await t()
+        .insert({ bucket, key_hash: keyHash, created_at: nowIso })
+        .select("id")
+        .single();
       check(error, "record event");
+      if (!data?.id) throw new Error("record event: no id returned");
+      return data.id;
     },
     async clear(bucket, keyHash) {
       const { error } = await t().delete().eq("bucket", bucket).eq("key_hash", keyHash);
       check(error, "clear events");
     },
-    async forget(bucket, keyHash, atIso) {
-      const { error } = await t().delete().eq("bucket", bucket).eq("key_hash", keyHash).eq("created_at", atIso);
+    async forget(id) {
+      const { error } = await t().delete().eq("id", id);
       check(error, "forget event");
     },
     async deleteOlderThan(beforeIso) {

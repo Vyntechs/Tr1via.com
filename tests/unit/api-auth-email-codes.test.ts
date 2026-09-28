@@ -772,6 +772,40 @@ describe("a stranger on one network can't stop Heather getting in by code", () =
     expect(res.status).toBe(200);
   });
 
+  it("10 wrong guesses fired at the same moment from one network can't slip past its cap of 5", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));
+    const hers = lastEmailedCode();
+    const wrong = hers === "000000" ? "111111" : "000000";
+    await Promise.all(
+      Array.from({ length: 10 }, () =>
+        verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: wrong }, STRANGER_IP)),
+      ),
+    );
+    const rates = h.rates as ReturnType<typeof memoryRateStore>;
+    const counted = rates.events.filter((e) => e.bucket === "fail:code-email").length;
+    expect(counted).toBeLessThanOrEqual(RATE_LIMITS["fail:code-ip-email"]);
+    expect(store().rows[0].attempts).toBeLessThanOrEqual(RATE_LIMITS["fail:code-ip-email"]);
+
+    sessionWorks({});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: hers }, HEATHER_IP),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("a right code isn't left counted as a wrong guess", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));
+    sessionWorks({});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: lastEmailedCode() }, HEATHER_IP),
+    );
+    expect(res.status).toBe(200);
+    const rates = h.rates as ReturnType<typeof memoryRateStore>;
+    expect(rates.events.filter((e) => e.bucket.startsWith("fail:code"))).toHaveLength(0);
+  });
+
   it("backstop: 20 wrong codes for her email from many networks pause code checks (15 min) everywhere", async () => {
     users({ id: "h", email: "heather@example.com", app_metadata: {} });
     await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));

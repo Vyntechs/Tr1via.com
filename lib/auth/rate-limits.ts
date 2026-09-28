@@ -47,9 +47,13 @@
 //                                 you're stuck"). Her own typos are a
 //                                 handful, nowhere near 20.
 //   Only codes that really went out are counted: the two send counts are
-//   recorded BEFORE the email goes out (so a burst of requests from one
-//   network can't all slip past the cap while mail is slow) and taken back
-//   if the send fails (lib/auth/email-code-flow.ts).
+//   recorded before the email goes out (so a burst can't all slip past the
+//   cap while mail is slow) and taken back if the send fails
+//   (lib/auth/email-code-flow.ts).
+//   The two wrong-code caps count every guess BEFORE checking it
+//   (claimEvent) and take it back if the guess turns out right, so guesses
+//   fired at the same moment from one network can't slip past its cap of
+//   5 — reaching the every-network 20 really takes several networks.
 //
 // Events live in public.auth_rate_events (lib/auth/rate-limit-store.ts).
 // Keys are HMAC'd with SESSION_SECRET, so no plain IP or email is stored.
@@ -115,11 +119,12 @@ const KEEP_MS = 24 * 60 * 60 * 1000;
 export interface RateStore {
   /** Events for this bucket + hashed key created at/after sinceIso. */
   count(bucket: RateBucket, keyHash: string, sinceIso: string): Promise<number>;
-  record(bucket: RateBucket, keyHash: string, nowIso: string): Promise<void>;
+  /** Save one event and return its id (for forget). */
+  record(bucket: RateBucket, keyHash: string, nowIso: string): Promise<string>;
   /** Forget every event for this bucket + hashed key (e.g. after a new password). */
   clear(bucket: RateBucket, keyHash: string): Promise<void>;
-  /** Forget the event(s) for this bucket + hashed key recorded at exactly atIso. */
-  forget(bucket: RateBucket, keyHash: string, atIso: string): Promise<void>;
+  /** Forget one event by the id record() returned. */
+  forget(id: string): Promise<void>;
   deleteOlderThan(beforeIso: string): Promise<void>;
 }
 
@@ -183,8 +188,8 @@ export async function isOverLimit(
 }
 
 /**
- * Count one event (best effort — never throws). Returns when it was
- * recorded (for forgetEvent), or null if it wasn't.
+ * Count one event (best effort — never throws). Returns the event's id
+ * (for forgetEvent), or null if it couldn't be saved.
  */
 export async function recordEvent(
   bucket: RateBucket,
@@ -194,38 +199,64 @@ export async function recordEvent(
   const store = storeOrNull(opts.store);
   if (!store) return null;
   const now = opts.now ?? new Date();
-  const at = now.toISOString();
+  let id: string;
   try {
-    await store.record(bucket, rateKeyHash(bucket, key), at);
-    // Light housekeeping: roughly one request in 20 sweeps old rows.
-    if (Math.random() < 0.05) {
-      await store.deleteOlderThan(new Date(now.getTime() - KEEP_MS).toISOString());
-    }
+    id = await store.record(bucket, rateKeyHash(bucket, key), now.toISOString());
   } catch (err) {
     logSkip(`record ${bucket}`, err);
     return null;
   }
-  return at;
+  // Light housekeeping: roughly one request in 20 sweeps old rows. Its
+  // failure never loses the event just saved.
+  if (Math.random() < 0.05) {
+    await store.deleteOlderThan(new Date(now.getTime() - KEEP_MS).toISOString()).catch((err) => {
+      logSkip(`clean up ${bucket}`, err);
+    });
+  }
+  return id;
 }
 
-/**
- * Take back one event recordEvent counted (best effort), e.g. a code email
- * that never went out. `at` is recordEvent's answer; null does nothing.
- */
-export async function forgetEvent(
-  bucket: RateBucket,
-  key: string,
-  at: string | null,
-  opts: { store?: RateStore } = {},
-): Promise<void> {
-  if (!at) return;
+/** Take back one event by the id recordEvent returned (best effort; null does nothing). */
+export async function forgetEvent(id: string | null, opts: { store?: RateStore } = {}): Promise<void> {
+  if (!id) return;
   const store = storeOrNull(opts.store);
   if (!store) return;
   try {
-    await store.forget(bucket, rateKeyHash(bucket, key), at);
+    await store.forget(id);
   } catch (err) {
-    logSkip(`forget ${bucket}`, err);
+    logSkip("forget", err);
   }
+}
+
+/**
+ * Count first, then check: saves this event, then refuses (and takes it
+ * back) if that puts the bucket over its limit. Unlike isOverLimit +
+ * recordEvent, requests fired at the same moment can't all see a count
+ * under the limit, so a burst can't slip past it. Fails open (never
+ * refuses) when the store can't be reached. `id` is for forgetEvent when
+ * the thing it counted turns out not to count (e.g. a right code).
+ */
+export async function claimEvent(
+  bucket: RateBucket,
+  key: string,
+  opts: { store?: RateStore; now?: Date } = {},
+): Promise<{ over: boolean; id: string | null }> {
+  const store = storeOrNull(opts.store);
+  if (!store) return { over: false, id: null };
+  const now = opts.now ?? new Date();
+  const id = await recordEvent(bucket, key, { ...opts, store, now });
+  if (!id) return { over: false, id: null };
+  try {
+    const since = new Date(now.getTime() - rateWindowMs(bucket)).toISOString();
+    // This count includes the event just saved.
+    if ((await store.count(bucket, rateKeyHash(bucket, key), since)) > RATE_LIMITS[bucket]) {
+      await forgetEvent(id, { store });
+      return { over: true, id: null };
+    }
+  } catch (err) {
+    logSkip(`count ${bucket}`, err);
+  }
+  return { over: false, id };
 }
 
 export async function clearEvents(
