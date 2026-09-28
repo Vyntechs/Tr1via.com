@@ -100,8 +100,9 @@ export async function sendCodeTo(
     if (issued.reason === "too_many_sitewide") return paused(503);
     return { ok: false, status: 429, code: "too_many_codes", error: TOO_MANY_CODES_MESSAGE, maskedEmail };
   }
-  // Counted before sending (mail can take seconds; a burst from one network
-  // mustn't all slip past the caps meanwhile), taken back below on failure.
+  // Counted before sending (mail can take seconds; that shouldn't widen the
+  // gap between the cap check above and this count), taken back below on
+  // failure.
   const ipEvent = await recordEvent(ipBucket, ip, { store: opts.rates });
   const pairEvent = await recordEvent("send:code-ip-email", pairKey, { store: opts.rates });
   const sent = await sendCodeEmail(email, issued.code);

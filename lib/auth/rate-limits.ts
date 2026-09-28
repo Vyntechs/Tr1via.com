@@ -47,8 +47,10 @@
 //                                 you're stuck"). Her own typos are a
 //                                 handful, nowhere near 20.
 //   Only codes that really went out are counted: the two send counts are
-//   recorded before the email goes out (so a burst can't all slip past the
-//   cap while mail is slow) and taken back if the send fails
+//   recorded before the email goes out (so the seconds mail takes don't
+//   widen the gap between checking the cap and counting; requests at the
+//   exact same moment can still pass together, and those extra codes go
+//   only to her own inbox) and taken back if the send fails
 //   (lib/auth/email-code-flow.ts).
 //   The two wrong-code caps count every guess BEFORE checking it
 //   (claimEvent) and take it back if the guess turns out right, so guesses

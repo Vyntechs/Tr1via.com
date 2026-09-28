@@ -19,7 +19,8 @@
 //     or 50 for one email from every network together) lock that door for
 //     15 minutes with a friendly message, even for the right password; a
 //     stranger's wrong passwords on their network never lock her out on
-//     hers; setting a new password lifts both locks on every network
+//     hers; setting a new password lifts the per-email and per-network+email
+//     locks on every network (the per-IP cap of 20 just runs out)
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
