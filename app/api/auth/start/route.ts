@@ -5,7 +5,10 @@
 //   - account with a password (app_metadata.password_set_at)
 //       → { step: "password" }          (no email is sent)
 //   - account with no password yet (every account made before passwords)
-//       → emails a 6-digit "login" code → { step: "code", purpose: "login", maskedEmail }
+//       → emails a 6-digit "login" code → { step: "code", purpose: "login", maskedEmail, passwordNext }
+//         passwordNext: "Create your password" really comes after the code
+//         (same rule as /api/auth/verify-code), so the page's "What's new"
+//         pop-up only promises a password step she'll actually get
 //   - no account
 //       → { step: "signup" }            (the page asks for a password, then
 //                                         /api/auth/send-code emails a
@@ -21,7 +24,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { findAuthUserByEmail } from "@/lib/auth/admin-users";
-import { hasPassword } from "@/lib/auth/password-gate";
+import { hasPassword, walkToPasswordAfterSignIn } from "@/lib/auth/password-gate";
+import { hostHasRunningShow } from "@/lib/auth/live-show";
 import { parseEmail, sendCodeTo } from "@/lib/auth/email-code-flow";
 import { clientIp, hitIpLimit } from "@/lib/auth/rate-limits";
 import { BAD_EMAIL_MESSAGE, TOO_MANY_TRIES_MESSAGE, TRY_AGAIN_MESSAGE } from "@/lib/auth/auth-messages";
@@ -30,6 +34,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // Room for a user lookup plus a slow SMTP handshake (8s connect timeout).
 export const maxDuration = 30;
+
+const SHOW_CHECK_MS = 2000;
+
+/** `work`'s answer, or null if it takes longer than `ms`. */
+function withinMs<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
 
 export async function POST(req: NextRequest) {
   // Per-IP cap (lib/auth/rate-limits.ts) — this door looks up emails.
@@ -53,7 +68,12 @@ export async function POST(req: NextRequest) {
 
   const sent = await sendCodeTo(email, "login", clientIp(req));
   if (sent.ok) {
-    return NextResponse.json({ step: "code", purpose: "login", maskedEmail: sent.maskedEmail });
+    // Not while one of her nights is running (null = couldn't tell → no promise).
+    // The code is already in her inbox, so a slow check never holds her up.
+    const passwordNext =
+      walkToPasswordAfterSignIn(user.app_metadata) &&
+      (await withinMs(hostHasRunningShow(getSupabaseAdmin(), user.id), SHOW_CHECK_MS)) === false;
+    return NextResponse.json({ step: "code", purpose: "login", maskedEmail: sent.maskedEmail, passwordNext });
   }
   if (sent.code === "too_many_codes") {
     return NextResponse.json(

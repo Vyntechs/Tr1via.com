@@ -19,7 +19,7 @@
 
 "use client";
 
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { LaptopShell } from "@/components/shells";
 import { Display, Eyebrow, Wordmark, useTheme } from "@/components/system";
@@ -28,8 +28,10 @@ import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { hostReturnPath } from "@/lib/host/hostReturnPath";
 import { PasswordField, ShowPasswordToggle } from "@/components/host/PasswordField";
 import { CodeBoxes, CODE_BOX_COUNT } from "@/components/host/CodeBoxes";
-import { checkNewPassword } from "@/lib/auth/password-gate";
+import { checkNewPassword, isInShowPath } from "@/lib/auth/password-gate";
 import { PASSWORD_SAVED_SIGN_IN_MESSAGE } from "@/lib/auth/auth-messages";
+import { HostWhatsNew } from "@/components/host/HostWhatsNew";
+import { SIGN_IN_PASSWORD_NEWS } from "@/lib/host/whats-new";
 
 type Step = "email" | "password" | "code" | "signup";
 type CodePurpose = "login" | "reset" | "signup";
@@ -54,6 +56,7 @@ interface ApiBody {
   purpose?: CodePurpose;
   maskedEmail?: string;
   redirect?: string;
+  passwordNext?: boolean;
   code?: string;
   error?: string;
   field?: string;
@@ -76,6 +79,10 @@ function HostLoginInner() {
   // column so the email field + submit button are fully on-screen and tappable.
   const compact = useMediaQuery("(max-width: 640px)");
   const [step, setStep] = useState<Step>("email");
+  // "What's new": why she's being asked for a code and a password. Opens
+  // each time a host with no password yet gets a fresh code, so it stops
+  // by itself once she has one.
+  const [passwordNewsOpen, setPasswordNewsOpen] = useState(false);
   const [purpose, setPurpose] = useState<CodePurpose>("login");
   const [email, setEmail] = useState("");
   const [maskedEmail, setMaskedEmail] = useState("");
@@ -155,6 +162,7 @@ function HostLoginInner() {
   function startOver() {
     setSignupCode(null);
     setStep("email");
+    setPasswordNewsOpen(false);
     setPassword("");
     setConfirm("");
     setCode("");
@@ -175,6 +183,12 @@ function HostLoginInner() {
         // still use the newest one she already has.
         goToCode("login", body.maskedEmail);
         setState(res.ok ? { kind: "idle" } : { kind: "error", message: body.error ?? "" });
+        // Only when a code really just went out AND "Create your password"
+        // comes next (the pop-up promises both) — never on the way back
+        // into a running show.
+        if (res.ok && body.passwordNext === true && !isInShowPath(intendedHostPath().split("?")[0])) {
+          setPasswordNewsOpen(true);
+        }
         return;
       }
       if (res.ok && body?.step === "password") {
@@ -331,6 +345,13 @@ function HostLoginInner() {
     // Typing (or pasting) the 6th number sends it — one less tap.
     if (digits.length === CODE_BOX_COUNT) void submitCode(digits);
   }
+
+  const closePasswordNews = useCallback(() => {
+    // Straight to the code boxes, ready to type. Focus inside the tap itself:
+    // iPhones only raise the keyboard then.
+    document.getElementById("email-code")?.focus();
+    setPasswordNewsOpen(false);
+  }, []);
 
   const isSending = state.kind === "sending";
   const busyLabel = state.kind === "sending" ? BUSY_LABEL[state.busy] : "";
@@ -544,6 +565,11 @@ function HostLoginInner() {
           </form>
         )}
       </div>
+      <HostWhatsNew
+        open={passwordNewsOpen}
+        news={SIGN_IN_PASSWORD_NEWS}
+        onClose={closePasswordNews}
+      />
     </div>
   );
 }

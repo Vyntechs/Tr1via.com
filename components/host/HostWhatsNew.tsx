@@ -3,40 +3,20 @@
 import { useEffect, useId, useRef } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
 import { useMediaQuery } from "@/components/system/useMediaQuery";
+import type { WhatsNewContent } from "@/lib/host/whats-new";
 
 export interface HostWhatsNewProps {
   open: boolean;
   onClose: () => void;
+  news: WhatsNewContent;
 }
 
-const BENEFITS = [
-  {
-    stamp: "CONTROL",
-    title: "Sign in on any device. Control the same live game.",
-    body: "Your phone and laptop stay together automatically. TV preview shows what players see, and players scan the only QR.",
-  },
-  {
-    stamp: "CHECKED",
-    title: "AI-generated questions are checked before you can use them.",
-    body: "TR1VIA now checks the answer, the other choices, and the fact before an AI-generated question reaches your game.",
-  },
-  {
-    stamp: "SAFE",
-    title: "You can leave generation without losing the work.",
-    body: "Come back whenever you need to. The screen shows what is actually finished and retries only what is missing.",
-  },
-  {
-    stamp: "CLEAR",
-    title: "Players get a steadier, easier-to-read night.",
-    body: "Phones recover to the right moment between rounds, and the venue screen keeps the important words large and still.",
-  },
-] as const;
-
-export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
+export function HostWhatsNew({ open, onClose, news }: HostWhatsNewProps) {
   const { t } = useTheme();
   const compact = useMediaQuery("(max-width: 720px)");
   const titleId = useId();
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -48,6 +28,20 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
     closeButtonRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      if (event.key !== "Tab") return;
+      // Keep Tab inside the pop-up, not on the page behind it.
+      const buttons = Array.from(dialogRef.current?.querySelectorAll("button") ?? []);
+      if (buttons.length === 0) return;
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      const inside = dialogRef.current?.contains(document.activeElement) ?? false;
+      if (event.shiftKey && (document.activeElement === first || !inside)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !inside)) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
@@ -71,23 +65,27 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
         background: "rgba(7, 6, 5, .76)",
         backdropFilter: "blur(10px)",
       }}
+      // Keep the press from moving focus, then close on the click, so the
+      // closer's own focus (e.g. the code boxes) sticks.
       onMouseDown={(event) => {
+        if (event.target === event.currentTarget) event.preventDefault();
+      }}
+      onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
         data-testid="host-whats-new"
         style={{
           position: "relative",
-          width: "min(860px, 100%)",
+          width: "min(620px, 100%)",
           maxHeight: "min(760px, calc(100dvh - 28px))",
           overflowY: "auto",
           overscrollBehavior: "contain",
-          display: "grid",
-          gridTemplateColumns: compact ? "1fr" : "156px 1fr",
           background: t.paper,
           color: t.ink,
           border: `1px solid ${t.line}`,
@@ -98,7 +96,7 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
         <button
           ref={closeButtonRef}
           type="button"
-          aria-label="Close What's new"
+          aria-label="Close"
           onClick={onClose}
           style={{
             position: "absolute",
@@ -120,43 +118,6 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
           ×
         </button>
 
-        <aside
-          aria-hidden="true"
-          style={{
-            display: "flex",
-            flexDirection: compact ? "row" : "column",
-            alignItems: "center",
-            justifyContent: compact ? "flex-start" : "center",
-            gap: compact ? 8 : 18,
-            padding: compact ? "18px 64px 18px 18px" : "28px 20px",
-            background: t.accent,
-            color: t.dark ? "#0E0E0C" : "#FFF",
-          }}
-        >
-          {BENEFITS.map((benefit, index) => (
-            <div
-              key={benefit.stamp}
-              style={{
-                width: compact ? 54 : 88,
-                height: compact ? 54 : 88,
-                borderRadius: 999,
-                border: "1px solid currentColor",
-                display: "grid",
-                placeItems: "center",
-                textAlign: "center",
-                fontFamily: "var(--font-mono)",
-                fontSize: compact ? 8 : 10,
-                fontWeight: 800,
-                letterSpacing: ".12em",
-                transform: index === 1 ? "rotate(2deg)" : index === 2 ? "rotate(-2deg)" : undefined,
-                opacity: 0.9,
-              }}
-            >
-              {benefit.stamp}
-            </div>
-          ))}
-        </aside>
-
         <div style={{ padding: compact ? "28px 22px 22px" : "48px 52px 40px" }}>
           <div
             style={{
@@ -168,20 +129,20 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
               textTransform: "uppercase",
             }}
           >
-            What&apos;s new · Original game
+            {news.eyebrow}
           </div>
           <h2
             id={titleId}
             style={{
               margin: "10px 48px 0 0",
               maxWidth: 560,
-              fontSize: compact ? 34 : 48,
+              fontSize: compact ? 32 : 40,
               lineHeight: 1.02,
               letterSpacing: "-.035em",
               fontWeight: 560,
             }}
           >
-            Your games now protect themselves.
+            {news.title}
           </h2>
           <p
             style={{
@@ -192,14 +153,13 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
               lineHeight: 1.5,
             }}
           >
-            You still build and host the same way. Now your controls follow your account,
-            while TR1VIA does more checking, saving, and recovery behind the scenes.
+            {news.lead}
           </p>
 
           <div style={{ marginTop: 30, display: "grid", gap: 0 }}>
-            {BENEFITS.map((benefit, index) => (
+            {news.steps.map((step, index) => (
               <div
-                key={benefit.stamp}
+                key={step.title}
                 style={{
                   display: "grid",
                   gridTemplateColumns: "30px 1fr",
@@ -215,43 +175,44 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
                     borderRadius: 999,
                     display: "grid",
                     placeItems: "center",
-                    background: `${t.correct}22`,
-                    color: t.correct,
+                    background: `${t.accent}22`,
+                    color: t.accent,
                     fontFamily: "var(--font-mono)",
                     fontWeight: 800,
                     fontSize: 13,
                   }}
                 >
-                  ✓
+                  {index + 1}
                 </span>
                 <div>
                   <div style={{ fontSize: 16, lineHeight: 1.35, fontWeight: 700 }}>
-                    {benefit.title}
+                    {step.title}
                   </div>
                   <div style={{ marginTop: 4, color: t.inkMid, fontSize: 14, lineHeight: 1.45 }}>
-                    {benefit.body}
+                    {step.body}
                   </div>
                 </div>
               </div>
             ))}
           </div>
 
-          <div
-            style={{
-              marginTop: 12,
-              padding: "16px 18px",
-              borderRadius: 12,
-              background: t.surface,
-              borderLeft: `3px solid ${t.accent}`,
-              color: t.inkMid,
-              fontSize: 14,
-              lineHeight: 1.5,
-            }}
-          >
-            <strong style={{ color: t.ink }}>One honest note:</strong> TR1VIA still uses AI,
-            and no fact-check is perfect. If a question or screen still looks wrong after
-            Retry, stop before opening the game and contact Brandon.
-          </div>
+          {news.footer && (
+            <p
+              style={{
+                margin: "12px 0 0",
+                padding: "14px 18px",
+                borderRadius: 12,
+                background: t.surface,
+                borderLeft: `3px solid ${t.accent}`,
+                color: t.ink,
+                fontSize: 15,
+                lineHeight: 1.5,
+                fontWeight: 600,
+              }}
+            >
+              {news.footer}
+            </p>
+          )}
 
           <div style={{ marginTop: 24, display: "flex", justifyContent: "flex-end" }}>
             <button
@@ -271,7 +232,7 @@ export function HostWhatsNew({ open, onClose }: HostWhatsNewProps) {
                 boxShadow: `0 12px 28px -14px ${t.accent}`,
               }}
             >
-              Got it
+              {news.button}
             </button>
           </div>
         </div>

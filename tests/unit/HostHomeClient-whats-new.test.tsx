@@ -8,8 +8,8 @@ vi.mock("next/navigation", () => ({
 
 import { HostHomeClient } from "@/app/host/HostHomeClient";
 import { ThemeProvider } from "@/components/system/ThemeProvider";
+import { shouldAutoShowWhatsNew, whatsNewSeenKey } from "@/lib/host/whats-new";
 
-const NOTICE_KEY = "tr1via-host-whats-new-original-v2";
 
 const baseProps = {
   hostName: "Heather",
@@ -37,39 +37,24 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("HostHomeClient host-only What's New", () => {
-  it("explains the host benefits and the honest Brandon escalation on first visit", async () => {
+describe("HostHomeClient What's new", () => {
+  it("doesn't pop up by itself — no old news interrupting her dashboard", async () => {
     renderThemed(<HostHomeClient {...baseProps} />);
-
-    expect(
-      await screen.findByRole("dialog", {
-        name: /your games now protect themselves/i,
-      }),
-    ).toBeVisible();
-    expect(
-      screen.getByText(/AI-generated questions are checked before you can use them/i),
-    ).toBeVisible();
-    expect(screen.getByText(/Sign in on any device\. Control the same live game\./i)).toBeVisible();
-    expect(screen.getByText(/TV preview shows what players see/i)).toBeVisible();
-    expect(screen.getByText(/Players scan the only QR/i)).toBeVisible();
-    expect(screen.getByText(/no fact-check is perfect/i)).toBeVisible();
-    expect(screen.getByText(/contact Brandon/i)).toBeVisible();
+    expect(await screen.findByRole("button", { name: /what's new/i })).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("remembers dismissal and lets the host reopen the notice", async () => {
-    const first = renderThemed(<HostHomeClient {...baseProps} />);
-    await screen.findByRole("dialog");
+  it("the button shows the current news: passwords, not the old July notes", async () => {
+    renderThemed(<HostHomeClient {...baseProps} />);
+    fireEvent.click(screen.getByRole("button", { name: /what's new/i }));
+    const dialog = await screen.findByRole("dialog", { name: "TR1VIA now uses a password." });
+    expect(dialog).toHaveTextContent("Running your night hasn't changed at all.");
+    expect(dialog).toHaveTextContent("The first time you sign in, we send you a 6-digit code from TR1VIA.");
+    expect(dialog).toHaveTextContent("Stuck? Text Brandon.");
+    expect(dialog).not.toHaveTextContent(/protect themselves|fact-check/i);
 
     fireEvent.click(screen.getByRole("button", { name: /got it/i }));
-    expect(window.localStorage.getItem(NOTICE_KEY)).toBe("dismissed");
     expect(screen.queryByRole("dialog")).toBeNull();
-
-    first.unmount();
-    renderThemed(<HostHomeClient {...baseProps} />);
-    expect(screen.queryByRole("dialog")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: /what's new/i }));
-    expect(await screen.findByRole("dialog")).toBeVisible();
   });
 
   it("keeps the dashboard fixed while the notice scrolls, then restores it", async () => {
@@ -77,6 +62,7 @@ describe("HostHomeClient host-only What's New", () => {
     document.documentElement.style.overflow = "scroll";
 
     renderThemed(<HostHomeClient {...baseProps} />);
+    fireEvent.click(screen.getByRole("button", { name: /what's new/i }));
 
     const dialog = await screen.findByRole("dialog");
     expect(document.body.style.overflow).toBe("hidden");
@@ -96,5 +82,26 @@ describe("HostHomeClient host-only What's New", () => {
     expect(await screen.findByTestId("host-onboarding-first")).toBeVisible();
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.queryByRole("button", { name: /what's new/i })).toBeNull();
+  });
+});
+
+describe("shouldAutoShowWhatsNew — can't show old news", () => {
+  const fresh = { date: "2026-09-27", autoShow: true };
+  const now = new Date("2026-10-05T12:00:00Z");
+
+  it("opens by itself for fresh, unseen news", () => {
+    expect(shouldAutoShowWhatsNew(fresh, false, now)).toBe(true);
+  });
+  it("never again once she's closed it", () => {
+    expect(shouldAutoShowWhatsNew(fresh, true, now)).toBe(false);
+  });
+  it("stops by itself after 30 days", () => {
+    expect(shouldAutoShowWhatsNew(fresh, false, new Date("2026-10-28T12:00:00Z"))).toBe(false);
+  });
+  it("never for news marked not to pop up", () => {
+    expect(shouldAutoShowWhatsNew({ ...fresh, autoShow: false }, false, now)).toBe(false);
+  });
+  it("a new announcement gets a new 'seen' mark", () => {
+    expect(whatsNewSeenKey({ id: "a" })).not.toBe(whatsNewSeenKey({ id: "b" }));
   });
 });

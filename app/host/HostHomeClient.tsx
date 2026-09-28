@@ -18,8 +18,8 @@ import {
 import { OnboardingFirstDashboard } from "@/components/onboarding";
 import { BillingUpgrade } from "@/components/host/BillingUpgrade";
 import { hostRunPath } from "@/lib/host/hostRunPath";
+import { HOST_NEWS, shouldAutoShowWhatsNew, whatsNewSeenKey } from "@/lib/host/whats-new";
 
-const HOST_WHATS_NEW_KEY = "tr1via-host-whats-new-original-v2";
 
 export interface HostHomeClientProps {
   hostName: string;
@@ -56,11 +56,12 @@ export function HostHomeClient({
 
   useEffect(() => {
     if (!isFirstNightComplete) return;
-    setWhatsNewOpen(window.localStorage.getItem(HOST_WHATS_NEW_KEY) !== "dismissed");
+    const seen = window.localStorage.getItem(whatsNewSeenKey(HOST_NEWS)) === "seen";
+    setWhatsNewOpen(shouldAutoShowWhatsNew(HOST_NEWS, seen));
   }, [isFirstNightComplete]);
 
   const dismissWhatsNew = useCallback(() => {
-    window.localStorage.setItem(HOST_WHATS_NEW_KEY, "dismissed");
+    window.localStorage.setItem(whatsNewSeenKey(HOST_NEWS), "seen");
     setWhatsNewOpen(false);
   }, []);
 
@@ -225,7 +226,7 @@ export function HostHomeClient({
       >
         What&apos;s new
       </button>
-      <HostWhatsNew open={whatsNewOpen} onClose={dismissWhatsNew} />
+      <HostWhatsNew open={whatsNewOpen} onClose={dismissWhatsNew} news={HOST_NEWS} />
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
       {successMessage && (
         <SuccessToast
