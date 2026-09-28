@@ -28,7 +28,7 @@ import { getSupabaseBrowser } from "@/lib/supabase/client";
 import { hostReturnPath } from "@/lib/host/hostReturnPath";
 import { PasswordField, ShowPasswordToggle } from "@/components/host/PasswordField";
 import { CodeBoxes, CODE_BOX_COUNT } from "@/components/host/CodeBoxes";
-import { checkNewPassword } from "@/lib/auth/password-gate";
+import { checkNewPassword, isInShowPath } from "@/lib/auth/password-gate";
 import { PASSWORD_SAVED_SIGN_IN_MESSAGE } from "@/lib/auth/auth-messages";
 import { HostWhatsNew } from "@/components/host/HostWhatsNew";
 import { SIGN_IN_PASSWORD_NEWS } from "@/lib/host/whats-new";
@@ -56,6 +56,7 @@ interface ApiBody {
   purpose?: CodePurpose;
   maskedEmail?: string;
   redirect?: string;
+  passwordNext?: boolean;
   code?: string;
   error?: string;
   field?: string;
@@ -182,8 +183,12 @@ function HostLoginInner() {
         // still use the newest one she already has.
         goToCode("login", body.maskedEmail);
         setState(res.ok ? { kind: "idle" } : { kind: "error", message: body.error ?? "" });
-        // Only when a code really just went out (the pop-up says so).
-        if (res.ok) setPasswordNewsOpen(true);
+        // Only when a code really just went out AND "Create your password"
+        // comes next (the pop-up promises both) — never on the way back
+        // into a running show.
+        if (res.ok && body.passwordNext === true && !isInShowPath(intendedHostPath().split("?")[0])) {
+          setPasswordNewsOpen(true);
+        }
         return;
       }
       if (res.ok && body?.step === "password") {
@@ -342,9 +347,10 @@ function HostLoginInner() {
   }
 
   const closePasswordNews = useCallback(() => {
+    // Straight to the code boxes, ready to type. Focus inside the tap itself:
+    // iPhones only raise the keyboard then.
+    document.getElementById("email-code")?.focus();
     setPasswordNewsOpen(false);
-    // Straight to the code boxes, ready to type.
-    requestAnimationFrame(() => document.getElementById("email-code")?.focus());
   }, []);
 
   const isSending = state.kind === "sending";

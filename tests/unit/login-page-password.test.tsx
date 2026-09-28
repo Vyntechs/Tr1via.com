@@ -213,7 +213,7 @@ describe("/login — account with no password yet (Heather)", () => {
 
 describe("/login — What's new: why she's asked for a code and a password", () => {
   it("opens right after the code is emailed, with the approved words", async () => {
-    respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com" });
+    respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com", passwordNext: true });
     render(<HostLoginPage />);
     await submitEmail("heather@example.com");
     const dialog = await screen.findByRole("dialog", { name: "TR1VIA now uses a password." });
@@ -234,13 +234,49 @@ describe("/login — What's new: why she's asked for a code and a password", () 
   });
 
   it("'Got it' closes it and puts her in the code boxes", async () => {
-    respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com" });
+    respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com", passwordNext: true });
     render(<HostLoginPage />);
     await submitEmail("heather@example.com");
     await screen.findByRole("dialog");
     fireEvent.click(screen.getByRole("button", { name: /got it/i }));
     expect(screen.queryByRole("dialog")).toBeNull();
-    await waitFor(() => expect(document.activeElement).toBe(screen.getByLabelText("6-digit code")));
+    // Focused in the tap itself (iPhone keyboard), not a frame later.
+    expect(document.activeElement).toBe(screen.getByLabelText("6-digit code"));
+  });
+
+  it("never opens when no password step follows (prompt off, or a night is running)", async () => {
+    respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com", passwordNext: false });
+    render(<HostLoginPage />);
+    await submitEmail("heather@example.com");
+    await screen.findByLabelText("6-digit code");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("never opens on the way back into a running show", async () => {
+    window.history.pushState({}, "", "/login?next=%2Fhost%2Flive%2Fnight-1");
+    try {
+      respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com", passwordNext: true });
+      render(<HostLoginPage />);
+      await submitEmail("heather@example.com");
+      await screen.findByLabelText("6-digit code");
+      expect(screen.queryByRole("dialog")).toBeNull();
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+  });
+
+  it("Tab stays inside the pop-up", async () => {
+    respond(200, { step: "code", purpose: "login", maskedEmail: "h***@example.com", passwordNext: true });
+    render(<HostLoginPage />);
+    await submitEmail("heather@example.com");
+    await screen.findByRole("dialog");
+    const close = screen.getByRole("button", { name: "Close" });
+    const gotIt = screen.getByRole("button", { name: /got it/i });
+    gotIt.focus();
+    fireEvent.keyDown(window, { key: "Tab" });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(window, { key: "Tab", shiftKey: true });
+    expect(document.activeElement).toBe(gotIt);
   });
 
   it("never opens for a host who already has a password", async () => {

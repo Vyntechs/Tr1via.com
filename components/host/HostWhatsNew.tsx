@@ -16,6 +16,7 @@ export function HostWhatsNew({ open, onClose, news }: HostWhatsNewProps) {
   const compact = useMediaQuery("(max-width: 720px)");
   const titleId = useId();
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -27,6 +28,20 @@ export function HostWhatsNew({ open, onClose, news }: HostWhatsNewProps) {
     closeButtonRef.current?.focus();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      if (event.key !== "Tab") return;
+      // Keep Tab inside the pop-up, not on the page behind it.
+      const buttons = Array.from(dialogRef.current?.querySelectorAll("button") ?? []);
+      if (buttons.length === 0) return;
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      const inside = dialogRef.current?.contains(document.activeElement) ?? false;
+      if (event.shiftKey && (document.activeElement === first || !inside)) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !inside)) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => {
@@ -55,6 +70,7 @@ export function HostWhatsNew({ open, onClose, news }: HostWhatsNewProps) {
       }}
     >
       <section
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
