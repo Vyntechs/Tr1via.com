@@ -35,6 +35,17 @@ export const dynamic = "force-dynamic";
 // Room for a user lookup plus a slow SMTP handshake (8s connect timeout).
 export const maxDuration = 30;
 
+const SHOW_CHECK_MS = 2000;
+
+/** `work`'s answer, or null if it takes longer than `ms`. */
+function withinMs<T>(work: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), ms);
+  });
+  return Promise.race([work, timeout]).finally(() => clearTimeout(timer));
+}
+
 export async function POST(req: NextRequest) {
   // Per-IP cap (lib/auth/rate-limits.ts) — this door looks up emails.
   if (await hitIpLimit("ip:start", req)) {
@@ -58,9 +69,10 @@ export async function POST(req: NextRequest) {
   const sent = await sendCodeTo(email, "login", clientIp(req));
   if (sent.ok) {
     // Not while one of her nights is running (null = couldn't tell → no promise).
+    // The code is already in her inbox, so a slow check never holds her up.
     const passwordNext =
       walkToPasswordAfterSignIn(user.app_metadata) &&
-      (await hostHasRunningShow(getSupabaseAdmin(), user.id)) === false;
+      (await withinMs(hostHasRunningShow(getSupabaseAdmin(), user.id), SHOW_CHECK_MS)) === false;
     return NextResponse.json({ step: "code", purpose: "login", maskedEmail: sent.maskedEmail, passwordNext });
   }
   if (sent.code === "too_many_codes") {

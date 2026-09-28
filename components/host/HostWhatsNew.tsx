@@ -65,7 +65,12 @@ export function HostWhatsNew({ open, onClose, news }: HostWhatsNewProps) {
         background: "rgba(7, 6, 5, .76)",
         backdropFilter: "blur(10px)",
       }}
+      // Keep the press from moving focus, then close on the click, so the
+      // closer's own focus (e.g. the code boxes) sticks.
       onMouseDown={(event) => {
+        if (event.target === event.currentTarget) event.preventDefault();
+      }}
+      onClick={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
     >

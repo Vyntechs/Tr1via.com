@@ -185,6 +185,20 @@ describe("POST /api/auth/start — step 1, email only", () => {
     expect(await res.json()).toMatchObject({ step: "code", passwordNext: false });
   });
 
+  it("can't tell whether a night is running → still the code step, no password promise", async () => {
+    h.db = fakeShowDb({
+      hosts: () => {
+        throw new Error("db down");
+      },
+      nights: () => [],
+      games: () => [],
+    });
+    users({ id: "u1", email: "heather@example.com", app_metadata: {} });
+    const res = await start(req("/api/auth/start", { email: "heather@example.com" }));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ step: "code", passwordNext: false });
+  });
+
   it("no account → sign-up step, no email yet", async () => {
     users();
     const res = await start(req("/api/auth/start", { email: "new@example.com" }));
