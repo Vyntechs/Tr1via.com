@@ -31,7 +31,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { findAuthUserByEmail } from "@/lib/auth/admin-users";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
-import { forgetPasswordLater, hasPassword } from "@/lib/auth/password-gate";
+import { PASSWORD_SET_AT_KEY, forgetPasswordLater, hasPassword } from "@/lib/auth/password-gate";
 import { clientIp, hitIpLimit, ipEmailKey, isOverLimit, recordEvent } from "@/lib/auth/rate-limits";
 import {
   LOCKED_OUT_MESSAGE,
@@ -67,11 +67,7 @@ export async function POST(req: NextRequest) {
 
   const ip = clientIp(req);
   const pairKey = ipEmailKey(ip, email);
-  const locks = await Promise.all([
-    isOverLimit("fail:login-ip-email", pairKey),
-    isOverLimit("fail:login-email", email),
-    isOverLimit("fail:login-ip", ip),
-  ]);
+  const locks = await Promise.all([isOverLimit("fail:login-email", email), isOverLimit("fail:login-ip", ip)]);
   if (locks.some(Boolean)) return fail(429, "locked_out", LOCKED_OUT_MESSAGE);
 
   const lookup = await findAuthUserByEmail(getSupabaseAdmin(), email);
@@ -87,6 +83,17 @@ export async function POST(req: NextRequest) {
     // start a session.
     await recordEvent("fail:login-ip", ip);
     return fail(403, "no_password", NO_PASSWORD_MESSAGE);
+  }
+  // The network + email lock. Wrong passwords from before her newest
+  // password don't count, so a reset lifts it on every network (it can't be
+  // cleared by email: the key is network + email, hashed).
+  const passwordSetAt = lookup.user.app_metadata?.[PASSWORD_SET_AT_KEY];
+  if (
+    await isOverLimit("fail:login-ip-email", pairKey, {
+      notBefore: typeof passwordSetAt === "string" ? passwordSetAt : null,
+    })
+  ) {
+    return fail(429, "locked_out", LOCKED_OUT_MESSAGE);
   }
 
   const { supabase, applyCookies } = createSessionCookieClient(req);

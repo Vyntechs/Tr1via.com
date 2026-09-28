@@ -81,10 +81,12 @@ describe("hostHasRunningShow", () => {
   });
 
   it("a game from last week on an old unclosed night → not running", async () => {
-    // 6 days: inside the week, but not today's weekday (not show day).
-    const night = openedNight("host-h", 24 * 6);
-    const game = { id: "g1", night_id: night.id, state: "done", started_at: hoursAgo(24 * 6 - 1) };
-    expect(await ask(db([night], [game]))).toBe(false);
+    // Fixed clock: opened Mon Sep 21 evening, asked Sun Sep 27 (inside the
+    // week, not show day), the game's from Monday.
+    const now = new Date("2026-09-27T20:00:00Z");
+    const night = { id: "n", host_id: "host-h", created_at: "2026-09-21T23:00:00Z", opened_at: "2026-09-21T23:00:00Z", closed_at: null };
+    const game = { id: "g1", night_id: "n", state: "done", started_at: "2026-09-22T00:00:00Z" };
+    expect(await hostHasRunningShow(db([night], [game]) as never, "user-h", now)).toBe(false);
   });
 
   it("setup on a night made days ago: a category built an hour ago → running", async () => {
@@ -197,6 +199,15 @@ describe("hostHasRunningShow", () => {
     it("another host's show day doesn't count", async () => {
       const theirs = { ...lastWeek, host_id: "host-other" };
       expect(await hostHasRunningShow(db([theirs, upcoming]) as never, "user-h", wedAfternoon)).toBe(false);
+    });
+
+    it("show day uses venue time for the rooms she opened: Wed 7:30pm Chicago (Thursday in UTC) teaches Wednesday", async () => {
+      // Winter: her usual evening opening lands on Thursday in UTC. Only
+      // this night teaches show day, so a UTC weekday would miss Wednesday.
+      const lateOpen = { ...lastWeek, opened_at: "2026-09-24T00:30:00Z" }; // Wed Sep 23, 19:30 Chicago
+      expect(await hostHasRunningShow(db([lateOpen, upcoming]) as never, "user-h", wedAfternoon)).toBe(true);
+      const thu = new Date("2026-10-01T20:00:00Z"); // Thu Oct 1, 15:00 Chicago
+      expect(await hostHasRunningShow(db([lateOpen, upcoming]) as never, "user-h", thu)).toBe(false);
     });
 
     it("show day uses venue time: Wednesday 9pm Chicago is still Wednesday (Thursday in UTC)", async () => {

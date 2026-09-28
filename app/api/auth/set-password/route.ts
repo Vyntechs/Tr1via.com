@@ -42,7 +42,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { createSessionCookieClient, isSupabaseSessionCookie } from "@/lib/auth/session-cookies";
 import { checkNewPassword, PASSWORD_SET_AT_KEY } from "@/lib/auth/password-gate";
-import { clearEvents, clientIp, ipEmailKey } from "@/lib/auth/rate-limits";
+import { clearEvents } from "@/lib/auth/rate-limits";
 import { hostHasRunningShow } from "@/lib/auth/live-show";
 import { hostReturnPath } from "@/lib/host/hostReturnPath";
 import {
@@ -105,10 +105,9 @@ export async function POST(req: NextRequest) {
     return fail(500, "save_failed", TRY_AGAIN_MESSAGE);
   }
 
-  if (user.email) {
-    await clearEvents("fail:login-email", user.email);
-    await clearEvents("fail:login-ip-email", ipEmailKey(clientIp(req), user.email));
-  }
+  // The per-network lock lifts by itself: /api/auth/login ignores wrong
+  // passwords from before password_set_at.
+  if (user.email) await clearEvents("fail:login-email", user.email);
 
   // Every session she had is now ended (see header). Sign THIS device in
   // with the new password; only that new session's cookies go out.

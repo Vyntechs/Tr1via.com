@@ -123,7 +123,8 @@ export type CheckOutcome = { ok: true; codeId: string } | FlowFailure;
  * Check a code. `consume: false` only checks it (see verifyCode); use it up
  * afterwards with spendCode(). `ip` is the visitor's network: wrong codes
  * from one network for one email are capped (lib/auth/rate-limits.ts), so
- * a stranger can't lock the code she is typing.
+ * a stranger can't lock the code she is typing; wrong codes for one email
+ * from every network together have a higher backstop cap.
  */
 export async function checkCode(
   email: string,

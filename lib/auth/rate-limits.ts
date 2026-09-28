@@ -17,7 +17,10 @@
 //                                   only a many-network attack reaches 50)
 //   "Forgot password?" (send-code "reset") is NOT blocked by the password
 //   lockout, so a host who is locked out can always get back in by code.
-//   Saving a new password clears her email's lockout and this network's.
+//   Saving a new password lifts her lockouts on every network: the email
+//   backstop is cleared, and wrong passwords from before her newest
+//   password (app_metadata.password_set_at) stop counting toward the
+//   network + email lock (app/api/auth/login/route.ts).
 //   Codes actually sent, per IP per purpose (1-hour window) — this is what
 //   protects the Zoho mailbox:
 //     login                  10   (whichever door sends it: start or send-code)
@@ -149,17 +152,25 @@ function logSkip(what: string, err: unknown) {
   console.error("[rate-limit] skipped (failing open)", { what, message: (err as Error)?.message });
 }
 
-/** True when this bucket + key already has `limit` events in the window. */
+/**
+ * True when this bucket + key already has `limit` events in the window.
+ * `notBefore`: ignore events before this moment too (e.g. her last new
+ * password — a lock keyed by network can't be cleared for every network
+ * at once, so events from before the reset just stop counting).
+ */
 export async function isOverLimit(
   bucket: RateBucket,
   key: string,
-  opts: { store?: RateStore; now?: Date } = {},
+  opts: { store?: RateStore; now?: Date; notBefore?: string | null } = {},
 ): Promise<boolean> {
   const store = storeOrNull(opts.store);
   if (!store) return false;
   const now = opts.now ?? new Date();
   try {
-    const since = new Date(now.getTime() - rateWindowMs(bucket)).toISOString();
+    let sinceMs = now.getTime() - rateWindowMs(bucket);
+    const floor = opts.notBefore ? new Date(opts.notBefore).getTime() : NaN;
+    if (Number.isFinite(floor) && floor > sinceMs) sinceMs = floor;
+    const since = new Date(sinceMs).toISOString();
     return (await store.count(bucket, rateKeyHash(bucket, key), since)) >= RATE_LIMITS[bucket];
   } catch (err) {
     logSkip(`count ${bucket}`, err);

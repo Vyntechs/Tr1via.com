@@ -19,7 +19,7 @@
 //     or 50 for one email from every network together) lock that door for
 //     15 minutes with a friendly message, even for the right password; a
 //     stranger's wrong passwords on their network never lock her out on
-//     hers; setting a new password clears the email lock
+//     hers; setting a new password lifts both locks on every network
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -230,6 +230,26 @@ describe("POST /api/auth/login — wrong-password lockout", () => {
       req("/api/auth/login", { email: "brandon@vyntechs.com", password: "pw-12345678" }, "203.0.113.20"),
     );
     expect(hers.status).toBe(200);
+  });
+
+  it("a new password lifts the network lock on EVERY network (e.g. reset from her phone, laptop on venue WiFi)", async () => {
+    signInFails();
+    for (let i = 0; i < RATE_LIMITS["fail:login-ip-email"]; i++) {
+      await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "nope" }, "198.51.100.7"));
+    }
+    signInSucceeds(MARKED);
+    const locked = await login(
+      req("/api/auth/login", { email: "brandon@vyntechs.com", password: "pw-12345678" }, "198.51.100.7"),
+    );
+    expect(locked.status).toBe(429);
+    // She saves a new password from another network (password_set_at moves on).
+    const fresh = { password_set_at: new Date(Date.now() + 1000).toISOString() };
+    accounts({ ...MARKED_USER, app_metadata: fresh });
+    signInSucceeds(fresh);
+    const ok = await login(
+      req("/api/auth/login", { email: "brandon@vyntechs.com", password: "new-password" }, "198.51.100.7"),
+    );
+    expect(ok.status).toBe(200);
   });
 
   it("backstop: 50 wrong passwords for one email from many networks lock it everywhere", async () => {
