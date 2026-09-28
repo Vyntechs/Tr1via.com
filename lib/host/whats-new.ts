@@ -38,7 +38,7 @@ export const SIGN_IN_PASSWORD_NEWS: WhatsNewContent = {
   steps: [
     {
       title: "Check your email.",
-      body: "We just sent you a 6-digit code from TR1VIA. Type it on the next screen.",
+      body: "We just sent you a 6-digit code from TR1VIA. Check your spam folder if you don't see it. Type it on the next screen.",
     },
     {
       title: "Create your password.",
@@ -65,7 +65,7 @@ export const HOST_NEWS: WhatsNewContent = {
   steps: [
     {
       title: "Check your email.",
-      body: "The first time you sign in, we send you a 6-digit code from TR1VIA.",
+      body: "The first time you sign in, we send you a 6-digit code from TR1VIA. Check your spam folder if you don't see it.",
     },
     {
       title: "Create your password.",

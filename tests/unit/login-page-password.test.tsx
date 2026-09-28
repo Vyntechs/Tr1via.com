@@ -222,7 +222,7 @@ describe("/login — What's new: why she's asked for a code and a password", () 
       "It keeps your trivia nights safe, so only you can open them. Running your night hasn't changed at all.",
     );
     expect(dialog).toHaveTextContent(
-      "Check your email.We just sent you a 6-digit code from TR1VIA. Type it on the next screen.",
+      "Check your email.We just sent you a 6-digit code from TR1VIA. Check your spam folder if you don't see it. Type it on the next screen.",
     );
     expect(dialog).toHaveTextContent(
       "Create your password.Pick one you'll remember. You only do this once.",
