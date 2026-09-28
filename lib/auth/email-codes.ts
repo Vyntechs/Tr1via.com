@@ -29,7 +29,9 @@
 //     codes sent from one IP to one email (5 an hour, half the per-email
 //     cap), and wrong codes from one IP for one email (5 per 15 minutes,
 //     half a code's 10 tries). So one stranger's network can neither use up
-//     her code allowance nor lock the code she is typing.
+//     her code allowance nor lock the code she is typing. A higher cap on
+//     wrong codes per email from every network together (20 per 15
+//     minutes) is the backstop against guessing from many networks.
 //   - the check is constant-time (timingSafeEqual)
 //
 // Storage lives behind the small CodeStore interface (Supabase in
@@ -120,6 +122,8 @@ export interface CodeStore {
   readAttempts(id: string): Promise<{ attempts: number; consumed: boolean } | null>;
   /** consumed_at := now, only if still unconsumed. False if already used. */
   consume(id: string, nowIso: string): Promise<boolean>;
+  /** Delete one code (a code whose email never went out). */
+  remove(id: string): Promise<void>;
   /** Housekeeping: delete rows created before beforeIso. */
   deleteOlderThan(beforeIso: string): Promise<void>;
 }

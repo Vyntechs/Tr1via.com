@@ -55,7 +55,8 @@ export const RELOAD_PAGE_MESSAGE = "TR1VIA was updated. Please refresh this page
 // set-password refuses while one of her nights is running (see lib/auth/live-show.ts).
 export const SHOW_RUNNING_MESSAGE =
   "Your show is running right now. Create your password after the show, so your TV screen and phone stay signed in.";
-// Too many wrong codes from one network for one email (lib/auth/rate-limits.ts).
+// Too many wrong codes for one email, from one network or from every network
+// together (lib/auth/rate-limits.ts).
 export const TOO_MANY_WRONG_CODES_MESSAGE =
   "Too many wrong codes. Wait 15 minutes, then try again. Text Brandon if you're stuck.";
 export const SIGNED_OUT_MESSAGE =

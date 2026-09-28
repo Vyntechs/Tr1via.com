@@ -63,6 +63,10 @@ export function memoryCodeStore(): CodeStore & { rows: CodeRow[] } {
       r.consumed_at = nowIso;
       return true;
     },
+    async remove(id: string) {
+      const i = rows.findIndex((x) => x.id === id);
+      if (i >= 0) rows.splice(i, 1);
+    },
     async deleteOlderThan(beforeIso: string) {
       for (let i = rows.length - 1; i >= 0; i--) if (rows[i].created_at < beforeIso) rows.splice(i, 1);
     },

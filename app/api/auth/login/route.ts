@@ -16,7 +16,8 @@
 // password yet / wrong password.
 //
 // Abuse limits (lib/auth/rate-limits.ts): a per-IP request cap, and a
-// lockout after too many wrong passwords for one email or from one IP
+// lockout after too many wrong passwords for one email from one network,
+// from one IP, or (a much higher backstop) for one email from everywhere
 // ("Too many tries. Wait 15 minutes or use Forgot password."). The lockout
 // only covers this door — "Forgot password?" still emails a reset code.
 // Only Supabase's real "invalid credentials" answer is a wrong password;
@@ -31,7 +32,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { findAuthUserByEmail } from "@/lib/auth/admin-users";
 import { createSessionCookieClient } from "@/lib/auth/session-cookies";
 import { forgetPasswordLater, hasPassword } from "@/lib/auth/password-gate";
-import { clientIp, hitIpLimit, isOverLimit, recordEvent } from "@/lib/auth/rate-limits";
+import { clientIp, hitIpLimit, ipEmailKey, isOverLimit, recordEvent } from "@/lib/auth/rate-limits";
 import {
   LOCKED_OUT_MESSAGE,
   NO_ACCOUNT_MESSAGE,
@@ -65,11 +66,13 @@ export async function POST(req: NextRequest) {
   }
 
   const ip = clientIp(req);
-  const [emailLocked, ipLocked] = await Promise.all([
+  const pairKey = ipEmailKey(ip, email);
+  const locks = await Promise.all([
+    isOverLimit("fail:login-ip-email", pairKey),
     isOverLimit("fail:login-email", email),
     isOverLimit("fail:login-ip", ip),
   ]);
-  if (emailLocked || ipLocked) return fail(429, "locked_out", LOCKED_OUT_MESSAGE);
+  if (locks.some(Boolean)) return fail(429, "locked_out", LOCKED_OUT_MESSAGE);
 
   const lookup = await findAuthUserByEmail(getSupabaseAdmin(), email);
   if (!lookup.ok) return fail(500, "lookup_failed", TRY_AGAIN_MESSAGE);
@@ -114,8 +117,10 @@ export async function POST(req: NextRequest) {
   }
 
   // A real wrong password for a real password account counts against this
-  // IP and that email.
+  // IP, this IP + that email (the lockout), and that email from every
+  // network (the backstop).
   await recordEvent("fail:login-ip", ip);
+  await recordEvent("fail:login-ip-email", pairKey);
   await recordEvent("fail:login-email", email);
   return fail(401, "wrong_password", WRONG_PASSWORD_MESSAGE);
 }

@@ -100,15 +100,20 @@ export async function sendCodeTo(
     if (issued.reason === "too_many_sitewide") return paused(503);
     return { ok: false, status: 429, code: "too_many_codes", error: TOO_MANY_CODES_MESSAGE, maskedEmail };
   }
-  await recordEvent(ipBucket, ip, { store: opts.rates });
-  await recordEvent("send:code-ip-email", pairKey, { store: opts.rates });
   const sent = await sendCodeEmail(email, issued.code);
   if (!sent.ok) {
-    // A code nobody received shouldn't stay usable (only this one — her
-    // earlier codes still work).
-    await store.consume(issued.codeId, new Date().toISOString()).catch(() => {});
+    // A code that never went out doesn't count against her: delete it (so
+    // it leaves her hourly counts in issueCode) and record no rate events.
+    // Her earlier codes still work. If the delete fails, at least make it
+    // unusable.
+    await store.remove(issued.codeId).catch(() =>
+      store.consume(issued.codeId, new Date().toISOString()).catch(() => {}),
+    );
     return { ok: false, status: 503, code: "code_not_sent", error: CODE_NOT_SENT_MESSAGE, maskedEmail };
   }
+  // Only codes that really went out count against this network.
+  await recordEvent(ipBucket, ip, { store: opts.rates });
+  await recordEvent("send:code-ip-email", pairKey, { store: opts.rates });
   return { ok: true, maskedEmail };
 }
 
@@ -127,7 +132,13 @@ export async function checkCode(
   opts: { ip: string; store?: CodeStore; rates?: RateStore; consume?: boolean },
 ): Promise<CheckOutcome> {
   const pairKey = ipEmailKey(opts.ip, email);
-  if (await isOverLimit("fail:code-ip-email", pairKey, { store: opts.rates })) {
+  // This network's wrong codes for her email, and everyone's together
+  // (the many-network backstop).
+  const [pairOver, emailOver] = await Promise.all([
+    isOverLimit("fail:code-ip-email", pairKey, { store: opts.rates }),
+    isOverLimit("fail:code-email", email, { store: opts.rates }),
+  ]);
+  if (pairOver || emailOver) {
     return { ok: false, status: 429, code: "too_many_wrong_codes", error: TOO_MANY_WRONG_CODES_MESSAGE };
   }
   let result;
@@ -143,7 +154,10 @@ export async function checkCode(
     return { ok: false, status: 500, code: "try_again", error: TRY_AGAIN_MESSAGE };
   }
   if (result.ok) return { ok: true, codeId: result.codeId };
-  if (result.counted) await recordEvent("fail:code-ip-email", pairKey, { store: opts.rates });
+  if (result.counted) {
+    await recordEvent("fail:code-ip-email", pairKey, { store: opts.rates });
+    await recordEvent("fail:code-email", email, { store: opts.rates });
+  }
   switch (result.reason) {
     case "wrong_code":
       return { ok: false, status: 400, code: "wrong_code", error: WRONG_CODE_MESSAGE };

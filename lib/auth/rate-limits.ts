@@ -7,10 +7,17 @@
 //     /api/auth/verify-code  20   (and /api/auth/host-access — code checks)
 //     /api/auth/login        30
 //   Wrong passwords at /api/auth/login (15-minute window):
-//     per email              10   → "Too many tries. Wait 15 minutes or use
+//     per IP + email         10   → "Too many tries. Wait 15 minutes or use
 //     per IP                 20      Forgot password."
+//     per email              50   (every network together: a backstop
+//                                   against guessing from many networks.
+//                                   The tight lockout is keyed by network +
+//                                   email, so a stranger typing her email
+//                                   on their own network can't lock her out;
+//                                   only a many-network attack reaches 50)
 //   "Forgot password?" (send-code "reset") is NOT blocked by the password
 //   lockout, so a host who is locked out can always get back in by code.
+//   Saving a new password clears her email's lockout and this network's.
 //   Codes actually sent, per IP per purpose (1-hour window) — this is what
 //   protects the Zoho mailbox:
 //     login                  10   (whichever door sends it: start or send-code)
@@ -27,6 +34,17 @@
 //                           5    half of a code's 10 tries, so one
 //                                 stranger's network can't lock the code
 //                                 she is typing (a code lives 10 minutes)
+//   Wrong codes for one email, every network together (15-minute window):
+//                          20    a backstop against guessing her codes
+//                                 from many networks at once (without it,
+//                                 30 codes an hour x 10 tries each = 300
+//                                 guesses an hour). Trade-off: a
+//                                 many-network attack can pause her codes
+//                                 for up to 15 minutes ("Text Brandon if
+//                                 you're stuck"). Her own typos are a
+//                                 handful, nowhere near 20.
+//   Only codes that really went out are counted: a send that fails
+//   (mail trouble) records nothing (lib/auth/email-code-flow.ts).
 //
 // Events live in public.auth_rate_events (lib/auth/rate-limit-store.ts).
 // Keys are HMAC'd with SESSION_SECRET, so no plain IP or email is stored.
@@ -48,26 +66,30 @@ export type RateBucket =
   | "ip:send-code"
   | "ip:verify-code"
   | "ip:login"
+  | "fail:login-ip-email"
   | "fail:login-email"
   | "fail:login-ip"
   | "ip:code-login"
   | "ip:code-reset"
   | "ip:code-signup"
   | "send:code-ip-email"
-  | "fail:code-ip-email";
+  | "fail:code-ip-email"
+  | "fail:code-email";
 
 export const RATE_LIMITS: Readonly<Record<RateBucket, number>> = {
   "ip:start": 20,
   "ip:send-code": 10,
   "ip:verify-code": 20,
   "ip:login": 30,
-  "fail:login-email": 10,
+  "fail:login-ip-email": 10,
+  "fail:login-email": 50,
   "fail:login-ip": 20,
   "ip:code-login": 10,
   "ip:code-reset": 10,
   "ip:code-signup": 3,
   "send:code-ip-email": 5,
   "fail:code-ip-email": 5,
+  "fail:code-email": 20,
 };
 
 /** How far back each bucket counts. Everything not listed: RATE_WINDOW_MS. */
@@ -179,7 +201,7 @@ export async function clearEvents(
   }
 }
 
-/** Key for the IP + email buckets ("send:code-ip-email", "fail:code-ip-email"). */
+/** Key for the IP + email buckets ("send:code-ip-email", "fail:code-ip-email", "fail:login-ip-email"). */
 export function ipEmailKey(ip: string, email: string): string {
   return `${ip}|${email.trim().toLowerCase()}`;
 }

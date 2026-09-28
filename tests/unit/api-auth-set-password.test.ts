@@ -17,7 +17,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { memoryRateStore } from "./helpers/memory-rate-store";
-import { RATE_LIMITS, isOverLimit, recordEvent } from "@/lib/auth/rate-limits";
+import { RATE_LIMITS, ipEmailKey, isOverLimit, recordEvent } from "@/lib/auth/rate-limits";
 import { fakeShowDb, openedNight, type FakeShowDb } from "./helpers/fake-show-db";
 
 type SetAll = (c: Array<{ name: string; value: string; options?: object }>) => void;
@@ -87,7 +87,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.rates = memoryRateStore();
   // Heather's host row; last week's night was never closed (like prod).
-  h.nights = [openedNight("host-h", 24 * 7)];
+  h.nights = [openedNight("host-h", 24 * 8)]; // 8 days: exactly a week ago would make today show day
   h.db = fakeShowDb({
     hosts: () => [{ id: "host-h", user_id: USER.id }],
     nights: () => h.nights as never,
@@ -222,12 +222,17 @@ describe("POST /api/auth/set-password", () => {
     expect((await res.json()).error).not.toMatch(/boom/);
   });
 
-  it("clears a wrong-password lockout on her email once the new password is saved", async () => {
+  it("clears a wrong-password lockout on her email (and on this network) once the new password is saved", async () => {
+    // No IP header in these requests, so the network key is "unknown".
+    const pair = ipEmailKey("unknown", USER.email);
     for (let i = 0; i < RATE_LIMITS["fail:login-email"]; i++) await recordEvent("fail:login-email", USER.email);
+    for (let i = 0; i < RATE_LIMITS["fail:login-ip-email"]; i++) await recordEvent("fail:login-ip-email", pair);
     expect(await isOverLimit("fail:login-email", USER.email)).toBe(true);
+    expect(await isOverLimit("fail:login-ip-email", pair)).toBe(true);
     const res = await POST(req({ password: "trivia-night", confirm: "trivia-night" }));
     expect(res.status).toBe(200);
     expect(await isOverLimit("fail:login-email", USER.email)).toBe(false);
+    expect(await isOverLimit("fail:login-ip-email", pair)).toBe(false);
   });
 
   it("REFUSES while one of her nights is running: nothing saved, no session touched", async () => {
