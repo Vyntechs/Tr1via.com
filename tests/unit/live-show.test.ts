@@ -11,8 +11,11 @@
 //     with nothing recent → NOT running
 //   - scheduled for today (venue time, America/Chicago) or within 12h of
 //     now, even if made long ago and never opened → running
-//   - only the last week's nights are looked at: an unclosed night from
+//   - only the last two weeks' nights are looked at: an unclosed night from
 //     weeks ago is ignored, even with game activity
+//   - show day: on a weekday she opened a room on in the last 5 weeks
+//     (venue time), any not-closed night from the last two weeks → running,
+//     even before the room is opened (she sets up days ahead)
 //   - a closed night, another host's night, no host row → not running
 //   - a database error → null (callers decide)
 
@@ -40,7 +43,8 @@ describe("hostHasRunningShow", () => {
   });
 
   it("last week's night, never closed (like every past prod night) → not running", async () => {
-    expect(await ask(db([openedNight("host-h", 24 * 7)]))).toBe(false);
+    // 8 days, not 7: a room opened exactly a week ago makes today her show day.
+    expect(await ask(db([openedNight("host-h", 24 * 8)]))).toBe(false);
   });
 
   it("a closed night → not running", async () => {
@@ -77,9 +81,12 @@ describe("hostHasRunningShow", () => {
   });
 
   it("a game from last week on an old unclosed night → not running", async () => {
-    const night = openedNight("host-h", 24 * 7);
-    const game = { id: "g1", night_id: night.id, state: "done", started_at: hoursAgo(24 * 7 - 1) };
-    expect(await ask(db([night], [game]))).toBe(false);
+    // Fixed clock: opened Mon Sep 21 evening, asked Sun Sep 27 (inside the
+    // week, not show day), the game's from Monday.
+    const now = new Date("2026-09-27T20:00:00Z");
+    const night = { id: "n", host_id: "host-h", created_at: "2026-09-21T23:00:00Z", opened_at: "2026-09-21T23:00:00Z", closed_at: null };
+    const game = { id: "g1", night_id: "n", state: "done", started_at: "2026-09-22T00:00:00Z" };
+    expect(await hostHasRunningShow(db([night], [game]) as never, "user-h", now)).toBe(false);
   });
 
   it("setup on a night made days ago: a category built an hour ago → running", async () => {
@@ -143,6 +150,78 @@ describe("hostHasRunningShow", () => {
     const night = openedNight("host-h", 72);
     const game = { id: "g1", night_id: night.id, state: "live", started_at: hoursAgo(1) };
     expect(await ask(db([night], [game]))).toBe(true);
+  });
+
+  describe("show day (learned from the rooms she opened)", () => {
+    // Heather's real pattern: night made the Thursday before, room opened
+    // Wednesday evening. Wed 2026-09-30 15:00 Chicago = 20:00Z.
+    const wedAfternoon = new Date("2026-09-30T20:00:00Z");
+    const lastWeek = {
+      id: "last",
+      host_id: "host-h",
+      created_at: "2026-09-19T15:09:00Z",
+      opened_at: "2026-09-23T21:36:00Z", // Wed Sep 23, 16:36 Chicago
+      closed_at: null,
+    };
+    const upcoming = {
+      id: "next",
+      host_id: "host-h",
+      created_at: "2026-09-24T16:26:00Z", // Thu Sep 24
+      opened_at: null,
+      scheduled_at: null,
+      closed_at: null,
+    };
+
+    it("Wednesday afternoon, room not opened yet, night made last Thursday → running", async () => {
+      expect(await hostHasRunningShow(db([lastWeek, upcoming]) as never, "user-h", wedAfternoon)).toBe(true);
+    });
+
+    it("the same nights on Tuesday → not running (she can be asked)", async () => {
+      const tue = new Date("2026-09-29T20:00:00Z");
+      expect(await hostHasRunningShow(db([lastWeek, upcoming]) as never, "user-h", tue)).toBe(false);
+    });
+
+    it("a CLOSED past night still teaches her show day", async () => {
+      const closed = { ...lastWeek, closed_at: "2026-09-24T02:00:00Z" };
+      expect(await hostHasRunningShow(db([closed, upcoming]) as never, "user-h", wedAfternoon)).toBe(true);
+    });
+
+    it("tonight's night made the morning of LAST week's show: still running after last week's opening time", async () => {
+      // Both nights are just over a week old at 5pm Wed Sep 30.
+      const lastShow = { ...lastWeek, created_at: "2026-09-17T15:00:00Z" }; // opened Wed Sep 23 16:36 Chicago
+      const madeThatMorning = { ...upcoming, created_at: "2026-09-23T14:00:00Z" }; // Wed Sep 23 9am Chicago
+      const wed5pm = new Date("2026-09-30T22:00:00Z");
+      expect(await hostHasRunningShow(db([lastShow, madeThatMorning]) as never, "user-h", wed5pm)).toBe(true);
+    });
+
+    it("show day but no night from the last two weeks → not running", async () => {
+      const oldOpened = { ...lastWeek, created_at: "2026-09-05T14:28:00Z", opened_at: "2026-09-09T23:37:00Z" };
+      expect(await hostHasRunningShow(db([oldOpened]) as never, "user-h", wedAfternoon)).toBe(false);
+    });
+
+    it("a room opened more than 5 weeks ago doesn't set show day", async () => {
+      const ancient = { ...lastWeek, id: "old", created_at: "2026-08-15T00:00:00Z", opened_at: "2026-08-19T23:00:00Z" };
+      expect(await hostHasRunningShow(db([ancient, upcoming]) as never, "user-h", wedAfternoon)).toBe(false);
+    });
+
+    it("another host's show day doesn't count", async () => {
+      const theirs = { ...lastWeek, host_id: "host-other" };
+      expect(await hostHasRunningShow(db([theirs, upcoming]) as never, "user-h", wedAfternoon)).toBe(false);
+    });
+
+    it("show day uses venue time for the rooms she opened: Wed 7:30pm Chicago (Thursday in UTC) teaches Wednesday", async () => {
+      // Winter: her usual evening opening lands on Thursday in UTC. Only
+      // this night teaches show day, so a UTC weekday would miss Wednesday.
+      const lateOpen = { ...lastWeek, opened_at: "2026-09-24T00:30:00Z" }; // Wed Sep 23, 19:30 Chicago
+      expect(await hostHasRunningShow(db([lateOpen, upcoming]) as never, "user-h", wedAfternoon)).toBe(true);
+      const thu = new Date("2026-10-01T20:00:00Z"); // Thu Oct 1, 15:00 Chicago
+      expect(await hostHasRunningShow(db([lateOpen, upcoming]) as never, "user-h", thu)).toBe(false);
+    });
+
+    it("show day uses venue time: Wednesday 9pm Chicago is still Wednesday (Thursday in UTC)", async () => {
+      const wedNight = new Date("2026-10-01T02:00:00Z"); // Wed Sep 30, 21:00 Chicago
+      expect(await hostHasRunningShow(db([lastWeek, upcoming]) as never, "user-h", wedNight)).toBe(true);
+    });
   });
 
   it("another host's show doesn't count", async () => {

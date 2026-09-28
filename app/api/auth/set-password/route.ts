@@ -105,6 +105,8 @@ export async function POST(req: NextRequest) {
     return fail(500, "save_failed", TRY_AGAIN_MESSAGE);
   }
 
+  // The per-network lock lifts by itself: /api/auth/login ignores wrong
+  // passwords from before password_set_at.
   if (user.email) await clearEvents("fail:login-email", user.email);
 
   // Every session she had is now ended (see header). Sign THIS device in

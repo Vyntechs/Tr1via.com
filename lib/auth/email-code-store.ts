@@ -93,6 +93,10 @@ export function supabaseCodeStore(
       check(error, "use code");
       return Array.isArray(data) && data.length === 1;
     },
+    async remove(id: string) {
+      const { error } = await t().delete().eq("id", id);
+      check(error, "remove code");
+    },
     async deleteOlderThan(beforeIso: string) {
       const { error } = await t().delete().lt("created_at", beforeIso);
       check(error, "clean up codes");

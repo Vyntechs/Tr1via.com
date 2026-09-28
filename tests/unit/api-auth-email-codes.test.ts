@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { memoryCodeStore } from "./helpers/memory-code-store";
 import { memoryRateStore } from "./helpers/memory-rate-store";
-import { RATE_LIMITS } from "@/lib/auth/rate-limits";
+import { RATE_LIMITS, recordEvent } from "@/lib/auth/rate-limits";
 import { MAX_ATTEMPTS, MAX_SENDS_PER_HOUR_SITEWIDE } from "@/lib/auth/email-codes";
 import { fakeShowDb, openedNight, type FakeShowDb } from "./helpers/fake-show-db";
 
@@ -122,7 +122,7 @@ beforeEach(() => {
   h.hostRole = "host";
   // The signed-in user (u1) has a host row; last week's night was never
   // closed (like every production night) — not a running show.
-  h.nights = [openedNight("host-u1", 24 * 7)];
+  h.nights = [openedNight("host-u1", 24 * 8)]; // 8 days: exactly a week ago would make today show day
   h.db = fakeShowDb({
     hosts: () => [{ id: "host-u1", user_id: "u1", role: h.hostRole }],
     nights: () => h.nights as never,
@@ -228,14 +228,31 @@ describe("POST /api/auth/start — step 1, email only", () => {
     log.mockRestore();
   });
 
-  it("SMTP failure → 'Text Brandon', and the unsent code can't be used", async () => {
+  it("SMTP failure → 'Text Brandon', and the unsent code is deleted (can't be used)", async () => {
     users({ id: "h", email: "heather@example.com", app_metadata: {} });
     const log = vi.spyOn(console, "error").mockImplementation(() => {});
     h.sendMail.mockRejectedValue(new Error("connect ETIMEDOUT"));
     const res = await start(req("/api/auth/start", { email: "heather@example.com" }));
     expect(res.status).toBe(503);
-    expect(store().rows.every((r) => r.consumed_at !== null)).toBe(true);
+    expect(store().rows).toHaveLength(0);
     log.mockRestore();
+  });
+
+  it("failed sends don't count against her limits: after mail trouble she still gets all her codes", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+    h.sendMail.mockRejectedValue(new Error("connect ETIMEDOUT"));
+    for (let i = 0; i < RATE_LIMITS["send:code-ip-email"] + 1; i++) {
+      expect((await start(req("/api/auth/start", { email: "heather@example.com" }))).status).toBe(503);
+    }
+    log.mockRestore();
+    // Mail is back: her full 5 codes from this network still go out.
+    h.sendMail.mockReset();
+    h.sendMail.mockResolvedValue({ messageId: "m" });
+    for (let i = 0; i < RATE_LIMITS["send:code-ip-email"]; i++) {
+      expect((await start(req("/api/auth/start", { email: "heather@example.com" }))).status).toBe(200);
+    }
+    expect(h.sendMail).toHaveBeenCalledTimes(RATE_LIMITS["send:code-ip-email"]);
   });
 
   it("after 5 codes to one email from one network in an hour → 429, but she still lands on the code step", async () => {
@@ -753,6 +770,68 @@ describe("a stranger on one network can't stop Heather getting in by code", () =
       req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: hers }, HEATHER_IP),
     );
     expect(res.status).toBe(200);
+  });
+
+  it("10 wrong guesses fired at the same moment from one network can't slip past its cap of 5", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));
+    const hers = lastEmailedCode();
+    const wrong = hers === "000000" ? "111111" : "000000";
+    await Promise.all(
+      Array.from({ length: 10 }, () =>
+        verify(req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: wrong }, STRANGER_IP)),
+      ),
+    );
+    const rates = h.rates as ReturnType<typeof memoryRateStore>;
+    const counted = rates.events.filter((e) => e.bucket === "fail:code-email").length;
+    expect(counted).toBeLessThanOrEqual(RATE_LIMITS["fail:code-ip-email"]);
+    expect(store().rows[0].attempts).toBeLessThanOrEqual(RATE_LIMITS["fail:code-ip-email"]);
+
+    sessionWorks({});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: hers }, HEATHER_IP),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("a right code isn't left counted as a wrong guess", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));
+    sessionWorks({});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: lastEmailedCode() }, HEATHER_IP),
+    );
+    expect(res.status).toBe(200);
+    const rates = h.rates as ReturnType<typeof memoryRateStore>;
+    expect(rates.events.filter((e) => e.bucket.startsWith("fail:code"))).toHaveLength(0);
+  });
+
+  it("backstop: 20 wrong codes for her email from many networks pause code checks (15 min) everywhere", async () => {
+    users({ id: "h", email: "heather@example.com", app_metadata: {} });
+    await start(req("/api/auth/start", { email: "heather@example.com" }, HEATHER_IP));
+    const hers = lastEmailedCode();
+    const wrong = hers === "000000" ? "111111" : "000000";
+    // 19 wrong codes already came in from other networks (each under its own cap).
+    for (let i = 0; i < RATE_LIMITS["fail:code-email"] - 1; i++) {
+      await recordEvent("fail:code-email", "heather@example.com");
+    }
+    // The 20th, from a fresh network, still counts as a normal wrong code…
+    const twentieth = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: wrong }, STRANGER_IP),
+    );
+    expect((await twentieth.json()).code).toBe("wrong_code");
+    // …and now code checks for her email pause, on every network.
+    sessionWorks({});
+    const res = await verify(
+      req("/api/auth/verify-code", { email: "heather@example.com", purpose: "login", code: hers }, HEATHER_IP),
+    );
+    expect(res.status).toBe(429);
+    expect(await res.json()).toEqual({
+      code: "too_many_wrong_codes",
+      error: "Too many wrong codes. Wait 15 minutes, then try again. Text Brandon if you're stuck.",
+    });
+    expect(h.generateLink).not.toHaveBeenCalled();
+    expect(RATE_LIMITS["fail:code-email"]).toBe(20);
   });
 
   it("send-code: too many codes still hands back the masked email so the page shows the code boxes", async () => {

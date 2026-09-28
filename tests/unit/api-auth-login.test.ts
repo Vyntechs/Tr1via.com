@@ -15,9 +15,12 @@
 //     Supabase refuses keeps the code good, with the rule in plain words)
 //   - sign-up creates the account WITH password + marker, then signs in
 //   - sign-up for an existing email → 409, no session
-//   - 10 wrong passwords for one email (or 20 from one IP) lock that door
-//     for 15 minutes with a friendly message, even for the right password;
-//     setting a new password clears the email lock
+//   - 10 wrong passwords for one email from one network (or 20 from one IP,
+//     or 50 for one email from every network together) lock that door for
+//     15 minutes with a friendly message, even for the right password; a
+//     stranger's wrong passwords on their network never lock her out on
+//     hers; setting a new password lifts the per-email and per-network+email
+//     locks on every network (the per-IP cap of 20 just runs out)
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -192,7 +195,8 @@ describe("POST /api/auth/login", () => {
     ["an unconfirmed email", { status: 400, code: "email_not_confirmed", message: "Email not confirmed" }],
   ])("%s → 'couldn't sign you in right now', never counted as a wrong password", async (_label, error) => {
     h.signInWithPassword.mockResolvedValue({ data: { user: null, session: null }, error });
-    for (let i = 0; i < RATE_LIMITS["fail:login-email"] + 2; i++) {
+    // One network, past its lockout: any count would show up as a 429.
+    for (let i = 0; i < RATE_LIMITS["fail:login-ip-email"] + 2; i++) {
       const res = await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "whatever1" }));
       expect(res.status).toBe(503);
       const body = await res.json();
@@ -207,10 +211,52 @@ describe("POST /api/auth/login", () => {
 });
 
 describe("POST /api/auth/login — wrong-password lockout", () => {
-  it("locks one email after 10 wrong passwords — even the right one is refused", async () => {
+  it("locks one email on one network after 10 wrong passwords — even the right one is refused there", async () => {
+    signInFails();
+    for (let i = 0; i < RATE_LIMITS["fail:login-ip-email"]; i++) {
+      const r = await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "nope" }, "198.51.100.7"));
+      expect(r.status).toBe(401);
+    }
+    expect(RATE_LIMITS["fail:login-ip-email"]).toBe(10);
+    signInSucceeds(MARKED);
+    const locked = await login(
+      req("/api/auth/login", { email: "brandon@vyntechs.com", password: "pw-12345678" }, "198.51.100.7"),
+    );
+    expect(locked.status).toBe(429);
+    expect(await locked.json()).toEqual({ code: "locked_out", error: LOCKED_OUT_MESSAGE });
+    expect(locked.cookies.get("sb-test-auth-token")).toBeUndefined();
+
+    // Her own network isn't locked: a stranger can't lock her out.
+    const hers = await login(
+      req("/api/auth/login", { email: "brandon@vyntechs.com", password: "pw-12345678" }, "203.0.113.20"),
+    );
+    expect(hers.status).toBe(200);
+  });
+
+  it("a new password lifts the network lock on EVERY network (e.g. reset from her phone, laptop on venue WiFi)", async () => {
+    signInFails();
+    for (let i = 0; i < RATE_LIMITS["fail:login-ip-email"]; i++) {
+      await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "nope" }, "198.51.100.7"));
+    }
+    signInSucceeds(MARKED);
+    const locked = await login(
+      req("/api/auth/login", { email: "brandon@vyntechs.com", password: "pw-12345678" }, "198.51.100.7"),
+    );
+    expect(locked.status).toBe(429);
+    // She saves a new password from another network (password_set_at moves on).
+    const fresh = { password_set_at: new Date(Date.now() + 1000).toISOString() };
+    accounts({ ...MARKED_USER, app_metadata: fresh });
+    signInSucceeds(fresh);
+    const ok = await login(
+      req("/api/auth/login", { email: "brandon@vyntechs.com", password: "new-password" }, "198.51.100.7"),
+    );
+    expect(ok.status).toBe(200);
+  });
+
+  it("backstop: 50 wrong passwords for one email from many networks lock it everywhere", async () => {
     signInFails();
     for (let i = 0; i < RATE_LIMITS["fail:login-email"]; i++) {
-      // Spread over IPs so only the per-email lock can trip.
+      // Spread over IPs so only the per-email backstop can trip.
       const r = await login(req("/api/auth/login", { email: "brandon@vyntechs.com", password: "nope" }, `198.51.100.${i}`));
       expect(r.status).toBe(401);
     }

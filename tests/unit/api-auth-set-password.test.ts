@@ -87,7 +87,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.rates = memoryRateStore();
   // Heather's host row; last week's night was never closed (like prod).
-  h.nights = [openedNight("host-h", 24 * 7)];
+  h.nights = [openedNight("host-h", 24 * 8)]; // 8 days: exactly a week ago would make today show day
   h.db = fakeShowDb({
     hosts: () => [{ id: "host-h", user_id: USER.id }],
     nights: () => h.nights as never,
