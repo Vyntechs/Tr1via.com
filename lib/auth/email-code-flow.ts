@@ -18,7 +18,7 @@ import {
   type CodePurpose,
   type CodeStore,
 } from "@/lib/auth/email-codes";
-import { ipEmailKey, isOverLimit, recordEvent, type RateStore } from "@/lib/auth/rate-limits";
+import { forgetEvent, ipEmailKey, isOverLimit, recordEvent, type RateStore } from "@/lib/auth/rate-limits";
 import { sendCodeEmail, smtpConfigFromEnv } from "@/lib/email/send-code-email";
 import {
   CODE_EXPIRED_MESSAGE,
@@ -100,20 +100,23 @@ export async function sendCodeTo(
     if (issued.reason === "too_many_sitewide") return paused(503);
     return { ok: false, status: 429, code: "too_many_codes", error: TOO_MANY_CODES_MESSAGE, maskedEmail };
   }
+  // Counted BEFORE sending (mail can take seconds; a burst from one network
+  // mustn't all slip past the caps meanwhile), taken back below on failure.
+  const ipAt = await recordEvent(ipBucket, ip, { store: opts.rates });
+  const pairAt = await recordEvent("send:code-ip-email", pairKey, { store: opts.rates });
   const sent = await sendCodeEmail(email, issued.code);
   if (!sent.ok) {
     // A code that never went out doesn't count against her: delete it (so
-    // it leaves her hourly counts in issueCode) and record no rate events.
-    // Her earlier codes still work. If the delete fails, at least make it
-    // unusable.
+    // it leaves her hourly counts in issueCode) and take back the two send
+    // counts. Her earlier codes still work. If the delete fails, at least
+    // make it unusable.
     await store.remove(issued.codeId).catch(() =>
       store.consume(issued.codeId, new Date().toISOString()).catch(() => {}),
     );
+    await forgetEvent(ipBucket, ip, ipAt, { store: opts.rates });
+    await forgetEvent("send:code-ip-email", pairKey, pairAt, { store: opts.rates });
     return { ok: false, status: 503, code: "code_not_sent", error: CODE_NOT_SENT_MESSAGE, maskedEmail };
   }
-  // Only codes that really went out count against this network.
-  await recordEvent(ipBucket, ip, { store: opts.rates });
-  await recordEvent("send:code-ip-email", pairKey, { store: opts.rates });
   return { ok: true, maskedEmail };
 }
 

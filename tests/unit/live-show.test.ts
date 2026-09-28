@@ -11,10 +11,10 @@
 //     with nothing recent → NOT running
 //   - scheduled for today (venue time, America/Chicago) or within 12h of
 //     now, even if made long ago and never opened → running
-//   - only the last week's nights are looked at: an unclosed night from
+//   - only the last two weeks' nights are looked at: an unclosed night from
 //     weeks ago is ignored, even with game activity
 //   - show day: on a weekday she opened a room on in the last 5 weeks
-//     (venue time), any not-closed night from the last week → running,
+//     (venue time), any not-closed night from the last two weeks → running,
 //     even before the room is opened (she sets up days ahead)
 //   - a closed night, another host's night, no host row → not running
 //   - a database error → null (callers decide)
@@ -186,7 +186,15 @@ describe("hostHasRunningShow", () => {
       expect(await hostHasRunningShow(db([closed, upcoming]) as never, "user-h", wedAfternoon)).toBe(true);
     });
 
-    it("show day but no night from the last week → not running", async () => {
+    it("tonight's night made the morning of LAST week's show: still running after last week's opening time", async () => {
+      // Both nights are just over a week old at 5pm Wed Sep 30.
+      const lastShow = { ...lastWeek, created_at: "2026-09-17T15:00:00Z" }; // opened Wed Sep 23 16:36 Chicago
+      const madeThatMorning = { ...upcoming, created_at: "2026-09-23T14:00:00Z" }; // Wed Sep 23 9am Chicago
+      const wed5pm = new Date("2026-09-30T22:00:00Z");
+      expect(await hostHasRunningShow(db([lastShow, madeThatMorning]) as never, "user-h", wed5pm)).toBe(true);
+    });
+
+    it("show day but no night from the last two weeks → not running", async () => {
       const oldOpened = { ...lastWeek, created_at: "2026-09-05T14:28:00Z", opened_at: "2026-09-09T23:37:00Z" };
       expect(await hostHasRunningShow(db([oldOpened]) as never, "user-h", wedAfternoon)).toBe(false);
     });

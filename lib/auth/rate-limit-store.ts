@@ -35,6 +35,10 @@ export function supabaseRateStore(
       const { error } = await t().delete().eq("bucket", bucket).eq("key_hash", keyHash);
       check(error, "clear events");
     },
+    async forget(bucket, keyHash, atIso) {
+      const { error } = await t().delete().eq("bucket", bucket).eq("key_hash", keyHash).eq("created_at", atIso);
+      check(error, "forget event");
+    },
     async deleteOlderThan(beforeIso) {
       const { error } = await t().delete().lt("created_at", beforeIso);
       check(error, "clean up events");

@@ -46,8 +46,10 @@
 //                                 for up to 15 minutes ("Text Brandon if
 //                                 you're stuck"). Her own typos are a
 //                                 handful, nowhere near 20.
-//   Only codes that really went out are counted: a send that fails
-//   (mail trouble) records nothing (lib/auth/email-code-flow.ts).
+//   Only codes that really went out are counted: the two send counts are
+//   recorded BEFORE the email goes out (so a burst of requests from one
+//   network can't all slip past the cap while mail is slow) and taken back
+//   if the send fails (lib/auth/email-code-flow.ts).
 //
 // Events live in public.auth_rate_events (lib/auth/rate-limit-store.ts).
 // Keys are HMAC'd with SESSION_SECRET, so no plain IP or email is stored.
@@ -116,6 +118,8 @@ export interface RateStore {
   record(bucket: RateBucket, keyHash: string, nowIso: string): Promise<void>;
   /** Forget every event for this bucket + hashed key (e.g. after a new password). */
   clear(bucket: RateBucket, keyHash: string): Promise<void>;
+  /** Forget the event(s) for this bucket + hashed key recorded at exactly atIso. */
+  forget(bucket: RateBucket, keyHash: string, atIso: string): Promise<void>;
   deleteOlderThan(beforeIso: string): Promise<void>;
 }
 
@@ -178,23 +182,49 @@ export async function isOverLimit(
   }
 }
 
-/** Count one event (best effort — never throws). */
+/**
+ * Count one event (best effort — never throws). Returns when it was
+ * recorded (for forgetEvent), or null if it wasn't.
+ */
 export async function recordEvent(
   bucket: RateBucket,
   key: string,
   opts: { store?: RateStore; now?: Date } = {},
-): Promise<void> {
+): Promise<string | null> {
   const store = storeOrNull(opts.store);
-  if (!store) return;
+  if (!store) return null;
   const now = opts.now ?? new Date();
+  const at = now.toISOString();
   try {
-    await store.record(bucket, rateKeyHash(bucket, key), now.toISOString());
+    await store.record(bucket, rateKeyHash(bucket, key), at);
     // Light housekeeping: roughly one request in 20 sweeps old rows.
     if (Math.random() < 0.05) {
       await store.deleteOlderThan(new Date(now.getTime() - KEEP_MS).toISOString());
     }
   } catch (err) {
     logSkip(`record ${bucket}`, err);
+    return null;
+  }
+  return at;
+}
+
+/**
+ * Take back one event recordEvent counted (best effort), e.g. a code email
+ * that never went out. `at` is recordEvent's answer; null does nothing.
+ */
+export async function forgetEvent(
+  bucket: RateBucket,
+  key: string,
+  at: string | null,
+  opts: { store?: RateStore } = {},
+): Promise<void> {
+  if (!at) return;
+  const store = storeOrNull(opts.store);
+  if (!store) return;
+  try {
+    await store.forget(bucket, rateKeyHash(bucket, key), at);
+  } catch (err) {
+    logSkip(`forget ${bucket}`, err);
   }
 }
 

@@ -23,7 +23,7 @@
 //     hosts set up days ahead: Heather makes Wednesday's night on the
 //     Thursday–Saturday before and opens the room Wednesday evening. So on
 //     Wednesday afternoon nothing above is recent yet. Her history says
-//     Wednesday is show day, so any not-closed night from the last week
+//     Wednesday is show day, so any not-closed night from the last two weeks
 //     counts as running all day. A brand-new host has no history and is
 //     covered only by the rules above.
 // The time window matters: closed_at is empty on every past production
@@ -51,8 +51,14 @@ type AdminClient = Pick<ReturnType<typeof getSupabaseAdmin>, "from">;
 
 /** A trivia night is a few hours; 12 covers a long night with setup. */
 export const SHOW_WINDOW_MS = 12 * 60 * 60 * 1000;
-/** Nights older than this (created, opened and scheduled) are never "running". */
-export const RECENT_NIGHT_MS = 7 * 24 * 60 * 60 * 1000;
+/**
+ * Nights older than this (created, opened and scheduled) are never "running".
+ * Two weeks, not one: on show day, last week's night must still count even
+ * after the clock passes last week's opening time (e.g. she made tonight's
+ * night the morning of last week's show — then no night is under a week old
+ * between last week's opening time and tonight's).
+ */
+export const RECENT_NIGHT_MS = 14 * 24 * 60 * 60 * 1000;
 /** The venues' local time, for "scheduled for today" and show day. */
 export const SHOW_TIME_ZONE = "America/Chicago";
 /** How far back her opened rooms are read to learn her show day(s). */
@@ -101,10 +107,10 @@ export async function hostHasRunningShow(
     if (hostErr) throw hostErr;
     if (!host) return false; // no host row yet (still onboarding): no nights
 
-    // Only the last week's nights (created, opened or scheduled since then —
+    // Only the last two weeks' nights (created, opened or scheduled since then —
     // a night scheduled later counts too): past nights are never closed, so
     // without this bound the list would grow every week, forever.
-    const weekAgoIso = new Date(now.getTime() - RECENT_NIGHT_MS).toISOString();
+    const recentIso = new Date(now.getTime() - RECENT_NIGHT_MS).toISOString();
     const historyIso = new Date(now.getTime() - SHOW_DAY_HISTORY_MS).toISOString();
     const [{ data: nights, error: nightsErr }, { data: opened, error: openedErr }] = await Promise.all([
       admin
@@ -112,7 +118,7 @@ export async function hostHasRunningShow(
         .select("id, created_at, opened_at, scheduled_at")
         .eq("host_id", host.id)
         .is("closed_at", null)
-        .or(`created_at.gte.${weekAgoIso},opened_at.gte.${weekAgoIso},scheduled_at.gte.${weekAgoIso}`),
+        .or(`created_at.gte.${recentIso},opened_at.gte.${recentIso},scheduled_at.gte.${recentIso}`),
       // Her show day(s): every room she opened in the last 5 weeks, closed or not.
       admin.from("nights").select("opened_at").eq("host_id", host.id).gte("opened_at", historyIso),
     ]);
@@ -121,7 +127,7 @@ export async function hostHasRunningShow(
     const notClosed = nights ?? [];
     if (notClosed.length === 0) return false;
 
-    // Show day (header): any not-closed night from the last week counts.
+    // Show day (header): any not-closed night from the last two weeks counts.
     const today = localWeekday(now);
     if ((opened ?? []).some((n) => !!n.opened_at && localWeekday(new Date(n.opened_at)) === today)) {
       return true;
@@ -138,7 +144,7 @@ export async function hostHasRunningShow(
       return true;
     }
 
-    // An older night (from the last week) with game or setup activity in the
+    // An older night (from the last two weeks) with game or setup activity in the
     // window.
     const ids = notClosed.map((n) => n.id);
     const sinceIso = new Date(since).toISOString();
