@@ -2,7 +2,7 @@
 //
 // findAuthUserByEmail — one indexed row via the service-role-only SQL
 // function public.find_auth_user_by_email (migration
-// 20260927230000_find_auth_user_by_email.sql). The sign-in doors call it on
+// 20260928002701_find_auth_user_by_email.sql). The sign-in doors call it on
 // unauthenticated requests, so it must not page through every account.
 // Until that migration is applied it falls back to the paged walk below.
 //

@@ -1,4 +1,4 @@
--- 20260927230000_find_auth_user_by_email.sql
+-- 20260928002701_find_auth_user_by_email.sql
 --
 -- One-row lookup of a sign-in account by email, for the host sign-in doors
 -- (/api/auth/start, send-code, verify-code, login) and the founder's admin
