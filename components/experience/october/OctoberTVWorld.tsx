@@ -56,6 +56,7 @@ export interface OctoberTVWorldProps {
 
 const NIGHT_BLACK = "#120A06";
 const STAGE_W = 1600;
+const PRESENT_FOR_MS = 20 * 60_000;
 const STAGE_H = 900;
 
 export function OctoberTVWorld({
@@ -93,11 +94,8 @@ export function OctoberTVWorld({
   }, []);
 
   // ── who is in the patch ──
-  const players = useMemo<PatchPlayer[]>(
-    () =>
-      [...snapshot.players]
-        .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt))
-        .map((p) => ({ key: p.id, name: p.displayName })),
+  const roster = useMemo(
+    () => [...snapshot.players].sort((a, b) => a.joinedAt.localeCompare(b.joinedAt)),
     [snapshot.players],
   );
   const answers = useMemo<PatchAnswer[]>(
@@ -109,6 +107,40 @@ export function OctoberTVWorld({
       })),
     [snapshot.liveAnswers],
   );
+
+  // A pumpkin for everyone who is actually here: phones check in every 10 s
+  // while open, so anyone silent for 20 minutes (and not answering this
+  // question) has most likely gone home. Leaving them out keeps the patch
+  // from knocking over a ghost every question.
+  const [players, setPlayers] = useState<PatchPlayer[]>(() =>
+    roster.map((p) => ({ key: p.id, name: p.displayName })),
+  );
+  useEffect(() => {
+    const update = () => {
+      const now = Date.now() + offsetRef.current;
+      const answering = new Set(
+        answers.filter((a) => a.questionId === momentRef.current.questionId).map((a) => a.playerKey),
+      );
+      const next = roster
+        .filter((p) => {
+          if (answering.has(p.id)) return true;
+          const seen = Date.parse(p.lastSeenAt);
+          return !Number.isFinite(seen) || now - seen < PRESENT_FOR_MS;
+        })
+        .map((p) => ({ key: p.id, name: p.displayName }));
+      setPlayers((prev) =>
+        prev.length === next.length && prev.every((p, i) => p.key === next[i].key && p.name === next[i].name)
+          ? prev
+          : next,
+      );
+    };
+    const first = window.setTimeout(update, 0);
+    const id = window.setInterval(update, 30_000);
+    return () => {
+      window.clearTimeout(first);
+      window.clearInterval(id);
+    };
+  }, [roster, answers, moment]);
 
   // The scene only changes at moment changes and at the 5 s / 0 s marks, so
   // re-checking it 5× a second is plenty; the canvas animates in between.
@@ -193,6 +225,7 @@ export function OctoberTVWorld({
       data-world-moment={moment.kind}
       data-world-phase={scene.phase}
       data-world-horseman={scene.horseman}
+      data-world-pumpkins={off ? undefined : players.length}
       data-world-off={off ? "true" : undefined}
       style={{
         position: "relative",

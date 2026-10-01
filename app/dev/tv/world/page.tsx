@@ -9,6 +9,7 @@
 // s:      seconds left on the clock (question only; the clock keeps running)
 // locked: how many players have locked in (question / reveal)
 // tier:   still → the host phone preview's no-animation version
+// long:   1 → worst-case content (long question + photo + long answers + fact)
 // play:   9 s left → lock-ins arrive → last five seconds → time's up →
 //         the reveal lands 0.6 s after zero (like the real game) → board.
 // host:   1 → inside the host's laptop console (TV panel + control strip,
@@ -44,6 +45,7 @@ function TVWorldPreview() {
   const lockedParam = params.get("locked");
   const play = params.get("play") === "1";
   const tier = params.get("tier") === "still" ? "still" : "full";
+  const long = params.get("long") === "1";
 
   // Build once per page load so the clock runs from the moment it opened.
   const [startMs] = useState(() => Date.now());
@@ -79,8 +81,9 @@ function TVWorldPreview() {
         locked,
         nowMs: play ? startMs : nowMs,
         revealedAtMs: play ? revealedAtMs : undefined,
+        long,
       }),
-    [moment, players, secondsLeft, locked, play, startMs, nowMs, revealedAtMs],
+    [moment, players, secondsLeft, locked, play, startMs, nowMs, revealedAtMs, long],
   );
   const snapshot = useMemo(
     () => ({ ...night.snapshot, night: { ...night.snapshot.night, themeKey } }),

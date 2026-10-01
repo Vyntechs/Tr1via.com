@@ -18,6 +18,9 @@ import {
   Wordmark,
 } from "@/components/system";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import type { ReactNode } from "react";
+import { useStageWorld } from "@/components/experience/StageWorld";
+import { ShrinkToFit } from "@/components/experience/ShrinkToFit";
 
 export interface TVRevealFastest {
   name: string;
@@ -83,12 +86,17 @@ function TVRevealInner({
   fastestFive = [],
 }: Omit<TVRevealProps, "themeKey">) {
   const { t } = useTheme();
+  // With a living world (October) the reveal keeps the top part of the TV:
+  // it sits on the world's dark scrim, and the answer column shrinks to fit
+  // when a long question, answer and fact would otherwise be cut off.
+  const world = useStageWorld();
 
   return (
     <TVStage
       data-testid="tv-reveal"
       data-reading-surface="theme-paper"
       weather={false}
+      page="reveal"
     >
       <div
         data-testid="tv-reveal-header"
@@ -123,7 +131,7 @@ function TVRevealInner({
           overflow: "hidden",
         }}
       >
-        <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>
+        <RevealAnswerColumn shrink={!!world}>
           <Display
             size="clamp(36px, 5vmin, 54px)"
             color={t.ink}
@@ -254,7 +262,7 @@ function TVRevealInner({
               </div>
             </div>
           </div>
-        </div>
+        </RevealAnswerColumn>
 
         <div style={{ minWidth: 0 }}>
           <Eyebrow color={t.inkMute} size={11}>FIRST FIVE IN</Eyebrow>
@@ -319,4 +327,11 @@ function TVRevealInner({
 
     </TVStage>
   );
+}
+
+/** The reveal's answer column. Everyday nights: exactly as always. Inside a
+ *  living world: shrinks as one piece when needed so nothing is cut off. */
+function RevealAnswerColumn({ shrink, children }: { shrink: boolean; children: ReactNode }) {
+  if (shrink) return <ShrinkToFit>{children}</ShrinkToFit>;
+  return <div style={{ minWidth: 0, display: "flex", flexDirection: "column" }}>{children}</div>;
 }

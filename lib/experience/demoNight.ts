@@ -56,6 +56,9 @@ export interface DemoNightOptions {
   revealedAtMs?: number;
   /** Clock the snapshot is built against. */
   nowMs?: number;
+  /** Worst-case content: a long question with a photo, long answers and a
+   *  long fact, to check nothing gets cut off. */
+  long?: boolean;
 }
 
 export interface DemoNight {
@@ -168,6 +171,21 @@ export function demoNight(opts: DemoNightOptions): DemoNight {
   subway.pointValue = 100;
   subway.factBlurb =
     "New York's subway has 472 stations — more than any other system on Earth, and it runs 24 hours a day.";
+  if (opts.long) {
+    subway.prompt =
+      "Which work boot company, still operating in Chippewa Falls, Wisconsin, is known for making custom boots to order for specific trades like firefighting, logging and linework, and has done so since 1910?";
+    subway.options = [
+      "Red Wing Heritage Workwear Company",
+      "Chippewa Boots of Wisconsin",
+      "Wolverine Worldwide Brands",
+      "Danner Boots of Portland, Oregon",
+    ];
+    subway.imageUrl =
+      "data:image/svg+xml;charset=utf-8," +
+      encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="260" height="260"><rect width="260" height="260" fill="#6b4a2b"/><circle cx="130" cy="130" r="80" fill="#c49a6c"/></svg>');
+    subway.factBlurb =
+      "Chippewa Boots has been making boots in Chippewa Falls since 1901, and its custom shop still builds made-to-order boots for loggers, firefighters and lineworkers who need a fit and a sole that off-the-shelf boots simply can't give them.";
+  }
 
   switch (opts.moment) {
     case "lobby": {

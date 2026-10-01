@@ -45,7 +45,9 @@ function renderTV(moment: DemoMoment, themeKey: ThemeKey, worldTier?: "full" | "
 }
 
 describe("October world on the venue TV", () => {
-  it("is not mounted on any other theme; the screens render exactly as before", () => {
+  // (Pixel-for-pixel sameness of the other themes is checked by the
+  // before/after picture comparison, not here.)
+  it("is not mounted on any other theme", () => {
     for (const theme of ["house", "may", "july", "september", "november"] as ThemeKey[]) {
       const { unmount } = renderTV("question", theme);
       expect(screen.queryByTestId("october-world")).toBeNull();
@@ -135,6 +137,37 @@ describe("October world on the venue TV", () => {
     expect(screen.getByText("New York City")).toBeInTheDocument();
     // …and the question view was never torn down (its clock didn't restart).
     expect(screen.getByTestId("tv-question")).toBe(questionBefore);
+  });
+
+  it("leaves out players who have gone home, unless they answered this question", async () => {
+    const now = Date.now();
+    const night = demoNight({ moment: "question", nowMs: now, secondsLeft: 14, locked: 0 });
+    const stale = new Date(now - 45 * 60_000).toISOString();
+    const players = night.snapshot.players.map((p, i) => (i < 4 ? { ...p, lastSeenAt: stale } : p));
+    // One of the long-gone players answers this question after all.
+    const liveAnswers = [
+      {
+        question_id: night.snapshot.liveQuestionId!,
+        player_key: players[0].id,
+        player_name: players[0].displayName,
+        ms_to_lock: 3000,
+        is_correct: null,
+        chosen_index: null,
+      },
+    ];
+    render(
+      <ThemeProvider themeKey="october">
+        <TVStateMachine
+          snapshot={{ ...night.snapshot, players, liveAnswers }}
+          lastBroadcastRevealedAt={night.revealedAt}
+          lastBroadcastServerNow={new Date(now).toISOString()}
+          themeKey="october"
+        />
+      </ThemeProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("october-world")).toHaveAttribute("data-world-pumpkins", String(29 - 3)),
+    );
   });
 
   it("lets the Horseman finish his ride after the screen switches to the reveal", async () => {

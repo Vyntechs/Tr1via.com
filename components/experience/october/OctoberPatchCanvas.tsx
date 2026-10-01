@@ -375,7 +375,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
 
       const shiver =
         !still && scene.shiver && rt.mood === "waiting"
-          ? 2.4 * Math.sin(t * 2 * Math.PI * 7 + rt.seed)
+          ? 2.4 * Math.sin(t * 2 * Math.PI * 5 + rt.seed)
           : 0;
       rotate += shiver;
 
@@ -615,12 +615,17 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
     const tick = (ts: number) => {
       if (stopped) return;
       try {
-        if (lastFrameAt && framesSeen > 20 && frameTimes.length < 90) {
+        // Keep timing frames all night (the busiest moments, a full patch
+        // and the winner's embers, come late): if a run of 90 frames is slow,
+        // drop to lite for the rest of the night. Same story, less work.
+        if (lastFrameAt && framesSeen > 20 && !lite) {
           frameTimes.push(ts - lastFrameAt);
-          if (frameTimes.length === 90 && median(frameTimes) > 24 && !lite) {
-            // A slow TV: same story, fewer embers, lower resolution.
-            lite = true;
-            resize();
+          if (frameTimes.length >= 90) {
+            if (median(frameTimes) > 24) {
+              lite = true;
+              resize();
+            }
+            frameTimes.length = 0;
           }
         }
         framesSeen++;

@@ -32,6 +32,10 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 // claims its column, so its ceiling is a notch lower.
 const QUESTION_SIZES_NO_IMAGE = [48, 54, 60, 66, 72] as const;
 const QUESTION_SIZES_WITH_IMAGE = [48, 54, 60, 66, 72] as const;
+// A living world (October) gives the question the top part of the TV only,
+// so a very long prompt may step down further rather than be cut off. Short
+// prompts still get the full hero size.
+const QUESTION_SIZES_IN_WORLD = [32, 36, 40, 44, 48, 54, 60, 66, 72] as const;
 
 export interface TVQuestionOption {
   n: number;
@@ -125,7 +129,11 @@ function TVQuestionInner({
   // pixel viewport varies night to night. Measurement (not media queries) is
   // what guarantees fit.
   const { frameRef, textRef, fontSize: questionFontSize } = useAutoFitText({
-    sizes: showImage ? QUESTION_SIZES_WITH_IMAGE : QUESTION_SIZES_NO_IMAGE,
+    sizes: octoberWorld
+      ? QUESTION_SIZES_IN_WORLD
+      : showImage
+        ? QUESTION_SIZES_WITH_IMAGE
+        : QUESTION_SIZES_NO_IMAGE,
   });
   const opts: TVQuestionOption[] = options ?? [
     { n: 1, text: "Florida" },

@@ -58,7 +58,7 @@ function YourPumpkinArt({ mood, size, shiver = false, style }: YourPumpkinProps)
     mood === "toppled"
       ? { animation: "tr1via-oct-tip .5s cubic-bezier(.5,0,.4,1) both", transformOrigin: "50% 78%" }
       : shiver && mood === "waiting"
-        ? { animation: "tr1via-oct-shiver .16s ease-in-out infinite", transformOrigin: "50% 78%" }
+        ? { animation: "tr1via-oct-shiver .2s ease-in-out infinite", transformOrigin: "50% 78%" }
         : mood === "blaze"
           ? { animation: "tr1via-oct-flame .9s ease-in-out infinite", transformOrigin: "50% 78%" }
           : {};
