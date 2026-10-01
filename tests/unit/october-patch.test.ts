@@ -68,6 +68,8 @@ describe("patchScene · moods", () => {
     expect(scene.phase).toBe("times-up");
     expect(scene.moods).toEqual({ a: "lit", b: "waiting", c: "waiting" });
     expect(scene.shiver).toBe(false);
+    // Names fade as answers close, before anything blazes, smokes or tips.
+    expect(scene.showNames).toBe(false);
   });
 
   it("reveal: right blazes, wrong smokes, missed stays knocked over, names fade", () => {

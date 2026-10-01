@@ -181,7 +181,9 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
       const rect = canvas.getBoundingClientRect();
       cssW = Math.max(1, rect.width);
       cssH = Math.max(1, rect.height);
-      dpr = Math.min(lite || still ? 1 : 2, window.devicePixelRatio || 1);
+      // Never paint more than ~1920 (or 1280 on a slow TV) pixels across:
+      // a 4K TV gains nothing visible from a bigger canvas, only work.
+      dpr = Math.min(lite || still ? 1 : 2, window.devicePixelRatio || 1, (lite ? 1280 : 1920) / cssW);
       canvas.width = Math.round(cssW * dpr);
       canvas.height = Math.round(cssH * dpr);
       k = Math.min(cssW / STAGE_W, cssH / STAGE_H);
@@ -475,7 +477,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
       ctx.restore();
     };
 
-    const drawParticles = (now: number) => {
+    const drawParticles = (now: number, phase: PatchScene["phase"]) => {
       for (let i = particles.length - 1; i >= 0; i--) {
         const pt = particles[i];
         const age = now - pt.born;
@@ -488,6 +490,12 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
         const sec = age / 1000;
         const x = pt.x + pt.vx * sec;
         const y = pt.y + pt.vy * sec;
+        // Embers stay in the patch, off the answer text; only the winner's
+        // eruption fills the sky.
+        if (pt.kind === "ember" && phase !== "winner" && y < 610) {
+          particles.splice(i, 1);
+          continue;
+        }
         ctx.save();
         if (pt.kind === "ember") {
           ctx.globalCompositeOperation = "lighter";
@@ -600,7 +608,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
         }
       }
 
-      drawParticles(now);
+      drawParticles(now, scene.phase);
       drawHorseman(now, scene, "front");
       drawFog(now, scene);
     };

@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useMemo, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { TVStage, TVHeader } from "@/components/shells";
 import { QRBlock, useTheme } from "@/components/system";
 import type { TVLobbyProps } from "@/components/tv/TVLobby";
@@ -553,19 +553,16 @@ export function OctoberWinner({
 
         <span style={abs(56, 150, mono(13, { color: t.accent }))}>WON THE NIGHT · HOLDS THE FLAMING HEAD</span>
         <FlamingHead height={166} style={abs(56, 170)} />
-        <span
-          data-testid="tv-finale-winner-name"
-          style={abs(168, 180, display(190, {
-            color: t.ink,
-            lineHeight: 0.92,
-            letterSpacing: "-0.05em",
-            maxWidth: 860,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }))}
-        >
-          {winner.name}.
-        </span>
+        {/* The champion's name at full size when it fits; a long name or a
+            tie ("Sarah + Mike") shrinks to fit whole, never cut off. */}
+        <FitWidth maxWidth={890} style={abs(168, 180, { height: 175 })}>
+          <span
+            data-testid="tv-finale-winner-name"
+            style={display(190, { color: t.ink, lineHeight: 0.92, letterSpacing: "-0.05em" })}
+          >
+            {winner.name}.
+          </span>
+        </FitWidth>
         <div style={abs(60, 390, { display: "flex", alignItems: "baseline", gap: 28 })}>
           <span
             data-testid="tv-finale-winner-score"
@@ -613,6 +610,47 @@ export function OctoberWinner({
         ))}
       </FitStage>
     </TVStage>
+  );
+}
+
+/** One line at its natural size, scaled down as a whole if wider than
+ *  `maxWidth`. Measures layout width, so a scaled stage isn't counted twice. */
+function FitWidth({ maxWidth, style, children }: { maxWidth: number; style: CSSProperties; children: ReactNode }) {
+  const innerRef = useRef<HTMLDivElement | null>(null);
+  const [scale, setScale] = useState(1);
+  useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner) return;
+    const fit = () => {
+      const natural = inner.offsetWidth;
+      if (natural <= 0) return;
+      const next = Math.min(1, maxWidth / natural);
+      setScale((current) => (Math.abs(current - next) < 0.005 ? current : next));
+    };
+    const first = window.setTimeout(fit, 0);
+    if (typeof ResizeObserver === "undefined") return () => window.clearTimeout(first);
+    const observer = new ResizeObserver(fit);
+    observer.observe(inner);
+    return () => {
+      window.clearTimeout(first);
+      observer.disconnect();
+    };
+  }, [maxWidth]);
+  return (
+    <div style={{ ...style, width: maxWidth, display: "flex", alignItems: "center" }}>
+      <div
+        ref={innerRef}
+        data-fit-scale={scale.toFixed(2)}
+        style={{
+          whiteSpace: "nowrap",
+          flexShrink: 0,
+          transform: scale === 1 ? undefined : `scale(${scale})`,
+          transformOrigin: "left center",
+        }}
+      >
+        {children}
+      </div>
+    </div>
   );
 }
 

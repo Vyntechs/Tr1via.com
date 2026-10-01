@@ -53,8 +53,9 @@ export interface PatchAnswer {
 export interface PatchScene {
   phase: PatchPhase;
   moods: Record<string, PumpkinMood>;
-  /** Name stakes show, except on the board and at the reveal (they fade just
-   *  before it, so nobody is called out for a wrong answer). */
+  /** Name stakes show, except on the board and from time's up through the
+   *  reveal (they fade as answers close, before any pumpkin blazes, smokes or
+   *  tips over, so nobody is called out). */
   showNames: boolean;
   /** Unlit pumpkins shiver in the last five seconds. */
   shiver: boolean;
@@ -122,7 +123,7 @@ export function patchScene(input: PatchSceneInput): PatchScene {
   return {
     phase,
     moods,
-    showNames: phase !== "reveal" && moment.kind !== "board",
+    showNames: phase !== "reveal" && phase !== "times-up" && moment.kind !== "board",
     shiver: phase === "final-seconds",
     clouds: phase === "final-seconds" || phase === "times-up",
     moon: moonFor(moment.kind),

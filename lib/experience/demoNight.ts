@@ -309,6 +309,10 @@ export function demoNight(opts: DemoNightOptions): DemoNight {
       scores[order[0]].fastest_correct_ms = 900;
       scores[order[1]].score = 8910;
       scores[order[2]].score = 8020;
+      if (opts.long) {
+        // A tie for the win: the TV names both champions.
+        scores[order[1]].score = 9640;
+      }
       break;
     }
   }

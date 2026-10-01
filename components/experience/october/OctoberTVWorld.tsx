@@ -38,6 +38,7 @@ import {
 } from "@/lib/experience/october/patch";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { HARVEST_MOON, HOLLOW_TV, PATCH_HILL, artUrl } from "./art";
 import { OctoberPatchCanvas, type OctoberPatchInputs } from "./OctoberPatchCanvas";
@@ -56,7 +57,9 @@ export interface OctoberTVWorldProps {
 
 const NIGHT_BLACK = "#120A06";
 const STAGE_W = 1600;
-const PRESENT_FOR_MS = 20 * 60_000;
+const PRESENT_FOR_MS = 10 * 60_000;
+// The same clock length the on-screen timer uses for this theme.
+const QUESTION_CLOCK_S = questionDurationFor("october");
 const STAGE_H = 900;
 
 export function OctoberTVWorld({
@@ -109,7 +112,7 @@ export function OctoberTVWorld({
   );
 
   // A pumpkin for everyone who is actually here: phones check in every 10 s
-  // while open, so anyone silent for 20 minutes (and not answering this
+  // while open, so anyone silent for 10 minutes (and not answering this
   // question) has most likely gone home. Leaving them out keeps the patch
   // from knocking over a ghost every question.
   const [players, setPlayers] = useState<PatchPlayer[]>(() =>
@@ -163,6 +166,7 @@ export function OctoberTVWorld({
           players,
           answers,
           serverNowMs: Date.now() + offsetRef.current,
+          durationS: QUESTION_CLOCK_S,
         });
         setScene((prev) => (sameScene(prev, next) ? prev : next));
       } catch (error) {
@@ -185,6 +189,7 @@ export function OctoberTVWorld({
         players: [],
         answers: [],
         serverNowMs: Date.now() + offsetRef.current,
+        durationS: QUESTION_CLOCK_S,
       }),
     [],
   );
