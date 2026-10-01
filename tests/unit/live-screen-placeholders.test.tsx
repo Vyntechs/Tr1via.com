@@ -119,10 +119,10 @@ describe("room lookup for the join screen", () => {
     return (await response.json()) as { hostName: string | null; venueName: string };
   }
 
-  it("returns the host's first name", async () => {
-    const builder = lookupReturning("Brandon Nichols");
+  it("returns the host's name as she set it", async () => {
+    const builder = lookupReturning(" Heather ");
     const body = await lookup();
-    expect(body.hostName).toBe("Brandon");
+    expect(body.hostName).toBe("Heather");
     expect(body.venueName).toBe("Soul Fire Pizza");
     expect(builder.select).toHaveBeenCalledWith(expect.stringContaining("display_name"));
   });
@@ -217,6 +217,29 @@ describe("venue TV counts the game, not the room", () => {
     });
     render(wrap(<TVStateMachine snapshot={live} />));
     expect(screen.getByText(/OF 3 LOCKED IN/)).toBeInTheDocument();
+  });
+});
+
+describe("venue TV counts only players still in the room", () => {
+  it("leaves out a player the host removed (their score row lingers)", () => {
+    const base = nightSnapshot();
+    // Brooke (pk1) was removed: gone from players, still in the scores feed.
+    const removed = nightSnapshot({ players: base.players.filter((p) => p.id !== "pk1") });
+    render(wrap(<TVStateMachine snapshot={removed} />));
+    expect(screen.getByText(/of 2 got it/)).toBeInTheDocument();
+  });
+
+  it("the Game 2 winner screen's PLAYERS stat counts Game 2 players", () => {
+    const done = nightSnapshot({
+      games: [
+        { id: "g1", gameNo: 1, state: "done", startedAt: null, endedAt: null, categoryCount: 1, questionCount: 1 },
+        { id: "g2", gameNo: 2, state: "done", startedAt: null, endedAt: null, categoryCount: 1, questionCount: 1 },
+      ],
+    });
+    render(wrap(<TVStateMachine snapshot={done} />));
+    const stat = screen.getByText("PLAYERS").parentElement!;
+    expect(stat).toHaveTextContent("3");
+    expect(stat).not.toHaveTextContent("5");
   });
 });
 

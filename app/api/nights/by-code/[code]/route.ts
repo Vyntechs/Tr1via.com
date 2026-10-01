@@ -4,7 +4,7 @@
 // into a night_id so they can post their display name to /api/players.
 // Players aren't members yet, so RLS would deny — we use the admin client
 // to perform the single narrow lookup. Returns only the bare minimum: id,
-// venue name, the host's first name (the join screen's "hosted by" line),
+// venue name, the host's display name (the join screen's "hosted by" line),
 // theme (so the join page can theme itself), and whether the room is locked.
 //
 // Theme: returns both the per-night override (`themeKey`) and the host's
@@ -47,15 +47,8 @@ export async function GET(
     venueName: data.venue_name,
     themeKey: data.theme_key,
     hostDefaultThemeKey: host?.default_theme_key ?? null,
-    hostName: firstName(host?.display_name),
+    hostName: host?.display_name?.trim() || null,
     isLocked: data.is_locked,
     isOpen: data.opened_at !== null,
   });
-}
-
-// "Heather" stays "Heather"; "Brandon Nichols" becomes "Brandon". The join
-// screen only ever uses a first name.
-function firstName(displayName: string | null | undefined): string | null {
-  const first = displayName?.trim().split(/\s+/)[0];
-  return first ? first : null;
 }

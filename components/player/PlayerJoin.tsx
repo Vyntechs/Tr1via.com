@@ -29,7 +29,7 @@ export interface PlayerJoinProps {
    * eyebrow and the supporting copy. The gallery default is demo-only.
    */
   venueName?: string;
-  /** Host's first name for the supporting copy. Live callers always pass it;
+  /** Host's display name for the supporting copy. Live callers always pass it;
    *  an empty string drops the "hosted by" clause instead of naming a demo
    *  host. The gallery default is demo-only. */
   hostName?: string;

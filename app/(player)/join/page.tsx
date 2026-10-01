@@ -42,7 +42,7 @@ import { writeThemeSeed } from "@/lib/theme/themeSeed";
 interface NightLookup {
   nightId: string;
   venueName: string;
-  /** Host's first name; null when the host has no display name. */
+  /** Host's display name; null when the host has none. */
   hostName: string | null;
   /** Per-night theme override; null when no override is set. */
   themeKey: string | null;
