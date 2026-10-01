@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { fireLightningBeat } from "@/components/system/Lightning";
 import { fireLockInBurst } from "@/components/system/Pyrotechnics";
 import type { CeremonyKind } from "@/lib/theme/lockInCeremony";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 
 export type CeremonyMode = "calm" | "storm";
 
@@ -66,7 +67,17 @@ export interface TVLockInCeremonyProps {
   onSpotlight?: (playerId: string | null) => void;
 }
 
-export function TVLockInCeremony({
+// Decoration only: if this effect ever throws, it switches itself off and
+// the game keeps going (see ThemeLayerBoundary).
+export function TVLockInCeremony(props: TVLockInCeremonyProps) {
+  return (
+    <ThemeLayerBoundary name="lock-in-ceremony">
+      <TVLockInCeremonyLayer {...props} />
+    </ThemeLayerBoundary>
+  );
+}
+
+function TVLockInCeremonyLayer({
   events,
   ceremony = "lightning",
   onEventComplete,

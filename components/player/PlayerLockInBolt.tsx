@@ -15,6 +15,7 @@
 import { useEffect, useRef } from "react";
 import { generateBolt, type BoltSegment } from "@/components/system/lightning-bolt";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 
 export interface PlayerLockInBoltProps {
   active: boolean;
@@ -27,7 +28,17 @@ const DURATION_MS = 700;
 const BOLT_HEIGHT = 200;
 const BOLT_WIDTH = 80;
 
-export function PlayerLockInBolt({ active, tint, onComplete }: PlayerLockInBoltProps) {
+// Decoration only: if the bolt ever throws, it switches itself off and the
+// player's locked-in screen carries on underneath (see ThemeLayerBoundary).
+export function PlayerLockInBolt(props: PlayerLockInBoltProps) {
+  return (
+    <ThemeLayerBoundary name="phone-lock-in-bolt">
+      <PlayerLockInBoltLayer {...props} />
+    </ThemeLayerBoundary>
+  );
+}
+
+function PlayerLockInBoltLayer({ active, tint, onComplete }: PlayerLockInBoltProps) {
   const reducedMotion = usePrefersReducedMotion();
 
   const onCompleteRef = useRef(onComplete);

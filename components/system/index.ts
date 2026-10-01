@@ -15,6 +15,7 @@ export { TimerRing } from "./TimerRing";
 export { TVTimerArc } from "./TVTimerArc";
 export { QRBlock } from "./QRBlock";
 export { Weather, weatherLabel } from "./Weather";
+export { ThemeLayerBoundary } from "./ThemeLayerBoundary";
 export { Lightning, fireLightningBeat } from "./Lightning";
 export { Pyrotechnics, JULY_FIREWORK_COLORS, publishPyrotechnicsBeat } from "./Pyrotechnics";
 export type { PyrotechnicsProps, PyrotechnicsBeatKind } from "./Pyrotechnics";
