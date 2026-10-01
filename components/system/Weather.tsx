@@ -45,8 +45,8 @@ export interface WeatherProps {
 // off and the screen it sits behind keeps working.
 export function Weather(props: WeatherProps) {
   return (
-    // Keyed by theme so a host switching themes mid-night gets a fresh try.
-    <ThemeLayerBoundary key={props.themeKey ?? "house"} name={`weather:${props.themeKey ?? "house"}`}>
+    // A host switching themes mid-night gives a failed layer a fresh try.
+    <ThemeLayerBoundary name={`weather:${props.themeKey ?? "house"}`} resetKey={props.themeKey ?? "house"}>
       <WeatherLayer {...props} />
     </ThemeLayerBoundary>
   );

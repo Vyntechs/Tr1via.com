@@ -59,6 +59,9 @@ function subscribeBeat(fn: BeatListener): () => void {
   return () => beatListeners.delete(fn);
 }
 
+/** Test-only alias so unit tests can subscribe without a mounted canvas. */
+export const __subscribeLightningBeatForTest = subscribeBeat;
+
 /**
  * Fire a beat-triggered lightning strike across every mounted Lightning
  * instance. Used at section-complete (one close strike) and finale

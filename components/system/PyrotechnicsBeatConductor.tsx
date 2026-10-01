@@ -97,7 +97,8 @@ export interface PyrotechnicsBeatConductorProps {
 // the game keeps going (see ThemeLayerBoundary).
 export function PyrotechnicsBeatConductor(props: PyrotechnicsBeatConductorProps) {
   return (
-    <ThemeLayerBoundary name="fireworks-beat">
+    // Each new beat gets a fresh try, so one bad beat can't silence the finale.
+    <ThemeLayerBoundary name="fireworks-beat" resetKey={props.beat?.fireAt ?? null}>
       <PyrotechnicsBeatConductorLayer {...props} />
     </ThemeLayerBoundary>
   );

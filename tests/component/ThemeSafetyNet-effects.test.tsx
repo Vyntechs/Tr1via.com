@@ -1,6 +1,7 @@
-// The theme safety net, effect side: a theme piece that throws from an effect
-// (not while drawing) switches off cleanly, and a broken listener on a theme
-// "beat" signal never breaks the game screen that fired it.
+// The theme safety net, effect side: if a theme piece ITSELF throws from an
+// effect (not while drawing), it switches off cleanly. Here the ceremony's
+// and the fireworks conductor's own calls are made to throw; the real
+// listener guards inside those calls are tested in ThemeSignals.test.ts.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, waitFor } from "@testing-library/react";
@@ -19,7 +20,6 @@ vi.mock("@/components/system/Pyrotechnics", async (importOriginal) => ({
 
 import { TVLockInCeremony, type CeremonyEvent } from "@/components/tv/TVLockInCeremony";
 import { PyrotechnicsBeatConductor } from "@/components/system/PyrotechnicsBeatConductor";
-import { __subscribeJuneBeatForTest, fireJuneBeat } from "@/components/system/JuneSky";
 import { guardThemeCall } from "@/components/system/ThemeLayerBoundary";
 
 afterEach(() => {
@@ -70,19 +70,6 @@ describe("theme safety net — effects and signals", () => {
     );
     expect(container).toBeEmptyDOMElement();
     expect(warn.mock.calls.some((c) => String(c[0]).includes('"fireworks-beat" switched off'))).toBe(true);
-  });
-
-  it("skips a broken June listener and still reaches the others", () => {
-    quiet();
-    const reached = vi.fn();
-    const off1 = __subscribeJuneBeatForTest(() => {
-      throw new Error("june listener exploded");
-    });
-    const off2 = __subscribeJuneBeatForTest(reached);
-    expect(() => fireJuneBeat("lock")).not.toThrow();
-    expect(reached).toHaveBeenCalledWith("lock");
-    off1();
-    off2();
   });
 
   it("guardThemeCall logs a given failure once, not every frame", () => {
