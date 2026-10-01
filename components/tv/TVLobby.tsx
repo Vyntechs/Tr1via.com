@@ -114,7 +114,7 @@ function TVLobbyInner({
   return (
     <TVStage page="lobby" data-testid="tv-lobby">
       <TVHeader
-        left={`${venueName} · ${scheduledDate}`}
+        left={scheduledDate ? `${venueName} · ${scheduledDate}` : venueName}
         right={gameStatusLine}
       />
 

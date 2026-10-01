@@ -679,7 +679,7 @@ function TVQuestionView({
         options={options}
         seconds={Math.max(0, displaySeconds)}
         tiles={tiles}
-        totalPlayers={snapshot.players.length}
+        totalPlayers={gamePlayerCount(snapshot)}
         imageUrl={question.imageUrl}
         themeKey={themeKey}
         marqueeChips={decoratedChips}
@@ -760,7 +760,7 @@ function TVRevealView({
         correctText={correctText}
         fact={question.factBlurb ?? ""}
         gotIt={correctAnswers.length}
-        ofTotal={snapshot.players.length}
+        ofTotal={gamePlayerCount(snapshot)}
         whoNailedIt={nailed}
         pointBlurb={pointBlurb}
       />
@@ -786,7 +786,7 @@ function TVRevealView({
       correctText={correctText}
       fact={question.factBlurb ?? undefined}
       gotIt={correctAnswers.length}
-      ofTotal={snapshot.players.length}
+      ofTotal={gamePlayerCount(snapshot)}
       fastest={fastestStr}
       speedBonus={(() => {
         // The actual speed bonus that the leader earned — computed by the
@@ -940,10 +940,12 @@ function TVFinaleView({ snapshot }: { snapshot: TVSnapshot }) {
     },
   ];
 
+  const venue = snapshot.night.venueName.toUpperCase();
   const scheduled = formatScheduledDate(snapshot.night.scheduledAt);
   return (
     <TVFinaleWinner
-      headerEyebrow={`${snapshot.night.venueName.toUpperCase()} · ${scheduled}`}
+      headerEyebrow={scheduled ? `${venue} · ${scheduled}` : venue}
+      headerRight={`GAME ${finalGameNo(snapshot)} · FINAL`}
       winner={winner}
       podium={podium}
       nightStats={stats}
@@ -957,6 +959,24 @@ function TVFinaleView({ snapshot }: { snapshot: TVSnapshot }) {
 
 function pickLiveQuestion(snapshot: TVSnapshot) {
   return snapshot.questions.find((q) => q.id === snapshot.liveQuestionId) ?? null;
+}
+
+// Players who can answer in the game on screen. Everyone who joins the room
+// is in Game 1, but Game 2 is opt-in, so the room total overstates it (Sep 24:
+// 28 played Game 2 in a room of 33, and the TV said "of 33"). The scores feed
+// has one row per game participant, the same count the phones already use;
+// fall back to the room only while that feed is empty.
+function gamePlayerCount(snapshot: TVSnapshot): number {
+  return snapshot.scores.length > 0 ? snapshot.scores.length : snapshot.players.length;
+}
+
+// The finale crowns the last game actually played: Game 2 on a normal night,
+// Game 1 when the night ends without a Game 2.
+function finalGameNo(snapshot: TVSnapshot): number {
+  const played = snapshot.games
+    .filter((g) => g.state === "live" || g.state === "done")
+    .map((g) => g.gameNo);
+  return played.length > 0 ? Math.max(...played) : 1;
 }
 
 function topScores(snapshot: TVSnapshot): TVGridLeaderRow[] {

@@ -25,11 +25,13 @@ export interface PlayerJoinProps {
   /** Pre-filled name (e.g. "Maya"); when in live mode the user can edit. */
   playerName?: string;
   /**
-   * Venue name surfaced in the eyebrow ("JOINING · SOUL FIRE"). Falls back
-   * to "SOUL FIRE" for the gallery.
+   * Venue name exactly as the host typed it ("Soul Fire Pizza"), used in the
+   * eyebrow and the supporting copy. The gallery default is demo-only.
    */
   venueName?: string;
-  /** Host's first name — appears in the supporting copy. */
+  /** Host's first name for the supporting copy. Live callers always pass it;
+   *  an empty string drops the "hosted by" clause instead of naming a demo
+   *  host. The gallery default is demo-only. */
   hostName?: string;
   /**
    * When defined, the form becomes interactive: name is editable, the CTA
@@ -46,7 +48,7 @@ export interface PlayerJoinProps {
 export function PlayerJoin({
   themeKey: _themeKey,
   playerName = "Maya",
-  venueName = "Soul Fire",
+  venueName = "Soul Fire Pizza",
   hostName = "Linda",
   onSubmit,
   submitting,
@@ -96,7 +98,7 @@ export function PlayerJoin({
             </Display>
           </div>
           <div style={{ marginTop: 18, color: t.inkMid, fontSize: 14.5, lineHeight: 1.45, maxWidth: 280 }}>
-            Wednesday trivia at {venueName} Pizza, hosted by {hostName}. Pick a name and you&apos;re in the room.
+            Wednesday trivia at {venueName}{hostName ? `, hosted by ${hostName}` : ""}. Pick a name and you&apos;re in the room.
           </div>
 
           <div style={{ marginTop: 36 }}>

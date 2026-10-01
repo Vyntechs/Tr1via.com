@@ -823,14 +823,16 @@ function PlayersSheet({
 //      reachability === "unreachable". Show the first host an ACTIONABLE message
 //      ("switch to a hotspot") instead of the cryptic black placeholder that
 //      looked like a crash during the first host's live show.
-//   2. The /dev/host gallery renders HostLiveConsole with no `useRoom` mounted
-//      → reachability stays undefined. Keep the original dev placeholder there.
+//   2. Nothing has loaded yet (the first second after opening /host/live, or
+//      the /dev/host gallery with no `useRoom` mounted). Show a quiet empty
+//      frame: this area is mirrored to the venue TV, so it must never print
+//      developer text to the room.
 // ─────────────────────────────────────────────────────────────────────────
 
 function NoSnapshotPanel() {
   const reachability = useReachability();
   if (reachability === "unreachable") return <UnreachableConsole />;
-  return <DevPlaceholder />;
+  return <LoadingFrame />;
 }
 
 function UnreachableConsole() {
@@ -875,24 +877,7 @@ function UnreachableConsole() {
   );
 }
 
-// Dev placeholder — shown in the /dev/host gallery where tvSnapshot is not
-// wired. Real /host/live/[nightId] always supplies a snapshot once reachable.
-function DevPlaceholder() {
-  const { t } = useTheme();
-  return (
-    <div
-      style={{
-        flex: 1,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        color: t.inkMute,
-        fontFamily: "var(--font-mono)",
-        fontSize: 13,
-        letterSpacing: "0.06em",
-      }}
-    >
-      TV STATE MACHINE · provide tvSnapshot to render
-    </div>
-  );
+// Empty while the room loads. Deliberately blank: the venue TV can see it.
+function LoadingFrame() {
+  return <div data-testid="host-tv-loading" style={{ flex: 1 }} />;
 }

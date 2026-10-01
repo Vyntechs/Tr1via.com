@@ -247,7 +247,12 @@ async function assertLiveEverywhere(ctx: Ctx, gameId: string, qid: string): Prom
   return snap;
 }
 
-async function assertResolvedEverywhere(ctx: Ctx, gameId: string, qid: string): Promise<Snapshot> {
+async function assertResolvedEverywhere(
+  ctx: Ctx,
+  gameId: string,
+  qid: string,
+  { lastOfFinalGame = false }: { lastOfFinalGame?: boolean } = {},
+): Promise<Snapshot> {
   const snap = await waitForSnapshot(
     ctx.tvPage,
     ctx.roomCode,
@@ -279,10 +284,18 @@ async function assertResolvedEverywhere(ctx: Ctx, gameId: string, qid: string): 
   await expect(ctx.tvPage.getByTestId(TID.tvReveal.root)).toBeVisible({ timeout: 8_000 });
 
   // Phone — Theme A's frictionless auto-return: the board reappears
-  // immediately no matter which device performed the resolve.
-  await expect(ctx.hostPhone.getByRole("grid", { name: "Question board" })).toBeVisible({
-    timeout: 10_000,
-  });
+  // immediately no matter which device performed the resolve. The one
+  // exception is the final game's last question: there is nothing left to
+  // pick, so the phone drops straight to "Final scores are ready" (#163).
+  if (lastOfFinalGame) {
+    await expect(
+      ctx.hostPhone.getByRole("heading", { name: "Final scores are ready" }),
+    ).toBeVisible({ timeout: 10_000 });
+  } else {
+    await expect(ctx.hostPhone.getByRole("grid", { name: "Question board" })).toBeVisible({
+      timeout: 10_000,
+    });
+  }
 
   return snap;
 }
@@ -299,9 +312,11 @@ async function playCategory(
   players: Page[],
   slots: Array<1 | 2 | 3 | 4>,
   autoRevealIndex: number | null = null,
+  finalGame = false,
 ): Promise<void> {
   for (let i = 0; i < category.question_ids.length; i++) {
     const qid = category.question_ids[i];
+    const lastOfFinalGame = finalGame && i === category.question_ids.length - 1;
     const pointValue = (i + 1) * 100;
     const revealDevice = REVEAL_PATTERN[i % REVEAL_PATTERN.length];
     const isAutoRevealProbe = i === autoRevealIndex;
@@ -333,7 +348,7 @@ async function playCategory(
       // doesn't block the rest of this journey from being surveyed — see
       // the QA report for the full writeup (lib/hooks/useAllLockedAutoReveal.ts
       // + its two call sites).
-      await assertResolvedEverywhere(ctx, gameId, qid);
+      await assertResolvedEverywhere(ctx, gameId, qid, { lastOfFinalGame });
       for (const [surface, page] of [
         ["laptop", ctx.hostPage],
         ["host-phone", ctx.hostPhone],
@@ -351,7 +366,7 @@ async function playCategory(
     } else {
       const resolveDevice = RESOLVE_PATTERN[i % RESOLVE_PATTERN.length];
       await resolveQuestion(ctx, resolveDevice);
-      await assertResolvedEverywhere(ctx, gameId, qid);
+      await assertResolvedEverywhere(ctx, gameId, qid, { lastOfFinalGame });
     }
 
     for (const player of answerers) {
@@ -544,6 +559,8 @@ test.describe("mixed-device host — laptop + phone alternate every action, game
       seed.game2Categories[0],
       [phone1, phone2],
       [1, 2],
+      null,
+      true,
     );
     await expect(phone3.getByTestId(TID.playerJoinGame2.root)).toBeVisible();
 

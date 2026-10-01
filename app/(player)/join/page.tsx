@@ -42,6 +42,8 @@ import { writeThemeSeed } from "@/lib/theme/themeSeed";
 interface NightLookup {
   nightId: string;
   venueName: string;
+  /** Host's first name; null when the host has no display name. */
+  hostName: string | null;
   /** Per-night theme override; null when no override is set. */
   themeKey: string | null;
   /** Host's default theme; null when the column doesn't exist yet
@@ -335,6 +337,7 @@ function JoinWithCode({
       <PlayerJoin
         themeKey={themeKey}
         venueName={lookup.night.venueName}
+        hostName={lookup.night.hostName ?? ""}
         playerName={lastNameRef.current || ""}
         onSubmit={handleSubmit}
         submitting={submitting}
