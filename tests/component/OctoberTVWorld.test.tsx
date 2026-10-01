@@ -111,13 +111,52 @@ describe("October world on the venue TV", () => {
     expect(screen.getByTestId("october-patch")).toHaveAttribute("data-world-tier", "still");
   });
 
-  it("switches itself off if it breaks, and the question stays on screen", async () => {
+  it("switches itself off if it breaks, and the question stays on screen without restarting", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     vi.spyOn(console, "warn").mockImplementation(() => {});
+    const night = demoNight({ moment: "question", nowMs: Date.parse("2026-10-07T23:50:00Z"), secondsLeft: 14, locked: 10 });
+    const tv = (n: number) => (
+      <ThemeProvider themeKey="october">
+        <TVStateMachine
+          snapshot={{ ...night.snapshot, night: { ...night.snapshot.night, themeKey: "october" }, players: night.snapshot.players.slice(0, n) }}
+          lastBroadcastRevealedAt={night.revealedAt}
+          themeKey="october"
+        />
+      </ThemeProvider>
+    );
+    const { rerender } = render(tv(29));
+    const questionBefore = screen.getByTestId("tv-question");
     crash.patch = true;
-    renderTV("question", "october");
-    await waitFor(() => expect(screen.queryByTestId("october-world")).toBeNull());
+    rerender(tv(28));
+    await waitFor(() => expect(screen.getByTestId("october-world")).toHaveAttribute("data-world-off", "true"));
+    expect(screen.queryByTestId("october-patch")).toBeNull();
+    // The plain screen takes over: it paints its own background again…
     expect(screen.getByTestId("tv-question")).not.toHaveAttribute("data-stage-world");
     expect(screen.getByText("New York City")).toBeInTheDocument();
+    // …and the question view was never torn down (its clock didn't restart).
+    expect(screen.getByTestId("tv-question")).toBe(questionBefore);
+  });
+
+  it("lets the Horseman finish his ride after the screen switches to the reveal", async () => {
+    const now = Date.now();
+    const revealedAtMs = now - 24_000; // 1 s left: he is riding
+    const q = demoNight({ moment: "question", nowMs: now, revealedAtMs, locked: 10 });
+    const r = demoNight({ moment: "reveal", nowMs: now, revealedAtMs, locked: 10 });
+    const tv = (snap: typeof q) => (
+      <ThemeProvider themeKey="october">
+        <TVStateMachine
+          snapshot={snap.snapshot}
+          lastBroadcastRevealedAt={snap.revealedAt}
+          lastBroadcastServerNow={new Date(now).toISOString()}
+          themeKey="october"
+        />
+      </ThemeProvider>
+    );
+    const { rerender } = render(tv(q));
+    const world = screen.getByTestId("october-world");
+    await waitFor(() => expect(world).toHaveAttribute("data-world-horseman", "ride"));
+    rerender(tv(r));
+    await waitFor(() => expect(world).toHaveAttribute("data-world-moment", "reveal"));
+    expect(world).toHaveAttribute("data-world-horseman", "ride");
   });
 });

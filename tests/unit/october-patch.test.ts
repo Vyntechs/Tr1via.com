@@ -11,7 +11,6 @@ import {
   patchRows,
   patchScene,
   rawSecondsLeft,
-  stakeLabel,
   type PatchAnswer,
   type PatchPlayer,
 } from "@/lib/experience/october/patch";
@@ -62,10 +61,13 @@ describe("patchScene · moods", () => {
     expect(scene.clouds).toBe(true);
   });
 
-  it("time's up: anyone who didn't answer is knocked over", () => {
+  it("time's up: no one is knocked over until the reveal brings every answer", () => {
+    // The venue TV's answer list can lag a few seconds; a buzzer-beater must
+    // never be shown knocked over with their name on the stake.
     const scene = patchScene({ moment: question(), players, answers: lockedA, serverNowMs: at(-0.2) });
     expect(scene.phase).toBe("times-up");
-    expect(scene.moods).toEqual({ a: "lit", b: "toppled", c: "toppled" });
+    expect(scene.moods).toEqual({ a: "lit", b: "waiting", c: "waiting" });
+    expect(scene.shiver).toBe(false);
   });
 
   it("reveal: right blazes, wrong smokes, missed stays knocked over, names fade", () => {
@@ -119,7 +121,7 @@ describe("patchScene · the Headless Horseman", () => {
     expect(scene.horseman).toBe("ride");
   });
 
-  it("never rides on an early reveal (everyone locked in with time to spare)", () => {
+  it("never rides when the reveal comes before his ride would start", () => {
     const clock = { questionId: Q, revealedAtMs: REVEALED, endedAtMs: at(12) };
     for (const left of [11, 5, 1, 0, -0.5]) {
       const scene = patchScene({ moment: reveal(), questionClock: clock, players, answers: [], serverNowMs: at(left) });
@@ -189,12 +191,5 @@ describe("patchLayout", () => {
 
   it("is empty for an empty room", () => {
     expect(patchLayout(0)).toEqual([]);
-  });
-});
-
-describe("stakeLabel", () => {
-  it("shortens long names to fit a stake", () => {
-    expect(stakeLabel("Smarty Pints", 10)).toBe("Smarty Pi…");
-    expect(stakeLabel("Kev", 10)).toBe("Kev");
   });
 });

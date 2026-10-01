@@ -51,6 +51,9 @@ export interface OctoberPatchInputs {
 export interface OctoberPatchCanvasProps {
   inputs: OctoberPatchInputs;
   tier: "full" | "still";
+  /** Scale the surrounding stage is drawn at; a change re-sizes the canvas
+   *  so the pumpkins stay sharp. */
+  stageScale?: number;
   onFail: (error: unknown) => void;
 }
 
@@ -96,11 +99,12 @@ interface Particle {
   size: number;
 }
 
-export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasProps) {
+export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: OctoberPatchCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputsRef = useRef(inputs);
   const onFailRef = useRef(onFail);
   const drawRef = useRef<(() => void) | null>(null);
+  const resizeRef = useRef<(() => void) | null>(null);
   // The animation loop reads the latest inputs from refs, refreshed after
   // every render (never during one).
   useEffect(() => {
@@ -139,6 +143,9 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
     const particles: Particle[] = [];
     let initialized = false;
     let fontFamily = "system-ui, sans-serif";
+    let lastDrawAt = 0;
+    const labelCache = new Map<string, string>();
+    let puffSprite: HTMLCanvasElement | null = null;
     let lastLayoutCount = -1;
     let layout: PumpkinSlot[] = [];
     let lastPhase: PatchScene["phase"] | null = null;
@@ -276,8 +283,11 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
       return Math.min(rippleIndex, 30) * 100; // lock-in rush: ~0.1 s apart
     };
 
+    const puffCount = () => particles.reduce((n, p) => n + (p.kind === "puff" ? 1 : 0), 0);
+    const MAX_PUFFS = 60;
+
     const spawnPuffs = (rt: PumpkinRuntime, at: number) => {
-      if (still) return;
+      if (still || puffCount() >= MAX_PUFFS) return;
       for (let i = 0; i < 3; i++) {
         particles.push({
           kind: "puff",
@@ -410,7 +420,7 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
         rt.nextEmberAt = now + (winner ? 180 : 520) + Math.random() * 500;
       }
       // Smoking pumpkins keep a thin wisp going.
-      if (!still && rt.mood === "smoke" && p >= 1 && now >= rt.nextWispAt) {
+      if (!still && rt.mood === "smoke" && p >= 1 && now >= rt.nextWispAt && puffCount() < MAX_PUFFS) {
         particles.push({
           kind: "puff",
           x: rt.x,
@@ -433,7 +443,14 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
       ctx.globalAlpha = alpha;
       ctx.font = `600 ${toS(font)}px ${fontFamily}`;
       ctx.textBaseline = "middle";
-      const label = fitLabel(ctx, rt.name, toS(s.stakeMaxW - font * 1.6));
+      const maxW = toS(s.stakeMaxW - font * 1.6);
+      const cacheKey = `${rt.name}|${ctx.font}|${Math.round(maxW)}`;
+      let label = labelCache.get(cacheKey);
+      if (label === undefined) {
+        label = fitLabel(ctx, rt.name, maxW);
+        if (labelCache.size > 400) labelCache.clear();
+        labelCache.set(cacheKey, label);
+      }
       const textW = ctx.measureText(label).width;
       const padL = toS(font * 0.5);
       const dot = toS(font * 0.38);
@@ -481,13 +498,11 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
           ctx.fill();
         } else {
           const r = toS(pt.size * (1 + u * 1.4));
-          const g = ctx.createRadialGradient(toX(x), toY(y), 0, toX(x), toY(y), r);
-          g.addColorStop(0, `rgba(154,144,136,${0.55 * (1 - u)})`);
-          g.addColorStop(1, "rgba(154,144,136,0)");
-          ctx.fillStyle = g;
-          ctx.beginPath();
-          ctx.arc(toX(x), toY(y), r, 0, Math.PI * 2);
-          ctx.fill();
+          const sprite = puffSprite ?? (puffSprite = makePuffSprite());
+          if (sprite) {
+            ctx.globalAlpha = 0.55 * (1 - u);
+            ctx.drawImage(sprite, toX(x) - r, toY(y) - r, r * 2, r * 2);
+          }
         }
         ctx.restore();
       }
@@ -579,7 +594,11 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
       namesAlpha = still
         ? scene.showNames ? 1 : 0
         : namesAlpha + ((scene.showNames ? 1 : 0) - namesAlpha) * 0.12;
-      if (namesAlpha > 0.01) for (const rt of ordered) drawStake(rt, namesAlpha * Math.min(1, (now - rt.appearedAt) / 700));
+      if (namesAlpha > 0.01) {
+        for (const rt of ordered) {
+          drawStake(rt, still ? namesAlpha : namesAlpha * Math.min(1, (now - rt.appearedAt) / 700));
+        }
+      }
 
       drawParticles(now);
       drawHorseman(now, scene, "front");
@@ -606,7 +625,12 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
         }
         framesSeen++;
         lastFrameAt = ts;
-        draw();
+        // ~60 frames a second is plenty (30 on a slow TV); fast displays
+        // (120 Hz laptops) don't need twice the work.
+        if (ts - lastDrawAt >= (lite ? 31 : 15)) {
+          lastDrawAt = ts;
+          draw();
+        }
         raf = requestAnimationFrame(tick);
       } catch (error) {
         fail(error);
@@ -622,6 +646,25 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
       }
     });
     observer.observe(canvas);
+    // On the venue TV the canvas keeps its 1600×900 layout box and only the
+    // stage's scale changes (e.g. a small window going fullscreen), which a
+    // ResizeObserver never reports. Re-measure after the stage re-scales.
+    let resizeRaf = 0;
+    const onWindowResize = () => {
+      cancelAnimationFrame(resizeRaf);
+      resizeRaf = requestAnimationFrame(() => {
+        resizeRaf = requestAnimationFrame(() => {
+          try {
+            resize();
+            if (still) drawRef.current?.();
+          } catch (error) {
+            fail(error);
+          }
+        });
+      });
+    };
+    window.addEventListener("resize", onWindowResize);
+    resizeRef.current = onWindowResize;
     resize();
     const sans = getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim();
     if (sans) fontFamily = sans;
@@ -635,10 +678,21 @@ export function OctoberPatchCanvas({ inputs, tier, onFail }: OctoberPatchCanvasP
     return () => {
       stopped = true;
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(resizeRaf);
+      window.removeEventListener("resize", onWindowResize);
+      resizeRef.current = null;
       observer.disconnect();
       drawRef.current = null;
     };
   }, [tier]);
+
+  // The stage around us re-scaled (the host's window changed size).
+  const lastScaleRef = useRef(stageScale);
+  useEffect(() => {
+    if (lastScaleRef.current === stageScale) return;
+    lastScaleRef.current = stageScale;
+    resizeRef.current?.();
+  }, [stageScale]);
 
   // Still tier: redraw whenever what we're told changes (no loop running).
   useEffect(() => {
@@ -690,6 +744,21 @@ function ridePath(u: number): { cx: number; top: number; w: number } {
   }
   const last = keys[keys.length - 1];
   return { cx: last.cx, top: last.top, w: last.w };
+}
+
+/** One soft smoke puff, drawn once and reused for every puff. */
+function makePuffSprite(): HTMLCanvasElement | null {
+  const c = document.createElement("canvas");
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext("2d");
+  if (!g) return null;
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(154,144,136,1)");
+  grad.addColorStop(1, "rgba(154,144,136,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return c;
 }
 
 function fitLabel(ctx: CanvasRenderingContext2D, name: string, maxW: number): string {

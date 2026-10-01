@@ -11,7 +11,10 @@
 //   lit      locked in (or between questions, the patch glows)
 //   blaze    right answer, at the reveal
 //   smoke    wrong answer, at the reveal
-//   toppled  didn't answer before time ran out
+//   toppled  didn't answer before time ran out (shown at the reveal, when
+//            the TV has every answer: the venue TV's answer list can lag a
+//            few seconds behind, so knocking pumpkins over at zero could
+//            wrongly call out someone who locked in at the buzzer)
 
 import type { TVMoment } from "@/lib/experience/tvMoment";
 
@@ -167,7 +170,8 @@ function moodFor(phase: PatchPhase, answer: PatchAnswer | undefined): PumpkinMoo
     case "final-seconds":
       return answer ? "lit" : "waiting";
     case "times-up":
-      return answer ? "lit" : "toppled";
+      // Unknown yet: hold dark until the reveal brings the full answer list.
+      return answer ? "lit" : "waiting";
     case "reveal":
       if (!answer) return "toppled";
       if (answer.isCorrect === true) return "blaze";
@@ -288,9 +292,3 @@ export function patchLayout(count: number): PumpkinSlot[] {
   return slots;
 }
 
-/** "Smarty Pints" → "Smarty Pin…" style, to fit a stake. */
-export function stakeLabel(name: string, maxChars: number): string {
-  const clean = name.trim();
-  if (clean.length <= maxChars) return clean;
-  return `${clean.slice(0, Math.max(1, maxChars - 1)).trimEnd()}…`;
-}

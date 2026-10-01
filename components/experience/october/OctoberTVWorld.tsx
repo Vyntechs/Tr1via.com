@@ -47,13 +47,25 @@ export interface OctoberTVWorldProps {
   snapshot: TVSnapshot;
   /** "still" for previews that should never animate (the host's phone). */
   tier: "full" | "still";
+  /** True once the world has failed: it draws nothing and steps aside, but
+   *  keeps the same wrapper so the game screens inside never remount. */
+  off?: boolean;
   onFail: (error: unknown) => void;
   children: ReactNode;
 }
 
 const NIGHT_BLACK = "#120A06";
+const STAGE_W = 1600;
+const STAGE_H = 900;
 
-export function OctoberTVWorld({ spec, snapshot, tier: requestedTier, onFail, children }: OctoberTVWorldProps) {
+export function OctoberTVWorld({
+  spec,
+  snapshot,
+  tier: requestedTier,
+  off = false,
+  onFail,
+  children,
+}: OctoberTVWorldProps) {
   const reducedMotion = usePrefersReducedMotion();
   const tier = reducedMotion ? "still" : requestedTier;
 
@@ -105,16 +117,25 @@ export function OctoberTVWorld({ spec, snapshot, tier: requestedTier, onFail, ch
     patchScene({ moment: NO_MOMENT, players, answers, serverNowMs: 0 }),
   );
   const timed = moment.kind === "question" || moment.kind === "reveal";
+  const onFailRef = useRef(onFail);
   useEffect(() => {
+    onFailRef.current = onFail;
+  });
+  useEffect(() => {
+    if (off) return;
     const update = () => {
-      const next = patchScene({
-        moment,
-        questionClock,
-        players,
-        answers,
-        serverNowMs: Date.now() + offsetRef.current,
-      });
-      setScene((prev) => (sameScene(prev, next) ? prev : next));
+      try {
+        const next = patchScene({
+          moment,
+          questionClock,
+          players,
+          answers,
+          serverNowMs: Date.now() + offsetRef.current,
+        });
+        setScene((prev) => (sameScene(prev, next) ? prev : next));
+      } catch (error) {
+        onFailRef.current(error);
+      }
     };
     const first = window.setTimeout(update, 0);
     const id = timed ? window.setInterval(update, 200) : null;
@@ -122,7 +143,7 @@ export function OctoberTVWorld({ spec, snapshot, tier: requestedTier, onFail, ch
       window.clearTimeout(first);
       if (id !== null) window.clearInterval(id);
     };
-  }, [moment, questionClock, players, answers, timed]);
+  }, [moment, questionClock, players, answers, timed, off]);
 
   const secondsLeftNow = useCallback(
     () =>
@@ -141,12 +162,38 @@ export function OctoberTVWorld({ spec, snapshot, tier: requestedTier, onFail, ch
     [players, scene, secondsLeftNow],
   );
 
+  // The world is composed on the TV's own 1600×900 stage. The venue TV and
+  // the host's phone preview already provide that stage (scale 1 here). The
+  // host's laptop console gives a panel of whatever size the window is: there
+  // the whole picture scales down as one, exactly like the TV, instead of the
+  // screens being squeezed (a 13" laptop window would cut off the question).
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [stageScale, setStageScale] = useState(1);
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root || typeof ResizeObserver === "undefined") return;
+    const apply = (width: number, height: number) => {
+      if (width <= 0 || height <= 0) return;
+      const next = Math.min(width / STAGE_W, height / STAGE_H);
+      setStageScale((current) => (Math.abs(current - next) < 0.001 ? current : next));
+    };
+    const observer = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect;
+      if (box) apply(box.width, box.height);
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div
+      ref={rootRef}
       data-testid="october-world"
       data-world-pack="october"
       data-world-moment={moment.kind}
       data-world-phase={scene.phase}
+      data-world-horseman={scene.horseman}
+      data-world-off={off ? "true" : undefined}
       style={{
         position: "relative",
         flex: 1,
@@ -156,33 +203,61 @@ export function OctoberTVWorld({ spec, snapshot, tier: requestedTier, onFail, ch
         minWidth: 0,
         minHeight: 0,
         overflow: "hidden",
-        background: NIGHT_BLACK,
+        background: off ? "transparent" : NIGHT_BLACK,
         isolation: "isolate",
       }}
     >
-      <ThemeLayerBoundary name="october:backdrop" onFail={onFail}>
-        <OctoberBackdrop scene={scene} tier={tier} />
-      </ThemeLayerBoundary>
+      <div
+        data-testid="october-stage"
+        data-stage-scale={off ? undefined : stageScale.toFixed(3)}
+        style={
+          off
+            ? { position: "absolute", inset: 0 }
+            : {
+                position: "absolute",
+                left: "50%",
+                top: "50%",
+                width: STAGE_W,
+                height: STAGE_H,
+                transform: `translate(-50%, -50%) scale(${stageScale})`,
+                transformOrigin: "center center",
+                overflow: "hidden",
+              }
+        }
+      >
+        {off ? null : (
+          <ThemeLayerBoundary name="october:backdrop" onFail={onFail}>
+            <OctoberBackdrop scene={scene} tier={tier} />
+          </ThemeLayerBoundary>
+        )}
 
-      <StageWorldContext.Provider value={spec}>
-        <TVMomentPublisherContext.Provider value={publish}>
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              zIndex: 1,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            {children}
-          </div>
-        </TVMomentPublisherContext.Provider>
-      </StageWorldContext.Provider>
+        <StageWorldContext.Provider value={off ? null : spec}>
+          <TVMomentPublisherContext.Provider value={off ? null : publish}>
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                zIndex: 1,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              {children}
+            </div>
+          </TVMomentPublisherContext.Provider>
+        </StageWorldContext.Provider>
 
-      <ThemeLayerBoundary name="october:patch" onFail={onFail}>
-        <OctoberPatchCanvas inputs={inputs} tier={tier === "still" ? "still" : "full"} onFail={onFail} />
-      </ThemeLayerBoundary>
+        {off ? null : (
+          <ThemeLayerBoundary name="october:patch" onFail={onFail}>
+            <OctoberPatchCanvas
+              inputs={inputs}
+              tier={tier === "still" ? "still" : "full"}
+              stageScale={stageScale}
+              onFail={onFail}
+            />
+          </ThemeLayerBoundary>
+        )}
+      </div>
     </div>
   );
 }
@@ -283,13 +358,17 @@ function OctoberBackdrop({ scene, tier }: { scene: PatchScene; tier: "full" | "s
           data-testid="october-moon"
           data-moon-pose={scene.moon}
           style={{
+            // A fixed 900-unit box moved and sized by transform alone, so the
+            // glide between moments costs no layout work.
             position: "absolute",
-            left: pct(pose.x, 1600),
-            top: pct(pose.y, 900),
-            width: pct(pose.size, 1600),
+            left: 0,
+            top: 0,
+            width: pct(900, 1600),
             height: "auto",
+            transformOrigin: "0 0",
+            transform: `translate(${(pose.x / 900) * 100}%, ${(pose.y / 900) * 100}%) scale(${pose.size / 900})`,
             filter: asking ? "brightness(1.12)" : "brightness(0.96)",
-            transition: tier === "still" ? "none" : `left ${ease}, top ${ease}, width ${ease}, filter .6s ease`,
+            transition: tier === "still" ? "none" : `transform ${ease}, filter .6s ease`,
           }}
         />
         {CLOUDS.map((c) => (
@@ -320,10 +399,11 @@ function OctoberBackdrop({ scene, tier }: { scene: PatchScene; tier: "full" | "s
           style={{
             position: "absolute",
             left: 0,
-            top: pct(pose.hill, 900),
+            top: 0,
             width: "100%",
             height: "auto",
-            transition: tier === "still" ? "none" : `top ${ease}`,
+            transform: `translateY(${(pose.hill / 300) * 100}%)`,
+            transition: tier === "still" ? "none" : `transform ${ease}`,
           }}
         />
       </div>

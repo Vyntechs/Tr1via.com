@@ -46,40 +46,20 @@ export function TVStage({
   // A theme's living world (October) is mounted behind every TV screen. The
   // stage then steps aside: no background or weather of its own, and it
   // keeps to the top part so the world's patch has the bottom strip. The
-  // reveal keeps a dark scrim so the answer reads exactly like today.
+  // reveal keeps a dark scrim so the answer reads exactly like today. Same
+  // element structure either way, so if the world switches off mid-night the
+  // screen inside doesn't restart.
   const world = useStageWorld();
-  if (world) {
-    return (
-      <div
-        data-testid={dataTestId}
-        data-reading-surface={dataReadingSurface}
-        data-stage-world={world.pack}
-        style={{
-          width: "100%",
-          height: `${world.contentHeight * 100}%`,
-          flexShrink: 0,
-          background: page === "reveal" ? "rgba(18,10,6,.72)" : "transparent",
-          color: t.ink,
-          fontFamily: "var(--font-sans)",
-          position: "relative",
-          overflow: "hidden",
-          display: "flex",
-          flexDirection: "column",
-          ...style,
-        }}
-      >
-        {children}
-      </div>
-    );
-  }
   return (
     <div
       data-testid={dataTestId}
       data-reading-surface={dataReadingSurface}
+      data-stage-world={world?.pack}
       style={{
         width: "100%",
-        height: "100%",
-        background: bg ?? t.paper,
+        height: world ? `${world.contentHeight * 100}%` : "100%",
+        ...(world ? { flexShrink: 0 } : null),
+        background: world ? (page === "reveal" ? "rgba(18,10,6,.72)" : "transparent") : bg ?? t.paper,
         color: t.ink,
         fontFamily: "var(--font-sans)",
         position: "relative",
@@ -89,7 +69,7 @@ export function TVStage({
         ...style,
       }}
     >
-      {weather && (
+      {weather && !world && (
         <Weather
           themeKey={themeKey}
           intensity={weatherIntensity}
@@ -101,16 +81,18 @@ export function TVStage({
           substrate={!bg || bg === t.paper}
         />
       )}
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          pointerEvents: "none",
-          background: t.dark
-            ? "radial-gradient(90% 60% at 50% 0%, rgba(244,230,196,.04), transparent 60%)"
-            : "radial-gradient(90% 60% at 50% 0%, rgba(0,0,0,.04), transparent 60%)",
-        }}
-      />
+      {world ? null : (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            background: t.dark
+              ? "radial-gradient(90% 60% at 50% 0%, rgba(244,230,196,.04), transparent 60%)"
+              : "radial-gradient(90% 60% at 50% 0%, rgba(0,0,0,.04), transparent 60%)",
+          }}
+        />
+      )}
       {children}
     </div>
   );
