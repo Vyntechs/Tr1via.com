@@ -568,6 +568,10 @@ test.describe("mixed-device host — laptop + phone alternate every action, game
     //    round →" control — it never routes through the phone's dedicated
     //    "Present winners" ceremony button. The phone must still land on
     //    the correct finale stage on its own. ─────────────────────────
+    // The laptop's pick surface is the venue TV, so after the last reveal it
+    // shows "Next question →" first; that returns to the (fully played)
+    // board, where "Finish round →" lives (#163).
+    await ensureLaptopPicking(hostPage);
     const finishRoundBtn = hostPage.getByTestId("host-end-game-btn");
     await expect(finishRoundBtn).toBeEnabled({ timeout: 15_000 });
     await finishRoundBtn.click();
@@ -584,12 +588,18 @@ test.describe("mixed-device host — laptop + phone alternate every action, game
     ).toBeVisible({ timeout: 15_000 });
     await expect(phone1.getByTestId("player-finale")).toBeVisible({ timeout: 15_000 });
     await expect(phone2.getByTestId("player-finale")).toBeVisible({ timeout: 15_000 });
-    // Casey (opted out of Game 2) is untouched by the finale.
-    await expect(phone3.getByTestId(TID.playerJoinGame2.root)).toBeVisible();
+    // Casey (opted out of Game 2) gets the finale too, told plainly that she
+    // sat Game 2 out, never a "score still catching up" that can't arrive.
+    await expect(phone3.getByTestId("player-finale")).toBeVisible({ timeout: 15_000 });
+    await expect(phone3.getByText("You sat out Game 2.")).toBeVisible();
+    await expect(phone3.getByText(/still catching up/)).toHaveCount(0);
 
     const finaleName = (await tvPage.getByTestId(TID.tvFinaleWinner.name).innerText()).trim();
     const winnerName = finaleName.replace(/\.\s*$/, "");
-    expect(["Alex", "Brooke"]).toContain(winnerName);
+    // A tie names every leader ("Alex + Brooke").
+    for (const name of winnerName.split(" + ")) {
+      expect(["Alex", "Brooke"]).toContain(name);
+    }
     const scoreText = await tvPage.getByTestId(TID.tvFinaleWinner.score).innerText();
     const winnerScore = Number(scoreText.replace(/[^\d]/g, ""));
     expect(Number.isInteger(winnerScore)).toBe(true);

@@ -268,7 +268,11 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     const winnerName = finaleName.replace(/\.\s*$/, ""); // rendered as "Alex."
     // Game 2's winner must be a player who opted INTO game 2 (Alex or Brooke).
     // Casey opted out; "Devon" is the /dev demo default that must never leak.
-    expect(["Alex", "Brooke"]).toContain(winnerName);
+    // A tie names every leader ("Alex + Brooke"), and taps here are scrambled
+    // per phone, so either outcome is legitimate.
+    for (const name of winnerName.split(" + ")) {
+      expect(["Alex", "Brooke"]).toContain(name);
+    }
 
     const scoreText = await tvPage.getByTestId(TID.tvFinaleWinner.score).innerText();
     const winnerScore = Number(scoreText.replace(/[^\d]/g, ""));

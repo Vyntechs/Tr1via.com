@@ -133,10 +133,13 @@ function PlayerFinaleView({
   answered,
   fastestMs,
   longestStreak,
+  satOut = false,
 }: {
   won: boolean;
   rank: number | null;
   score: number | null;
+  /** Never joined the final game (Game 2 is opt-in), so no score is coming. */
+  satOut?: boolean;
   correct: number | null;
   answered: number | null;
   fastestMs: number | null;
@@ -174,7 +177,7 @@ function PlayerFinaleView({
             </div>
           ) : (
             <p style={{ margin: 0, color: t.inkMid, lineHeight: 1.5 }}>
-              Your final score is still catching up.
+              {satOut ? "You sat out Game 2." : "Your final score is still catching up."}
             </p>
           )}
           {stats.length > 0 && (
@@ -559,6 +562,7 @@ function RoomStateMachine({
         answered={myFinalScore?.answered_count ?? null}
         fastestMs={myFinalScore?.fastest_correct_ms ?? null}
         longestStreak={longestResolvedStreak(finalAnswers)}
+        satOut={finalGameForRecap.game_no === 2 && !inGame2}
       />
     );
   } else if ((betweenView || waitingForGame2FirstQuestion) && game1 && game2) {
