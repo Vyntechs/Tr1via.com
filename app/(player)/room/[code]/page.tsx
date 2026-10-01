@@ -43,6 +43,8 @@ import {
   PyrotechnicsBeatConductor,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
+import { hasPhoneLayer } from "@/lib/experience/packs";
+import { FlamingHead } from "@/components/experience/october/tv/OctoberScreens";
 import {
   PlayerLobby,
   PlayerLockInBolt,
@@ -148,7 +150,7 @@ function PlayerFinaleView({
   fastestMs: number | null;
   longestStreak: number;
 }) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const stats = [
     correct !== null && answered !== null
       ? { label: "GOT RIGHT", value: `${correct} / ${answered}` }
@@ -168,6 +170,13 @@ function PlayerFinaleView({
         <Display size="clamp(44px, 15vw, 64px)" color={t.ink} weight={700}>
           {won ? "You won." : rank !== null ? `You finished #${rank}.` : "Game complete."}
         </Display>
+        {won && hasPhoneLayer(themeKey) ? (
+          // October: the champion holds the flaming head.
+          <div data-testid="player-finale-flaming-head" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
+            <FlamingHead height={56} style={{ margin: "-12px 0 -4px" }} />
+            <span style={{ fontSize: 16, fontWeight: 700, color: t.pop }}>You hold the flaming head.</span>
+          </div>
+        ) : null}
 
         <section
           aria-label="Your final result"

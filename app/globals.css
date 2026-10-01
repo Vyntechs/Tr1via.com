@@ -127,7 +127,7 @@ main:has([data-september-viewport-motion="true"]),
 @keyframes tr1via-oct-breathe { 0%,100% { opacity:.82; } 50% { opacity:1; } }
 @keyframes tr1via-oct-shiver  { 0%,100% { transform:rotate(-3deg); } 50% { transform:rotate(3deg); } }
 @keyframes tr1via-oct-flame   { 0%,100% { transform:scaleY(1); } 50% { transform:scaleY(1.045); } }
-@keyframes tr1via-oct-tip     { from { transform:translateY(0) rotate(0deg); } to { transform:translateY(20%) rotate(-78deg); } }
+@keyframes tr1via-oct-tip     { from { transform:translateY(0) rotate(0deg); } to { transform:translateY(4%) rotate(-78deg); } }
 @keyframes tr1via-oct-puff    { 0% { opacity:0; transform:translate(-50%,0) scale(.6); } 20% { opacity:.75; }
                                 100% { opacity:0; transform:translate(-50%,-140%) scale(1.5); } }
 @keyframes tr1via-glow-flicker { 0%,100% { opacity:0.7; } 25% { opacity:1; } 50% { opacity:0.55; } 72% { opacity:0.95; } }

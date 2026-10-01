@@ -311,7 +311,7 @@ function TVGridInner({
                       >
                         {r.rank}
                       </Numeric>
-                      {octoberWorld && top ? (
+                      {octoberWorld && top && r.score > 0 ? (
                         // October: the leader holds the flaming head.
                         <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
                           <FlamingHead height={45} style={{ margin: "-18px 0 -6px" }} />

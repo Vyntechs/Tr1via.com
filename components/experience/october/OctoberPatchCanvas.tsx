@@ -177,6 +177,17 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
         ),
       );
 
+    // Re-measure if the on-screen size changed since the last measure (the
+    // TV stage can finish sizing itself after the first measure, or re-scale
+    // later without the canvas's own layout box changing).
+    const checkSize = () => {
+      const rect = canvas.getBoundingClientRect();
+      if (Math.abs(rect.width - cssW) > 0.5 || Math.abs(rect.height - cssH) > 0.5) {
+        resize();
+        if (still) drawRef.current?.();
+      }
+    };
+
     const resize = () => {
       const rect = canvas.getBoundingClientRect();
       cssW = Math.max(1, rect.width);
@@ -587,6 +598,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
 
     const draw = () => {
       if (stopped) return;
+      if (cssW < 2 || cssH < 2) return; // not laid out yet; checkSize retries
       const now = performance.now();
       const scene = inputsRef.current.scene;
       syncPumpkins(now);
@@ -638,6 +650,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
         }
         framesSeen++;
         lastFrameAt = ts;
+        if (framesSeen % 30 === 0) checkSize();
         // ~60 frames a second is plenty (30 on a slow TV); fast displays
         // (120 Hz laptops) don't need twice the work.
         if (ts - lastDrawAt >= (lite ? 31 : 15)) {
@@ -678,6 +691,16 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
     };
     window.addEventListener("resize", onWindowResize);
     resizeRef.current = onWindowResize;
+    // The still version has no animation loop to notice size changes.
+    const sizePoll = still
+      ? window.setInterval(() => {
+          try {
+            checkSize();
+          } catch (error) {
+            fail(error);
+          }
+        }, 1000)
+      : 0;
     resize();
     const sans = getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim();
     if (sans) fontFamily = sans;
@@ -693,6 +716,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
       cancelAnimationFrame(raf);
       cancelAnimationFrame(resizeRaf);
       window.removeEventListener("resize", onWindowResize);
+      if (sizePoll) window.clearInterval(sizePoll);
       resizeRef.current = null;
       observer.disconnect();
       drawRef.current = null;
