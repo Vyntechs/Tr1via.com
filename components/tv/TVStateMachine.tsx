@@ -961,7 +961,7 @@ function pickLiveQuestion(snapshot: TVSnapshot) {
   return snapshot.questions.find((q) => q.id === snapshot.liveQuestionId) ?? null;
 }
 
-// Players who can answer in the game on screen. Everyone who joins the room
+// Players in the game on screen. Everyone who joins the room
 // is in Game 1, but Game 2 is opt-in, so the room total overstates it (Sep 24:
 // 28 played Game 2 in a room of 33, and the TV said "of 33"). The scores feed
 // has one row per game participant; it doesn't drop players the host removed,
