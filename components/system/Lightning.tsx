@@ -35,6 +35,7 @@ import {
   type BoltSegment,
 } from "./lightning-bolt";
 import { playThunder, unlockThunder } from "@/lib/audio/thunder";
+import { guardThemeCall } from "./ThemeLayerBoundary";
 
 // ─── Module-level beat trigger ────────────────────────────────────────────
 // Game-state callsites (section-complete celebration, finale mount, etc.)
@@ -75,7 +76,7 @@ export function fireLightningBeat(
   distance: "distant" | "close" = "close",
   opts?: { tint?: string },
 ): void {
-  for (const fn of beatListeners) fn(distance, opts);
+  for (const fn of beatListeners) guardThemeCall("lightning-beat", () => fn(distance, opts));
 }
 
 export interface LightningProps {

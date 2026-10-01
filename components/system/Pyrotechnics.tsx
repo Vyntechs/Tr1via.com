@@ -39,6 +39,7 @@
 
 import { useEffect, useRef } from "react";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { guardThemeCall } from "./ThemeLayerBoundary";
 
 // ─── Module-level synchronized beat ─────────────────────────────────────────
 // Mirrors Lightning.fireLightningBeat / JuneSky.fireJuneBeat so callsites don't
@@ -114,7 +115,7 @@ export function publishPyrotechnicsBeat(
     kind,
     targetAtMs: Date.now() + Math.max(0, delayMs),
   };
-  for (const fn of pyroBeatListeners) fn();
+  for (const fn of pyroBeatListeners) guardThemeCall("fireworks-beat", () => fn());
 }
 
 // ─── Module-level lock-in burst ─────────────────────────────────────────────
@@ -139,7 +140,7 @@ function subscribeLockInBurst(fn: LockInBurstListener): () => void {
  * (the engine effect early-returns before subscribing, exactly like Lightning).
  */
 export function fireLockInBurst(tint: string): void {
-  for (const fn of lockInBurstListeners) fn(tint);
+  for (const fn of lockInBurstListeners) guardThemeCall("lock-in-burst", () => fn(tint));
 }
 
 /** Test-only hooks: drive the beat without mounting a canvas (jsdom has no 2D

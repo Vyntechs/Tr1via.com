@@ -17,6 +17,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { guardThemeCall } from "./ThemeLayerBoundary";
 
 export type JuneBeatKind = "lock" | "reveal";
 type JuneBeatListener = (kind: JuneBeatKind) => void;
@@ -34,7 +35,7 @@ export const __subscribeJuneBeatForTest = subscribeJuneBeat;
 /** Pulse the June sky from a game-state callsite. No-op unless a JuneSky is
  *  mounted (i.e. the current theme is june and a TVStage is on screen). */
 export function fireJuneBeat(kind: JuneBeatKind): void {
-  for (const fn of beatListeners) fn(kind);
+  for (const fn of beatListeners) guardThemeCall("june-beat", () => fn(kind));
 }
 
 export interface JuneSkyProps {

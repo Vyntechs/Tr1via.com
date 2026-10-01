@@ -71,10 +71,20 @@ export interface TVLockInCeremonyProps {
 // the game keeps going (see ThemeLayerBoundary).
 export function TVLockInCeremony(props: TVLockInCeremonyProps) {
   return (
-    <ThemeLayerBoundary name="lock-in-ceremony">
+    <ThemeLayerBoundary name="lock-in-ceremony" fallback={<CeremonyDrain {...props} />}>
       <TVLockInCeremonyLayer {...props} />
     </ThemeLayerBoundary>
   );
+}
+
+/** Stands in for a ceremony that switched itself off: clears any spotlight and
+ *  marks every queued lock-in done, so the TV never waits on a dead queue. */
+function CeremonyDrain({ events, onEventComplete, onSpotlight }: TVLockInCeremonyProps) {
+  useEffect(() => {
+    onSpotlight?.(null);
+    for (const event of events) onEventComplete?.(event.playerId);
+  }, [events, onEventComplete, onSpotlight]);
+  return null;
 }
 
 function TVLockInCeremonyLayer({

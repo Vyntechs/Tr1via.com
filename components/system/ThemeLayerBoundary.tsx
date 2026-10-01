@@ -11,7 +11,10 @@
 // no DOM of its own, so a healthy layer looks exactly the same.
 //
 // Not covered: errors thrown inside requestAnimationFrame/setTimeout
-// callbacks never reach React. Animation loops guard their own ticks.
+// callbacks never reach React. Those can't blank the page (React never sees
+// them), but a loop that throws mid-frame just stops. New animation loops
+// should catch their own errors; the theme signals below go through
+// guardThemeCall so one broken listener can't break the screen that fired it.
 
 "use client";
 
@@ -25,6 +28,21 @@ export interface ThemeLayerBoundaryProps {
   fallback?: ReactNode;
   /** Told once, when the layer switches itself off. */
   onFail?: (error: unknown) => void;
+}
+
+const warnedCalls = new Set<string>();
+
+/** Run one theme listener; if it throws, skip it (logging once per name). Used
+ *  by the theme "beat" signals (June sky, May lightning, July fireworks),
+ *  which game screens fire from their own effects. */
+export function guardThemeCall(name: string, call: () => void): void {
+  try {
+    call();
+  } catch (error) {
+    if (warnedCalls.has(name)) return;
+    warnedCalls.add(name);
+    console.warn(`[theme] a "${name}" listener failed and was skipped; the game keeps going.`, error);
+  }
 }
 
 interface ThemeLayerBoundaryState {
