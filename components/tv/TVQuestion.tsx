@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { TVStage, TVHeader } from "@/components/shells";
+import { useStageWorld } from "@/components/experience/StageWorld";
 import {
   Eyebrow,
   Numeric,
@@ -99,6 +100,9 @@ function TVQuestionInner({
   houseLightsLockedCount,
 }: TVQuestionProps) {
   const { t } = useTheme();
+  // October's world says "TIME'S UP" when the clock hits zero (the Horseman
+  // is riding through the patch right then). The clock itself is unchanged.
+  const octoberWorld = useStageWorld()?.pack === "october";
   const cc = categoryColor(category, t.accent);
   const [imageFailed, setImageFailed] = useState(false);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -256,7 +260,7 @@ function TVQuestionInner({
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, alignSelf: "flex-start" }}>
           <TVTimerArc accent={cc} seconds={seconds} />
           <Eyebrow color={seconds <= 5 ? t.wrong : cc} size={10}>
-            {seconds <= 5 ? "FINAL SECONDS" : "SPEED BONUS < 5s"}
+            {octoberWorld && seconds <= 0 ? "TIME'S UP" : seconds <= 5 ? "FINAL SECONDS" : "SPEED BONUS < 5s"}
           </Eyebrow>
         </div>
       </div>

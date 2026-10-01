@@ -20,6 +20,9 @@ import {
 } from "@/components/system";
 import type { ResolvedTheme } from "@/lib/theme/resolve";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { useStageWorld } from "@/components/experience/StageWorld";
+import { OctoberWinner } from "@/components/experience/october/tv/OctoberScreens";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { useCrescendo } from "@/lib/hooks/useCrescendo";
 
 export interface TVFinaleWinnerData {
@@ -65,11 +68,11 @@ export function TVFinaleWinner({ themeKey, ...rest }: TVFinaleWinnerProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVFinaleWinnerInner {...rest} />
+        <TVFinaleWinnerBody {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVFinaleWinnerInner {...rest} />;
+  return <TVFinaleWinnerBody {...rest} />;
 }
 
 export const DEMO_WINNER: TVFinaleWinnerData = {
@@ -93,6 +96,21 @@ export const DEMO_STATS: TVFinaleStat[] = [
   { l: "FASTEST EVER", v: "0.6s · Cole" },
   { l: "STUMPER",      v: "4/32 · Egyptian honey" },
 ];
+
+// October (Sleepy Hollow Night) lays this screen out anew around its pumpkin
+// patch. Any other night renders the everyday screen, untouched. If the
+// October version ever fails, the everyday one takes its place.
+function TVFinaleWinnerBody(props: Omit<TVFinaleWinnerProps, "themeKey">) {
+  const world = useStageWorld();
+  if (world?.pack === "october") {
+    return (
+      <ThemeLayerBoundary name="october:OctoberWinner" fallback={<TVFinaleWinnerInner {...props} />}>
+        <OctoberWinner {...props} />
+      </ThemeLayerBoundary>
+    );
+  }
+  return <TVFinaleWinnerInner {...props} />;
+}
 
 function TVFinaleWinnerInner({
   headerEyebrow = "",

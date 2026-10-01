@@ -14,8 +14,9 @@ import { Lightning } from "./Lightning";
 import { JuneSky } from "./JuneSky";
 import { Pyrotechnics } from "./Pyrotechnics";
 import { SeptemberFront } from "./SeptemberFront";
-import { Snowflake, Heart, Clover, Leaf, Pumpkin, Pine, Rain } from "./motifs";
+import { Snowflake, Heart, Clover, Leaf, Pine, Rain } from "./motifs";
 import { ThemeLayerBoundary } from "./ThemeLayerBoundary";
+import { OctoberHollow } from "@/components/experience/october/OctoberHollow";
 import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 
 export interface WeatherProps {
@@ -164,21 +165,11 @@ function WeatherLayer({
           seed={seed}
         />
       );
+    // October is Sleepy Hollow Night: the painted hollow everywhere except
+    // the live venue TV, which mounts the full living world instead
+    // (components/experience/october/OctoberTVWorld).
     case "october":
-      return (
-        <>
-          <FlickerGlow color="#F08C2A" />
-          <ParticleField
-            count={count(8)}
-            Glyph={Pumpkin}
-            sizeRange={[14, 22]}
-            durationRange={[20, 32]}
-            colors={["#F08C2A", "#A94ACC"]}
-            opacityRange={[0.18, 0.4]}
-            seed={seed}
-          />
-        </>
-      );
+      return <OctoberHollow compact={compact} substrate={substrate} intensity={intensity} />;
     case "december":
       return (
         <>
@@ -216,21 +207,6 @@ function WeatherLayer({
 // and falls back to the same legacy glow internally for prefers-reduced-
 // motion users.
 
-function FlickerGlow({ color = "#F08C2A" }: { color?: string }) {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        inset: 0,
-        pointerEvents: "none",
-        background: `radial-gradient(120% 40% at 50% 100%, ${color}22, transparent 60%)`,
-        animation: "tr1via-glow-flicker 4.2s ease-in-out infinite",
-        mixBlendMode: "screen",
-      }}
-    />
-  );
-}
-
 function WarmLight() {
   return (
     <div
@@ -259,7 +235,7 @@ export function weatherLabel(themeKey: ThemeKey): string {
     july: "firework bursts",
     august: "a notebook page, half-turned leaves",
     september: "the heat breaks by kickoff",
-    october: "pumpkin glow",
+    october: "sleepy hollow night",
     november: "autumn drift",
     december: "snow + pine",
   } as Record<ThemeKey, string>)[themeKey] ?? "ambient";

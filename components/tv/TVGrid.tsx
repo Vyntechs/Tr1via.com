@@ -9,6 +9,8 @@
 "use client";
 
 import { TVStage, TVHeader, TVFooter } from "@/components/shells";
+import { useStageWorld } from "@/components/experience/StageWorld";
+import { FlamingHead } from "@/components/experience/october/tv/OctoberScreens";
 import {
   Eyebrow,
   Numeric,
@@ -17,6 +19,7 @@ import {
 } from "@/components/system";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import type { CSSProperties } from "react";
 
 export interface TVGridCell {
   /** True when the question at (column, row) has been played and resolved. */
@@ -110,6 +113,7 @@ function TVGridInner({
   upNext,
   onCellClick,
 }: Omit<TVGridProps, "themeKey">) {
+  const octoberWorld = useStageWorld()?.pack === "october";
   const { t } = useTheme();
   const board = cells ?? [];
 
@@ -307,22 +311,19 @@ function TVGridInner({
                       >
                         {r.rank}
                       </Numeric>
-                      <span
-                        data-testid="tv-grid-standing-name"
-                        style={{
-                          fontSize: top ? 26 : 21,
-                          fontWeight: 700,
-                          letterSpacing: "-0.015em",
-                          color: t.ink,
-                          fontFamily: "var(--font-sans)",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          minWidth: 0,
-                        }}
-                      >
-                        {r.name}
-                      </span>
+                      {octoberWorld && top ? (
+                        // October: the leader holds the flaming head.
+                        <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                          <FlamingHead height={45} style={{ margin: "-18px 0 -6px" }} />
+                          <span data-testid="tv-grid-standing-name" style={standingNameStyle(top, t.ink)}>
+                            {r.name}
+                          </span>
+                        </span>
+                      ) : (
+                        <span data-testid="tv-grid-standing-name" style={standingNameStyle(top, t.ink)}>
+                          {r.name}
+                        </span>
+                      )}
                       <Numeric
                         size={top ? 24 : 19}
                         weight={700}
@@ -334,6 +335,11 @@ function TVGridInner({
                   );
                 })}
               </div>
+              {octoberWorld ? (
+                <Eyebrow color={t.pop} size={9} style={{ display: "block", marginTop: 12 }}>
+                  THE LEADER HOLDS THE FLAMING HEAD
+                </Eyebrow>
+              ) : null}
             </div>
           )}
 
@@ -368,4 +374,18 @@ function TVGridInner({
       <TVFooter left={footerLeft} right={footerRight} />
     </TVStage>
   );
+}
+
+function standingNameStyle(top: boolean, ink: string): CSSProperties {
+  return {
+    fontSize: top ? 26 : 21,
+    fontWeight: 700,
+    letterSpacing: "-0.015em",
+    color: ink,
+    fontFamily: "var(--font-sans)",
+    whiteSpace: "nowrap",
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    minWidth: 0,
+  };
 }

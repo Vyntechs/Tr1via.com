@@ -60,6 +60,9 @@ import { shouldHoldReveal } from "@/lib/tv/revealPause";
 import { selectLobbyTopics } from "@/lib/tv/lobbyTopics";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { fireJuneBeat } from "@/components/system";
+import { TVWorldLayer } from "@/components/experience/TVWorldLayer";
+import { usePublishTVMoment } from "@/components/experience/StageWorld";
+import type { TVMoment } from "@/lib/experience/tvMoment";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
 
@@ -91,9 +94,31 @@ export interface TVStateMachineProps {
    *  (25s for every theme). When omitted, useTimer falls back to the
    *  registry default (25s). */
   themeKey?: ThemeKey;
+  /** How a theme's living world (October's hollow) may move on this surface.
+   *  "still" = never animate (the host's phone preview). Plain themes ignore it. */
+  worldTier?: "full" | "still";
 }
 
-export function TVStateMachine({
+/** Each screen announces its moment so a theme's world can react to it. */
+const momentOf = (
+  kind: TVMoment["kind"],
+  questionId: string | null = null,
+  revealedAtMs: number | null = null,
+  serverNowMs: number | null = null,
+): TVMoment => ({ kind, questionId, revealedAtMs, serverNowMs });
+
+export function TVStateMachine(props: TVStateMachineProps) {
+  // A theme with a living world (October) mounts it ONCE here, around the
+  // screen switcher, so the world carries through screen changes. Plain
+  // themes get the screens exactly as before.
+  return (
+    <TVWorldLayer themeKey={props.themeKey} snapshot={props.snapshot} tier={props.worldTier}>
+      <TVStateMachineViews {...props} />
+    </TVWorldLayer>
+  );
+}
+
+function TVStateMachineViews({
   snapshot,
   lastBroadcastRevealedAt = null,
   lastBroadcastServerNow = null,
@@ -378,6 +403,7 @@ function TVLobbyView({
   snapshot: TVSnapshot;
   welcomeEvent?: TVLobbyWelcomeEvent | null;
 }) {
+  usePublishTVMoment(momentOf("lobby"));
   const formattedCode = formatRoomCode(snapshot.night.roomCode);
   const venue = snapshot.night.venueName.toUpperCase();
   const scheduled = formatScheduledDate(snapshot.night.scheduledAt);
@@ -422,6 +448,7 @@ function TVGridView({
   game: { id: string };
   onCellClick?: (questionId: string) => void;
 }) {
+  usePublishTVMoment(momentOf("board"));
   const cats = snapshot.categories
     .filter((c) => c.gameId === game.id)
     .sort((a, b) => a.position - b.position);
@@ -511,6 +538,7 @@ function TVQuestionView({
       ? new Date(question.playedAt).getTime()
       : null;
   const serverNowMs = serverNow ? new Date(serverNow).getTime() : null;
+  usePublishTVMoment(momentOf("question", question.id, revealedMs, serverNowMs));
   // TV/host-laptop is the documented fallback for resolving a live question
   // when the player's phone dies (force-closed Safari, lost network, iOS
   // backgrounding the tab, etc.). The /api/questions/[id]/resolve endpoint
@@ -706,6 +734,7 @@ function TVRevealView({
   useEffect(() => {
     if (themeKey === "june") fireJuneBeat("reveal");
   }, [themeKey]);
+  usePublishTVMoment(momentOf("reveal", question.id));
 
   const cat = snapshot.categories.find((c) => c.id === question.categoryId);
   const category = cat?.name ?? "Trivia";
@@ -809,6 +838,7 @@ function TVLeaderboardView({
   snapshot: TVSnapshot;
   game: { id: string; gameNo?: 1 | 2 };
 }) {
+  usePublishTVMoment(momentOf("standings"));
   const gameNo = snapshot.games.find((g) => g.id === game.id)?.gameNo ?? 1;
   const rows: TVLeaderboardRow[] = rankScores(snapshot.scores)
     .slice(0, 10)
@@ -838,6 +868,7 @@ function TVIntermissionView({
   snapshot: TVSnapshot;
   game1: { id: string } | null;
 }) {
+  usePublishTVMoment(momentOf("between-games"));
   const game2 = snapshot.games.find((g) => g.gameNo === 2) ?? null;
   // Top 3 from game 1 — fetched from the snapshot's game_scores.
   const game1Scores = game1
@@ -901,6 +932,7 @@ function TVIntermissionView({
 }
 
 function TVFinaleView({ snapshot }: { snapshot: TVSnapshot }) {
+  usePublishTVMoment(momentOf("winner"));
   const sorted = rankScores(snapshot.scores);
   const top = sorted[0] ?? null;
   const topRanked = sorted.filter(({ rank }) => rank === 1);

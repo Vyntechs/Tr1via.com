@@ -19,6 +19,9 @@ import {
 } from "@/components/system";
 import { colorHexFromKey, playerColorHex } from "@/lib/player/playerColor";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { useStageWorld } from "@/components/experience/StageWorld";
+import { OctoberLobby } from "@/components/experience/october/tv/OctoberScreens";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { TVLobbyTopics } from "./TVLobbyTopics";
 import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 
@@ -77,11 +80,11 @@ export function TVLobby({ themeKey, ...rest }: TVLobbyProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVLobbyInner {...rest} />
+        <TVLobbyBody {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVLobbyInner {...rest} />;
+  return <TVLobbyBody {...rest} />;
 }
 
 export const DEMO_ROSTER: string[] = [
@@ -89,6 +92,21 @@ export const DEMO_ROSTER: string[] = [
   "June", "Lex", "Otis", "Sam", "Iris", "Ren", "Kai", "Nadia", "Jules",
   "Ezra", "Mira", "Hank", "Reza", "Tess", "Vee", "Yumi", "Quinn", "Wren",
 ];
+
+// October (Sleepy Hollow Night) lays this screen out anew around its pumpkin
+// patch. Any other night renders the everyday screen, untouched. If the
+// October version ever fails, the everyday one takes its place.
+function TVLobbyBody(props: Omit<TVLobbyProps, "themeKey">) {
+  const world = useStageWorld();
+  if (world?.pack === "october") {
+    return (
+      <ThemeLayerBoundary name="october:OctoberLobby" fallback={<TVLobbyInner {...props} />}>
+        <OctoberLobby {...props} />
+      </ThemeLayerBoundary>
+    );
+  }
+  return <TVLobbyInner {...props} />;
+}
 
 function TVLobbyInner({
   venueName = "",

@@ -19,6 +19,8 @@ import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { SeptemberQuestionLampBand } from "@/components/system/SeptemberFront";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { hasPhoneLayer } from "@/lib/experience/packs";
+import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import type { StandingRow } from "@/lib/player/betweenGames";
 
 export interface PlayerLockedProps {
@@ -185,6 +187,10 @@ export function PlayerLocked({
             </span>
           </div>
         </div>
+        {hasPhoneLayer(themeKey) ? (
+          // October: your pumpkin lit the instant you locked in.
+          <YourPumpkin mood="lit" size={56} style={{ margin: "-18px 0 -8px" }} />
+        ) : null}
         {!hasLiveCount && lockedSummary && <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>}
       </div>
 

@@ -5,6 +5,7 @@
 
 import { useTheme } from "@/components/system/ThemeProvider";
 import { Eyebrow } from "@/components/system/Eyebrow";
+import { useStageWorld } from "@/components/experience/StageWorld";
 
 export interface TVFooterProps {
   left: string;
@@ -14,6 +15,9 @@ export interface TVFooterProps {
 
 export function TVFooter({ left, right, accent }: TVFooterProps) {
   const { t } = useTheme();
+  // A living world (October) owns the bottom strip; the footer's details are
+  // already on screen elsewhere, so it steps aside.
+  if (useStageWorld()) return null;
   return (
     <div
       style={{

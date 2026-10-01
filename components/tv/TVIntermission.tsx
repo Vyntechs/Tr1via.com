@@ -19,6 +19,9 @@ import {
 } from "@/components/system";
 import type { ResolvedTheme } from "@/lib/theme/resolve";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { useStageWorld } from "@/components/experience/StageWorld";
+import { OctoberBetweenGames } from "@/components/experience/october/tv/OctoberScreens";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { readableForeground } from "@/lib/theme/contrast";
 
 export interface TVIntermissionPodiumRow {
@@ -64,11 +67,11 @@ export function TVIntermission({ themeKey, ...rest }: TVIntermissionProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVIntermissionInner {...rest} />
+        <TVIntermissionBody {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVIntermissionInner {...rest} />;
+  return <TVIntermissionBody {...rest} />;
 }
 
 export function demoPodium(t: ResolvedTheme): TVIntermissionPodiumRow[] {
@@ -84,6 +87,21 @@ export const DEMO_INTERMISSION_STATS: TVIntermissionStat[] = [
   { l: "STREAK",  v: "×7",   sub: "Devon on history" },
   { l: "STUMPER", v: "4/32", sub: "Egyptian honey" },
 ];
+
+// October (Sleepy Hollow Night) lays this screen out anew around its pumpkin
+// patch. Any other night renders the everyday screen, untouched. If the
+// October version ever fails, the everyday one takes its place.
+function TVIntermissionBody(props: Omit<TVIntermissionProps, "themeKey">) {
+  const world = useStageWorld();
+  if (world?.pack === "october") {
+    return (
+      <ThemeLayerBoundary name="october:OctoberBetweenGames" fallback={<TVIntermissionInner {...props} />}>
+        <OctoberBetweenGames {...props} />
+      </ThemeLayerBoundary>
+    );
+  }
+  return <TVIntermissionInner {...props} />;
+}
 
 function TVIntermissionInner({
   headerLeft = "GAME 1 · COMPLETE",

@@ -8,6 +8,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTheme, Display, Eyebrow, Numeric } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
+import { hasPhoneLayer } from "@/lib/experience/packs";
 import { readableForeground } from "@/lib/theme/contrast";
 import { categoryColor } from "@/lib/theme/categories";
 import type { StandingRow } from "@/lib/player/betweenGames";
@@ -67,7 +68,7 @@ export function PlayerBetweenGames({
   topics = [],
   game2Started = false,
 }: PlayerBetweenGamesProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const [floats, setFloats] = useState<{ id: number; emoji: string }[]>([]);
   const nextId = useRef(0);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -92,7 +93,7 @@ export function PlayerBetweenGames({
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 14, position: "relative" }}>
         <Display size={44} color={t.ink}>
-          Game 2 starts when your host is ready.
+          {hasPhoneLayer(themeKey) ? "Game 2 rides soon." : "Game 2 starts when your host is ready."}
         </Display>
         <div style={{ marginTop: 6, fontSize: 14, color: t.inkMid }}>
           You&apos;re in Game 2.

@@ -8,6 +8,7 @@ import type { CSSProperties, ReactNode } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
 import type { AugustPageName } from "@/components/system/AugustPage";
 import { Weather } from "@/components/system/Weather";
+import { useStageWorld } from "@/components/experience/StageWorld";
 
 export interface TVStageProps {
   children: ReactNode;
@@ -42,6 +43,35 @@ export function TVStage({
   "data-reading-surface": dataReadingSurface,
 }: TVStageProps) {
   const { t, themeKey } = useTheme();
+  // A theme's living world (October) is mounted behind every TV screen. The
+  // stage then steps aside: no background or weather of its own, and it
+  // keeps to the top part so the world's patch has the bottom strip. The
+  // reveal keeps a dark scrim so the answer reads exactly like today.
+  const world = useStageWorld();
+  if (world) {
+    return (
+      <div
+        data-testid={dataTestId}
+        data-reading-surface={dataReadingSurface}
+        data-stage-world={world.pack}
+        style={{
+          width: "100%",
+          height: `${world.contentHeight * 100}%`,
+          flexShrink: 0,
+          background: page === "reveal" ? "rgba(18,10,6,.72)" : "transparent",
+          color: t.ink,
+          fontFamily: "var(--font-sans)",
+          position: "relative",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          ...style,
+        }}
+      >
+        {children}
+      </div>
+    );
+  }
   return (
     <div
       data-testid={dataTestId}

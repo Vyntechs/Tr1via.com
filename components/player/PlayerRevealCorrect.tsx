@@ -14,6 +14,8 @@ import {
   Numeric,
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
+import { hasPhoneLayer } from "@/lib/experience/packs";
+import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import { nailedItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealCorrectProps {
@@ -60,7 +62,7 @@ export function PlayerRevealCorrect({
   roomMagicControls,
   standingsPanel,
 }: PlayerRevealCorrectProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const speedBonus = msToLock < 5000;
   const speedBonusAmount = speedBonus
     ? Math.max(0, awardedPoints - value)
@@ -112,6 +114,14 @@ export function PlayerRevealCorrect({
         <Display size="clamp(52px, 18cqw, 72px)" color="#0E0805" weight={700}>
           Correct.
         </Display>
+        {hasPhoneLayer(themeKey) ? (
+          // October: the green screen stays, and your pumpkin blazes.
+          <YourPumpkin
+            mood="blaze"
+            size={100}
+            style={{ marginLeft: 6, marginTop: -26, marginBottom: -12, verticalAlign: "bottom" }}
+          />
+        ) : null}
       </div>
 
       <div style={{ marginTop: 8, display: "flex", alignItems: "baseline", gap: 12 }}>
