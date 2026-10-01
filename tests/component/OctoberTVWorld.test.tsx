@@ -170,6 +170,27 @@ describe("October world on the venue TV", () => {
     );
   });
 
+  it("gives pumpkins only to the players in this game, not everyone in the room", async () => {
+    const now = Date.now();
+    const night = demoNight({ moment: "question", nowMs: now, secondsLeft: 14, locked: 0 });
+    // Game 2 is opt-in: 6 of the room's 29 players sat it out, so the scores
+    // feed (one row per game player) has 23 rows.
+    const scores = night.snapshot.scores.slice(0, 23);
+    render(
+      <ThemeProvider themeKey="october">
+        <TVStateMachine
+          snapshot={{ ...night.snapshot, scores, liveAnswers: [] }}
+          lastBroadcastRevealedAt={night.revealedAt}
+          lastBroadcastServerNow={new Date(now).toISOString()}
+          themeKey="october"
+        />
+      </ThemeProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("october-world")).toHaveAttribute("data-world-pumpkins", "23"),
+    );
+  });
+
   it("lets the Horseman finish his ride after the screen switches to the reveal", async () => {
     const now = Date.now();
     const revealedAtMs = now - 24_000; // 1 s left: he is riding

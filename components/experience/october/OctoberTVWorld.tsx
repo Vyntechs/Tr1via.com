@@ -97,10 +97,16 @@ export function OctoberTVWorld({
   }, []);
 
   // ── who is in the patch ──
-  const roster = useMemo(
-    () => [...snapshot.players].sort((a, b) => a.joinedAt.localeCompare(b.joinedAt)),
-    [snapshot.players],
-  );
+  // Only the players in the game on screen. Game 2 is opt-in (Sep 24: 28 of
+  // 33 played it), and the scores feed lists exactly that game's players, so a
+  // patron who sat Game 2 out never gets a pumpkin knocked over for not
+  // answering. Before any game has scores (the lobby), it's the whole room.
+  const roster = useMemo(() => {
+    const inGame = new Set(snapshot.scores.map((s) => s.player_key));
+    return [...snapshot.players]
+      .filter((p) => inGame.size === 0 || inGame.has(p.id))
+      .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
+  }, [snapshot.players, snapshot.scores]);
   const answers = useMemo<PatchAnswer[]>(
     () =>
       snapshot.liveAnswers.map((a) => ({
