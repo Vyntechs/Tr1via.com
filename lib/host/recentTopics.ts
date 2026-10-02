@@ -12,16 +12,9 @@ import type { RecentTopic } from "@/components/host/gen/HostGenTopicEntry";
 /** How many chips the design shows. */
 export const RECENT_TOPIC_LIMIT = 9;
 
-/** Longest category name the create route accepts (schemas.ts). The chip
- *  fills the box with her typed topic, and that text is sent as both name
- *  and topic, so anything longer couldn't have been typed there. */
-const MAX_FILL_LENGTH = 80;
-
 export interface RecentTopicSourceRow {
-  /** Category name — the short label on her board. */
+  /** Category name — the label on her board. */
   name: string;
-  /** What she typed when she created it (the generation topic). */
-  topic?: string | null;
   /** When the category was created. */
   created_at: string;
   /** When its night was opened to the room, if it ever was. */
@@ -49,8 +42,7 @@ function shownAt(row: RecentTopicSourceRow): string {
 
 /**
  * Distinct category names, newest first by the date each chip shows, capped
- * at `limit`. Each chip fills the box with what she originally typed, or the
- * board name when that isn't stored.
+ * at `limit`. Tapping a chip fills the box with that same name.
  */
 export function buildRecentTopics(
   rows: RecentTopicSourceRow[],
@@ -69,10 +61,7 @@ export function buildRecentTopics(
     const key = name.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    const typed = clean(row.topic);
-    const chip: RecentTopic = { name, date: formatTopicDate(shownAt(row)) };
-    if (typed && typed.length <= MAX_FILL_LENGTH) chip.topic = typed;
-    out.push(chip);
+    out.push({ name, date: formatTopicDate(shownAt(row)) });
     if (out.length >= limit) break;
   }
   return out;

@@ -52,20 +52,26 @@ export default async function SetupTopicPage({
   // checks). This catches a malicious query-string before we render the
   // form.
   const admin = getSupabaseAdmin();
-  const { data: game } = await admin
-    .from("games")
-    .select("id, night_id, game_no")
-    .eq("id", gameId)
-    .maybeSingle();
+  // Her past topics load alongside the game check. They're a convenience:
+  // if the lookup fails in any way, the chips are hidden and the page still
+  // works.
+  const recentLookup = loadRecentTopics(admin, owned.host.id, nightId).catch(
+    (err: unknown): RecentTopic[] => {
+      console.error("[host/setup/topic] could not load recent topics", err);
+      return [];
+    },
+  );
+  const [{ data: game }, recent] = await Promise.all([
+    admin
+      .from("games")
+      .select("id, night_id, game_no")
+      .eq("id", gameId)
+      .maybeSingle(),
+    recentLookup,
+  ]);
   if (!game || game.night_id !== nightId) {
     redirect(`/host/setup/${nightId}`);
   }
-
-  // Chips are a convenience: if the lookup fails in any way, the row is
-  // simply hidden and the page still works.
-  const recent = await loadRecentTopics(admin, owned.host.id, nightId).catch(
-    (): RecentTopic[] => [],
-  );
 
   return (
     <HostSetupTopicClient
@@ -108,20 +114,14 @@ async function loadRecentTopics(
 
   const { data: catRows } = await admin
     .from("categories")
-    .select("name, topic, created_at, game_id")
+    .select("name, created_at, game_id")
     .in("game_id", games.map((g) => g.id))
     .order("created_at", { ascending: false })
     .limit(120);
   const rows: RecentTopicSourceRow[] = (
-    (catRows ?? []) as Array<{
-      name: string;
-      topic: string | null;
-      created_at: string;
-      game_id: string;
-    }>
+    (catRows ?? []) as Array<{ name: string; created_at: string; game_id: string }>
   ).map((c) => ({
     name: c.name,
-    topic: c.topic,
     created_at: c.created_at,
     night_opened_at: openedAtByNight.get(nightByGame.get(c.game_id) ?? "") ?? null,
   }));

@@ -1329,7 +1329,6 @@ export function HostSetupPickClient({
               setUploadError(null);
               setModal({ kind: "upload", questionId: swapQuestion.id });
             }}
-            onLoadMore={() => void openSwap(swapQuestion.id)}
             onBack={() => setModal({ kind: "none" })}
             isSaving={savingPhoto}
             errorMessage={photoLookupError}

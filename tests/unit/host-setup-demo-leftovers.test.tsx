@@ -6,6 +6,7 @@ import { HostSetupPickClient } from "@/app/host/setup/[nightId]/pick/[categoryId
 import { HostGenEdit } from "@/components/host/gen/HostGenEdit";
 import { HostGenImageSwap } from "@/components/host/gen/HostGenImageSwap";
 import { HostGenImageUpload } from "@/components/host/gen/HostGenImageUpload";
+import { HostGenPick } from "@/components/host/gen/HostGenPick";
 import { buildRecentTopics } from "@/lib/host/recentTopics";
 import { editQuestionEyebrow } from "@/lib/host/editQuestionEyebrow";
 import type { QuestionRow } from "@/lib/supabase/types";
@@ -17,7 +18,9 @@ import type { QuestionRow } from "@/lib/supabase/types";
 // Fire · sign) with a bar stuck at "paris-eiffel-2024.jpg 68%", and
 // "EDIT QUESTION · 6 OF 20" on whichever question she opened. Around them:
 // "~ 4 SECONDS" for a pull that takes minutes, a "My photos" library that
-// doesn't exist, and drag/drop and paste-a-link promises nothing handles.
+// doesn't exist, drag/drop and paste-a-link promises nothing handles, a
+// "Show twelve more" button that re-ran the same search, and "each photo
+// was picked to match" even on her uploads and on cards with no photo.
 
 const DEMO_TOPICS = [
   "Pixar Movies",
@@ -120,18 +123,13 @@ describe("topic screen", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("a chip labelled with the short board name fills in what she originally typed", () => {
-    renderTopic([
-      {
-        name: "The color Green",
-        topic: "The color Green, including green with envy, the color of money",
-        date: "Sep 30",
-      },
-    ]);
-    fireEvent.click(screen.getByRole("button", { name: /The color Green/ }));
-    expect(screen.getByPlaceholderText("Pixar Movies")).toHaveValue(
-      "The color Green, including green with envy, the color of money",
-    );
+  it("a chip fills the box with exactly its own label (her cleaned-up board name)", () => {
+    // She renamed "Famouse Mustaches in films and commercials" to "Famous
+    // Mustaches"; the chip must bring back the clean name, not the typo.
+    renderTopic([{ name: "Famous Mustaches", date: "Sep 23" }]);
+    const chip = screen.getByRole("button", { name: /Famous Mustaches/ });
+    fireEvent.click(chip);
+    expect(screen.getByPlaceholderText("Pixar Movies")).toHaveValue("Famous Mustaches");
   });
 
   it("doesn't promise a 4-second pull (real pulls take about 1.5–3 minutes)", () => {
@@ -160,27 +158,34 @@ describe("topic page · loading her past topics", () => {
     })) as ReactElement<{ recent?: unknown }>;
   }
 
-  it("uses her earlier nights only, newest first, with her typed topic", async () => {
+  const GAME_ROW = { id: "game-1", night_id: "night-tonight", game_no: 1 };
+
+  it("uses her earlier nights only, newest first, and a chip fills in its own board name", async () => {
     owned();
-    const gameLookup = query(null, { id: "game-1", night_id: "night-tonight", game_no: 1 });
-    const pastGames = query([
-      { id: "g-sep30", night_id: "n-sep30" },
-      { id: "g-sep23", night_id: "n-sep23" },
-    ]);
+    // One "games" stand-in serves both the game check (maybeSingle) and the
+    // past-games list (awaited), whatever order they run in.
+    const games = query(
+      [
+        { id: "g-sep30", night_id: "n-sep30" },
+        { id: "g-sep23", night_id: "n-sep23" },
+      ],
+      GAME_ROW,
+    );
     const nights = query([
       { id: "n-sep30", opened_at: "2026-09-30T23:33:05Z" },
       { id: "n-sep23", opened_at: "2026-09-23T21:36:58Z" },
     ]);
+    // Real rows also carry what she first typed (`topic`); she renamed the
+    // board to fix the spelling, so the chip must use the board name.
     const categories = query([
       { name: "Aquodic animals", topic: "Aquodic animals", created_at: "2026-09-27T15:15:17Z", game_id: "g-sep30" },
       { name: "Guitars", topic: "Different typeS if guitards", created_at: "2026-09-26T00:46:16Z", game_id: "g-sep30" },
       { name: "Frogs", topic: "Frogs", created_at: "2026-09-19T16:16:24Z", game_id: "g-sep23" },
       { name: "guitars ", topic: "Guitars", created_at: "2026-09-19T15:00:00Z", game_id: "g-sep23" },
     ]);
-    let gamesCalls = 0;
     adminMock.getSupabaseAdmin.mockReturnValue({
       from: (table: string) => {
-        if (table === "games") return (gamesCalls++ === 0 ? gameLookup : pastGames).builder;
+        if (table === "games") return games.builder;
         if (table === "nights") return nights.builder;
         if (table === "categories") return categories.builder;
         throw new Error(`unexpected table ${table}`);
@@ -189,25 +194,67 @@ describe("topic page · loading her past topics", () => {
 
     const element = await loadPage();
     expect(element.props.recent).toEqual([
-      { name: "Aquodic animals", topic: "Aquodic animals", date: "Sep 30" },
-      { name: "Guitars", topic: "Different typeS if guitards", date: "Sep 30" },
-      { name: "Frogs", topic: "Frogs", date: "Sep 23" },
+      { name: "Aquodic animals", date: "Sep 30" },
+      { name: "Guitars", date: "Sep 30" },
+      { name: "Frogs", date: "Sep 23" },
     ]);
     expect(nights.calls).toContainEqual(["eq", ["host_id", "host-heather"]]);
     expect(nights.calls).toContainEqual(["neq", ["id", "night-tonight"]]);
+
+    render(element);
+    fireEvent.click(screen.getByRole("button", { name: /Guitars/ }));
+    expect(screen.getByPlaceholderText("Pixar Movies")).toHaveValue("Guitars");
   });
 
-  it("still opens the page, without chips, if the topic lookup throws", async () => {
+  it("starts the topic lookup without waiting for the game check", async () => {
     owned();
-    const gameLookup = query(null, { id: "game-1", night_id: "night-tonight", game_no: 1 });
+    let nightsAsked!: () => void;
+    const nightsStarted = new Promise<void>((resolve) => {
+      nightsAsked = resolve;
+    });
+    // The game check only answers once the topic lookup has started, so a
+    // one-after-the-other page would never finish.
+    const games = query([], GAME_ROW);
+    games.builder.maybeSingle = async () => {
+      await nightsStarted;
+      return { data: GAME_ROW, error: null };
+    };
     adminMock.getSupabaseAdmin.mockReturnValue({
       from: (table: string) => {
-        if (table === "games") return gameLookup.builder;
+        if (table === "games") return games.builder;
+        if (table === "nights") {
+          nightsAsked();
+          return query([]).builder;
+        }
+        return query([]).builder;
+      },
+    });
+    const element = await Promise.race([
+      loadPage(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("lookups ran one after the other")), 1000),
+      ),
+    ]);
+    expect(element.props.recent).toEqual([]);
+  });
+
+  it("still opens the page, without chips, and logs it, if the topic lookup throws", async () => {
+    owned();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const games = query([], GAME_ROW);
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      from: (table: string) => {
+        if (table === "games") return games.builder;
         throw new Error("network blip");
       },
     });
     const element = await loadPage();
     expect(element.props.recent).toEqual([]);
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining("recent topics"),
+      expect.any(Error),
+    );
+    errorSpy.mockRestore();
   });
 });
 
@@ -245,14 +292,6 @@ describe("recent-topic chips", () => {
     ]);
   });
 
-  it("falls back to the board name when her typed topic isn't stored", () => {
-    const [missing, tooLong] = buildRecentTopics([
-      { name: "Rodents", topic: "  ", created_at: "2026-09-25T17:00:00Z", night_opened_at: null },
-      { name: "Subway", topic: "x".repeat(81), created_at: "2026-09-24T17:00:00Z", night_opened_at: null },
-    ]);
-    expect(missing).toEqual({ name: "Rodents", date: "Sep 25" });
-    expect(tooLong).toEqual({ name: "Subway", date: "Sep 24" });
-  });
 });
 
 describe("image screens", () => {
@@ -307,9 +346,35 @@ describe("image screens", () => {
     expect(screen.queryByText(/photos you've used before/)).not.toBeInTheDocument();
     expect(screen.queryByText(/paste a link/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/drag/i)).not.toBeInTheDocument();
+    // "Show twelve more" re-ran the same search and got the same 12 photos.
+    expect(screen.queryByText(/Show twelve more/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/from the same library/)).not.toBeInTheDocument();
     // Uploading your own still opens the upload screen.
     fireEvent.click(screen.getByRole("button", { name: /upload your own/i }));
     expect(onOpenUpload).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("pick screen photo line", () => {
+  it("counts the cards that really have a photo, and claims nothing about where they came from", () => {
+    const base = { options: ["A", "B", "C", "D"] as [string, string, string, string], correctIndex: 0 as const, difficulty: 3 };
+    render(
+      <HostGenPick
+        themeKey="house"
+        topic="Rodents"
+        pickedIds={new Set()}
+        questions={[
+          { ...base, id: "a", prompt: "Stock", imageUrl: "https://images.pexels.com/1.jpg" },
+          { ...base, id: "b", prompt: "Upload", imageUrl: "https://example.supabase.co/q.jpg" },
+          { ...base, id: "c", prompt: "None", imageUrl: null },
+        ]}
+      />,
+    );
+    expect(screen.getByTestId("host-gen-pick-photo-count")).toHaveTextContent("2 of 3 have a photo.");
+    expect(screen.getByText("RODENTS · 3 PULLED")).toBeInTheDocument();
+    expect(screen.queryByText(/PHOTOS MATCHED/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/picked to match/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/free stock library/)).not.toBeInTheDocument();
   });
 });
 

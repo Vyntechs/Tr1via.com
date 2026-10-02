@@ -51,8 +51,6 @@ export interface HostGenImageSwapProps {
   onClear?: () => void;
   /** Called when the host taps the upload-your-own tile. */
   onOpenUpload?: () => void;
-  /** Called when the host taps "More from library" / refresh. */
-  onLoadMore?: () => void;
   /** Called when the host taps "Back without changes". */
   onBack?: () => void;
   /** True while the photo patch / refresh is in flight. */
@@ -60,7 +58,7 @@ export interface HostGenImageSwapProps {
   /**
    * Pexels lookup failure — renders an inline banner inside the gallery
    * region with a Retry button. The parent clears this by re-issuing
-   * the lookup (`onLoadMore`).
+   * the lookup (`onErrorRetry`).
    */
   errorMessage?: string | null;
   /** Called when the host taps "Try again" on the error banner. */
@@ -102,7 +100,6 @@ function HostGenImageSwapInner({
   onChoose,
   onClear,
   onOpenUpload,
-  onLoadMore,
   onBack,
   isSaving = false,
   errorMessage = null,
@@ -260,21 +257,6 @@ function HostGenImageSwapInner({
                 </button>
               );
             })}
-            <button
-              type="button"
-              onClick={onLoadMore}
-              style={{
-                gridColumn: "span 2",
-                borderRadius: 12, border: `1.5px dashed ${t.line}`,
-                background: "transparent", color: t.ink,
-                display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6,
-                cursor: "pointer", fontFamily: "var(--font-sans)",
-              }}
-            >
-              <span style={{ fontSize: 22, fontWeight: 300, color: t.inkMid }}>↻</span>
-              <span style={{ fontSize: 12, fontWeight: 600 }}>Show twelve more</span>
-              <span style={{ fontSize: 10, color: t.inkMute }}>from the same library</span>
-            </button>
             <button
               type="button"
               onClick={onOpenUpload}
