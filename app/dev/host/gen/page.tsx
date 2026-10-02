@@ -96,7 +96,7 @@ export default function HostGenGallery() {
       step: "5",
       title: "Edit",
       note: "Inline panel for editing a single question.",
-      render: () => <HostGenEdit eyebrow={DEMO_EDIT_EYEBROW} />,
+      render: () => <HostGenEdit eyebrow={DEMO_EDIT_EYEBROW} imageSource="pexels" />,
     },
     {
       step: "6",

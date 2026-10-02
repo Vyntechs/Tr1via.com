@@ -61,7 +61,11 @@ export default async function SetupTopicPage({
     redirect(`/host/setup/${nightId}`);
   }
 
-  const recent = await loadRecentTopics(admin, owned.host.id, nightId);
+  // Chips are a convenience: if the lookup fails in any way, the row is
+  // simply hidden and the page still works.
+  const recent = await loadRecentTopics(admin, owned.host.id, nightId).catch(
+    (): RecentTopic[] => [],
+  );
 
   return (
     <HostSetupTopicClient
@@ -104,14 +108,20 @@ async function loadRecentTopics(
 
   const { data: catRows } = await admin
     .from("categories")
-    .select("name, created_at, game_id")
+    .select("name, topic, created_at, game_id")
     .in("game_id", games.map((g) => g.id))
     .order("created_at", { ascending: false })
     .limit(120);
   const rows: RecentTopicSourceRow[] = (
-    (catRows ?? []) as Array<{ name: string; created_at: string; game_id: string }>
+    (catRows ?? []) as Array<{
+      name: string;
+      topic: string | null;
+      created_at: string;
+      game_id: string;
+    }>
   ).map((c) => ({
     name: c.name,
+    topic: c.topic,
     created_at: c.created_at,
     night_opened_at: openedAtByNight.get(nightByGame.get(c.game_id) ?? "") ?? null,
   }));

@@ -1,7 +1,7 @@
 // HOST · GENERATE · 6. IMAGE SWAP
-// Stock photo picker (real photos, never AI). Three rails: auto-matched
-// library suggestions, her own uploads, upload new. Right rail is a live
-// TV reveal preview.
+// Stock photo picker (real photos, never AI). Two ways in: auto-matched
+// library suggestions, or upload her own (opens the upload screen). Right
+// rail is a live TV reveal preview.
 //
 // Wired form: the pick route passes the list of alternative photos
 // (fetched from GET /api/questions/[id]/photos), the current image URL,
@@ -129,14 +129,13 @@ function HostGenImageSwapInner({
             Pick a better photo.
           </Display>
           <div style={{ marginTop: 6, fontSize: 13, color: t.inkMid, lineHeight: 1.4, maxWidth: 540 }}>
-            Three places to look — auto-matched options, photos you&apos;ve used before, or upload your own.
+            Pick a matched photo from the library, or upload your own.
           </div>
 
           {/* Tabs */}
           <div style={{ marginTop: 22, display: mobile ? "grid" : "flex", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : undefined, width: mobile ? "100%" : undefined, gap: 4, padding: 4, borderRadius: mobile ? 14 : 99, background: t.surface, alignSelf: "flex-start" }}>
             {[
               { id: "lib", label: "From the library", sub: `${candidates.length} fresh`, active: true },
-              { id: "mine", label: "My photos", sub: "0 saved", active: false },
               { id: "upload", label: "Upload new", sub: "+ add", active: false },
             ].map((tab) => (
               <button
@@ -289,7 +288,7 @@ function HostGenImageSwapInner({
             >
               <span style={{ fontSize: 22, fontWeight: 300, color: t.pop }}>↑</span>
               <span style={{ fontSize: 13, fontWeight: 700 }}>Upload your own</span>
-              <span style={{ fontSize: 10, color: t.inkMid }}>drag a file or paste a link</span>
+              <span style={{ fontSize: 10, color: t.inkMid }}>choose a file from your device</span>
             </button>
           </div>
         </div>

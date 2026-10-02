@@ -1,5 +1,6 @@
 // HOST · GENERATE · 6b. IMAGE UPLOAD
-// Drag-and-drop file picker. The route owns the file state and calls
+// File picker (tap/click opens the device's file chooser; there is no
+// drag-and-drop handling, so the copy doesn't promise it). The route owns the file state and calls
 // POST /api/images/upload via the onUpload handler. While the request is in
 // flight we render the "uploading" treatment.
 //
@@ -110,13 +111,7 @@ function HostGenImageUploadInner({
             Use your own.
           </Display>
           <div style={{ marginTop: 6, fontSize: 13, color: t.inkMid, lineHeight: 1.4, maxWidth: 540 }}>
-            When the library doesn&apos;t have the right thing — your venue photo, a press still, a personal shot — drop it here. It saves to <em style={{ fontStyle: "normal", fontWeight: 700, color: t.ink }}>My photos</em> for future questions.
-          </div>
-
-          <div style={{ marginTop: 22, display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(3, auto)", width: mobile ? "100%" : undefined, gap: 4, padding: 4, borderRadius: mobile ? 14 : 99, background: t.surface, alignSelf: "flex-start" }}>
-            <span style={{ padding: "10px 16px", borderRadius: 99, color: t.inkMid, fontSize: 13, fontWeight: 600 }}>From the library</span>
-            <span style={{ padding: "10px 16px", borderRadius: 99, color: t.inkMid, fontSize: 13, fontWeight: 600 }}>My photos</span>
-            <span style={{ padding: "10px 16px", borderRadius: 99, background: t.ink, color: t.paper, fontSize: 13, fontWeight: 700 }}>Upload new</span>
+            When the library doesn&apos;t have the right thing — your venue photo, a press still, a personal shot — choose one from your device. It&apos;s used for this question.
           </div>
 
           <input
@@ -222,8 +217,8 @@ function HostGenImageUploadInner({
                   </svg>
                 </div>
                 <div style={{ textAlign: "center" }}>
-                  <Display size={26} color={t.ink}>Drop a photo here</Display>
-                  <div style={{ marginTop: 6, fontSize: 13, color: t.inkMid }}>or <span style={{ color: t.accent, fontWeight: 700, textDecoration: "underline", textUnderlineOffset: 4 }}>click to browse</span> your computer</div>
+                  <Display size={26} color={t.ink}>Choose a photo</Display>
+                  <div style={{ marginTop: 6, fontSize: 13, color: t.inkMid }}><span style={{ color: t.accent, fontWeight: 700, textDecoration: "underline", textUnderlineOffset: 4 }}>Pick a file</span> from your device</div>
                 </div>
               </Fragment>
             )}

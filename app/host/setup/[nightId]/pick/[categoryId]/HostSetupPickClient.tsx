@@ -70,7 +70,8 @@ export interface HostSetupPickClientProps {
 
 type ModalState =
   | { kind: "none" }
-  | { kind: "edit"; questionId: string }
+  // `from` records where the host tapped Edit, only to label the panel.
+  | { kind: "edit"; questionId: string; from?: "grid" | "board" }
   | { kind: "swap"; questionId: string }
   | { kind: "upload"; questionId: string };
 
@@ -1217,10 +1218,13 @@ export function HostSetupPickClient({
     modal.kind === "swap" ? questions.find((q) => q.id === modal.questionId) ?? null : null;
   const uploadQuestion =
     modal.kind === "upload" ? questions.find((q) => q.id === modal.questionId) ?? null : null;
-  // "N OF M" = the card's position in the grid the host is looking at.
-  const editEyebrow = editingQuestion
-    ? editQuestionEyebrow(pickList.map((q) => q.id), editingQuestion.id)
-    : undefined;
+  // From a card: "N OF M" = that card's position in the grid she's looking
+  // at. From the YOUR BOARD list the grid position means nothing to her, so
+  // just "EDIT QUESTION".
+  const editEyebrow =
+    editingQuestion && modal.kind === "edit" && modal.from !== "board"
+      ? editQuestionEyebrow(pickList.map((q) => q.id), editingQuestion.id)
+      : undefined;
 
   return (
     <>
@@ -1264,7 +1268,7 @@ export function HostSetupPickClient({
           difficulty={difficulty}
           flavor={flavor}
           onTogglePick={togglePick}
-          onEdit={(id) => setModal({ kind: "edit", questionId: id })}
+          onEdit={(id, from) => setModal({ kind: "edit", questionId: id, from })}
           onSwapImage={(id) => void openSwap(id)}
           onReorder={handleReorder}
           onLock={handleLock}
@@ -1298,6 +1302,8 @@ export function HostSetupPickClient({
             // is lost by re-seeding.
             key={`${editingQuestion.id}:${editingQuestion.fact_blurb ?? ""}`}
             imageSeed={editingQuestion.image_url ?? categoryTopic}
+            imageUrl={editingQuestion.image_url}
+            imageSource={editingQuestion.image_source}
             onSave={handleSaveEdit}
             onClose={() => setModal({ kind: "none" })}
             onSwapImage={handleSaveEditAndOpenSwap}

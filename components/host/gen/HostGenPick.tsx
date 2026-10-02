@@ -92,8 +92,9 @@ export interface HostGenPickProps {
   onTogglePick?: (questionId: string) => void;
   /** Open the edit panel for a specific question. Also wired to the edit
    *  affordance on each YOUR BOARD sidebar card (same modal, different
-   *  entry point). */
-  onEdit?: (questionId: string) => void;
+   *  entry point). `from` says which was tapped, only so the panel can
+   *  label itself honestly. */
+  onEdit?: (questionId: string, from?: "grid" | "board") => void;
   /** Open the image swap UI for a specific question. */
   onSwapImage?: (questionId: string) => void;
   /** Persist a drag-to-reorder of the YOUR BOARD sidebar. Receives the new
@@ -370,7 +371,7 @@ function HostGenPickInner({
                 isPicked={picked.has(q.id)}
                 assignedPointValue={tierByPickId.get(q.id)}
                 onTogglePick={() => onTogglePick?.(q.id)}
-                onEdit={() => onEdit?.(q.id)}
+                onEdit={() => onEdit?.(q.id, "grid")}
                 onSwapImage={() => onSwapImage?.(q.id)}
               />
             ))}
@@ -389,7 +390,7 @@ function HostGenPickInner({
           picked={pickedQs}
           tierByPickId={tierByPickId}
           onUnpick={onTogglePick}
-          onEdit={onEdit}
+          onEdit={onEdit ? (id) => onEdit(id, "board") : undefined}
           onReorder={onReorder}
           onLock={onLock}
           isLocking={isLocking}

@@ -66,7 +66,7 @@ function HostMobilePreview() {
           onRename={async () => {}}
         />
       )}
-      {surface === "edit" && <HostGenEdit eyebrow={DEMO_EDIT_EYEBROW} />}
+      {surface === "edit" && <HostGenEdit eyebrow={DEMO_EDIT_EYEBROW} imageSource="pexels" />}
       {surface === "image-swap" && <HostGenImageSwap />}
       {surface === "image-upload" && (
         <HostGenImageUpload state="idle" recent={DEMO_RECENT_PHOTOS} />

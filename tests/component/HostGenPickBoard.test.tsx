@@ -75,14 +75,15 @@ describe("HostGenPick — YOUR BOARD reorder + edit affordances", () => {
         onTogglePick={vi.fn()}
       />,
     );
-    // The 100 slot holds q0; its pencil should fire onEdit("q0").
+    // The 100 slot holds q0; its pencil should fire onEdit("q0"), tagged
+    // as opened from the board (the panel labels itself from that).
     fireEvent.click(screen.getByTestId("pick-sidebar-edit-100"));
     expect(onEdit).toHaveBeenCalledTimes(1);
-    expect(onEdit).toHaveBeenCalledWith("q0");
+    expect(onEdit).toHaveBeenCalledWith("q0", "board");
 
     // The 700 slot holds q6.
     fireEvent.click(screen.getByTestId("pick-sidebar-edit-700"));
-    expect(onEdit).toHaveBeenCalledWith("q6");
+    expect(onEdit).toHaveBeenCalledWith("q6", "board");
   });
 
   it("renders a drag handle for every filled slot when reordering is enabled", () => {

@@ -24,7 +24,11 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 export type DifficultyTarget = "easy" | "normal" | "hard";
 
 export interface RecentTopic {
+  /** Chip label: the short name on her board. */
   name: string;
+  /** What she originally typed for this topic. Tapping the chip fills the
+   *  box with this; without it, the box gets `name`. */
+  topic?: string;
   /** Display label (e.g. "Apr 2"). */
   date: string;
   /** True if Linda has already used this exact topic. Surfaces the warning rail. */
@@ -191,7 +195,7 @@ function HostGenTopicEntryInner({
                   <button
                     key={c.name}
                     type="button"
-                    onClick={() => updateTopic(c.name)}
+                    onClick={() => updateTopic(c.topic ?? c.name)}
                     style={{
                       padding: "6px 12px", borderRadius: 99, minHeight: mobile ? 44 : undefined,
                       background: c.used ? t.accent : "transparent",
@@ -285,7 +289,7 @@ function HostGenTopicEntryInner({
           >
             {isSubmitting ? "Saving…" : "Pull 20 questions  →"}
           </button>
-          <div style={{ fontSize: 11, color: t.inkMute, textAlign: "center", fontFamily: "var(--font-mono)", letterSpacing: "0.06em" }}>~ 4 SECONDS</div>
+          <div style={{ fontSize: 11, color: t.inkMute, textAlign: "center", fontFamily: "var(--font-mono)", letterSpacing: "0.06em" }}>TAKES A COUPLE OF MINUTES</div>
         </div>
       </form>
     </LaptopShell>
