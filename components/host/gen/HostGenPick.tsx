@@ -92,8 +92,9 @@ export interface HostGenPickProps {
   onTogglePick?: (questionId: string) => void;
   /** Open the edit panel for a specific question. Also wired to the edit
    *  affordance on each YOUR BOARD sidebar card (same modal, different
-   *  entry point). */
-  onEdit?: (questionId: string) => void;
+   *  entry point). `from` says which was tapped, only so the panel can
+   *  label itself honestly. */
+  onEdit?: (questionId: string, from?: "grid" | "board") => void;
   /** Open the image swap UI for a specific question. */
   onSwapImage?: (questionId: string) => void;
   /** Persist a drag-to-reorder of the YOUR BOARD sidebar. Receives the new
@@ -186,6 +187,9 @@ function HostGenPickInner({
   const cc = categoryColor(topic, t.accent);
   const picked = pickedIds ?? new Set(["1", "2", "3", "4", "7", "8"]);
   const pickedQs = questions.filter((q) => picked.has(q.id));
+  // Real count of cards that have a photo (stock or her upload). The old
+  // copy claimed every photo was matched from the stock library.
+  const withPhoto = questions.filter((q) => Boolean(q.imageUrl)).length;
   // Mirror the server's lock-time assignment so the host sees the actual
   // tier each pick will land at. Two-pass:
   //   1. Explicit host-set point_values claim their slots directly
@@ -246,7 +250,7 @@ function HostGenPickInner({
           <div>
             <EditableTopicEyebrow
               value={topic}
-              suffix={`· ${questions.length} PULLED · PHOTOS MATCHED`}
+              suffix={`· ${questions.length} PULLED`}
               onSave={onRename}
               isSaving={isRenaming}
             />
@@ -370,7 +374,7 @@ function HostGenPickInner({
                 isPicked={picked.has(q.id)}
                 assignedPointValue={tierByPickId.get(q.id)}
                 onTogglePick={() => onTogglePick?.(q.id)}
-                onEdit={() => onEdit?.(q.id)}
+                onEdit={() => onEdit?.(q.id, "grid")}
                 onSwapImage={() => onSwapImage?.(q.id)}
               />
             ))}
@@ -378,8 +382,10 @@ function HostGenPickInner({
           <div style={{ marginTop: 18, padding: "12px 16px", borderRadius: 10, background: t.surface, display: "flex", alignItems: "center", gap: 10 }}>
             <span style={{ width: 4, height: 28, background: t.pop, borderRadius: 99 }} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 12.5, color: t.ink, fontWeight: 600 }}>Each photo was picked to match its question.</div>
-              <div style={{ marginTop: 2, fontSize: 11, color: t.inkMid }}>From your free stock library. Click <em style={{ fontStyle: "normal", fontWeight: 600 }}>Image</em> on any card to swap.</div>
+              <div data-testid="host-gen-pick-photo-count" style={{ fontSize: 12.5, color: t.ink, fontWeight: 600 }}>
+                {withPhoto} of {questions.length} {withPhoto === 1 ? "has" : "have"} a photo.
+              </div>
+              <div style={{ marginTop: 2, fontSize: 11, color: t.inkMid }}>Click <em style={{ fontStyle: "normal", fontWeight: 600 }}>Image</em> on any card to change its photo.</div>
             </div>
           </div>
         </div>
@@ -389,7 +395,7 @@ function HostGenPickInner({
           picked={pickedQs}
           tierByPickId={tierByPickId}
           onUnpick={onTogglePick}
-          onEdit={onEdit}
+          onEdit={onEdit ? (id) => onEdit(id, "board") : undefined}
           onReorder={onReorder}
           onLock={onLock}
           isLocking={isLocking}

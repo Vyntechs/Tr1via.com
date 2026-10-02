@@ -45,14 +45,21 @@ export interface HostGenEditProps {
   themeKey?: ThemeKey;
   /** Topic, used for the category color and the breadcrumb. */
   topic?: string;
-  /** Eyebrow text (e.g. "EDIT QUESTION · 6 OF 20"). */
+  /** Eyebrow text (e.g. "EDIT QUESTION · 6 OF 20"), built by the caller from
+   *  the card's real position among the questions on screen. Omitted → just
+   *  "EDIT QUESTION". */
   eyebrow?: string;
   /** Title for the shell chrome. */
   shellTitle?: string;
   /** Initial values for the form. */
   initial?: HostGenEditValues;
-  /** Photo URL or seed for the placeholder. */
+  /** Seed for the striped placeholder shown when there's no photo. */
   imageSeed?: string;
+  /** The question's current photo, shown as-is. */
+  imageUrl?: string | null;
+  /** Where that photo came from ("pexels" stock library or "upload"), so
+   *  the label says which. */
+  imageSource?: string | null;
   /** Called when the host saves. Receives the (possibly modified) values. */
   onSave?: (values: HostGenEditValues) => void;
   /** Called when the host closes / discards. */
@@ -87,6 +94,23 @@ const DEMO_INITIAL: HostGenEditValues = {
   pointValue: 200,
 };
 
+/** Says where the photo on this question came from. It used to read
+ *  "AUTO-MATCHED · from your library" for every question, including ones
+ *  with her own upload. */
+function describeImage(
+  source: string | null,
+  url: string | null,
+): { eyebrow: string; caption: string | null } {
+  if (source === "upload") {
+    return { eyebrow: "IMAGE · YOUR UPLOAD", caption: "The photo you uploaded for this question." };
+  }
+  if (source === "pexels") {
+    return { eyebrow: "IMAGE · STOCK PHOTO", caption: "From the free stock photo library." };
+  }
+  if (url) return { eyebrow: "IMAGE", caption: null };
+  return { eyebrow: "IMAGE · NONE", caption: "No photo on this question." };
+}
+
 /** Longest blurb the PATCH route will accept (schemas.ts). Enforced here too
  *  so the host sees the ceiling instead of a save failure. */
 const FACT_BLURB_MAX = 280;
@@ -105,10 +129,12 @@ export function HostGenEdit(props: HostGenEditProps) {
 
 function HostGenEditInner({
   topic = "Pixar Movies",
-  eyebrow = "EDIT QUESTION · 6 OF 20",
+  eyebrow = "EDIT QUESTION",
   shellTitle = "edit · pixar movies · q6",
   initial = DEMO_INITIAL,
   imageSeed = "pixar6",
+  imageUrl = null,
+  imageSource = null,
   onSave,
   onClose,
   onSwapImage,
@@ -119,6 +145,7 @@ function HostGenEditInner({
   const { t } = useTheme();
   const mobile = useMediaQuery("(max-width: 860px)");
   const cc = categoryColor(topic, t.accent);
+  const imageLabel = describeImage(imageSource, imageUrl);
   const [prompt, setPrompt] = useState(initial.prompt);
   const [options, setOptions] = useState<[string, string, string, string]>(initial.options);
   const [correctIndex, setCorrectIndex] = useState<0 | 1 | 2 | 3>(initial.correctIndex);
@@ -315,13 +342,15 @@ function HostGenEditInner({
 
           <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "180px 1fr", gap: 16, alignItems: "flex-start" }}>
             <div>
-              <Eyebrow color={t.inkMute} size={9}>IMAGE · AUTO-MATCHED</Eyebrow>
+              <Eyebrow color={t.inkMute} size={9}>{imageLabel.eyebrow}</Eyebrow>
               <div style={{ marginTop: 8 }}>
-                <StockImage seed={imageSeed} height={120} radius="10px" />
+                <StockImage src={imageUrl ?? undefined} seed={imageSeed} height={120} radius="10px" />
               </div>
-              <div style={{ marginTop: 6, fontSize: 11, color: t.inkMid, lineHeight: 1.45 }}>
-                Picked to fit this question from your library.
-              </div>
+              {imageLabel.caption && (
+                <div style={{ marginTop: 6, fontSize: 11, color: t.inkMid, lineHeight: 1.45 }}>
+                  {imageLabel.caption}
+                </div>
+              )}
               <button
                 type="button"
                 onClick={handleSwapImage}

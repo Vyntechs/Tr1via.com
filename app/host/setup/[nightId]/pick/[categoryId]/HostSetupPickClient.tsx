@@ -46,6 +46,7 @@ import {
   canonicalPickedAfterRefetch,
   mergePickedAfterRefetch,
 } from "@/lib/host/mergePickedAfterRefetch";
+import { editQuestionEyebrow } from "@/lib/host/editQuestionEyebrow";
 import { shouldRewriteFactBlurb } from "@/lib/host/factBlurbStaleness";
 import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
@@ -69,7 +70,8 @@ export interface HostSetupPickClientProps {
 
 type ModalState =
   | { kind: "none" }
-  | { kind: "edit"; questionId: string }
+  // `from` records where the host tapped Edit, only to label the panel.
+  | { kind: "edit"; questionId: string; from?: "grid" | "board" }
   | { kind: "swap"; questionId: string }
   | { kind: "upload"; questionId: string };
 
@@ -170,6 +172,8 @@ export function HostSetupPickClient({
   const [rewritingFact, setRewritingFact] = useState(false);
   const [savingPhoto, setSavingPhoto] = useState(false);
   const [uploadState, setUploadState] = useState<"idle" | "uploading">("idle");
+  // Name of the file being sent, shown on the upload screen while it goes.
+  const [uploadFilename, setUploadFilename] = useState<string | undefined>(undefined);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [photoCandidates, setPhotoCandidates] = useState<HostGenPhotoCandidate[]>([]);
   const [photoLookupError, setPhotoLookupError] = useState<string | null>(null);
@@ -1009,6 +1013,7 @@ export function HostSetupPickClient({
 
   async function handleUploadFile(file: File) {
     if (modal.kind !== "upload") return;
+    setUploadFilename(file.name);
     setUploadState("uploading");
     setError(null);
     setUploadError(null);
@@ -1019,6 +1024,7 @@ export function HostSetupPickClient({
         "That file is over 10 MB. Try a smaller export or compress it first.",
       );
       setUploadState("idle");
+      setUploadFilename(undefined);
       return;
     }
     try {
@@ -1057,6 +1063,7 @@ export function HostSetupPickClient({
       );
     } finally {
       setUploadState("idle");
+      setUploadFilename(undefined);
     }
   }
 
@@ -1211,6 +1218,13 @@ export function HostSetupPickClient({
     modal.kind === "swap" ? questions.find((q) => q.id === modal.questionId) ?? null : null;
   const uploadQuestion =
     modal.kind === "upload" ? questions.find((q) => q.id === modal.questionId) ?? null : null;
+  // From a card: "N OF M" = that card's position in the grid she's looking
+  // at. From the YOUR BOARD list the grid position means nothing to her, so
+  // just "EDIT QUESTION".
+  const editEyebrow =
+    editingQuestion && modal.kind === "edit" && modal.from !== "board"
+      ? editQuestionEyebrow(pickList.map((q) => q.id), editingQuestion.id)
+      : undefined;
 
   return (
     <>
@@ -1254,7 +1268,7 @@ export function HostSetupPickClient({
           difficulty={difficulty}
           flavor={flavor}
           onTogglePick={togglePick}
-          onEdit={(id) => setModal({ kind: "edit", questionId: id })}
+          onEdit={(id, from) => setModal({ kind: "edit", questionId: id, from })}
           onSwapImage={(id) => void openSwap(id)}
           onReorder={handleReorder}
           onLock={handleLock}
@@ -1274,6 +1288,7 @@ export function HostSetupPickClient({
             themeKey={themeKey as ThemeKey}
             shellTitle={`edit · ${categoryName.toLowerCase()}`}
             topic={categoryName}
+            eyebrow={editEyebrow}
             initial={{
               prompt: editingQuestion.prompt,
               options: editingQuestion.options,
@@ -1287,6 +1302,8 @@ export function HostSetupPickClient({
             // is lost by re-seeding.
             key={`${editingQuestion.id}:${editingQuestion.fact_blurb ?? ""}`}
             imageSeed={editingQuestion.image_url ?? categoryTopic}
+            imageUrl={editingQuestion.image_url}
+            imageSource={editingQuestion.image_source}
             onSave={handleSaveEdit}
             onClose={() => setModal({ kind: "none" })}
             onSwapImage={handleSaveEditAndOpenSwap}
@@ -1312,7 +1329,6 @@ export function HostSetupPickClient({
               setUploadError(null);
               setModal({ kind: "upload", questionId: swapQuestion.id });
             }}
-            onLoadMore={() => void openSwap(swapQuestion.id)}
             onBack={() => setModal({ kind: "none" })}
             isSaving={savingPhoto}
             errorMessage={photoLookupError}
@@ -1328,6 +1344,7 @@ export function HostSetupPickClient({
             topic={categoryName}
             prompt={uploadQuestion.prompt}
             state={uploadState}
+            uploadFilename={uploadFilename}
             onFileChosen={(file) => void handleUploadFile(file)}
             onBack={() => {
               setUploadError(null);

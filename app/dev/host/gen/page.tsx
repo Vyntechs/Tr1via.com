@@ -26,6 +26,13 @@ import {
   HostGenManualEntry,
 } from "@/components/host/gen";
 import { LockInPileUp } from "@/components/tv/lockin";
+import {
+  DEMO_EDIT_EYEBROW,
+  DEMO_RECENT_PHOTOS,
+  DEMO_RECENT_TOPICS,
+  DEMO_UPLOAD_FILENAME,
+  DEMO_UPLOAD_PERCENT,
+} from "../hostGenDemo";
 
 interface Screen {
   step: string;
@@ -50,7 +57,7 @@ export default function HostGenGallery() {
       step: "2",
       title: "Topic entry",
       note: "Typing a topic. Repeat warning + flavor settings.",
-      render: () => <HostGenTopicEntry />,
+      render: () => <HostGenTopicEntry recent={DEMO_RECENT_TOPICS} />,
     },
     {
       step: "3",
@@ -89,7 +96,7 @@ export default function HostGenGallery() {
       step: "5",
       title: "Edit",
       note: "Inline panel for editing a single question.",
-      render: () => <HostGenEdit />,
+      render: () => <HostGenEdit eyebrow={DEMO_EDIT_EYEBROW} imageSource="pexels" />,
     },
     {
       step: "6",
@@ -101,13 +108,20 @@ export default function HostGenGallery() {
       step: "6b",
       title: "Image upload · idle",
       note: "Drop zone or paste-URL — empty state.",
-      render: () => <HostGenImageUpload state="idle" />,
+      render: () => <HostGenImageUpload state="idle" recent={DEMO_RECENT_PHOTOS} />,
     },
     {
       step: "6b",
       title: "Image upload · uploading",
       note: "Same surface, mid-upload. Shimmer + progress.",
-      render: () => <HostGenImageUpload state="uploading" />,
+      render: () => (
+        <HostGenImageUpload
+          state="uploading"
+          recent={DEMO_RECENT_PHOTOS}
+          uploadFilename={DEMO_UPLOAD_FILENAME}
+          uploadPercent={DEMO_UPLOAD_PERCENT}
+        />
+      ),
     },
     {
       step: "6c",

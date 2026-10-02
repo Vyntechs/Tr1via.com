@@ -143,7 +143,7 @@ function HostGenLoadingInner({
           <div>
             <Eyebrow color={t.accent} size={11}>PULLING {total} ON</Eyebrow>
             <div style={{ marginTop: 4, fontSize: 28, fontWeight: 700, color: t.ink, letterSpacing: "-0.02em" }}>{topic}</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>{statusLine ?? "Writing the questions, then matching a photo to each."}</div>
+            <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>{statusLine ?? "Writing the questions, then looking for photos."}</div>
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", gap: mobile ? 12 : 22 }}>

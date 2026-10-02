@@ -3,9 +3,10 @@
 // warning surfaces inline. Difficulty + Flavor settings ride in the right rail.
 //
 // Wired form: controlled topic text + difficulty + flavor selections. The
-// setup route owns the state and submits to POST /api/categories. All props
-// are optional with demo defaults so the /dev/host/gen gallery still
-// renders.
+// setup route owns the state and submits to POST /api/categories. The
+// "your last topics" chips come only from the caller (the host's real past
+// topics); with none, the row is hidden. The /dev/host/gen gallery passes
+// its demo list explicitly.
 
 "use client";
 
@@ -23,6 +24,9 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 export type DifficultyTarget = "easy" | "normal" | "hard";
 
 export interface RecentTopic {
+  /** The name on her board. It's both the chip label and what tapping the
+   *  chip puts in the box (her renames fix her typos, so this is the clean
+   *  version). */
   name: string;
   /** Display label (e.g. "Apr 2"). */
   date: string;
@@ -36,7 +40,8 @@ export interface HostGenTopicEntryProps {
   shellTitle?: string;
   /** Eyebrow over the headline (e.g. "GAME 1 · SLOT 5 OF 6"). */
   eyebrow?: string;
-  /** Recent topics, used both for autocomplete and as the "your last topics" rail. */
+  /** The host's real recent topics, shown as the "your last topics" chips.
+   *  Omitted or empty → the row (and its heading) is hidden. */
   recent?: RecentTopic[];
   /** Initial topic value. */
   initialTopic?: string;
@@ -57,18 +62,6 @@ export interface HostGenTopicEntryProps {
   /** Warning shown beneath the input (e.g. "you ran this on April 2"). */
   warning?: string | null;
 }
-
-const DEMO_RECENT: RecentTopic[] = [
-  { name: "Pixar Movies", date: "Apr 2", used: true },
-  { name: "Geography", date: "last night" },
-  { name: "NFL Teams", date: "May 12" },
-  { name: "90s Music", date: "May 7" },
-  { name: "Local Madison", date: "May 5" },
-  { name: "Greek Mythology", date: "Apr 23" },
-  { name: "World Cup", date: "Apr 16" },
-  { name: "Cocktails", date: "Apr 9" },
-  { name: "Beatles", date: "Mar 26" },
-];
 
 const FLAVOR_OPTIONS = [
   "Sharper",
@@ -101,7 +94,7 @@ export function HostGenTopicEntry(props: HostGenTopicEntryProps) {
 
 function HostGenTopicEntryInner({
   eyebrow = "GAME 1 · SLOT 5 OF 6",
-  recent = DEMO_RECENT,
+  recent = [],
   initialTopic = "",
   draftKey,
   initialDifficulty = "normal",
@@ -193,30 +186,32 @@ function HostGenTopicEntryInner({
             </div>
           )}
 
-          <div style={{ marginTop: 32 }}>
-            <Eyebrow color={t.inkMute} size={10}>YOUR LAST TOPICS</Eyebrow>
-            <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
-              {recent.map((c) => (
-                <button
-                  key={c.name}
-                  type="button"
-                  onClick={() => updateTopic(c.name)}
-                  style={{
-                    padding: "6px 12px", borderRadius: 99, minHeight: mobile ? 44 : undefined,
-                    background: c.used ? t.accent : "transparent",
-                    color: c.used ? "#0E0805" : t.ink,
-                    border: `1px solid ${c.used ? t.accent : t.line}`,
-                    fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)",
-                    display: "flex", alignItems: "center", gap: 6,
-                    cursor: "pointer",
-                  }}
-                >
-                  {c.name}
-                  <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500, fontSize: 10, opacity: c.used ? 0.7 : 0.55 }}>{c.date}</span>
-                </button>
-              ))}
+          {recent.length > 0 && (
+            <div style={{ marginTop: 32 }}>
+              <Eyebrow color={t.inkMute} size={10}>YOUR LAST TOPICS</Eyebrow>
+              <div style={{ marginTop: 12, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {recent.map((c) => (
+                  <button
+                    key={c.name}
+                    type="button"
+                    onClick={() => updateTopic(c.name)}
+                    style={{
+                      padding: "6px 12px", borderRadius: 99, minHeight: mobile ? 44 : undefined,
+                      background: c.used ? t.accent : "transparent",
+                      color: c.used ? "#0E0805" : t.ink,
+                      border: `1px solid ${c.used ? t.accent : t.line}`,
+                      fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)",
+                      display: "flex", alignItems: "center", gap: 6,
+                      cursor: "pointer",
+                    }}
+                  >
+                    {c.name}
+                    <span style={{ fontFamily: "var(--font-mono)", fontWeight: 500, fontSize: 10, opacity: c.used ? 0.7 : 0.55 }}>{c.date}</span>
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
@@ -293,7 +288,7 @@ function HostGenTopicEntryInner({
           >
             {isSubmitting ? "Saving…" : "Pull 20 questions  →"}
           </button>
-          <div style={{ fontSize: 11, color: t.inkMute, textAlign: "center", fontFamily: "var(--font-mono)", letterSpacing: "0.06em" }}>~ 4 SECONDS</div>
+          <div style={{ fontSize: 11, color: t.inkMute, textAlign: "center", fontFamily: "var(--font-mono)", letterSpacing: "0.06em" }}>TAKES A COUPLE OF MINUTES</div>
         </div>
       </form>
     </LaptopShell>

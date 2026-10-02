@@ -305,7 +305,7 @@ test("all production prep components fit every approved phone viewport", async (
 
         if (viewport.name === "320x568") {
           const metadata = page.getByText(
-            "PIXAR MOVIES · 10 PULLED · PHOTOS MATCHED",
+            "PIXAR MOVIES · 10 PULLED",
             { exact: true },
           );
           const title = page.getByText("Pick your seven.", { exact: true });
