@@ -80,7 +80,14 @@ export function OctoberTVWorld({
   const clockRef = useRef<QuestionClock | null>(null);
   const offsetRef = useRef(0);
 
-  const publish = useCallback((next: TVMoment) => {
+  const publish = useCallback((raw: TVMoment) => {
+    // A broadcast time that isn't a number (a bad timestamp) counts as unknown,
+    // so it can't turn every clock in the world into NaN.
+    const next: TVMoment = {
+      ...raw,
+      revealedAtMs: finiteOrNull(raw.revealedAtMs),
+      serverNowMs: finiteOrNull(raw.serverNowMs),
+    };
     const prev = momentRef.current;
     if (sameMoment(prev, next)) return;
     if (next.kind === "question" && next.questionId && next.revealedAtMs !== null) {
@@ -105,7 +112,7 @@ export function OctoberTVWorld({
     const inGame = new Set(snapshot.scores.map((s) => s.player_key));
     return [...snapshot.players]
       .filter((p) => inGame.size === 0 || inGame.has(p.id))
-      .sort((a, b) => a.joinedAt.localeCompare(b.joinedAt));
+      .sort((a, b) => String(a.joinedAt ?? "").localeCompare(String(b.joinedAt ?? "")));
   }, [snapshot.players, snapshot.scores]);
   const answers = useMemo<PatchAnswer[]>(
     () =>
@@ -121,9 +128,7 @@ export function OctoberTVWorld({
   // while open, so anyone silent for 10 minutes (and not answering this
   // question) has most likely gone home. Leaving them out keeps the patch
   // from knocking over a ghost every question.
-  const [players, setPlayers] = useState<PatchPlayer[]>(() =>
-    roster.map((p) => ({ key: p.id, name: p.displayName })),
-  );
+  const [players, setPlayers] = useState<PatchPlayer[]>(() => roster.map(patchPlayer));
   useEffect(() => {
     const update = () => {
       const now = Date.now() + offsetRef.current;
@@ -136,7 +141,7 @@ export function OctoberTVWorld({
           const seen = Date.parse(p.lastSeenAt);
           return !Number.isFinite(seen) || now - seen < PRESENT_FOR_MS;
         })
-        .map((p) => ({ key: p.id, name: p.displayName }));
+        .map(patchPlayer);
       setPlayers((prev) =>
         prev.length === next.length && prev.every((p, i) => p.key === next[i].key && p.name === next[i].name)
           ? prev
@@ -176,6 +181,9 @@ export function OctoberTVWorld({
         });
         setScene((prev) => (sameScene(prev, next) ? prev : next));
       } catch (error) {
+        // A timer's error never reaches React's crash guard: report it the
+        // same way, then switch the world off.
+        console.warn(`[theme] "october:world" switched off after an error; the game keeps going.`, error);
         onFailRef.current(error);
       }
     };
@@ -304,6 +312,14 @@ export function OctoberTVWorld({
       </div>
     </div>
   );
+}
+
+const finiteOrNull = (value: number | null): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+
+/** A patch pumpkin for a player, whatever shape the name arrived in. */
+function patchPlayer(p: TVSnapshot["players"][number]): PatchPlayer {
+  return { key: String(p.id), name: typeof p.displayName === "string" ? p.displayName : "" };
 }
 
 function sameScene(a: PatchScene, b: PatchScene): boolean {

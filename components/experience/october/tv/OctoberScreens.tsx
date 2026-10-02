@@ -23,6 +23,9 @@ import { FitStage } from "./FitStage";
 const DARK = "#0E0805";
 const CREAM = (a: number) => `rgba(244,230,196,${a})`;
 
+/** A score as the screen shows it (a missing score reads 0). */
+const points = (score: number): string => (Number.isFinite(score) ? score : 0).toLocaleString();
+
 const abs = (x: number, y: number, extra: CSSProperties = {}): CSSProperties => ({
   position: "absolute",
   left: x,
@@ -422,7 +425,7 @@ export function OctoberBetweenGames({
                   fontSize: 40,
                 }}
               >
-                {p.score.toLocaleString()}
+                {points(p.score)}
               </span>
             </div>
           );
@@ -568,7 +571,7 @@ export function OctoberWinner({
             data-testid="tv-finale-winner-score"
             style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 84, color: t.accent, lineHeight: 1.1 }}
           >
-            {winner.score.toLocaleString()}
+            {points(winner.score)}
           </span>
           <span style={{ fontSize: 26, fontWeight: 500, color: t.inkMid }}>points</span>
         </div>
@@ -600,7 +603,7 @@ export function OctoberWinner({
                 {p.rank}
               </span>
               <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700, fontSize: 22, color: t.ink }}>
-                {p.score.toLocaleString()}
+                {points(p.score)}
               </span>
             </div>
             <div style={display(34, { marginTop: 4, color: t.ink, letterSpacing: "-0.02em", overflow: "hidden", textOverflow: "ellipsis" })}>

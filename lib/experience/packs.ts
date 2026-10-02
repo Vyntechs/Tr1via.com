@@ -26,7 +26,7 @@ const TV_WORLDS: Partial<Record<ThemeKey, TVWorldSpec>> = {
 
 /** The world a TV surface wears for this theme, or null for a plain theme. */
 export function tvWorldFor(themeKey: ThemeKey | undefined): TVWorldSpec | null {
-  if (!themeKey) return null;
+  if (!themeKey || !Object.prototype.hasOwnProperty.call(TV_WORLDS, themeKey)) return null;
   return TV_WORLDS[themeKey] ?? null;
 }
 

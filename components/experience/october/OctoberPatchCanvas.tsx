@@ -157,6 +157,9 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
       if (stopped) return;
       stopped = true;
       cancelAnimationFrame(raf);
+      // Errors in animation frames never reach React's crash guard, so say
+      // so here the same way the guard does (it's how a crash gets noticed).
+      console.warn(`[theme] "october:patch" stopped drawing after an error; the game keeps going.`, error);
       onFailRef.current(error);
     };
 
@@ -246,7 +249,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
         if (!rt) {
           rt = {
             key: p.key,
-            name: p.name,
+            name: labelText(p.name),
             x: slot.cx,
             top: slot.top,
             w: slot.w,
@@ -264,7 +267,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
           pumpkins.set(p.key, rt);
         }
         rt.slot = slot;
-        rt.name = p.name;
+        rt.name = labelText(p.name);
         if (rt.mood !== target) {
           rt.prevMood = rt.mood;
           rt.mood = target;
@@ -663,15 +666,20 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
       }
     };
 
-    const observer = new ResizeObserver(() => {
-      try {
-        resize();
-        if (still) drawRef.current?.();
-      } catch (error) {
-        fail(error);
-      }
-    });
-    observer.observe(canvas);
+    // (Older TV browsers have no ResizeObserver: the frame loop's size check
+    // and the window's resize event still keep the canvas the right size.)
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(() => {
+            try {
+              resize();
+              if (still) drawRef.current?.();
+            } catch (error) {
+              fail(error);
+            }
+          });
+    observer?.observe(canvas);
     // On the venue TV the canvas keeps its 1600×900 layout box and only the
     // stage's scale changes (e.g. a small window going fullscreen), which a
     // ResizeObserver never reports. Re-measure after the stage re-scales.
@@ -718,7 +726,7 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
       window.removeEventListener("resize", onWindowResize);
       if (sizePoll) window.clearInterval(sizePoll);
       resizeRef.current = null;
-      observer.disconnect();
+      observer?.disconnect();
       drawRef.current = null;
     };
   }, [tier]);
@@ -798,8 +806,15 @@ function makePuffSprite(): HTMLCanvasElement | null {
   return c;
 }
 
+/** A name as text, whatever arrived (a missing name draws an empty stake). */
+function labelText(name: unknown): string {
+  return typeof name === "string" ? name : name == null ? "" : String(name);
+}
+
 function fitLabel(ctx: CanvasRenderingContext2D, name: string, maxW: number): string {
-  const clean = name.trim();
+  // Names are 40 characters at most; anything longer is cut before measuring
+  // so one odd name can never cost a frame.
+  const clean = name.trim().slice(0, 80);
   if (ctx.measureText(clean).width <= maxW) return clean;
   let n = clean.length;
   while (n > 1 && ctx.measureText(`${clean.slice(0, n).trimEnd()}…`).width > maxW) n--;

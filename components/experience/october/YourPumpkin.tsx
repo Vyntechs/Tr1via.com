@@ -50,7 +50,10 @@ export function YourPumpkin(props: YourPumpkinProps) {
   );
 }
 
-function YourPumpkinArt({ mood, size, shiver = false, style }: YourPumpkinProps) {
+function YourPumpkinArt({ mood: requestedMood, size: requestedSize, shiver = false, style }: YourPumpkinProps) {
+  // Unknown moods show the unlit pumpkin; a bad size shows nothing.
+  const mood: PumpkinMood = Object.prototype.hasOwnProperty.call(ART, requestedMood) ? requestedMood : "waiting";
+  const size = Number.isFinite(requestedSize) && requestedSize > 0 ? requestedSize : 0;
   const url = useMemo(() => artUrl(ART[mood]), [mood]);
   const width = (size * 160) / 200;
 
