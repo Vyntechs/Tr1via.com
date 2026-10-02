@@ -139,6 +139,8 @@ export function OctoberTVWorld({
   });
   const [players, setPlayers] = useState<PatchPlayer[]>(() => roster.map(patchPlayer));
   useEffect(() => {
+    // Switched off: no more checks (a repeating failure must not log every 30 s).
+    if (off) return;
     const update = () => {
       try {
         const now = Date.now() + offsetRef.current;
@@ -170,7 +172,7 @@ export function OctoberTVWorld({
       window.clearTimeout(first);
       window.clearInterval(id);
     };
-  }, [roster, answers, moment]);
+  }, [roster, answers, moment, off]);
 
   // The scene only changes at moment changes and at the 5 s / 0 s marks, so
   // re-checking it 5× a second is plenty; the canvas animates in between.

@@ -68,24 +68,26 @@ afterEach(() => {
 
 const players: PatchPlayer[] = Array.from({ length: 41 }, (_, i) => ({ key: `p${i}`, name: `Player number ${i}` }));
 const Q = "q1";
-const REVEALED = Date.now() - 24_000;
-const momentOf = (kind: TVMoment["kind"]): TVMoment =>
+const momentOf = (kind: TVMoment["kind"], revealedAtMs: number): TVMoment =>
   kind === "question"
-    ? { kind, questionId: Q, revealedAtMs: REVEALED, serverNowMs: null }
+    ? { kind, questionId: Q, revealedAtMs, serverNowMs: null }
     : { kind, questionId: kind === "reveal" ? Q : null, revealedAtMs: null, serverNowMs: null };
 
-function inputsFor(kind: TVMoment["kind"]): OctoberPatchInputs {
+/** Inputs for one moment. A question's clock starts fresh on each call, with
+ *  `secondsLeft` to go (1 s by default: the last five seconds). */
+function inputsFor(kind: TVMoment["kind"], secondsLeft = 1): OctoberPatchInputs {
+  const revealedAtMs = Date.now() - (25 - secondsLeft) * 1000;
   const answers = players.slice(0, 30).map((p, i) => ({
     playerKey: p.key,
     questionId: Q,
     isCorrect: kind === "reveal" ? i % 4 !== 0 : null,
   }));
-  const moment = momentOf(kind);
+  const moment = momentOf(kind, revealedAtMs);
   const scene = patchScene({ moment, players, answers, serverNowMs: Date.now() });
   return {
     players,
     scene,
-    secondsLeftNow: () => (kind === "question" ? 25 - (Date.now() - REVEALED) / 1000 : null),
+    secondsLeftNow: () => (kind === "question" ? 25 - (Date.now() - revealedAtMs) / 1000 : null),
     colorFor: () => "#F5C451",
   };
 }
@@ -119,8 +121,9 @@ describe("October patch canvas", () => {
 
   it("an early reveal takes every name away before any pumpkin starts to change", async () => {
     const onFail = vi.fn();
-    // A question with the names showing…
-    const { rerender } = render(<OctoberPatchCanvas inputs={inputsFor("question")} tier="full" onFail={onFail} />);
+    // A question with the names showing (14 s to go, so the clock can't run
+    // out however slowly this runs)…
+    const { rerender } = render(<OctoberPatchCanvas inputs={inputsFor("question", 14)} tier="full" onFail={onFail} />);
     await waitFor(() => expect((calls.fillText ?? []).length).toBeGreaterThan(players.length * 3));
     // …then everyone locks in and the reveal lands before the clock runs out
     // (no time's up, so the names never had their fade).
