@@ -40,6 +40,7 @@ import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { playerColorHex } from "@/lib/player/playerColor";
+import { gamePlayers } from "@/lib/tv/gamePlayers";
 import { HARVEST_MOON, HOLLOW_TV, PATCH_HILL, artUrl } from "./art";
 import { OctoberPatchCanvas, type OctoberPatchInputs } from "./OctoberPatchCanvas";
 
@@ -108,12 +109,15 @@ export function OctoberTVWorld({
   // 33 played it), and the scores feed lists exactly that game's players, so a
   // patron who sat Game 2 out never gets a pumpkin knocked over for not
   // answering. Before any game has scores (the lobby), it's the whole room.
-  const roster = useMemo(() => {
-    const inGame = new Set(snapshot.scores.map((s) => s.player_key));
-    return [...snapshot.players]
-      .filter((p) => inGame.size === 0 || inGame.has(p.id))
-      .sort((a, b) => String(a.joinedAt ?? "").localeCompare(String(b.joinedAt ?? "")));
-  }, [snapshot.players, snapshot.scores]);
+  // Same list the TV counts its PLAYERS / "of N" from (gamePlayers), so the
+  // patch and the numbers on screen always agree.
+  const roster = useMemo(
+    () =>
+      [...gamePlayers({ players: snapshot.players, scores: snapshot.scores })].sort((a, b) =>
+        String(a.joinedAt ?? "").localeCompare(String(b.joinedAt ?? "")),
+      ),
+    [snapshot.players, snapshot.scores],
+  );
   const answers = useMemo<PatchAnswer[]>(
     () =>
       snapshot.liveAnswers.map((a) => ({

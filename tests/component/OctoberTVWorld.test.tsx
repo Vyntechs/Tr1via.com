@@ -8,6 +8,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { TVStateMachine } from "@/components/tv/TVStateMachine";
 import { ThemeProvider } from "@/components/system";
 import { demoNight, type DemoMoment } from "@/lib/experience/demoNight";
+import { gamePlayerCount } from "@/lib/tv/gamePlayers";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
 const crash = { patch: false };
@@ -189,6 +190,67 @@ describe("October world on the venue TV", () => {
     await waitFor(() =>
       expect(screen.getByTestId("october-world")).toHaveAttribute("data-world-pumpkins", "23"),
     );
+  });
+
+  it("draws exactly as many pumpkins as the TV counts players (a removed player's score row gets none)", async () => {
+    const now = Date.now();
+    const night = demoNight({ moment: "question", nowMs: now, secondsLeft: 14, locked: 0 });
+    // 23 played this game; the host then removed 2 of them. Their score rows
+    // linger in the feed, but they're gone from the room.
+    const scores = night.snapshot.scores.slice(0, 23);
+    const removed = new Set(scores.slice(0, 2).map((s) => s.player_key));
+    const snapshot = {
+      ...night.snapshot,
+      players: night.snapshot.players.filter((p) => !removed.has(p.id)),
+      scores,
+      liveAnswers: [],
+    };
+    expect(gamePlayerCount(snapshot)).toBe(21);
+    render(
+      <ThemeProvider themeKey="october">
+        <TVStateMachine
+          snapshot={snapshot}
+          lastBroadcastRevealedAt={night.revealedAt}
+          lastBroadcastServerNow={new Date(now).toISOString()}
+          themeKey="october"
+        />
+      </ThemeProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("october-world")).toHaveAttribute("data-world-pumpkins", "21"),
+    );
+    expect(screen.getByText(/OF 21 LOCKED IN/)).toBeInTheDocument();
+  });
+
+  it("names the venue without a dangling dot on the October lobby when no date is set", () => {
+    const night = demoNight({ moment: "lobby", nowMs: Date.parse("2026-10-07T23:50:00Z"), secondsLeft: 14, locked: 0 });
+    render(
+      <ThemeProvider themeKey="october">
+        <TVStateMachine
+          snapshot={{ ...night.snapshot, night: { ...night.snapshot.night, scheduledAt: null } }}
+          themeKey="october"
+        />
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId("tv-lobby")).toBeInTheDocument();
+    expect(screen.getByText("SOUL FIRE PIZZA")).toBeInTheDocument();
+    expect(screen.queryByText(/SOUL FIRE PIZZA ·/)).not.toBeInTheDocument();
+  });
+
+  it("labels a one-game night's October winner screen as Game 1", () => {
+    const night = demoNight({ moment: "winner", nowMs: Date.parse("2026-10-07T23:50:00Z"), secondsLeft: 14, locked: 0 });
+    const game1 = night.snapshot.games.find((g) => g.gameNo === 1)!;
+    render(
+      <ThemeProvider themeKey="october">
+        <TVStateMachine
+          snapshot={{ ...night.snapshot, games: [{ ...game1, state: "done" }], currentGameId: game1.id }}
+          themeKey="october"
+        />
+      </ThemeProvider>,
+    );
+    expect(screen.getByText("WON THE NIGHT · HOLDS THE FLAMING HEAD")).toBeInTheDocument();
+    expect(screen.getByText("GAME 1 · FINAL")).toBeInTheDocument();
+    expect(screen.queryByText("GAME 2 · FINAL")).not.toBeInTheDocument();
   });
 
   it("lets the Horseman finish his ride after the screen switches to the reveal", async () => {

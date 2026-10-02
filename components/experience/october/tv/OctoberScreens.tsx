@@ -108,7 +108,7 @@ export function OctoberLobby({
   return (
     <TVStage page="lobby" data-testid="tv-lobby" style={{ overflow: "visible" }}>
       <FitStage>
-        <Header left={`${venueName} · ${scheduledDate}`} right={gameStatusLine} />
+        <Header left={scheduledDate ? `${venueName} · ${scheduledDate}` : venueName} right={gameStatusLine} />
 
         {/* Left: the invitation */}
         <div style={abs(56, 104)}>

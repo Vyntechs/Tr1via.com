@@ -58,6 +58,7 @@ import { countHouseLightsLocks } from "@/lib/room-magic/house-lights";
 import { hasCeremony, hasMarquee, lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
 import { shouldHoldReveal } from "@/lib/tv/revealPause";
 import { selectLobbyTopics } from "@/lib/tv/lobbyTopics";
+import { gamePlayerCount } from "@/lib/tv/gamePlayers";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { fireJuneBeat } from "@/components/system";
 import { TVWorldLayer } from "@/components/experience/TVWorldLayer";
@@ -993,17 +994,8 @@ function pickLiveQuestion(snapshot: TVSnapshot) {
   return snapshot.questions.find((q) => q.id === snapshot.liveQuestionId) ?? null;
 }
 
-// Players in the game on screen. Everyone who joins the room
-// is in Game 1, but Game 2 is opt-in, so the room total overstates it (Sep 24:
-// 28 played Game 2 in a room of 33, and the TV said "of 33"). The scores feed
-// has one row per game participant; it doesn't drop players the host removed,
-// so count only those still in the room. Fall back to the room while the feed
-// is empty.
-function gamePlayerCount(snapshot: TVSnapshot): number {
-  const inRoom = new Set(snapshot.players.map((p) => p.id));
-  const inGame = snapshot.scores.filter((s) => inRoom.has(s.player_key)).length;
-  return inGame > 0 ? inGame : snapshot.players.length;
-}
+// gamePlayerCount (lib/tv/gamePlayers): players in the game on screen, not
+// the whole room. Shared with October's pumpkin patch so the two agree.
 
 // The finale crowns the game whose scores it ranks (the current game): Game 2
 // on a normal night, Game 1 when the night ends without a Game 2.
