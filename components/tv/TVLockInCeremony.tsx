@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { fireLightningBeat } from "@/components/system/Lightning";
 import { fireLockInBurst } from "@/components/system/Pyrotechnics";
 import type { CeremonyKind } from "@/lib/theme/lockInCeremony";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 
 export type CeremonyMode = "calm" | "storm";
 
@@ -66,7 +67,27 @@ export interface TVLockInCeremonyProps {
   onSpotlight?: (playerId: string | null) => void;
 }
 
-export function TVLockInCeremony({
+// Decoration only: if this effect ever throws, it switches itself off and
+// the game keeps going (see ThemeLayerBoundary).
+export function TVLockInCeremony(props: TVLockInCeremonyProps) {
+  return (
+    <ThemeLayerBoundary name="lock-in-ceremony" fallback={<CeremonyDrain {...props} />}>
+      <TVLockInCeremonyLayer {...props} />
+    </ThemeLayerBoundary>
+  );
+}
+
+/** Stands in for a ceremony that switched itself off: clears any spotlight and
+ *  marks every queued lock-in done, so the TV never waits on a dead queue. */
+function CeremonyDrain({ events, onEventComplete, onSpotlight }: TVLockInCeremonyProps) {
+  useEffect(() => {
+    onSpotlight?.(null);
+    for (const event of events) onEventComplete?.(event.playerId);
+  }, [events, onEventComplete, onSpotlight]);
+  return null;
+}
+
+function TVLockInCeremonyLayer({
   events,
   ceremony = "lightning",
   onEventComplete,

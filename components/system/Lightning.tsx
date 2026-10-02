@@ -35,6 +35,7 @@ import {
   type BoltSegment,
 } from "./lightning-bolt";
 import { playThunder, unlockThunder } from "@/lib/audio/thunder";
+import { guardThemeCall } from "./ThemeLayerBoundary";
 
 // ─── Module-level beat trigger ────────────────────────────────────────────
 // Game-state callsites (section-complete celebration, finale mount, etc.)
@@ -58,6 +59,9 @@ function subscribeBeat(fn: BeatListener): () => void {
   return () => beatListeners.delete(fn);
 }
 
+/** Test-only alias so unit tests can subscribe without a mounted canvas. */
+export const __subscribeLightningBeatForTest = subscribeBeat;
+
 /**
  * Fire a beat-triggered lightning strike across every mounted Lightning
  * instance. Used at section-complete (one close strike) and finale
@@ -75,7 +79,7 @@ export function fireLightningBeat(
   distance: "distant" | "close" = "close",
   opts?: { tint?: string },
 ): void {
-  for (const fn of beatListeners) fn(distance, opts);
+  for (const fn of beatListeners) guardThemeCall("lightning-beat", () => fn(distance, opts));
 }
 
 export interface LightningProps {

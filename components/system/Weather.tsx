@@ -15,6 +15,7 @@ import { JuneSky } from "./JuneSky";
 import { Pyrotechnics } from "./Pyrotechnics";
 import { SeptemberFront } from "./SeptemberFront";
 import { Snowflake, Heart, Clover, Leaf, Pumpkin, Pine, Rain } from "./motifs";
+import { ThemeLayerBoundary } from "./ThemeLayerBoundary";
 import { TR1VIA_THEMES, type ThemeKey } from "@/lib/theme/tokens";
 
 export interface WeatherProps {
@@ -40,7 +41,18 @@ export interface WeatherProps {
   surface?: "game" | "card";
 }
 
-export function Weather({
+// Weather is decoration: if a month's layer ever throws, it switches itself
+// off and the screen it sits behind keeps working.
+export function Weather(props: WeatherProps) {
+  return (
+    // A host switching themes mid-night gives a failed layer a fresh try.
+    <ThemeLayerBoundary name={`weather:${props.themeKey ?? "house"}`} resetKey={props.themeKey ?? "house"}>
+      <WeatherLayer {...props} />
+    </ThemeLayerBoundary>
+  );
+}
+
+function WeatherLayer({
   themeKey = "house",
   intensity = 1,
   seed = 1,

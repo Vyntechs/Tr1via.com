@@ -26,6 +26,7 @@
 
 import { useEffect } from "react";
 import { publishPyrotechnicsBeat, type PyrotechnicsBeatKind } from "./Pyrotechnics";
+import { ThemeLayerBoundary } from "./ThemeLayerBoundary";
 
 export interface FireworksBeat {
   kind: PyrotechnicsBeatKind;
@@ -92,7 +93,18 @@ export interface PyrotechnicsBeatConductorProps {
   beat: FireworksBeat | null;
 }
 
-export function PyrotechnicsBeatConductor({ beat }: PyrotechnicsBeatConductorProps) {
+// Decoration only: if this effect ever throws, it switches itself off and
+// the game keeps going (see ThemeLayerBoundary).
+export function PyrotechnicsBeatConductor(props: PyrotechnicsBeatConductorProps) {
+  return (
+    // Each new beat gets a fresh try, so one bad beat can't silence the finale.
+    <ThemeLayerBoundary name="fireworks-beat" resetKey={props.beat?.fireAt ?? null}>
+      <PyrotechnicsBeatConductorLayer {...props} />
+    </ThemeLayerBoundary>
+  );
+}
+
+function PyrotechnicsBeatConductorLayer({ beat }: PyrotechnicsBeatConductorProps) {
   useEffect(() => {
     if (!beat) return;
     const delay = computeBeatDelayMs(beat, Date.now());
