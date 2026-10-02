@@ -45,7 +45,8 @@ const VALUES = [100, 200, 300, 400, 500, 600, 700] as const;
 
 export interface DemoNightOptions {
   moment: DemoMoment;
-  /** Players in the room (1-65). Default 29, the design's count. */
+  /** Players in the room (0-150). Default 29, the design's count. Past the
+   *  65 demo names, names repeat with a number ("Coach K 2"). */
   players?: number;
   /** Question moment only: seconds left on the 25 s clock (0-25). */
   secondsLeft?: number;
@@ -59,6 +60,18 @@ export interface DemoNightOptions {
   /** Worst-case content: a long question with a photo, long answers and a
    *  long fact, to check nothing gets cut off. */
   long?: boolean;
+  /** Which board question is the live/just-revealed one (0-20, Game 1).
+   *  Default: the subway question. Lets a preview play several questions. */
+  questionNo?: number;
+}
+
+/** Most players the demo night seats (the stress-test ceiling). */
+export const DEMO_MAX_PLAYERS = 150;
+
+function demoName(i: number): string {
+  const base = DEMO_PLAYER_NAMES[i % DEMO_PLAYER_NAMES.length];
+  const lap = Math.floor(i / DEMO_PLAYER_NAMES.length);
+  return lap === 0 ? base : `${base} ${lap + 1}`;
 }
 
 export interface DemoNight {
@@ -75,10 +88,11 @@ function iso(ms: number): string {
 
 export function demoNight(opts: DemoNightOptions): DemoNight {
   const nowMs = opts.nowMs ?? Date.now();
-  const playerCount = Math.max(1, Math.min(DEMO_PLAYER_NAMES.length, opts.players ?? 29));
-  const players: TVPlayer[] = DEMO_PLAYER_NAMES.slice(0, playerCount).map((name, i) => ({
+  const requested = Number.isFinite(opts.players) ? Math.round(opts.players as number) : 29;
+  const playerCount = Math.max(0, Math.min(DEMO_MAX_PLAYERS, requested));
+  const players: TVPlayer[] = Array.from({ length: playerCount }, (_, i) => ({
     id: `pk-${i + 1}`,
-    displayName: name,
+    displayName: demoName(i),
     joinedAt: iso(NIGHT_START + i * 41_000),
     lastSeenAt: iso(nowMs),
   }));
@@ -166,7 +180,12 @@ export function demoNight(opts: DemoNightOptions): DemoNight {
   let closedAt: string | null = null;
   let currentGameId: string | null = game1.id;
 
-  const subway = questions.find((q) => q.id === "game-1-cat-2-q300");
+  // The live question: the subway one, or another unplayed Game 1 question.
+  const unplayed = questions.filter(
+    (q) => q.id.startsWith("game-1-") && !playedIds.includes(q.id) && q.id !== "game-1-cat-2-q300",
+  );
+  const pick = opts.questionNo && opts.questionNo > 0 ? unplayed[(opts.questionNo - 1) % unplayed.length] : null;
+  const subway = pick ?? questions.find((q) => q.id === "game-1-cat-2-q300");
   if (!subway) throw new Error("demoNight: missing subway question");
   subway.pointValue = 100;
   subway.factBlurb =
@@ -303,16 +322,15 @@ export function demoNight(opts: DemoNightOptions): DemoNight {
       scores.forEach((s, i) => {
         s.score = Math.max(0, 8020 - i * 470);
       });
-      scores[order[0]].score = 9640;
-      scores[order[0]].correct_count = 12;
-      scores[order[0]].answered_count = 14;
-      scores[order[0]].fastest_correct_ms = 900;
-      scores[order[1]].score = 8910;
-      scores[order[2]].score = 8020;
-      if (opts.long) {
-        // A tie for the win: the TV names both champions.
-        scores[order[1]].score = 9640;
+      const champ = scores[order[0]];
+      if (champ) {
+        champ.score = 9640;
+        champ.correct_count = 12;
+        champ.answered_count = 14;
+        champ.fastest_correct_ms = 900;
       }
+      if (scores[order[1]]) scores[order[1]].score = opts.long ? 9640 : 8910; // long: a tie for the win
+      if (scores[order[2]]) scores[order[2]].score = 8020;
       break;
     }
   }
