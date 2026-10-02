@@ -10,7 +10,8 @@
 
 import { TVStage, TVHeader, TVFooter } from "@/components/shells";
 import { useStageWorld } from "@/components/experience/StageWorld";
-import { FlamingHead } from "@/components/experience/october/tv/OctoberScreens";
+import { FlamingHead } from "@/components/experience/october/FlamingHead";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import {
   Eyebrow,
   Numeric,
@@ -19,7 +20,7 @@ import {
 } from "@/components/system";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
-import type { CSSProperties } from "react";
+import { useState, type CSSProperties } from "react";
 
 export interface TVGridCell {
   /** True when the question at (column, row) has been played and resolved. */
@@ -114,6 +115,10 @@ function TVGridInner({
   onCellClick,
 }: Omit<TVGridProps, "themeKey">) {
   const octoberWorld = useStageWorld()?.pack === "october";
+  // October's flaming head (and its caption) has its own crash guard: if the
+  // art fails, both step aside and the board carries on, never remounted.
+  const [flamingHeadOff, setFlamingHeadOff] = useState(false);
+  const flamingHead = octoberWorld && !flamingHeadOff;
   const { t } = useTheme();
   const board = cells ?? [];
 
@@ -311,10 +316,12 @@ function TVGridInner({
                       >
                         {r.rank}
                       </Numeric>
-                      {octoberWorld && top && r.score > 0 ? (
+                      {flamingHead && top && r.score > 0 ? (
                         // October: the leader holds the flaming head.
                         <span style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-                          <FlamingHead height={45} style={{ margin: "-18px 0 -6px" }} />
+                          <ThemeLayerBoundary name="october:board-flaming-head" onFail={() => setFlamingHeadOff(true)}>
+                            <FlamingHead height={45} style={{ margin: "-18px 0 -6px" }} />
+                          </ThemeLayerBoundary>
                           <span data-testid="tv-grid-standing-name" style={standingNameStyle(top, t.ink)}>
                             {r.name}
                           </span>
@@ -335,10 +342,12 @@ function TVGridInner({
                   );
                 })}
               </div>
-              {octoberWorld ? (
-                <Eyebrow color={t.pop} size={9} style={{ display: "block", marginTop: 12 }}>
-                  THE LEADER HOLDS THE FLAMING HEAD
-                </Eyebrow>
+              {flamingHead ? (
+                <ThemeLayerBoundary name="october:board-flaming-head-caption">
+                  <Eyebrow color={t.pop} size={9} style={{ display: "block", marginTop: 12 }}>
+                    THE LEADER HOLDS THE FLAMING HEAD
+                  </Eyebrow>
+                </ThemeLayerBoundary>
               ) : null}
             </div>
           )}

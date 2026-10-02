@@ -11,7 +11,17 @@ import { demoNight, type DemoMoment } from "@/lib/experience/demoNight";
 import { gamePlayerCount } from "@/lib/tv/gamePlayers";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-const crash = { patch: false };
+const crash = { patch: false, head: false };
+vi.mock("@/components/experience/october/FlamingHead", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/components/experience/october/FlamingHead")>();
+  return {
+    ...real,
+    FlamingHead: (props: Parameters<typeof real.FlamingHead>[0]) => {
+      if (crash.head) throw new Error("flaming head exploded");
+      return real.FlamingHead(props);
+    },
+  };
+});
 vi.mock("@/components/experience/october/OctoberPatchCanvas", async (importOriginal) => {
   const real = await importOriginal<typeof import("@/components/experience/october/OctoberPatchCanvas")>();
   return {
@@ -28,6 +38,7 @@ HTMLCanvasElement.prototype.getContext = (() => null) as unknown as HTMLCanvasEl
 
 afterEach(() => {
   crash.patch = false;
+  crash.head = false;
   vi.restoreAllMocks();
 });
 
@@ -107,6 +118,37 @@ describe("October world on the venue TV", () => {
     renderTV("board", "october");
     expect(screen.getByText("THE LEADER HOLDS THE FLAMING HEAD")).toBeInTheDocument();
     expect(screen.getByTestId("tv-grid-standing-1")).toContainElement(screen.getByTestId("october-flaming-head"));
+  });
+
+  it("a broken flaming head steps aside on the board, which carries on without remounting", () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const night = demoNight({ moment: "board", nowMs: Date.parse("2026-10-07T23:50:00Z"), secondsLeft: 14, locked: 10 });
+    const tv = (snapshot: typeof night.snapshot) => (
+      <ThemeProvider themeKey="october">
+        <TVStateMachine snapshot={snapshot} lastBroadcastRevealedAt={night.revealedAt} themeKey="october" />
+      </ThemeProvider>
+    );
+    const { rerender } = render(tv(night.snapshot));
+    const grid = screen.getByTestId("tv-grid");
+    const leader = screen.getByTestId("tv-grid-standing-1").textContent;
+    expect(screen.getByTestId("tv-grid-standing-1")).toContainElement(screen.getByTestId("october-flaming-head"));
+    expect(screen.getByText("THE LEADER HOLDS THE FLAMING HEAD")).toBeInTheDocument();
+
+    // The art breaks on the next board update.
+    crash.head = true;
+    rerender(tv({ ...night.snapshot, scores: [...night.snapshot.scores] }));
+
+    expect(screen.getByTestId("tv-grid")).toBe(grid); // same board, not remounted
+    expect(screen.queryByTestId("october-flaming-head")).toBeNull();
+    expect(screen.queryByText("THE LEADER HOLDS THE FLAMING HEAD")).toBeNull();
+    expect(screen.getByTestId("tv-grid-standing-1").textContent).toBe(leader);
+    expect(screen.getByTestId("october-world")).toBeInTheDocument(); // the world stays on
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('"october:board-flaming-head" switched off'),
+      expect.anything(),
+      expect.anything(),
+    );
   });
 
   it("draws still on the host's phone preview", () => {

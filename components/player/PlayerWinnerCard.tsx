@@ -17,7 +17,7 @@ import {
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
-import { FlamingHead } from "@/components/experience/october/tv/OctoberScreens";
+import { FlamingHead } from "@/components/experience/october/FlamingHead";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { useCrescendo } from "@/lib/hooks/useCrescendo";

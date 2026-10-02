@@ -133,25 +133,36 @@ export function OctoberTVWorld({
   // while open, so anyone silent for 10 minutes (and not answering this
   // question) has most likely gone home. Leaving them out keeps the patch
   // from knocking over a ghost every question.
+  const onFailRef = useRef(onFail);
+  useEffect(() => {
+    onFailRef.current = onFail;
+  });
   const [players, setPlayers] = useState<PatchPlayer[]>(() => roster.map(patchPlayer));
   useEffect(() => {
     const update = () => {
-      const now = Date.now() + offsetRef.current;
-      const answering = new Set(
-        answers.filter((a) => a.questionId === momentRef.current.questionId).map((a) => a.playerKey),
-      );
-      const next = roster
-        .filter((p) => {
-          if (answering.has(p.id)) return true;
-          const seen = Date.parse(p.lastSeenAt);
-          return !Number.isFinite(seen) || now - seen < PRESENT_FOR_MS;
-        })
-        .map(patchPlayer);
-      setPlayers((prev) =>
-        prev.length === next.length && prev.every((p, i) => p.key === next[i].key && p.name === next[i].name)
-          ? prev
-          : next,
-      );
+      try {
+        const now = Date.now() + offsetRef.current;
+        const answering = new Set(
+          answers.filter((a) => a.questionId === momentRef.current.questionId).map((a) => a.playerKey),
+        );
+        const next = roster
+          .filter((p) => {
+            if (answering.has(p.id)) return true;
+            const seen = Date.parse(p.lastSeenAt);
+            return !Number.isFinite(seen) || now - seen < PRESENT_FOR_MS;
+          })
+          .map(patchPlayer);
+        setPlayers((prev) =>
+          prev.length === next.length && prev.every((p, i) => p.key === next[i].key && p.name === next[i].name)
+            ? prev
+            : next,
+        );
+      } catch (error) {
+        // A timer's error never reaches React's crash guard: report it the
+        // same way, then switch the world off.
+        console.warn(`[theme] "october:world" switched off after an error; the game keeps going.`, error);
+        onFailRef.current(error);
+      }
     };
     const first = window.setTimeout(update, 0);
     const id = window.setInterval(update, 30_000);
@@ -168,10 +179,6 @@ export function OctoberTVWorld({
     patchScene({ moment: NO_MOMENT, players, answers, serverNowMs: 0 }),
   );
   const timed = moment.kind === "question" || moment.kind === "reveal";
-  const onFailRef = useRef(onFail);
-  useEffect(() => {
-    onFailRef.current = onFail;
-  });
   useEffect(() => {
     if (off) return;
     const update = () => {
@@ -377,7 +384,9 @@ function OctoberBackdrop({ scene, tier }: { scene: PatchScene; tier: "full" | "s
     position: "absolute",
     left: "50%",
     bottom: 0,
-    width: "min(100%, calc(100cqh * 16 / 9))",
+    // The stage is always 1600×900 (16:9), so the full width is the
+    // backdrop's 16:9 box. (No container units: older TVs' browsers lack them.)
+    width: "100%",
     aspectRatio: "16 / 9",
     transform: "translateX(-50%)",
   };
@@ -386,7 +395,7 @@ function OctoberBackdrop({ scene, tier }: { scene: PatchScene; tier: "full" | "s
     <div
       aria-hidden
       data-testid="october-backdrop"
-      style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none", containerType: "size" }}
+      style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none" }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img

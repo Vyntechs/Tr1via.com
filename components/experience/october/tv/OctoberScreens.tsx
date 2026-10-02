@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { TVStage, TVHeader } from "@/components/shells";
 import { QRBlock, useTheme } from "@/components/system";
 import type { TVLobbyProps } from "@/components/tv/TVLobby";
@@ -17,7 +17,7 @@ import type { TVIntermissionProps } from "@/components/tv/TVIntermission";
 import type { TVFinaleWinnerProps } from "@/components/tv/TVFinaleWinner";
 import { categoryColor } from "@/lib/theme/categories";
 import { colorHexFromKey, playerColorHex } from "@/lib/player/playerColor";
-import { FLAMING_HEAD, artUrl } from "../art";
+import { FlamingHead } from "../FlamingHead";
 import { FitStage } from "./FitStage";
 
 const DARK = "#0E0805";
@@ -50,24 +50,6 @@ const display = (size: number, extra: CSSProperties = {}): CSSProperties => ({
   whiteSpace: "nowrap",
   ...extra,
 });
-
-/** The flaming head the leader holds (original art from the Figma kit). */
-export function FlamingHead({ height, style }: { height: number; style?: CSSProperties }) {
-  const url = useMemo(() => artUrl(FLAMING_HEAD), []);
-  const width = (height * FLAMING_HEAD.width) / FLAMING_HEAD.height;
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt=""
-      aria-hidden
-      data-testid="october-flaming-head"
-      width={width}
-      height={height}
-      style={{ display: "block", width, height, flexShrink: 0, ...style }}
-    />
-  );
-}
 
 function Header({ left, right }: { left: string; right?: string }) {
   return (

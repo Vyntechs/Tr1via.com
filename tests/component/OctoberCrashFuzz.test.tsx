@@ -42,7 +42,7 @@ import {
   PlayerWinnerCard,
 } from "@/components/player";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
-import { FlamingHead } from "@/components/experience/october/tv/OctoberScreens";
+import { FlamingHead } from "@/components/experience/october/FlamingHead";
 import { OctoberPatchCanvas, type OctoberPatchInputs } from "@/components/experience/october/OctoberPatchCanvas";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import {

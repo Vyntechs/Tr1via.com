@@ -117,6 +117,23 @@ describe("October patch canvas", () => {
     expect(onFail).not.toHaveBeenCalled();
   });
 
+  it("an early reveal takes every name away before any pumpkin starts to change", async () => {
+    const onFail = vi.fn();
+    // A question with the names showing…
+    const { rerender } = render(<OctoberPatchCanvas inputs={inputsFor("question")} tier="full" onFail={onFail} />);
+    await waitFor(() => expect((calls.fillText ?? []).length).toBeGreaterThan(players.length * 3));
+    // …then everyone locks in and the reveal lands before the clock runs out
+    // (no time's up, so the names never had their fade).
+    rerender(<OctoberPatchCanvas inputs={inputsFor("reveal")} tier="full" onFail={onFail} />);
+    const namesAtReveal = (calls.fillText ?? []).length;
+    const framesAtReveal = (calls.drawImage ?? []).length;
+    // Several frames later the pumpkins are blazing, smoking and toppling…
+    await waitFor(() => expect((calls.drawImage ?? []).length).toBeGreaterThan(framesAtReveal + players.length * 6));
+    // …and not one name was drawn beside them.
+    expect((calls.fillText ?? []).length).toBe(namesAtReveal);
+    expect(onFail).not.toHaveBeenCalled();
+  });
+
   it("stops and reports when drawing throws inside the animation loop", async () => {
     explodeOn = "drawImage";
     const onFail = vi.fn();

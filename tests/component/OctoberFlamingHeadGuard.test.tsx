@@ -14,8 +14,8 @@ import type { RoomSnapshotPayload } from "@/lib/room/roomSnapshotPayload";
 const mode = vi.hoisted(() => ({ value: "real" as "real" | "throw" | "none" }));
 const h = vi.hoisted(() => ({ fetchSnapshot: vi.fn() }));
 
-vi.mock("@/components/experience/october/tv/OctoberScreens", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/components/experience/october/tv/OctoberScreens")>();
+vi.mock("@/components/experience/october/FlamingHead", async (importOriginal) => {
+  const real = await importOriginal<typeof import("@/components/experience/october/FlamingHead")>();
   return {
     ...real,
     FlamingHead: (props: Parameters<typeof real.FlamingHead>[0]) => {

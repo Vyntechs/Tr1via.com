@@ -614,7 +614,12 @@ export function OctoberPatchCanvas({ inputs, tier, stageScale = 1, onFail }: Oct
       const ordered = [...pumpkins.values()].sort((a, b) => a.slot.row - b.slot.row);
       for (const rt of ordered) drawPumpkin(rt, now, scene);
 
-      namesAlpha = still
+      // The reveal starts the pumpkins blazing, smoking and toppling at once.
+      // Names normally fade at time's up, but an early reveal (everyone locked
+      // in, or the host shows the answer before the clock ends) skips it, so
+      // any name still showing goes now: no name is ever beside a pumpkin
+      // that has begun to change.
+      namesAlpha = still || scene.phase === "reveal"
         ? scene.showNames ? 1 : 0
         : namesAlpha + ((scene.showNames ? 1 : 0) - namesAlpha) * 0.12;
       if (namesAlpha > 0.01) {
