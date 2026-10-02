@@ -16,6 +16,9 @@ import {
   Weather,
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
+import { hasPhoneLayer } from "@/lib/experience/packs";
+import { FlamingHead } from "@/components/experience/october/FlamingHead";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { useCrescendo } from "@/lib/hooks/useCrescendo";
 
@@ -165,6 +168,16 @@ export function PlayerWinnerCard({
           >
             You won.
           </Display>
+          {hasPhoneLayer(themeKey) ? (
+            // October: the winner holds the flaming head. If it ever breaks,
+            // the line switches off and the card reads as on any other night.
+            <ThemeLayerBoundary name="october:winner-card-flaming-head">
+              <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
+                <FlamingHead height={52} style={{ margin: "-14px 0 -4px" }} />
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#0E0805" }}>You hold the flaming head.</span>
+              </div>
+            </ThemeLayerBoundary>
+          ) : null}
 
           <div style={{ marginTop: 18, display: "flex", alignItems: "baseline", gap: 10 }}>
             <Numeric size={56} weight={700} color="#0E0805" tracking={-0.04} style={{ lineHeight: 1 }}>

@@ -7,6 +7,8 @@
 
 import { useTheme, Display, Eyebrow } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
+import { hasPhoneLayer } from "@/lib/experience/packs";
+import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import { categoryColor } from "@/lib/theme/categories";
 import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -42,7 +44,8 @@ export function PlayerLobby({
   venueName: _venueName,
   topics = [],
 }: PlayerLobbyProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
+  const yourPumpkin = hasPhoneLayer(themeKey);
   return (
     <PhoneScreen data-testid="player-lobby">
       <PhoneHeader eyebrow="IN THE GAME" />
@@ -175,16 +178,29 @@ export function PlayerLobby({
             gap: 12,
           }}
         >
-          <span
-            style={{
-              width: 8,
-              height: 8,
-              borderRadius: 99,
-              background: t.pop,
-              animation: "tr1via-pulse 1.8s ease-in-out infinite",
-            }}
-          />
-          <span style={{ color: t.ink, fontSize: 14, fontWeight: 500 }}>{hostName} is setting up.</span>
+          {yourPumpkin ? (
+            // October: your own pumpkin, already glowing in the TV's patch.
+            <>
+              <YourPumpkin mood="lit" size={64} style={{ margin: "-22px -4px -10px -8px" }} />
+              <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                <span style={{ color: t.pop, fontSize: 15, fontWeight: 700 }}>Your pumpkin is in the patch.</span>
+                <span style={{ color: t.ink, fontSize: 14, fontWeight: 500 }}>{hostName} is setting up.</span>
+              </span>
+            </>
+          ) : (
+            <>
+              <span
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 99,
+                  background: t.pop,
+                  animation: "tr1via-pulse 1.8s ease-in-out infinite",
+                }}
+              />
+              <span style={{ color: t.ink, fontSize: 14, fontWeight: 500 }}>{hostName} is setting up.</span>
+            </>
+          )}
         </div>
       </div>
     </PhoneScreen>

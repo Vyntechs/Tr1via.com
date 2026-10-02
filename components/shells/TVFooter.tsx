@@ -5,6 +5,7 @@
 
 import { useTheme } from "@/components/system/ThemeProvider";
 import { Eyebrow } from "@/components/system/Eyebrow";
+import { useStageWorld } from "@/components/experience/StageWorld";
 
 export interface TVFooterProps {
   left: string;
@@ -14,10 +15,14 @@ export interface TVFooterProps {
 
 export function TVFooter({ left, right, accent }: TVFooterProps) {
   const { t } = useTheme();
+  // A living world (October) owns the strip below the screen, so the footer
+  // tucks in tighter. It stays: on the board it is where a late joiner finds
+  // the room code.
+  const world = useStageWorld();
   return (
     <div
       style={{
-        padding: "0 56px 28px",
+        padding: world ? "0 56px 10px" : "0 56px 28px",
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",

@@ -17,6 +17,9 @@ import {
 } from "@/components/system";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import type { ReactNode } from "react";
+import { useStageWorld } from "@/components/experience/StageWorld";
+import { ShrinkToFit } from "@/components/experience/ShrinkToFit";
 
 export interface TVStumperFastest {
   name: string;
@@ -80,6 +83,9 @@ function TVRevealStumperInner({
 }: Omit<TVRevealStumperProps, "themeKey">) {
   const { t } = useTheme();
   const cc = categoryColor(category, t.accent);
+  // With a living world (October) this screen keeps the top part of the TV;
+  // its answer column shrinks to fit rather than lose the bottom line.
+  const world = useStageWorld();
 
   return (
     <TVStage bg={t.paper} page="reveal" data-testid="tv-reveal">
@@ -94,9 +100,10 @@ function TVRevealStumperInner({
           gap: 48,
           position: "relative",
           zIndex: 1,
+          ...(world ? { minHeight: 0, gridTemplateRows: "minmax(0, 1fr)" } : null),
         }}
       >
-        <div>
+        <StumperAnswerColumn shrink={!!world}>
           <Eyebrow color={cc} size={12}>TOUGH ONE</Eyebrow>
           <Display
             size={42}
@@ -175,7 +182,7 @@ function TVRevealStumperInner({
             <span style={{ flex: 1 }} />
             <span style={{ color: t.inkMid, fontSize: 13 }}>The other {Math.max(0, ofTotal - gotIt)} are in good company.</span>
           </div>
-        </div>
+        </StumperAnswerColumn>
 
         <div>
           <Eyebrow color={t.inkMute} size={10}>
@@ -264,4 +271,11 @@ function spellOut(n: number): string {
     case 9: return "NINE";
     default: return String(n);
   }
+}
+
+/** Everyday nights: the column exactly as always. Inside a living world:
+ *  shrinks as one piece when needed so nothing is cut off. */
+function StumperAnswerColumn({ shrink, children }: { shrink: boolean; children: ReactNode }) {
+  if (shrink) return <ShrinkToFit style={{ flex: "none", height: "100%" }}>{children}</ShrinkToFit>;
+  return <div>{children}</div>;
 }

@@ -71,6 +71,9 @@ export function HostVenueMonitor({
                 lastBroadcastRevealedAt={lastBroadcastRevealedAt}
                 lastBroadcastServerNow={lastBroadcastServerNow}
                 themeKey={themeKey}
+                // A theme's living world (October) draws still here, to
+                // save the host phone's battery. Plain themes ignore it.
+                worldTier="still"
               />
           </ScaledTVCanvas>
         ) : (

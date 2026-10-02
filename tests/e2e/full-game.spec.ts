@@ -191,7 +191,8 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     await expect(phone1.getByTestId(TID.playerBetweenGames.root))
       .toBeVisible({ timeout: 15_000 });
     await expect(
-      phone1.getByText("Game 2 starts when your host is ready."),
+      // October (Sleepy Hollow Night) words this "Game 2 rides soon."
+      phone1.getByText(/^(Game 2 starts when your host is ready\.|Game 2 rides soon\.)$/),
     ).toBeVisible();
     await expect(phone1.getByTestId(TID.playerBetweenGames.topics))
       .toBeVisible();
@@ -216,7 +217,8 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     await expect(phone1.getByTestId(TID.playerBetweenGames.root))
       .toBeVisible({ timeout: 15_000 });
     await expect(
-      phone1.getByText("Game 2 starts when your host is ready."),
+      // October (Sleepy Hollow Night) words this "Game 2 rides soon."
+      phone1.getByText(/^(Game 2 starts when your host is ready\.|Game 2 rides soon\.)$/),
     ).toBeVisible();
     await expect(
       phone1.getByText("Waiting for your host to choose the first question."),

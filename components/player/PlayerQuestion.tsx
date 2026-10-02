@@ -28,6 +28,8 @@ import { useAnswerKeyboard } from "@/lib/hooks/useAnswerKeyboard";
 import { useAutoFitText } from "@/lib/hooks/useAutoFitText";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { SeptemberQuestionLampBand } from "@/components/system/SeptemberFront";
+import { hasPhoneLayer } from "@/lib/experience/packs";
+import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 
 export type PlayerQuestionSlot = 1 | 2 | 3 | 4;
 
@@ -86,6 +88,9 @@ export function PlayerQuestion({
   const { t, themeKey } = useTheme();
   const catColor = categoryColor(category, t.accent);
   const septemberQuestion = themeKey === "september";
+  // October: the player's own unlit pumpkin waits in the timer strip, right
+  // above the answers, using space the strip already has.
+  const yourPumpkin = hasPhoneLayer(themeKey);
   const bannerBottomGap = septemberQuestion ? 0 : 18;
   const slots: PlayerQuestionSlot[] = [1, 2, 3, 4];
   const [imageFailed, setImageFailed] = useState(false);
@@ -267,7 +272,18 @@ export function PlayerQuestion({
         }}
       >
         <TimerRing accent={catColor} seconds={seconds} />
-        <span style={{ flex: 1 }} />
+        {yourPumpkin ? (
+          <span style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+            <YourPumpkin
+              mood={seconds <= 0 ? "toppled" : "waiting"}
+              shiver={seconds > 0 && seconds <= 5}
+              size={56}
+              style={{ margin: "-18px 0 -8px" }}
+            />
+          </span>
+        ) : (
+          <span style={{ flex: 1 }} />
+        )}
         <Eyebrow color={t.inkMute} size={9}>+10% &lt; 5s</Eyebrow>
       </div>
 

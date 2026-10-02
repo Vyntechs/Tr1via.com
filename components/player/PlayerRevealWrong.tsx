@@ -14,6 +14,8 @@ import {
   AnswerCard,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
+import { hasPhoneLayer } from "@/lib/experience/packs";
+import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import { gotItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealWrongProps {
@@ -58,8 +60,10 @@ export function PlayerRevealWrong({
   roomMagicControls,
   standingsPanel,
 }: PlayerRevealWrongProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const noAnswer = chosenSlot === null;
+  // October: a wrong answer's pumpkin sags and smokes; a missed one tipped over.
+  const yourPumpkin = hasPhoneLayer(themeKey);
   const hasRank = rank !== null && rank !== undefined && rank > 0;
   return (
     <PhoneScreen data-testid="player-reveal-wrong">
@@ -74,10 +78,18 @@ export function PlayerRevealWrong({
           <span style={{ color: t.inkMid }}>{noAnswer ? "Time's" : "Not this"}</span>
           <br />
           {noAnswer ? "up." : "one."}
+          {yourPumpkin ? (
+            <YourPumpkin
+              mood={noAnswer ? "toppled" : "smoke"}
+              size={104}
+              style={{ marginLeft: 8, marginTop: -36, marginBottom: -14, verticalAlign: "bottom" }}
+            />
+          ) : null}
         </Display>
       </div>
       <div style={{ marginTop: 10, color: t.inkMid, fontSize: 14, lineHeight: 1.4 }}>
         No points lost — that&apos;s not how this game treats you.
+        {yourPumpkin ? <span style={{ color: t.pop, fontWeight: 600 }}> Relight it next question.</span> : null}
       </div>
 
       {typeof correctCount === "number" && typeof answeredCount === "number" && (
