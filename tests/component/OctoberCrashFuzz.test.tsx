@@ -427,7 +427,6 @@ afterAll(() => {
   vi.restoreAllMocks();
   tally.canvasDrawImageCalls = drawCount;
   if (REPORT) fs.writeFileSync(REPORT, JSON.stringify(tally, null, 2));
-  // eslint-disable-next-line no-console
   console.info(
     `[fuzz] seed ${SEED} scale ${SCALE}: ${tally.logicCases} logic, ${tally.canvasCases} canvas (${tally.canvasFrames} frames), ` +
       `${tally.tvNights} TV nights (${tally.tvSnapshotsRendered} snapshots), ${tally.phoneRenders} phone, ${tally.hostRenders} host; ` +

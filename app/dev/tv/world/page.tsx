@@ -93,20 +93,7 @@ function TVWorldPreview() {
     moment = MOMENTS.includes(momentParam as DemoMoment) ? (momentParam as DemoMoment) : "question";
   }
 
-  const night = useMemo(
-    () =>
-      demoNight({
-        moment,
-        players,
-        secondsLeft,
-        locked,
-        nowMs: builtAtMs,
-        revealedAtMs: questionRevealedAtMs,
-        long,
-        questionNo,
-      }),
-    [moment, players, secondsLeft, locked, builtAtMs, questionRevealedAtMs, long, questionNo],
-  );
+  const night = useDemoNight(moment, players, secondsLeft, locked, builtAtMs, questionRevealedAtMs, long, questionNo);
   const snapshot = useMemo(
     () => ({ ...night.snapshot, night: { ...night.snapshot.night, themeKey } }),
     [night, themeKey],
@@ -234,4 +221,32 @@ function tourFrame(elapsedMs: number, startMs: number): TourFrame {
     }
   }
   return { players, long, locked: 0, revealedAtMs: undefined, questionNo: 0, serverNowMs: stepStartMs, moment: "board" };
+}
+
+// The demo night, rebuilt only when one of its inputs changes. (A hook of its
+// own so the React Compiler lint can see its inputs are plain values.)
+function useDemoNight(
+  moment: DemoMoment,
+  players: number,
+  secondsLeft: number,
+  locked: number | undefined,
+  builtAtMs: number,
+  questionRevealedAtMs: number | undefined,
+  long: boolean,
+  questionNo: number,
+) {
+  return useMemo(
+    () =>
+      demoNight({
+        moment,
+        players,
+        secondsLeft,
+        locked,
+        nowMs: builtAtMs,
+        revealedAtMs: questionRevealedAtMs,
+        long,
+        questionNo,
+      }),
+    [moment, players, secondsLeft, locked, builtAtMs, questionRevealedAtMs, long, questionNo],
+  );
 }
