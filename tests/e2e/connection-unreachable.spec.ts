@@ -12,20 +12,20 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import { loginAsHost, seedNight, openHostLive, resetTestData } from "./helpers/host-laptop";
 import { joinPhone } from "./helpers/player-phone";
+import { isDirectSupabaseRequest } from "./helpers/supabase-line";
 import { TID } from "./helpers/selectors";
 
 const HOST_EMAIL = "unreachable-host@tr1via.test";
-const SUPABASE_GLOB = "**/*.supabase.co/**";
 const ROOM_ROUTE_GLOB = "**/api/room/**"; // the resilient fallback route
 
 /** Abort the direct Supabase line AND the server-route fallback → total outage. */
 async function blockSupabase(context: BrowserContext): Promise<void> {
-  await context.route(SUPABASE_GLOB, (route) => route.abort());
+  await context.route(isDirectSupabaseRequest, (route) => route.abort());
   await context.route(ROOM_ROUTE_GLOB, (route) => route.abort());
 }
 /** Lift the block (network restored / switched to hotspot). */
 async function unblockSupabase(context: BrowserContext): Promise<void> {
-  await context.unroute(SUPABASE_GLOB);
+  await context.unroute(isDirectSupabaseRequest);
   await context.unroute(ROOM_ROUTE_GLOB);
 }
 
