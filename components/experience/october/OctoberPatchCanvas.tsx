@@ -812,8 +812,8 @@ function labelText(name: unknown): string {
 }
 
 function fitLabel(ctx: CanvasRenderingContext2D, name: string, maxW: number): string {
-  // Names are 40 characters at most; anything longer is cut before measuring
-  // so one odd name can never cost a frame.
+  // Anything past 80 characters is cut before measuring, so one odd name can
+  // never cost a frame.
   const clean = name.trim().slice(0, 80);
   if (ctx.measureText(clean).width <= maxW) return clean;
   let n = clean.length;

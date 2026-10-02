@@ -109,8 +109,9 @@ export function OctoberTVWorld({
   // 33 played it), and the scores feed lists exactly that game's players, so a
   // patron who sat Game 2 out never gets a pumpkin knocked over for not
   // answering. Before any game has scores (the lobby), it's the whole room.
-  // Same list the TV counts its PLAYERS / "of N" from (gamePlayers), so the
-  // patch and the numbers on screen always agree.
+  // Same list the TV counts its PLAYERS / "of N" from (gamePlayers). The patch
+  // then also leaves out anyone silent for 10+ minutes (below), who still
+  // count on screen, so the patch can hold fewer pumpkins than that number.
   const roster = useMemo(
     () =>
       [...gamePlayers({ players: snapshot.players, scores: snapshot.scores })].sort((a, b) =>

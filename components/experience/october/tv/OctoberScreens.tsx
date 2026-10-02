@@ -378,7 +378,8 @@ export function OctoberBetweenGames({
           const first = i === 0;
           return (
             <div
-              key={`${p.rank}-${p.name}`}
+              // Position first: two tied players can share a name.
+              key={`${i}-${p.rank}-${p.name}`}
               data-testid="tv-intermission-podium-row"
               style={abs(56, 192 + i * 118, {
                 width: 880,
@@ -587,7 +588,8 @@ export function OctoberWinner({
         <span style={abs(1080, 112, mono(11, { color: t.inkMute }))}>SECOND AND THIRD</span>
         {podium.slice(0, 2).map((p, i) => (
           <div
-            key={`${p.rank}-${p.name}`}
+            // Position first: two tied players can share a name.
+            key={`${i}-${p.rank}-${p.name}`}
             style={abs(1080, 136 + i * 112, {
               width: 464,
               height: 98,

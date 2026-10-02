@@ -45,6 +45,7 @@ import {
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { FlamingHead } from "@/components/experience/october/tv/OctoberScreens";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import {
   PlayerLobby,
   PlayerLockInBolt,
@@ -171,11 +172,14 @@ function PlayerFinaleView({
           {won ? "You won." : rank !== null ? `You finished #${rank}.` : "Game complete."}
         </Display>
         {won && hasPhoneLayer(themeKey) ? (
-          // October: the champion holds the flaming head.
-          <div data-testid="player-finale-flaming-head" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-            <FlamingHead height={56} style={{ margin: "-12px 0 -4px" }} />
-            <span style={{ fontSize: 16, fontWeight: 700, color: t.pop }}>You hold the flaming head.</span>
-          </div>
+          // October: the champion holds the flaming head. If it ever breaks,
+          // the line switches off and the finale reads as on any other night.
+          <ThemeLayerBoundary name="october:finale-flaming-head">
+            <div data-testid="player-finale-flaming-head" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
+              <FlamingHead height={56} style={{ margin: "-12px 0 -4px" }} />
+              <span style={{ fontSize: 16, fontWeight: 700, color: t.pop }}>You hold the flaming head.</span>
+            </div>
+          </ThemeLayerBoundary>
         ) : null}
 
         <section
