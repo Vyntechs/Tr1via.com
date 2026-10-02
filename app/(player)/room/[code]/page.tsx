@@ -79,6 +79,7 @@ import {
   type StandingRow,
 } from "@/lib/player/betweenGames";
 import { buildNeighborhood, type Neighborhood } from "@/lib/player/standings";
+import { computeQuestionNumber } from "@/lib/player/questionNumber";
 import type { ResolveSummary } from "@/lib/player/celebrationCopy";
 import { gateBeatForPlayer, playerWasCorrect } from "@/lib/game/revealOutcome";
 import { selectLobbyTopicsFromRoom, type LobbyTopic } from "@/lib/tv/lobbyTopics";
@@ -132,10 +133,16 @@ function PlayerFinaleView({
   answered,
   fastestMs,
   longestStreak,
+  satOut = false,
+  finalGameNo = 2,
 }: {
   won: boolean;
   rank: number | null;
   score: number | null;
+  /** Never joined the final game (Game 2 is opt-in, or they arrived after a
+   *  one-game night ended), so no score is coming. */
+  satOut?: boolean;
+  finalGameNo?: number;
   correct: number | null;
   answered: number | null;
   fastestMs: number | null;
@@ -173,7 +180,7 @@ function PlayerFinaleView({
             </div>
           ) : (
             <p style={{ margin: 0, color: t.inkMid, lineHeight: 1.5 }}>
-              Your final score is still catching up.
+              {satOut ? `You sat out Game ${finalGameNo}.` : "Your final score is still catching up."}
             </p>
           )}
           {stats.length > 0 && (
@@ -558,6 +565,12 @@ function RoomStateMachine({
         answered={myFinalScore?.answered_count ?? null}
         fastestMs={myFinalScore?.fastest_correct_ms ?? null}
         longestStreak={longestResolvedStreak(finalAnswers)}
+        satOut={
+          finalGameForRecap.game_no === 2
+            ? !inGame2
+            : !myParticipations.some((p) => p.game_id === finalGameForRecap.id)
+        }
+        finalGameNo={finalGameForRecap.game_no}
       />
     );
   } else if ((betweenView || waitingForGame2FirstQuestion) && game1 && game2) {
@@ -604,6 +617,7 @@ function RoomStateMachine({
             roomCode={roomCode}
             allAnswers={myAnswers}
             categories={snapshot.categories}
+            allQuestions={allQuestions}
             game={currentGame}
             themeKey={themeKey}
             revealBroadcast={snapshot.lastBroadcast}
@@ -623,6 +637,7 @@ function RoomStateMachine({
             revealBroadcast={snapshot.lastBroadcast}
             game={currentGame}
             categories={snapshot.categories}
+            allQuestions={allQuestions}
             onServerConfirm={handleServerConfirm}
             themeKey={themeKey}
             serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
@@ -895,6 +910,7 @@ function QuestionView({
   revealBroadcast,
   game: _game,
   categories,
+  allQuestions,
   onServerConfirm,
   onResolveSettled,
   themeKey,
@@ -907,6 +923,8 @@ function QuestionView({
   revealBroadcast: ReturnType<typeof useRoom>["lastBroadcast"];
   game: GameRow;
   categories: CategoryRow[];
+  /** Every picked question of the night; numbers this one in play order. */
+  allQuestions: QuestionRow[];
   /** Called the moment the server confirms the answer. Used to fire
    *  the bolt ceremony from the parent, which survives this unmount. */
   onServerConfirm: () => void;
@@ -998,7 +1016,7 @@ function QuestionView({
     [hasExpired, submit],
   );
 
-  const questionNumber = computeQuestionNumber(question, categories);
+  const questionNumber = computeQuestionNumber(question, categories, allQuestions);
 
   return (
     <>
@@ -1054,6 +1072,7 @@ function LockedView({
   roomCode: _roomCode,
   allAnswers: _allAnswers,
   categories,
+  allQuestions,
   game,
   themeKey,
   revealBroadcast,
@@ -1068,6 +1087,8 @@ function LockedView({
   roomCode: string;
   allAnswers: AnswerRow[];
   categories: CategoryRow[];
+  /** Every picked question of the night; numbers this one in play order. */
+  allQuestions: QuestionRow[];
   game: GameRow;
   themeKey?: ThemeKey;
   revealBroadcast: ReturnType<typeof useRoom>["lastBroadcast"];
@@ -1126,7 +1147,7 @@ function LockedView({
     onZero: handleZero,
   });
 
-  const questionNumber = computeQuestionNumber(question, categories);
+  const questionNumber = computeQuestionNumber(question, categories, allQuestions);
 
   return (
     <PlayerLocked
@@ -1718,26 +1739,6 @@ function useAppSwitchTracking(playerId: string | null) {
 }
 
 // ─── ANALYTICS / DERIVED ─────────────────────────────────────────────────
-
-function computeQuestionNumber(
-  question: QuestionRow,
-  categories: CategoryRow[],
-): number {
-  // 1-based ordinal within its category, computed by point_value ascending
-  // (100 = 1, 200 = 2, ...). For the designer-default screens we show "10"
-  // because the static preview shows that; live we want a real ordinal that
-  // matches "QUESTION N" where N = (categoryIndex*7) + (questionIndexInCategory).
-  const category = categories.find((c) => c.id === question.category_id);
-  if (!category) return question.point_value ? question.point_value / 100 : 1;
-  // Categories with a position; questions ordered within their category by
-  // point_value 100..700. Indexing without all 7 in hand is approximate but
-  // good enough for the eyebrow.
-  const idxInCategory = question.point_value ? question.point_value / 100 : 1;
-  // categories are ordered by position; we can't compute the absolute index
-  // without all sibling categories, but in this game design each category
-  // holds 7 questions.
-  return (category.position ?? 0) * 7 + idxInCategory;
-}
 
 function computeStreak(
   answers: AnswerRow[],

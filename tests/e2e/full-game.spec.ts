@@ -246,9 +246,8 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     await expect(phone3.getByTestId(TID.playerJoinGame2.root)).toBeVisible();
 
     // ── Present winners → finale ──────────────────────────────────────
-    await expect(hostPhone.getByRole("button", { name: "Show standings & board" }))
-      .toBeVisible({ timeout: 15_000 });
-    await hostPhone.getByRole("button", { name: "Show standings & board" }).click();
+    // Since #163 the host phone has no "Show standings & board" step: the
+    // final game's last resolve drops straight to "Final scores are ready".
     await expect(
       hostPhone.getByRole("heading", { name: "Final scores are ready" }),
     ).toBeVisible({ timeout: 15_000 });
@@ -269,7 +268,11 @@ test.describe("full game — host + TV + 3 phones, game1 → intermission → ga
     const winnerName = finaleName.replace(/\.\s*$/, ""); // rendered as "Alex."
     // Game 2's winner must be a player who opted INTO game 2 (Alex or Brooke).
     // Casey opted out; "Devon" is the /dev demo default that must never leak.
-    expect(["Alex", "Brooke"]).toContain(winnerName);
+    // A tie names every leader ("Alex + Brooke"), and taps here are scrambled
+    // per phone, so either outcome is legitimate.
+    for (const name of winnerName.split(" + ")) {
+      expect(["Alex", "Brooke"]).toContain(name);
+    }
 
     const scoreText = await tvPage.getByTestId(TID.tvFinaleWinner.score).innerText();
     const winnerScore = Number(scoreText.replace(/[^\d]/g, ""));

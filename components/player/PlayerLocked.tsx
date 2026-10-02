@@ -33,7 +33,8 @@ export interface PlayerLockedProps {
   seconds?: number;
   /** Time-to-lock in seconds — drives the "Locked at 2.3s" stat. */
   msToLock?: number;
-  /** Locked-in count fraction string, e.g. "21/32". Optional. */
+  /** Static locked-in count, e.g. "21/32". Optional, and never defaulted: a
+   *  made-up count on a real phone tells the room something untrue. */
   lockedSummary?: string;
   /** Question number within its game (1..N). */
   questionNumber?: number;
@@ -111,7 +112,7 @@ export function PlayerLocked({
   chosenSlot = 2,
   seconds = 11,
   msToLock = 2300,
-  lockedSummary = "21/32",
+  lockedSummary,
   questionNumber: _questionNumber,
   lockedCount,
   totalPlayers,
@@ -184,7 +185,7 @@ export function PlayerLocked({
             </span>
           </div>
         </div>
-        {!hasLiveCount && <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>}
+        {!hasLiveCount && lockedSummary && <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>}
       </div>
 
       {hasLiveCount && (
