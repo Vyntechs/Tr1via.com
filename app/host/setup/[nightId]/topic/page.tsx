@@ -88,36 +88,43 @@ export default async function SetupTopicPage({
 
 // The host's own topics from her earlier nights (this night's slots are
 // already on the overview). Read-only; any failure just means no chips.
+// Supabase reports failures in `error` rather than throwing, so each step
+// checks it and throws, and the caller logs it and hides the chips.
 async function loadRecentTopics(
   admin: ReturnType<typeof getSupabaseAdmin>,
   hostId: string,
   currentNightId: string,
 ): Promise<RecentTopic[]> {
-  const { data: nightRows } = await admin
+  const { data: nightRows, error: nightsError } = await admin
     .from("nights")
     .select("id, opened_at")
     .eq("host_id", hostId)
     .neq("id", currentNightId)
     .order("created_at", { ascending: false })
     .limit(10);
+  if (nightsError) throw new Error(`nights lookup failed: ${nightsError.message}`);
   const nights = (nightRows ?? []) as Array<{ id: string; opened_at: string | null }>;
   if (nights.length === 0) return [];
   const openedAtByNight = new Map(nights.map((n) => [n.id, n.opened_at]));
 
-  const { data: gameRows } = await admin
+  const { data: gameRows, error: gamesError } = await admin
     .from("games")
     .select("id, night_id")
     .in("night_id", nights.map((n) => n.id));
+  if (gamesError) throw new Error(`games lookup failed: ${gamesError.message}`);
   const games = (gameRows ?? []) as Array<{ id: string; night_id: string }>;
   if (games.length === 0) return [];
   const nightByGame = new Map(games.map((g) => [g.id, g.night_id]));
 
-  const { data: catRows } = await admin
+  const { data: catRows, error: categoriesError } = await admin
     .from("categories")
     .select("name, created_at, game_id")
     .in("game_id", games.map((g) => g.id))
     .order("created_at", { ascending: false })
     .limit(120);
+  if (categoriesError) {
+    throw new Error(`categories lookup failed: ${categoriesError.message}`);
+  }
   const rows: RecentTopicSourceRow[] = (
     (catRows ?? []) as Array<{ name: string; created_at: string; game_id: string }>
   ).map((c) => ({

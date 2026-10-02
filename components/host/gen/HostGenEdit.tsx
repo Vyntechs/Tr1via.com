@@ -108,7 +108,7 @@ function describeImage(
     return { eyebrow: "IMAGE · STOCK PHOTO", caption: "From the free stock photo library." };
   }
   if (url) return { eyebrow: "IMAGE", caption: null };
-  return { eyebrow: "IMAGE · NONE", caption: "No photo on this question yet." };
+  return { eyebrow: "IMAGE · NONE", caption: "No photo on this question." };
 }
 
 /** Longest blurb the PATCH route will accept (schemas.ts). Enforced here too

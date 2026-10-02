@@ -6,6 +6,7 @@ import { HostSetupPickClient } from "@/app/host/setup/[nightId]/pick/[categoryId
 import { HostGenEdit } from "@/components/host/gen/HostGenEdit";
 import { HostGenImageSwap } from "@/components/host/gen/HostGenImageSwap";
 import { HostGenImageUpload } from "@/components/host/gen/HostGenImageUpload";
+import { HostGenLoading } from "@/components/host/gen/HostGenLoading";
 import { HostGenPick } from "@/components/host/gen/HostGenPick";
 import { buildRecentTopics } from "@/lib/host/recentTopics";
 import { editQuestionEyebrow } from "@/lib/host/editQuestionEyebrow";
@@ -56,8 +57,14 @@ const browserMock = vi.hoisted(() => ({ getSupabaseBrowser: vi.fn() }));
 vi.mock("@/lib/supabase/client", () => browserMock);
 
 // A Supabase query stand-in: every filter returns itself, awaiting it gives
-// `list`, and maybeSingle() gives `single`. Records the filters it saw.
-function query(list: unknown, single: unknown = null) {
+// `list` (or, like the real client, `{ data: null, error }` when `error` is
+// set — Supabase reports failures, it doesn't throw them), and maybeSingle()
+// gives `single`. Records the filters it saw.
+function query(
+  list: unknown,
+  single: unknown = null,
+  error: { message: string } | null = null,
+) {
   const calls: Array<[string, unknown[]]> = [];
   const builder: Record<string, unknown> = {};
   for (const method of ["select", "eq", "neq", "in", "is", "order", "limit"]) {
@@ -70,7 +77,11 @@ function query(list: unknown, single: unknown = null) {
   builder.then = (
     resolve: (value: unknown) => unknown,
     reject: (reason: unknown) => unknown,
-  ) => Promise.resolve({ data: list, error: null }).then(resolve, reject);
+  ) =>
+    Promise.resolve(error ? { data: null, error } : { data: list, error: null }).then(
+      resolve,
+      reject,
+    );
   return { builder, calls };
 }
 
@@ -121,15 +132,6 @@ describe("topic screen", () => {
     fireEvent.click(chip);
     expect(screen.getByPlaceholderText("Pixar Movies")).toHaveValue("Willie Nelson");
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("a chip fills the box with exactly its own label (her cleaned-up board name)", () => {
-    // She renamed "Famouse Mustaches in films and commercials" to "Famous
-    // Mustaches"; the chip must bring back the clean name, not the typo.
-    renderTopic([{ name: "Famous Mustaches", date: "Sep 23" }]);
-    const chip = screen.getByRole("button", { name: /Famous Mustaches/ });
-    fireEvent.click(chip);
-    expect(screen.getByPlaceholderText("Pixar Movies")).toHaveValue("Famous Mustaches");
   });
 
   it("doesn't promise a 4-second pull (real pulls take about 1.5–3 minutes)", () => {
@@ -229,32 +231,81 @@ describe("topic page · loading her past topics", () => {
         return query([]).builder;
       },
     });
-    const element = await Promise.race([
-      loadPage(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error("lookups ran one after the other")), 1000),
-      ),
-    ]);
-    expect(element.props.recent).toEqual([]);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const element = await Promise.race([
+        loadPage(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error("lookups ran one after the other")), 1000);
+        }),
+      ]);
+      expect(element.props.recent).toEqual([]);
+    } finally {
+      clearTimeout(timer);
+    }
   });
+
+  it.each(["nights", "games", "categories"] as const)(
+    "hides the chips and logs it when the %s lookup reports an error",
+    async (failing) => {
+      owned();
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      try {
+        const failure = { message: `${failing} unavailable` };
+        const games = query(
+          failing === "games" ? null : [{ id: "g-sep30", night_id: "n-sep30" }],
+          GAME_ROW,
+          failing === "games" ? failure : null,
+        );
+        const nights = query(
+          [{ id: "n-sep30", opened_at: "2026-09-30T23:33:05Z" }],
+          null,
+          failing === "nights" ? failure : null,
+        );
+        const categories = query(
+          [{ name: "Rodents", created_at: "2026-09-25T17:35:57Z", game_id: "g-sep30" }],
+          null,
+          failing === "categories" ? failure : null,
+        );
+        adminMock.getSupabaseAdmin.mockReturnValue({
+          from: (table: string) => {
+            if (table === "games") return games.builder;
+            if (table === "nights") return nights.builder;
+            return categories.builder;
+          },
+        });
+        const element = await loadPage();
+        expect(element.props.recent).toEqual([]);
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining("recent topics"),
+          expect.objectContaining({ message: expect.stringContaining(`${failing} unavailable`) }),
+        );
+      } finally {
+        errorSpy.mockRestore();
+      }
+    },
+  );
 
   it("still opens the page, without chips, and logs it, if the topic lookup throws", async () => {
     owned();
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
-    const games = query([], GAME_ROW);
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      from: (table: string) => {
-        if (table === "games") return games.builder;
-        throw new Error("network blip");
-      },
-    });
-    const element = await loadPage();
-    expect(element.props.recent).toEqual([]);
-    expect(errorSpy).toHaveBeenCalledWith(
-      expect.stringContaining("recent topics"),
-      expect.any(Error),
-    );
-    errorSpy.mockRestore();
+    try {
+      const games = query([], GAME_ROW);
+      adminMock.getSupabaseAdmin.mockReturnValue({
+        from: (table: string) => {
+          if (table === "games") return games.builder;
+          throw new Error("network blip");
+        },
+      });
+      const element = await loadPage();
+      expect(element.props.recent).toEqual([]);
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining("recent topics"),
+        expect.any(Error),
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 });
 
@@ -355,6 +406,16 @@ describe("image screens", () => {
   });
 });
 
+describe("loading screen", () => {
+  it("doesn't promise a photo for every question", () => {
+    // Without a live status line, the fallback used to say "…matching a
+    // photo to each", but some questions end up with no photo.
+    render(<HostGenLoading themeKey="house" topic="Rodents" loaded={[]} total={20} />);
+    expect(screen.queryByText(/a photo to each/)).not.toBeInTheDocument();
+    expect(screen.getByText("Writing the questions, then looking for photos.")).toBeInTheDocument();
+  });
+});
+
 describe("pick screen photo line", () => {
   it("counts the cards that really have a photo, and claims nothing about where they came from", () => {
     const base = { options: ["A", "B", "C", "D"] as [string, string, string, string], correctIndex: 0 as const, difficulty: 3 };
@@ -415,6 +476,9 @@ describe("edit popup", () => {
     unmount();
     render(<HostGenEdit themeKey="house" topic="Rodents" imageUrl={null} imageSource={null} />);
     expect(screen.getByText("IMAGE · NONE")).toBeInTheDocument();
+    // Neutral: she may have chosen "no image" on purpose.
+    expect(screen.getByText("No photo on this question.")).toBeInTheDocument();
+    expect(screen.queryByText(/yet/)).not.toBeInTheDocument();
   });
 });
 
