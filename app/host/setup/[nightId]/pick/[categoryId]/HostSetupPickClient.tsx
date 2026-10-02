@@ -46,6 +46,7 @@ import {
   canonicalPickedAfterRefetch,
   mergePickedAfterRefetch,
 } from "@/lib/host/mergePickedAfterRefetch";
+import { editQuestionEyebrow } from "@/lib/host/editQuestionEyebrow";
 import { shouldRewriteFactBlurb } from "@/lib/host/factBlurbStaleness";
 import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
@@ -170,6 +171,8 @@ export function HostSetupPickClient({
   const [rewritingFact, setRewritingFact] = useState(false);
   const [savingPhoto, setSavingPhoto] = useState(false);
   const [uploadState, setUploadState] = useState<"idle" | "uploading">("idle");
+  // Name of the file being sent, shown on the upload screen while it goes.
+  const [uploadFilename, setUploadFilename] = useState<string | undefined>(undefined);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [photoCandidates, setPhotoCandidates] = useState<HostGenPhotoCandidate[]>([]);
   const [photoLookupError, setPhotoLookupError] = useState<string | null>(null);
@@ -1009,6 +1012,7 @@ export function HostSetupPickClient({
 
   async function handleUploadFile(file: File) {
     if (modal.kind !== "upload") return;
+    setUploadFilename(file.name);
     setUploadState("uploading");
     setError(null);
     setUploadError(null);
@@ -1019,6 +1023,7 @@ export function HostSetupPickClient({
         "That file is over 10 MB. Try a smaller export or compress it first.",
       );
       setUploadState("idle");
+      setUploadFilename(undefined);
       return;
     }
     try {
@@ -1057,6 +1062,7 @@ export function HostSetupPickClient({
       );
     } finally {
       setUploadState("idle");
+      setUploadFilename(undefined);
     }
   }
 
@@ -1211,6 +1217,10 @@ export function HostSetupPickClient({
     modal.kind === "swap" ? questions.find((q) => q.id === modal.questionId) ?? null : null;
   const uploadQuestion =
     modal.kind === "upload" ? questions.find((q) => q.id === modal.questionId) ?? null : null;
+  // "N OF M" = the card's position in the grid the host is looking at.
+  const editEyebrow = editingQuestion
+    ? editQuestionEyebrow(pickList.map((q) => q.id), editingQuestion.id)
+    : undefined;
 
   return (
     <>
@@ -1274,6 +1284,7 @@ export function HostSetupPickClient({
             themeKey={themeKey as ThemeKey}
             shellTitle={`edit · ${categoryName.toLowerCase()}`}
             topic={categoryName}
+            eyebrow={editEyebrow}
             initial={{
               prompt: editingQuestion.prompt,
               options: editingQuestion.options,
@@ -1328,6 +1339,7 @@ export function HostSetupPickClient({
             topic={categoryName}
             prompt={uploadQuestion.prompt}
             state={uploadState}
+            uploadFilename={uploadFilename}
             onFileChosen={(file) => void handleUploadFile(file)}
             onBack={() => {
               setUploadError(null);

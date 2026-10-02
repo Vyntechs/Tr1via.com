@@ -45,7 +45,9 @@ export interface HostGenEditProps {
   themeKey?: ThemeKey;
   /** Topic, used for the category color and the breadcrumb. */
   topic?: string;
-  /** Eyebrow text (e.g. "EDIT QUESTION · 6 OF 20"). */
+  /** Eyebrow text (e.g. "EDIT QUESTION · 6 OF 20"), built by the caller from
+   *  the card's real position among the questions on screen. Omitted → just
+   *  "EDIT QUESTION". */
   eyebrow?: string;
   /** Title for the shell chrome. */
   shellTitle?: string;
@@ -105,7 +107,7 @@ export function HostGenEdit(props: HostGenEditProps) {
 
 function HostGenEditInner({
   topic = "Pixar Movies",
-  eyebrow = "EDIT QUESTION · 6 OF 20",
+  eyebrow = "EDIT QUESTION",
   shellTitle = "edit · pixar movies · q6",
   initial = DEMO_INITIAL,
   imageSeed = "pixar6",

@@ -8,7 +8,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { HostGenTopicEntry, type DifficultyTarget } from "@/components/host/gen";
+import {
+  HostGenTopicEntry,
+  type DifficultyTarget,
+  type RecentTopic,
+} from "@/components/host/gen";
 import { fetchWithRetry } from "@/lib/realtime/fetchWithRetry";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
@@ -40,6 +44,8 @@ export interface HostSetupTopicClientProps {
   position: number;
   themeKey: string;
   initialTopic?: string;
+  /** The host's own topics from earlier nights. Empty → no chip row. */
+  recent?: RecentTopic[];
 }
 
 export function HostSetupTopicClient({
@@ -49,6 +55,7 @@ export function HostSetupTopicClient({
   position,
   themeKey,
   initialTopic = "",
+  recent = [],
 }: HostSetupTopicClientProps) {
   const router = useRouter();
   const draftKey = `host-topic:${nightId}:${gameId}:${position}`;
@@ -113,6 +120,7 @@ export function HostSetupTopicClient({
         isSubmitting={submitting}
         initialTopic={initialTopic}
         draftKey={draftKey}
+        recent={recent}
       />
       {error && (
         <div

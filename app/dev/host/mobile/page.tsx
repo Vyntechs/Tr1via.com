@@ -19,6 +19,11 @@ import {
   type HostSection,
 } from "@/components/host";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
+import {
+  DEMO_EDIT_EYEBROW,
+  DEMO_RECENT_PHOTOS,
+  DEMO_RECENT_TOPICS,
+} from "../hostGenDemo";
 
 const SURFACES = [
   "overview",
@@ -51,7 +56,7 @@ function HostMobilePreview() {
   return (
     <main style={{ minHeight: "100dvh", width: "100%", overflowX: "hidden" }}>
       {surface === "overview" && <HostGenOverview />}
-      {surface === "topic" && <HostGenTopicEntry />}
+      {surface === "topic" && <HostGenTopicEntry recent={DEMO_RECENT_TOPICS} />}
       {surface === "loading" && <HostGenLoading />}
       {surface === "pick" && (
         <HostGenPick
@@ -61,9 +66,11 @@ function HostMobilePreview() {
           onRename={async () => {}}
         />
       )}
-      {surface === "edit" && <HostGenEdit />}
+      {surface === "edit" && <HostGenEdit eyebrow={DEMO_EDIT_EYEBROW} />}
       {surface === "image-swap" && <HostGenImageSwap />}
-      {surface === "image-upload" && <HostGenImageUpload state="idle" />}
+      {surface === "image-upload" && (
+        <HostGenImageUpload state="idle" recent={DEMO_RECENT_PHOTOS} />
+      )}
       {surface === "manual" && <HostGenManualEntry />}
       {surface === "dashboard" && (
         <HostDashboard

@@ -13,6 +13,8 @@ import { notFound, redirect } from "next/navigation";
 import { requireOwnedNight } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
+import { buildRecentTopics, type RecentTopicSourceRow } from "@/lib/host/recentTopics";
+import type { RecentTopic } from "@/components/host/gen";
 import { HostSetupTopicClient } from "./HostSetupTopicClient";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +61,8 @@ export default async function SetupTopicPage({
     redirect(`/host/setup/${nightId}`);
   }
 
+  const recent = await loadRecentTopics(admin, owned.host.id, nightId);
+
   return (
     <HostSetupTopicClient
       nightId={nightId}
@@ -67,6 +71,49 @@ export default async function SetupTopicPage({
       position={position}
       themeKey={resolveTheme(owned.night, owned.host)}
       initialTopic={initialTopic}
+      recent={recent}
     />
   );
+}
+
+// The host's own topics from her earlier nights (this night's slots are
+// already on the overview). Read-only; any failure just means no chips.
+async function loadRecentTopics(
+  admin: ReturnType<typeof getSupabaseAdmin>,
+  hostId: string,
+  currentNightId: string,
+): Promise<RecentTopic[]> {
+  const { data: nightRows } = await admin
+    .from("nights")
+    .select("id, opened_at")
+    .eq("host_id", hostId)
+    .neq("id", currentNightId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  const nights = (nightRows ?? []) as Array<{ id: string; opened_at: string | null }>;
+  if (nights.length === 0) return [];
+  const openedAtByNight = new Map(nights.map((n) => [n.id, n.opened_at]));
+
+  const { data: gameRows } = await admin
+    .from("games")
+    .select("id, night_id")
+    .in("night_id", nights.map((n) => n.id));
+  const games = (gameRows ?? []) as Array<{ id: string; night_id: string }>;
+  if (games.length === 0) return [];
+  const nightByGame = new Map(games.map((g) => [g.id, g.night_id]));
+
+  const { data: catRows } = await admin
+    .from("categories")
+    .select("name, created_at, game_id")
+    .in("game_id", games.map((g) => g.id))
+    .order("created_at", { ascending: false })
+    .limit(120);
+  const rows: RecentTopicSourceRow[] = (
+    (catRows ?? []) as Array<{ name: string; created_at: string; game_id: string }>
+  ).map((c) => ({
+    name: c.name,
+    created_at: c.created_at,
+    night_opened_at: openedAtByNight.get(nightByGame.get(c.game_id) ?? "") ?? null,
+  }));
+  return buildRecentTopics(rows);
 }
