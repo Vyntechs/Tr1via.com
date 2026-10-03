@@ -199,6 +199,12 @@ test.describe.serial("phone-first host parity", () => {
     await page.goto(`/host/live/${readyNight!.nightId}`);
 
     await page.getByRole("button", { name: "Start Game 1" }).click();
+    // Let the start land before leaving (navigating away mid-request could
+    // cancel it). Then a host who is still on her first night goes back to
+    // the home page and must find her way back into the live game.
+    await expect(page.getByRole("button", { name: "End Game 1" })).toBeVisible({
+      timeout: 15_000,
+    });
     await page.goto("/host");
     const liveGameControl = page.getByRole("button", { name: "Control live game" });
     await expect(liveGameControl).toBeVisible();

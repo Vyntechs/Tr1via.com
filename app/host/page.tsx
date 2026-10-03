@@ -3,8 +3,10 @@
 // Server Component. We:
 //   1. Resolve the signed-in user's `hosts` row (middleware has already
 //      enforced auth).
-//   2. If `is_first_night_complete` is false → render the onboarding
-//      "first dashboard" with a single "Set up Wednesday" CTA.
+//   2. If `is_first_night_complete` is false and nothing is live → render
+//      the onboarding "first dashboard" with a single "Set up Wednesday" CTA.
+//      (A first-time host whose night is live gets the normal dashboard so
+//      she has a way back into her game — see HostHomeClient.)
 //   3. Otherwise → render the normal HostDashboard with the host's past
 //      nights + an optional "tonight" headliner (the most-recent non-done
 //      night, if any).
@@ -95,8 +97,17 @@ export default async function HostHomePage() {
   // Lifetime totals for the eyebrow on the right of the past-nights list.
   const lifetime = await fetchLifetimeTotals(host.id);
 
+  // "Live" = the room was opened OR a game on it has started. Every real
+  // show today opens the room first, but a game can be started from the live
+  // console without that step, and a host who did so must still get the
+  // "Control live game" way back from this page (not "Continue setup" or the
+  // first-time welcome screen). Reset-to-setup clears both signals.
+  const tonightIsLive = tonightRow
+    ? Boolean(tonightRow.opened_at) || (await hasStartedGame(tonightRow.id))
+    : false;
+
   const resetPreview =
-    tonightRow && tonightRow.opened_at
+    tonightRow && tonightIsLive
       ? await fetchResetPreview(tonightRow.id)
       : null;
 
@@ -126,7 +137,7 @@ export default async function HostHomePage() {
           | "october"
           | "november"
           | "december",
-        status: tonightRow.opened_at
+        status: tonightIsLive
           ? ("live" as const)
           : ("setup" as const),
         resetPreview,
@@ -175,6 +186,17 @@ function formatNightDateLong(n: NightRow): string {
     "Saturday",
   ];
   return `${days[d.getDay()]} night`;
+}
+
+async function hasStartedGame(nightId: string): Promise<boolean> {
+  const admin = getSupabaseAdmin();
+  const { data } = await admin
+    .from("games")
+    .select("id")
+    .eq("night_id", nightId)
+    .not("started_at", "is", null)
+    .limit(1);
+  return (data ?? []).length > 0;
 }
 
 async function fetchCategoriesByNight(
