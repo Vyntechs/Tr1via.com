@@ -36,11 +36,19 @@ async function expectPhoneFit(page: Page) {
     .toBe(true);
 }
 
+// Narrow exception: Next.js's own "Open Next.js Dev Tools" button. It lives in
+// the <nextjs-portal> shadow root that only `next dev` renders, so it never
+// reaches a host and is not a host action. Matched by that host element, not
+// by label, so every real app control is still measured.
 async function expectTouchSafeHostActions(page: Page) {
   const undersized = await page
     .locator(INTERACTIVE_SELECTOR)
     .evaluateAll((elements) =>
       elements
+        .filter((element) => {
+          const root = element.getRootNode();
+          return !(root instanceof ShadowRoot && root.host.localName === "nextjs-portal");
+        })
         .map((element) => {
           const rect = element.getBoundingClientRect();
           return {
@@ -58,6 +66,11 @@ async function expectTouchSafeHostActions(page: Page) {
   const interactive = page.locator(INTERACTIVE_SELECTOR);
   for (let index = 0; index < (await interactive.count()); index += 1) {
     const control = interactive.nth(index);
+    const isNextDevOverlay = await control.evaluate((element) => {
+      const root = element.getRootNode();
+      return root instanceof ShadowRoot && root.host.localName === "nextjs-portal";
+    });
+    if (isNextDevOverlay) continue;
     await control.evaluate((element) =>
       element.scrollIntoView({ block: "center", inline: "center" }),
     );
@@ -151,14 +164,20 @@ test.describe.serial("phone-first host parity", () => {
       await expectPhoneFit(page);
       await expectTouchSafeHostActions(page);
 
+      // Before Game 1 starts, the phone console opens on the "Game ready"
+      // final check with its Start Game 1 button; the round-controls bar only
+      // appears once a game is under way (#149 added that preflight after
+      // this spec was written).
       await page.goto(`/host/live/${readyNight.nightId}`);
-      await expect(page.getByTestId("host-phone-round-controls")).toBeVisible();
+      await expect(page.getByRole("region", { name: "Game Ready preflight" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Start Game 1" })).toBeVisible();
       await expect(page.locator('a[href^="/tv/"]')).toHaveCount(0);
       await expectPhoneFit(page);
 
       await page.goto(`/host/phone/${readyNight.nightId}`);
       await expect(page).toHaveURL(`/host/live/${readyNight.nightId}`);
-      await expect(page.getByTestId("host-phone-round-controls")).toBeVisible();
+      await expect(page.getByRole("region", { name: "Game Ready preflight" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "Start Game 1" })).toBeVisible();
       await expectPhoneFit(page);
 
       if (viewport.name === "iphone" || viewport.name === "landscape") {
