@@ -103,6 +103,22 @@ describe("HostGameReady", () => {
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 
+  it("pins Start Game 1 (and why it is blocked) to the bottom of the console", () => {
+    renderReady({
+      preflight: preflight({
+        canStart: false,
+        canStartMinimal: false,
+        startReason: "Open the room before starting Game 1.",
+      }),
+    });
+
+    const actions = screen.getByTestId("game-ready-actions");
+    expect(actions).toHaveStyle({ position: "sticky", bottom: "0px" });
+    expect(actions).toContainElement(screen.getByRole("button", { name: "Start Game 1" }));
+    expect(actions).toContainElement(screen.getByRole("button", { name: "Check TV & phones" }));
+    expect(actions).toContainElement(screen.getByRole("alert"));
+  });
+
   it("allows starting a partial board (matches the laptop) with a non-blocking note", () => {
     renderReady({
       preflight: preflight({
