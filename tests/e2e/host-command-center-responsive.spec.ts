@@ -5,7 +5,10 @@ const VIEWPORTS = [
   { name: "small phone", width: 320, height: 568, previewAlwaysVisible: false },
   { name: "large phone", width: 430, height: 932, previewAlwaysVisible: false },
   { name: "landscape phone", width: 844, height: 390, previewAlwaysVisible: true },
-  { name: "tablet portrait", width: 768, height: 1024, previewAlwaysVisible: false },
+  // A 768px tablet has room for the venue TV preview beside the console, so
+  // it is shown there without a tap (same as landscape phones and laptops).
+  // The checks below still require Start Game 1 to stay on screen with it.
+  { name: "tablet portrait", width: 768, height: 1024, previewAlwaysVisible: true },
 ] as const;
 
 async function expectInitiallyInViewport(page: Page, locator: Locator) {

@@ -88,4 +88,57 @@ describe("HostHomeClient live-night entry", () => {
     fireEvent.click(screen.getByRole("button", { name: /show game on this laptop\/tv/i }));
     expect(push).toHaveBeenCalledWith("/host/live/night-live");
   });
+
+  // Real incident: a first-time host (no closed night yet) started Game 1,
+  // went back to /host, and only saw the "Welcome, set up" screen whose one
+  // button makes a brand-new night. She had no way back to her live game.
+  it("gives a first-time host a way back into her live game", () => {
+    setPhoneViewport(true);
+    render(
+      <ThemeProvider themeKey="house">
+        <HostHomeClient {...props} isFirstNightComplete={false} />
+      </ThemeProvider>,
+    );
+
+    expect(screen.queryByTestId("host-onboarding-first")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /control live game/i }));
+    expect(push).toHaveBeenCalledWith("/host/live/night-live");
+    // The first-time screen never showed these; a live first night doesn't either.
+    expect(screen.queryByRole("button", { name: /what's new/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /upgrade/i })).not.toBeInTheDocument();
+  });
+
+  it("gives a first-time host on a laptop the same way back", () => {
+    setPhoneViewport(false);
+    render(
+      <ThemeProvider themeKey="house">
+        <HostHomeClient {...props} isFirstNightComplete={false} />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /show game on this laptop\/tv/i }));
+    expect(push).toHaveBeenCalledWith("/host/live/night-live");
+  });
+
+  it("keeps the welcome screen for a first-time host with nothing live", () => {
+    setPhoneViewport(true);
+    const { rerender } = render(
+      <ThemeProvider themeKey="house">
+        <HostHomeClient {...props} isFirstNightComplete={false} tonight={null} />
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId("host-onboarding-first")).toBeInTheDocument();
+
+    rerender(
+      <ThemeProvider themeKey="house">
+        <HostHomeClient
+          {...props}
+          isFirstNightComplete={false}
+          tonight={{ ...props.tonight, status: "setup" as const }}
+        />
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId("host-onboarding-first")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /control live game/i })).not.toBeInTheDocument();
+  });
 });

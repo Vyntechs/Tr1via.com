@@ -191,46 +191,66 @@ export function HostGameReady({
         </section>
       </div>
 
-      {!current.canStartMinimal && current.startReason && (
-        <p id="game-ready-blocker" role="alert" style={{ margin: "12px 0 0", color: t.wrong, fontSize: 12, fontWeight: 750 }}>
-          {current.startReason}
-        </p>
-      )}
-      {current.canStartMinimal && !current.canStart && (
-        <p role="status" style={{ margin: "12px 0 0", color: t.inkMid, fontSize: 12, fontWeight: 650 }}>
-          The board isn’t fully built yet — you can start now, or add more first.
-        </p>
-      )}
-      {refreshMessage && (
-        <p
-          role={refreshMessage.includes("failed") || refreshMessage.includes("timed out") ? "alert" : "status"}
-          style={{ margin: "12px 0 0", color: t.inkMid, fontSize: 11 }}
-        >
-          {refreshMessage}
-        </p>
-      )}
+      {/* Pinned action bar. The readiness list can run taller than the
+          screen on every phone and on a tablet, which used to push Start
+          Game 1 below the fold so the host had to scroll for the one button
+          she needs. Sticky to the bottom of the console's scroll area keeps
+          the buttons (and any reason Start is blocked) always in view; the
+          checks scroll underneath. */}
+      <div
+        data-testid="game-ready-actions"
+        style={{
+          position: "sticky",
+          bottom: 0,
+          zIndex: 1,
+          marginTop: 14,
+          paddingTop: 10,
+          paddingBottom: 2,
+          background: t.paper,
+          borderTop: `1px solid ${t.lineSoft}`,
+        }}
+      >
+        {!current.canStartMinimal && current.startReason && (
+          <p id="game-ready-blocker" role="alert" style={{ margin: "0 0 10px", color: t.wrong, fontSize: 12, fontWeight: 750 }}>
+            {current.startReason}
+          </p>
+        )}
+        {current.canStartMinimal && !current.canStart && (
+          <p role="status" style={{ margin: "0 0 10px", color: t.inkMid, fontSize: 12, fontWeight: 650 }}>
+            The board isn’t fully built yet — you can start now, or add more first.
+          </p>
+        )}
+        {refreshMessage && (
+          <p
+            role={refreshMessage.includes("failed") || refreshMessage.includes("timed out") ? "alert" : "status"}
+            style={{ margin: "0 0 10px", color: t.inkMid, fontSize: 11 }}
+          >
+            {refreshMessage}
+          </p>
+        )}
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 180px), 1fr))", gap: 10, marginTop: 14 }}>
-        <button
-          type="button"
-          onClick={() => void checkAgain()}
-          disabled={checking || isStarting}
-          style={buttonStyle(t.surfaceH, t.ink, t.line)}
-        >
-          {checking ? "Checking TV & phones…" : "Check TV & phones"}
-        </button>
-        <button
-          type="button"
-          onClick={onStart}
-          disabled={!current.canStartMinimal || checking || isStarting}
-          aria-describedby={!current.canStartMinimal && current.startReason ? "game-ready-blocker" : undefined}
-          style={{
-            ...buttonStyle(t.accent, readableForeground(t.accent), t.accent),
-            opacity: !current.canStartMinimal || checking || isStarting ? 0.48 : 1,
-          }}
-        >
-          {isStarting ? "Starting Game 1…" : "Start Game 1"}
-        </button>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 120px), 1fr))", gap: 10 }}>
+          <button
+            type="button"
+            onClick={() => void checkAgain()}
+            disabled={checking || isStarting}
+            style={buttonStyle(t.surfaceH, t.ink, t.line)}
+          >
+            {checking ? "Checking TV & phones…" : "Check TV & phones"}
+          </button>
+          <button
+            type="button"
+            onClick={onStart}
+            disabled={!current.canStartMinimal || checking || isStarting}
+            aria-describedby={!current.canStartMinimal && current.startReason ? "game-ready-blocker" : undefined}
+            style={{
+              ...buttonStyle(t.accent, readableForeground(t.accent), t.accent),
+              opacity: !current.canStartMinimal || checking || isStarting ? 0.48 : 1,
+            }}
+          >
+            {isStarting ? "Starting Game 1…" : "Start Game 1"}
+          </button>
+        </div>
       </div>
     </section>
   );
@@ -282,7 +302,7 @@ function buttonStyle(background: string, color: string, borderColor: string): CS
   return {
     minWidth: 48,
     minHeight: 48,
-    padding: "0 16px",
+    padding: "0 12px",
     border: `1px solid ${borderColor}`,
     borderRadius: 12,
     background,

@@ -155,7 +155,17 @@ export function HostHomeClient({
     }
   }
 
-  if (!isFirstNightComplete) {
+  // A host is "first-time" until she closes her first night, which only
+  // happens at the very end of a show. So a brand-new host who starts Game 1
+  // and comes back here mid-show is still first-time. The welcome screen has
+  // no route back to a live game (its only button sets up a brand-new night),
+  // so once her night is live she gets the normal home page instead: the
+  // tonight card with "Control live game" (phone) / "Show game on this
+  // laptop/TV" (laptop) and the reset option. The extras a returning host sees
+  // (What's new, Upgrade) stay off, exactly as on the welcome screen.
+  const hasLiveNight = tonight?.status === "live";
+
+  if (!isFirstNightComplete && !hasLiveNight) {
     return (
       <>
         <OnboardingFirstDashboard
@@ -196,36 +206,16 @@ export function HostHomeClient({
       {isFounder && (
         <FounderBuildGameButton onClick={buildFullGameAndGo} busy={building} />
       )}
-      <BillingUpgrade
-        isFounder={isFounder}
-        isPaywallBypassed={isPaywallBypassed}
-        subscriptionStatus={subscriptionStatus}
-      />
-      <button
-        type="button"
-        onClick={() => setWhatsNewOpen(true)}
-        style={{
-          position: "fixed",
-          right: 20,
-          bottom: 20,
-          zIndex: 38,
-          minHeight: 40,
-          padding: "0 14px",
-          borderRadius: 999,
-          border: "1px solid var(--line)",
-          background: "var(--surface)",
-          color: "var(--ink)",
-          fontFamily: "var(--font-mono)",
-          fontSize: 10,
-          fontWeight: 700,
-          letterSpacing: ".1em",
-          textTransform: "uppercase",
-          cursor: "pointer",
-          boxShadow: "0 12px 28px -18px rgba(0,0,0,.6)",
-        }}
-      >
-        What&apos;s new
-      </button>
+      {isFirstNightComplete && (
+        <BillingUpgrade
+          isFounder={isFounder}
+          isPaywallBypassed={isPaywallBypassed}
+          subscriptionStatus={subscriptionStatus}
+        />
+      )}
+      {isFirstNightComplete && (
+        <WhatsNewButton onClick={() => setWhatsNewOpen(true)} />
+      )}
       <HostWhatsNew open={whatsNewOpen} onClose={dismissWhatsNew} news={HOST_NEWS} />
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
       {successMessage && (
@@ -235,6 +225,36 @@ export function HostHomeClient({
         />
       )}
     </>
+  );
+}
+
+function WhatsNewButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        position: "fixed",
+        right: 20,
+        bottom: 20,
+        zIndex: 38,
+        minHeight: 40,
+        padding: "0 14px",
+        borderRadius: 999,
+        border: "1px solid var(--line)",
+        background: "var(--surface)",
+        color: "var(--ink)",
+        fontFamily: "var(--font-mono)",
+        fontSize: 10,
+        fontWeight: 700,
+        letterSpacing: ".1em",
+        textTransform: "uppercase",
+        cursor: "pointer",
+        boxShadow: "0 12px 28px -18px rgba(0,0,0,.6)",
+      }}
+    >
+      What&apos;s new
+    </button>
   );
 }
 
