@@ -96,10 +96,20 @@ export const maxDuration = 300;
 // dead worker (no heartbeat) still trips it.
 const GENERATION_HEARTBEAT_MS = 12_000;
 
+// Vercel ends the whole request at maxDuration (300s) with no warning, and a
+// slow writing step can use most of that. Photos are optional and are the last
+// step, so once this much time has passed since the request began we stop
+// adding more, save what the host has, and finish — instead of being cut off
+// mid-photos with the build left unfinished. Leaves ~30s for the photo already
+// in flight, the final save, and the "done" message.
+const PHOTO_STOP_AFTER_MS = 270_000;
+
 export async function POST(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
+  // Vercel's 300s limit counts from when the request began.
+  const startedAtMs = Date.now();
   const { id: categoryId } = await context.params;
 
   const owned = await requireOwnedCategory(categoryId);
@@ -224,6 +234,7 @@ export async function POST(
       autoPick: parsed.data.autoPick,
       resume,
       attempt: job.attempt,
+      startedAtMs,
       reportContext,
     }).catch(async (err) => {
       if (err instanceof GenerationAttemptSupersededError) return;
@@ -299,6 +310,8 @@ async function runGenerationJob(opts: {
   resume?: boolean;
   /** Durable fencing token returned by begin or the atomic resume claim. */
   attempt: number;
+  /** When the request began (ms); Vercel's time limit counts from here. */
+  startedAtMs: number;
   reportContext: QuestionGenerationReportContext;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
@@ -308,14 +321,28 @@ async function runGenerationJob(opts: {
     requestedCount: 20,
     verifyPasses: 2,
   });
+  // Photos this attempt knows are already on its certified questions. The
+  // database refuses a job row with more photos than certified questions. A
+  // restart inherits the row of the run that was cut off, which may already say
+  // "16 photos", while this attempt starts counting certified questions from
+  // zero. So every write that sets the certified count also sets the photo
+  // count, to a number this attempt can vouch for and never above it.
+  let imageCount = 0;
   const writeWorkerProgress = async (
     patch: Parameters<typeof updateGenerationJob>[2],
   ) => {
+    const consistent =
+      patch.certified_count !== undefined && patch.image_count === undefined
+        ? {
+            ...patch,
+            image_count: Math.min(imageCount, patch.certified_count),
+          }
+        : patch;
     const writeWon = await updateGenerationJobForAttempt(
       jobClient,
       opts.categoryId,
       opts.attempt,
-      patch,
+      consistent,
     );
     if (!writeWon) throw new GenerationAttemptSupersededError();
   };
@@ -526,6 +553,9 @@ async function runGenerationJob(opts: {
       }
       insertedQuestions.push(...certifiedStoredQuestions);
       certifiedCount = certifiedStoredQuestions.length;
+      imageCount = certifiedStoredQuestions.filter((item) =>
+        Boolean(item.imageUrl),
+      ).length;
       writtenCount = certifiedCount;
       phase = certifiedCount >= 20 ? "images" : "repairing";
       qualityReport.recordRound({
@@ -681,8 +711,14 @@ async function runGenerationJob(opts: {
   // Step 3: attach photos. Sequential within a category because Pexels' free
   // tier is 200 req/hr — bursting risks brittleness without measurable
   // user-side latency benefit (the UI is already populated).
-  let imageCount = inserted.filter((row) => Boolean(row.imageUrl)).length;
+  imageCount = inserted.filter((row) => Boolean(row.imageUrl)).length;
   for (const { id, q } of photoTargets) {
+    if (Date.now() - opts.startedAtMs > PHOTO_STOP_AFTER_MS) {
+      // Out of time. Photos are optional: keep the ones attached so far and
+      // finish below rather than being cut off by the platform limit.
+      console.warn("[generate] running out of time; stopping photo attach");
+      break;
+    }
     try {
       const photo = await autoAttachPhoto(q, {
         topic: opts.topic,
