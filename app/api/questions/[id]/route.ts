@@ -5,6 +5,10 @@
 // `source` flips to 'host-edit' so we can later audit how often the host
 // reaches in vs accepts AI output verbatim.
 //
+// When the question's text actually changes, its saved photo search words
+// (`photo_query`) describe the OLD question, so they are cleared and the Image
+// button falls back to the new question's own words.
+//
 // Host-only.
 
 import { type NextRequest } from "next/server";
@@ -92,7 +96,30 @@ export async function PATCH(
   });
   if (result.error || !result.data) return slotUpdateError(result.error);
 
-  return ok({ question: result.data });
+  // The authoring function above does not know about `photo_query`, so the
+  // saved search words are cleared in a second write. That is a separate step,
+  // not part of the same transaction: if it fails the host's edit is still
+  // saved (the old words only affect which photos the Image button lists first).
+  let question = result.data;
+  if (
+    patch.prompt !== undefined &&
+    patch.prompt !== owned.question.prompt &&
+    owned.question.photo_query
+  ) {
+    const cleared = await admin
+      .from("questions")
+      .update({ photo_query: null })
+      .eq("id", questionId);
+    if (cleared.error) {
+      console.warn(
+        `[questions] could not clear saved photo words for ${questionId}: ${cleared.error.message}`,
+      );
+    } else {
+      question = { ...question, photo_query: null };
+    }
+  }
+
+  return ok({ question });
 }
 
 // A point-value collision should never reach the host as a raw Postgres
