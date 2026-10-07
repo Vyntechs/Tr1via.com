@@ -92,8 +92,13 @@ export async function searchPexels(
   const capped = Math.max(1, Math.min(perPage, MAX_PER_PAGE));
 
   const client = getClient();
+  // The pexels package builds the URL as "query=" + text with NO escaping, so
+  // "Rock & Roll" would search only "Rock " and "C#" would search "C" and drop
+  // per_page. Escape it here so every caller is safe. (The package does not
+  // escape, so this cannot double-escape; plain words come out the same as
+  // before once fetch turns spaces into %20.)
   const response = await client.photos.search({
-    query: trimmedQuery,
+    query: encodeURIComponent(trimmedQuery),
     per_page: capped,
   });
 
