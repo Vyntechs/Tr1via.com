@@ -86,6 +86,7 @@ it("reports verifier rejection reasons for a completed round", async () => {
           reasons: ["verifier_wrong", "verifier_ambiguous"],
         },
       ],
+      durationMs: expect.any(Number),
     },
   ]);
 });
@@ -180,6 +181,7 @@ it("reports empty generation rounds before stopping", async () => {
       generated: 0,
       accepted: 0,
       rejected: [],
+      durationMs: expect.any(Number),
     },
   ]);
 });

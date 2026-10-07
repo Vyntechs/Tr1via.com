@@ -35,6 +35,8 @@ export interface GenerationRoundTrace {
   generated: number;
   accepted: number;
   rejected: RejectedCandidateTrace[];
+  /** Milliseconds this round took. Absent on reports saved before it existed. */
+  durationMs?: number;
 }
 
 export interface QuestionRiskTrace {
@@ -59,6 +61,9 @@ export interface QuestionGenerationReportJson {
   riskFlags: QuestionRiskTrace[];
   /** Per-model token totals, including prompt-cache reads and writes. */
   usageByModel?: Record<string, ModelUsageTotals>;
+  /** Present (true) only when the build's clock ended the refill rounds early,
+   *  so the build finished with the questions it had already certified. */
+  refillStoppedEarly?: boolean;
 }
 
 export interface QuestionGenerationReportSnapshot {
@@ -129,6 +134,8 @@ export interface QuestionGenerationReportInsert {
 export interface QuestionGenerationReportAccumulator {
   recordUsage(model: string, usage: TokenUsage): void;
   recordRound(round: GenerationRoundTrace): void;
+  /** The build's clock stopped the refill rounds before the target was met. */
+  recordRefillStoppedEarly(): void;
   recordInvalidCandidate(prompt: string, issues: string[]): void;
   recordAcceptedQuestions(questions: GeneratedQuestion[]): void;
   recordImageTargets(count: number): void;
@@ -152,6 +159,7 @@ export function createQuestionGenerationReportAccumulator(input: {
   let imageTargetCount = 0;
   let imageAttachedCount = 0;
   let acceptedQuestionCount: number | null = null;
+  let refillStoppedEarly = false;
 
   const countReason = (reason: QuestionRejectionReason) => {
     reasonCounts[reason] = (reasonCounts[reason] ?? 0) + 1;
@@ -185,6 +193,9 @@ export function createQuestionGenerationReportAccumulator(input: {
         for (const reason of rejected.reasons) countReason(reason);
       }
       if (round.generated === 0) countReason("generation_empty");
+    },
+    recordRefillStoppedEarly() {
+      refillStoppedEarly = true;
     },
     recordInvalidCandidate(prompt, _issues) {
       void _issues;
@@ -245,6 +256,7 @@ export function createQuestionGenerationReportAccumulator(input: {
           invalidCandidates,
           riskFlags,
           usageByModel,
+          ...(refillStoppedEarly ? { refillStoppedEarly: true } : {}),
         },
       };
     },

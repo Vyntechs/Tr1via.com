@@ -104,6 +104,15 @@ const GENERATION_HEARTBEAT_MS = 12_000;
 // in flight, the final save, and the "done" message.
 const PHOTO_STOP_AFTER_MS = 270_000;
 
+// The checking loop has its own, earlier cutoff. One refill round is a write
+// plus two Opus checks run one after the other, which can take a minute or
+// more when the AI is slow, and nothing can interrupt it once started. So once
+// this much time has passed since the request began we start no new refill
+// round: the build finishes with the questions already certified (each round's
+// batch is saved as it passes) and goes on to photos, instead of risking the
+// 300s cutoff in the middle of checking or the final save.
+const REFILL_STOP_AFTER_MS = 200_000;
+
 export async function POST(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -517,6 +526,7 @@ async function runGenerationJob(opts: {
     let certifiedStoredQuestions: typeof storedQuestions = [];
     let rejectedStoredPrompts: string[] = [];
     if (storedQuestions.length > 0) {
+      const recheckStartedAtMs = Date.now();
       const storedPassResults = await Promise.all(
         [0, 1].map((passIndex) =>
           verifyCandidateBatch(
@@ -567,6 +577,7 @@ async function runGenerationJob(opts: {
           prompt,
           reasons,
         })),
+        durationMs: Date.now() - recheckStartedAtMs,
       });
       await writeWorkerProgress({
         phase,
@@ -580,9 +591,18 @@ async function runGenerationJob(opts: {
       initialClean: certifiedStoredQuestions.map((item) => item.q),
       // Up to 4 rounds to top back up to 20. Almost always 1; an occasional
       // rejected question takes a cheap 2nd round. The bound caps worst-case
-      // latency if the model keeps producing borderline answers.
+      // latency if the model keeps producing borderline answers, and the
+      // REFILL_STOP_AFTER_MS clock stops new rounds when the build runs slow.
       maxRounds: 4,
       verifyPasses: 2,
+      startedAtMs: opts.startedAtMs,
+      stopRefillingAfterMs: REFILL_STOP_AFTER_MS,
+      onRefillStopped: ({ round, elapsedMs }) => {
+        console.warn(
+          `[generate] out of time; no refill round ${round} (${elapsedMs}ms elapsed)`,
+        );
+        qualityReport.recordRefillStoppedEarly();
+      },
       generate: async (avoid, need) => {
         phase = "writing";
         await writeWorkerProgress({ phase: "writing" });
@@ -628,6 +648,7 @@ async function runGenerationJob(opts: {
             prompt: item.prompt,
             reasons: item.reasons,
           })),
+          durationMs: event.durationMs,
         });
         if (certifiedCount < 20) {
           phase = "repairing";

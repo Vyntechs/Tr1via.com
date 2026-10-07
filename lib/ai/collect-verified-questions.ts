@@ -20,8 +20,15 @@
 // to be accepted, this accepts exactly the same questions as running the passes
 // side by side — it just stops paying to check a question once it has failed.
 //
-// Pure orchestration: `generate` and `verify` are injected so this is unit-
-// tested without the network. The route supplies the real implementations.
+// Clock: slow builds can run into the platform's time limit, so the caller may
+// give a start time and a cutoff. Before each round, if more time than the
+// cutoff has passed, no new round is started: the loop stops and returns the
+// questions already certified (they were also saved round by round through
+// `onAccepted`). A round already under way is never interrupted. Nothing else
+// about which questions are accepted changes.
+//
+// Pure orchestration: `generate`, `verify` and the clock are injected so this
+// is unit-tested without the network. The route supplies the real ones.
 
 import type { GeneratedQuestion } from "./generate-questions";
 import type { AnswerVerdict } from "./verify-answers";
@@ -47,6 +54,8 @@ export interface CollectVerifiedRoundEvent {
   generated: number;
   accepted: number;
   rejected: CollectVerifiedRejectedCandidate[];
+  /** How long this round took (write + checks + save), in milliseconds. */
+  durationMs: number;
 }
 
 export interface VerifiedQuestionClassification {
@@ -77,6 +86,20 @@ export interface CollectVerifiedOptions {
   onRoundComplete?: (
     event: CollectVerifiedRoundEvent,
   ) => void | Promise<void>;
+  /** Clock in milliseconds. Defaults to `Date.now`; tests pass a pretend one. */
+  now?: () => number;
+  /** When the whole build began (same clock as `now`). Needed for the cutoff. */
+  startedAtMs?: number;
+  /**
+   * Cutoff: once more than this many ms have passed since `startedAtMs`, do not
+   * start another round. Needs `startedAtMs`; with neither set there is no cutoff.
+   */
+  stopRefillingAfterMs?: number;
+  /** Called once if the cutoff ended the loop early. `round` is the one skipped. */
+  onRefillStopped?: (event: {
+    round: number;
+    elapsedMs: number;
+  }) => void | Promise<void>;
 }
 
 export async function collectVerifiedQuestions(
@@ -88,8 +111,21 @@ export async function collectVerifiedQuestions(
     opts.target,
   );
   const seenPrompts: string[] = clean.map((question) => question.prompt);
+  const now = opts.now ?? Date.now;
 
   for (let round = 0; round < opts.maxRounds && clean.length < opts.target; round++) {
+    const roundStartedAtMs = now();
+    if (
+      opts.startedAtMs !== undefined &&
+      opts.stopRefillingAfterMs !== undefined &&
+      roundStartedAtMs - opts.startedAtMs > opts.stopRefillingAfterMs
+    ) {
+      await opts.onRefillStopped?.({
+        round: round + 1,
+        elapsedMs: roundStartedAtMs - opts.startedAtMs,
+      });
+      break;
+    }
     // Refill rounds only ask for the remaining gap, so topping 19 -> 20 costs
     // one extra question + its verify passes, not a whole fresh batch.
     const need = opts.target - clean.length;
@@ -101,6 +137,7 @@ export async function collectVerifiedQuestions(
         generated: 0,
         accepted: 0,
         rejected: [],
+        durationMs: now() - roundStartedAtMs,
       });
       break;
     }
@@ -127,6 +164,7 @@ export async function collectVerifiedQuestions(
       generated: batch.length,
       accepted: accepted.length,
       rejected,
+      durationMs: now() - roundStartedAtMs,
     });
   }
 
