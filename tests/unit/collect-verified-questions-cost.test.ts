@@ -10,7 +10,7 @@ import {
 } from "@/lib/ai/collect-verified-questions";
 import type { GeneratedQuestion } from "@/lib/ai/generate-questions";
 import type { AnswerVerdict } from "@/lib/ai/verify-answers";
-import { VERIFY_CHUNK_SIZE } from "@/lib/ai/verify-answers";
+import { VERIFY_CHUNK_SIZE, verifyAnswers } from "@/lib/ai/verify-answers";
 
 function q(prompt: string, overrides: Partial<GeneratedQuestion> = {}): GeneratedQuestion {
   return {
@@ -223,9 +223,193 @@ describe("free word check runs before the paid checks", () => {
       });
 
       expect(got.map((item) => item.prompt)).toEqual(expected);
+      expect(newChecker.paidCalls()).toBeLessThanOrEqual(oldChecker.paidCalls());
       oldChecked += oldChecker.questionsChecked();
       newChecked += newChecker.questionsChecked();
     }
     expect(newChecked).toBeLessThan(oldChecked);
+  });
+});
+
+describe("the two paid passes run one after the other", () => {
+  it("sends the second pass only the questions that passed the first", async () => {
+    const order: string[] = [];
+    const sizes: number[] = [];
+    const out = await collectVerifiedQuestions({
+      target: 10,
+      maxRounds: 1,
+      generate: async () => [q("a?"), q("fails blind?"), q("c?"), q("fails second?")],
+      verify: async (questions, pass) => {
+        order.push(`start${pass}`);
+        sizes.push(questions.length);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        order.push(`end${pass}`);
+        return questions.map((item, index) => {
+          if (pass === 0 && item.prompt === "fails blind?") {
+            return { ...ok(index), markedAnswerIsCorrect: false };
+          }
+          if (pass === 1 && item.prompt === "fails second?") {
+            return { ...ok(index), ambiguous: true };
+          }
+          return ok(index);
+        });
+      },
+    });
+
+    expect(order).toEqual(["start0", "end0", "start1", "end1"]);
+    expect(sizes).toEqual([4, 3]);
+    expect(out.map((item) => item.prompt)).toEqual(["a?", "c?"]);
+  });
+
+  it("reports a question's reasons from the pass that rejected it", async () => {
+    const events: Array<{ rejected: Array<{ prompt: string; reasons: string[] }> }> = [];
+    await collectVerifiedQuestions({
+      target: 10,
+      maxRounds: 1,
+      generate: async () => [q("blind says wrong?"), q("second says unsupported blurb?"), q("clean?")],
+      verify: async (questions, pass) =>
+        questions.map((item, index) => {
+          if (pass === 0 && item.prompt.startsWith("blind")) {
+            return { ...ok(index), markedAnswerIsCorrect: false };
+          }
+          if (pass === 1 && item.prompt.startsWith("second")) {
+            return { ...ok(index), factBlurbIsCorrect: false };
+          }
+          return ok(index);
+        }),
+      onRoundComplete: (event) => {
+        events.push(event);
+      },
+    });
+
+    expect(events[0]?.rejected).toEqual([
+      { prompt: "blind says wrong?", reasons: ["verifier_wrong"] },
+      { prompt: "second says unsupported blurb?", reasons: ["fact_blurb_wrong"] },
+    ]);
+  });
+
+  it("treats a missing verdict in the second pass as a rejection, same as before", async () => {
+    const out = await collectVerifiedQuestions({
+      target: 10,
+      maxRounds: 1,
+      generate: async () => [q("kept?"), q("no second verdict?")],
+      verify: async (questions, pass) =>
+        pass === 1
+          ? [ok(0)] // nothing for local index 1
+          : questions.map((_, index) => ok(index)),
+    });
+    expect(out.map((item) => item.prompt)).toEqual(["kept?"]);
+  });
+
+  it("an error in the first pass stops the build without ever paying for the second", async () => {
+    const passesRun: number[] = [];
+    await expect(
+      collectVerifiedQuestions({
+        target: 10,
+        maxRounds: 1,
+        generate: async () => [q("a?")],
+        verify: async (_questions, pass) => {
+          passesRun.push(pass);
+          throw new Error("rate limited");
+        },
+      }),
+    ).rejects.toThrow("rate limited");
+    expect(passesRun).toEqual([0]);
+  });
+});
+
+// A stand-in for the Anthropic client that answers from a table, so the REAL
+// verifyAnswers (6 questions per call, 3 tries per call) runs and every call it
+// would have billed is counted. No network.
+function fakeAnthropic(outcomes: Map<string, Outcome[]>) {
+  const create = async (params: Record<string, unknown>) => {
+    const content = (params.messages as Array<{ content: string }>)[0]!.content;
+    const payload = JSON.parse(content.slice(content.indexOf("\n") + 1)) as Array<{
+      index: number;
+      prompt: string;
+    }>;
+    const tool = (params.tools as Array<{ input_schema: { properties: { verdicts: { items: { properties: Record<string, unknown> } } } } }>)[0]!;
+    const blind = "derivedCorrectIndex" in tool.input_schema.properties.verdicts.items.properties;
+    const pass = blind ? 0 : 1;
+    const verdicts = payload.flatMap((item) => {
+      const outcome = outcomes.get(item.prompt)![pass] ?? "ok";
+      const v = verdictFor(outcome, item.index);
+      if (!v) return [];
+      return [
+        blind
+          ? {
+              index: v.index,
+              derivedCorrectIndex: v.markedAnswerIsCorrect ? 0 : 1,
+              ambiguous: v.ambiguous,
+              answerableWithoutImage: v.answerableWithoutImage,
+              fitsRequestedTopic: v.fitsRequestedTopic,
+              basis: "mock",
+            }
+          : { ...v, basis: "mock" },
+      ];
+    });
+    return {
+      content: [{ type: "tool_use", name: "verdicts", id: "t", input: { verdicts } }],
+      usage: { input_tokens: 1, output_tokens: 1 },
+    };
+  };
+  const calls = { count: 0 };
+  return {
+    client: {
+      messages: {
+        create: async (params: Record<string, unknown>) => {
+          calls.count++;
+          return create(params);
+        },
+      },
+    },
+    calls,
+  };
+}
+
+describe("with the real checker code and a pretend Anthropic client", () => {
+  it("accepts the same questions as the old way and makes 5 paid calls instead of 8", async () => {
+    // 20 questions: 4 the word check rejects, 5 that fail the blind pass,
+    // 2 that pass blind but fail the adversarial pass, 9 clean.
+    const questions: GeneratedQuestion[] = [];
+    const outcomes = new Map<string, Outcome[]>();
+    for (let i = 0; i < 20; i++) {
+      let prompt = `Question ${i}?`;
+      let outcome: Outcome[] = ["ok", "ok"];
+      if (i < 4) prompt = `What is the most famous thing number ${i}?`;
+      else if (i < 9) outcome = ["wrong", "ok"];
+      else if (i < 11) outcome = ["ok", "ambiguous"];
+      questions.push(q(prompt));
+      outcomes.set(prompt, outcome);
+    }
+
+    // Old way: both passes on all 20 at once, word check last.
+    const oldFake = fakeAnthropic(outcomes);
+    const oldPassResults = await Promise.all([
+      verifyAnswers(questions, { client: oldFake.client as never, topic: "t", mode: "blind" }),
+      verifyAnswers(questions, { client: oldFake.client as never, topic: "t", mode: "adversarial" }),
+    ]);
+    const oldAccepted = classifyVerifiedQuestions(questions, oldPassResults).acceptedIndexes.map(
+      (index) => questions[index]!.prompt,
+    );
+
+    // New way, through the real collection loop.
+    const newFake = fakeAnthropic(outcomes);
+    const newAccepted = await collectVerifiedQuestions({
+      target: 20,
+      maxRounds: 1,
+      generate: async () => questions,
+      verify: (batch, pass) =>
+        verifyAnswers(batch, {
+          client: newFake.client as never,
+          topic: "t",
+          mode: pass === 0 ? "blind" : "adversarial",
+        }),
+    });
+
+    expect(newAccepted.map((item) => item.prompt)).toEqual(oldAccepted);
+    expect(newAccepted).toHaveLength(9);
+    expect(oldFake.calls.count).toBe(8); // 2 passes x 4 calls of up to 6
+    expect(newFake.calls.count).toBe(5); // 16 blind (3 calls) + 11 adversarial (2 calls)
   });
 });
