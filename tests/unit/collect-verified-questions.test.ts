@@ -28,12 +28,7 @@ it("keeps only correct, non-ambiguous questions", async () => {
     target: 10,
     maxRounds: 1,
     generate: async () => batch,
-    // Answers by question, since the second pass only gets the questions that
-    // passed the first.
-    verify: async (qs) =>
-      qs.map((item, i) =>
-        item.prompt === "wrong" ? wrong(i) : item.prompt === "amb" ? ambig(i) : ok(i),
-      ),
+    verify: async () => [ok(0), wrong(1), ambig(2), ok(3)],
   });
   expect(out.map((x) => x.prompt)).toEqual(["k1", "k2"]);
 });
@@ -86,7 +81,6 @@ it("reports verifier rejection reasons for a completed round", async () => {
           reasons: ["verifier_wrong", "verifier_ambiguous"],
         },
       ],
-      durationMs: expect.any(Number),
     },
   ]);
 });
@@ -181,7 +175,6 @@ it("reports empty generation rounds before stopping", async () => {
       generated: 0,
       accepted: 0,
       rejected: [],
-      durationMs: expect.any(Number),
     },
   ]);
 });

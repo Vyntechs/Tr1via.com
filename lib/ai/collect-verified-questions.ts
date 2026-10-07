@@ -15,20 +15,8 @@
 // It looks only at the question's own text, so running it first cannot change
 // which questions end up accepted.
 //
-// The paid passes then run ONE AFTER ANOTHER, and only questions that passed
-// every earlier pass go on to the next. Because a question must pass every pass
-// to be accepted, this accepts exactly the same questions as running the passes
-// side by side — it just stops paying to check a question once it has failed.
-//
-// Clock: slow builds can run into the platform's time limit, so the caller may
-// give a start time and a cutoff. Before each round, if more time than the
-// cutoff has passed, no new round is started: the loop stops and returns the
-// questions already certified (they were also saved round by round through
-// `onAccepted`). A round already under way is never interrupted. Nothing else
-// about which questions are accepted changes.
-//
-// Pure orchestration: `generate`, `verify` and the clock are injected so this
-// is unit-tested without the network. The route supplies the real ones.
+// Pure orchestration: `generate` and `verify` are injected so this is unit-
+// tested without the network. The route supplies the real implementations.
 
 import type { GeneratedQuestion } from "./generate-questions";
 import type { AnswerVerdict } from "./verify-answers";
@@ -54,8 +42,6 @@ export interface CollectVerifiedRoundEvent {
   generated: number;
   accepted: number;
   rejected: CollectVerifiedRejectedCandidate[];
-  /** How long this round took (write + checks + save), in milliseconds. */
-  durationMs: number;
 }
 
 export interface VerifiedQuestionClassification {
@@ -86,28 +72,6 @@ export interface CollectVerifiedOptions {
   onRoundComplete?: (
     event: CollectVerifiedRoundEvent,
   ) => void | Promise<void>;
-  /** Clock in milliseconds. Defaults to `Date.now`; tests pass a pretend one. */
-  now?: () => number;
-  /** When the whole build began (same clock as `now`). Needed for the cutoff. */
-  startedAtMs?: number;
-  /**
-   * Cutoff: once more than this many ms have passed since `startedAtMs`, do not
-   * start another round. Needs `startedAtMs`; with neither set there is no cutoff.
-   */
-  stopRefillingAfterMs?: number;
-  /**
-   * Second cutoff, for rounds that cannot be interrupted once started: do not
-   * start another round if the time already spent plus how long the previous
-   * round took would go past this many ms since `startedAtMs`. Needs
-   * `startedAtMs` and at least one finished round, so round 1 always runs.
-   * Works alongside `stopRefillingAfterMs`; either one can end the loop.
-   */
-  stopRefillingIfRoundWouldEndAfterMs?: number;
-  /** Called once if a cutoff ended the loop early. `round` is the one skipped. */
-  onRefillStopped?: (event: {
-    round: number;
-    elapsedMs: number;
-  }) => void | Promise<void>;
 }
 
 export async function collectVerifiedQuestions(
@@ -119,28 +83,8 @@ export async function collectVerifiedQuestions(
     opts.target,
   );
   const seenPrompts: string[] = clean.map((question) => question.prompt);
-  const now = opts.now ?? Date.now;
-  // How long the last finished round took; unknown until round 1 is done.
-  let previousRoundMs: number | undefined;
 
   for (let round = 0; round < opts.maxRounds && clean.length < opts.target; round++) {
-    const roundStartedAtMs = now();
-    const elapsedMs =
-      opts.startedAtMs === undefined ? undefined : roundStartedAtMs - opts.startedAtMs;
-    if (
-      elapsedMs !== undefined &&
-      ((opts.stopRefillingAfterMs !== undefined &&
-        elapsedMs > opts.stopRefillingAfterMs) ||
-        (opts.stopRefillingIfRoundWouldEndAfterMs !== undefined &&
-          previousRoundMs !== undefined &&
-          elapsedMs + previousRoundMs > opts.stopRefillingIfRoundWouldEndAfterMs))
-    ) {
-      await opts.onRefillStopped?.({
-        round: round + 1,
-        elapsedMs,
-      });
-      break;
-    }
     // Refill rounds only ask for the remaining gap, so topping 19 -> 20 costs
     // one extra question + its verify passes, not a whole fresh batch.
     const need = opts.target - clean.length;
@@ -152,7 +96,6 @@ export async function collectVerifiedQuestions(
         generated: 0,
         accepted: 0,
         rejected: [],
-        durationMs: now() - roundStartedAtMs,
       });
       break;
     }
@@ -173,14 +116,12 @@ export async function collectVerifiedQuestions(
     if (accepted.length > 0) {
       await opts.onAccepted?.(accepted);
     }
-    previousRoundMs = now() - roundStartedAtMs;
     await opts.onRoundComplete?.({
       round: round + 1,
       requested: need,
       generated: batch.length,
       accepted: accepted.length,
       rejected,
-      durationMs: previousRoundMs,
     });
   }
 
@@ -211,38 +152,28 @@ async function certifyBatch(
     }
   });
 
-  // Distinct verify passes, run one after another. The pass identity lets the
+  // Distinct verify passes, run concurrently. The pass identity lets the
   // caller make pass 0 blind and later passes adversarial instead of asking
-  // the same anchored model question twice. Each pass sees only the questions
-  // still standing; its verdict indexes are positions within that subset.
-  let alive = checkable;
-  const failed: Array<CollectVerifiedRejectedCandidate & { index: number }> = [];
-  for (let passIndex = 0; passIndex < passes && alive.length > 0; passIndex++) {
-    const verdicts = await verify(
-      alive.map((index) => batch[index]!),
-      passIndex,
-    );
-    const byLocalIndex = new Map(
-      verdicts.map((verdict) => [verdict.index, verdict]),
-    );
-    const standing: number[] = [];
-    alive.forEach((batchIndex, localIndex) => {
-      const reasons = rejectionReasonsForVerdicts([byLocalIndex.get(localIndex)]);
-      if (reasons.length === 0) {
-        standing.push(batchIndex);
-      } else {
-        failed.push({
-          index: batchIndex,
-          prompt: batch[batchIndex]!.prompt,
-          reasons,
-        });
-      }
-    });
-    alive = standing;
-  }
+  // the same anchored model question twice.
+  const subset = checkable.map((index) => batch[index]!);
+  const passResults =
+    subset.length === 0
+      ? []
+      : await Promise.all(
+          Array.from({ length: passes }, (_, passIndex) =>
+            verify(subset, passIndex),
+          ),
+        );
+  const inner = classifyVerifiedQuestions(subset, passResults);
   return {
-    acceptedIndexes: alive,
-    rejected: [...failed, ...blocked].sort((a, b) => a.index - b.index),
+    acceptedIndexes: inner.acceptedIndexes.map((index) => checkable[index]!),
+    rejected: [
+      ...inner.rejected.map((item) => ({
+        ...item,
+        index: checkable[item.index]!,
+      })),
+      ...blocked,
+    ].sort((a, b) => a.index - b.index),
   };
 }
 
@@ -257,9 +188,7 @@ export function classifyVerifiedQuestions(
   const rejected: VerifiedQuestionClassification["rejected"] = [];
 
   questions.forEach((question, index) => {
-    const reasons = rejectionReasonsForVerdicts(
-      verdictsByPass.map((byIndex) => byIndex.get(index)),
-    );
+    const reasons = rejectionReasonsForIndex(verdictsByPass, index);
     if (blockingRiskFlagsForQuestion(question).length > 0) {
       reasons.push("deterministic_risk");
     }
@@ -273,9 +202,9 @@ export function classifyVerifiedQuestions(
   return { acceptedIndexes, rejected };
 }
 
-/** One entry per pass the question went through; `undefined` = no verdict. */
-function rejectionReasonsForVerdicts(
-  verdicts: Array<AnswerVerdict | undefined>,
+function rejectionReasonsForIndex(
+  verdictsByPass: Array<Map<number, AnswerVerdict>>,
+  index: number,
 ): CollectVerifiedRejectionReason[] {
   let verifierWrong = false;
   let verifierAmbiguous = false;
@@ -284,7 +213,8 @@ function rejectionReasonsForVerdicts(
   let imageRequired = false;
   let categoryMismatch = false;
 
-  for (const verdict of verdicts) {
+  for (const byIndex of verdictsByPass) {
+    const verdict = byIndex.get(index);
     if (!verdict) {
       missingVerdict = true;
       continue;
