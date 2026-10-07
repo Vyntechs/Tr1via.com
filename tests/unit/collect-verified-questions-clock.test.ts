@@ -13,6 +13,7 @@ import { createQuestionGenerationReportAccumulator } from "@/lib/ai/question-gen
 import type { AnswerVerdict } from "@/lib/ai/verify-answers";
 
 const STOP_AFTER_MS = 200_000;
+const ROUND_WOULD_END_AFTER_MS = 250_000;
 
 function q(prompt: string): GeneratedQuestion {
   return {
@@ -225,5 +226,184 @@ describe("collectVerifiedQuestions time cutoff", () => {
     expect(snapshot.report.rounds.map((round) => round.durationMs)).toEqual([130_000, 130_000]);
     expect(snapshot.report.refillStoppedEarly).toBe(true);
     expect(snapshot.acceptedCount).toBe(2);
+  });
+
+  describe("second cutoff: skip a round that would probably end too late", () => {
+    it("stops when 180 s have passed and the last round took 80 s (180 + 80 > 250)", async () => {
+      const clock = { t: 10_000_000 };
+      // Round 1 starts 100 s into the build and takes 80 s: round 2 would start
+      // at 180 s, which is under the 200 s cutoff, so only the new rule fires.
+      const startedAtMs = clock.t - 100_000;
+      const fake = fakeBuild(clock, 80_000);
+      const stopped: Array<{ round: number; elapsedMs: number }> = [];
+
+      const out = await collectVerifiedQuestions({
+        target: 4,
+        maxRounds: 4,
+        now: () => clock.t,
+        startedAtMs,
+        stopRefillingAfterMs: STOP_AFTER_MS,
+        stopRefillingIfRoundWouldEndAfterMs: ROUND_WOULD_END_AFTER_MS,
+        onRefillStopped: (event) => {
+          stopped.push(event);
+        },
+        generate: fake.generate,
+        verify: fake.verify,
+        onAccepted: fake.onAccepted,
+      });
+
+      expect(fake.calls.generate).toBe(1);
+      expect(fake.calls.verify).toBe(2);
+      expect(out.map((item) => item.prompt)).toEqual(["r1-good"]);
+      expect(fake.accepted).toEqual([["r1-good"]]);
+      expect(stopped).toEqual([{ round: 2, elapsedMs: 180_000 }]);
+    });
+
+    it("keeps going when 180 s have passed but the last round took only 30 s (180 + 30 <= 250)", async () => {
+      const clock = { t: 10_000_000 };
+      const startedAtMs = clock.t - 150_000;
+      const fake = fakeBuild(clock, 30_000);
+      const stopped: unknown[] = [];
+
+      const out = await collectVerifiedQuestions({
+        target: 2,
+        maxRounds: 4,
+        now: () => clock.t,
+        startedAtMs,
+        stopRefillingAfterMs: STOP_AFTER_MS,
+        stopRefillingIfRoundWouldEndAfterMs: ROUND_WOULD_END_AFTER_MS,
+        onRefillStopped: (event) => {
+          stopped.push(event);
+        },
+        generate: fake.generate,
+        verify: fake.verify,
+        onAccepted: fake.onAccepted,
+      });
+
+      expect(fake.calls.generate).toBe(2);
+      expect(out.map((item) => item.prompt)).toEqual(["r1-good", "r2-good"]);
+      expect(stopped).toEqual([]);
+    });
+
+    it("stops past the limit, not at it", async () => {
+      for (const [previousRoundMs, shouldRefill] of [
+        [70_000, true], // 180 s elapsed + 70 s = exactly 250 s: still goes
+        [70_001, false], // one millisecond over: stops
+      ] as const) {
+        const clock = { t: 0 };
+        const fake = fakeBuild(clock, previousRoundMs);
+        await collectVerifiedQuestions({
+          target: 2,
+          maxRounds: 2,
+          now: () => clock.t,
+          // Round 2 starts at 180 s: round 1 starts at (180 s - its length).
+          startedAtMs: -(180_000 - previousRoundMs),
+          stopRefillingIfRoundWouldEndAfterMs: ROUND_WOULD_END_AFTER_MS,
+          generate: fake.generate,
+          verify: fake.verify,
+        });
+        expect(fake.calls.generate).toBe(shouldRefill ? 2 : 1);
+      }
+    });
+
+    it("never skips round 1, even when the build is already late", async () => {
+      const clock = { t: 10_000_000 };
+      const fake = fakeBuild(clock, 5_000);
+
+      const out = await collectVerifiedQuestions({
+        target: 1,
+        maxRounds: 4,
+        now: () => clock.t,
+        // 190 s in (past 180 s, under the 200 s cutoff); no round has run yet,
+        // so there is no earlier round to add and the new rule has nothing to say.
+        startedAtMs: clock.t - 190_000,
+        stopRefillingAfterMs: STOP_AFTER_MS,
+        stopRefillingIfRoundWouldEndAfterMs: ROUND_WOULD_END_AFTER_MS,
+        generate: fake.generate,
+        verify: fake.verify,
+      });
+
+      expect(fake.calls.generate).toBe(1);
+      expect(out.map((item) => item.prompt)).toEqual(["r1-good"]);
+    });
+
+    it("a fast build never stops early, and the 4-round limit still applies", async () => {
+      const clock = { t: 0 };
+      const fake = fakeBuild(clock, 10_000);
+      const stopped: unknown[] = [];
+
+      const out = await collectVerifiedQuestions({
+        target: 20,
+        maxRounds: 4,
+        now: () => clock.t,
+        startedAtMs: 0,
+        stopRefillingAfterMs: STOP_AFTER_MS,
+        stopRefillingIfRoundWouldEndAfterMs: ROUND_WOULD_END_AFTER_MS,
+        onRefillStopped: (event) => {
+          stopped.push(event);
+        },
+        generate: fake.generate,
+        verify: fake.verify,
+      });
+
+      expect(fake.calls.generate).toBe(4);
+      expect(out).toHaveLength(4);
+      expect(stopped).toEqual([]);
+    });
+
+    it("needs the build start time, like the first cutoff: without it, no stop", async () => {
+      const clock = { t: 0 };
+      const fake = fakeBuild(clock, 300_000);
+
+      const out = await collectVerifiedQuestions({
+        target: 3,
+        maxRounds: 4,
+        now: () => clock.t,
+        stopRefillingIfRoundWouldEndAfterMs: ROUND_WOULD_END_AFTER_MS,
+        generate: fake.generate,
+        verify: fake.verify,
+      });
+
+      expect(fake.calls.generate).toBe(3);
+      expect(out).toHaveLength(3);
+    });
+
+    it("the saved report records the stop", async () => {
+      const clock = { t: 10_000_000 };
+      const fake = fakeBuild(clock, 80_000);
+      const report = createQuestionGenerationReportAccumulator({
+        requestedCount: 4,
+        verifyPasses: 2,
+      });
+
+      const out = await collectVerifiedQuestions({
+        target: 4,
+        maxRounds: 4,
+        now: () => clock.t,
+        startedAtMs: clock.t - 100_000,
+        stopRefillingAfterMs: STOP_AFTER_MS,
+        stopRefillingIfRoundWouldEndAfterMs: ROUND_WOULD_END_AFTER_MS,
+        onRefillStopped: () => report.recordRefillStoppedEarly(),
+        generate: fake.generate,
+        verify: fake.verify,
+        onRoundComplete: (event) => {
+          report.recordRound({
+            round: event.round,
+            requested: event.requested,
+            generated: event.generated,
+            accepted: event.accepted,
+            rejected: event.rejected,
+            durationMs: event.durationMs,
+          });
+        },
+      });
+      report.recordAcceptedQuestions(out);
+      const snapshot = report.snapshot("partial");
+
+      expect(fake.calls.generate).toBe(1);
+      expect(snapshot.report.rounds.map((round) => round.durationMs)).toEqual([80_000]);
+      expect(snapshot.report.refillStoppedEarly).toBe(true);
+      expect(snapshot.acceptedCount).toBe(1);
+    });
   });
 });

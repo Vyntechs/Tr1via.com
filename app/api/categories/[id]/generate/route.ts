@@ -113,6 +113,14 @@ const PHOTO_STOP_AFTER_MS = 270_000;
 // 300s cutoff in the middle of checking or the final save.
 const REFILL_STOP_AFTER_MS = 200_000;
 
+// Second refill cutoff, because a round cannot be interrupted and a slow one
+// (the AI clients retry) can take over a minute. Before starting a round we add
+// how long the previous round took to the time already used; if that total
+// would go past this, we skip the round. A fast build never trips it, and round
+// 1 never does (no previous round yet). Kept under PHOTO_STOP_AFTER_MS so the
+// finish still has room for photos and the final save.
+const REFILL_STOP_IF_ROUND_WOULD_END_AFTER_MS = 250_000;
+
 export async function POST(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
@@ -592,11 +600,13 @@ async function runGenerationJob(opts: {
       // Up to 4 rounds to top back up to 20. Almost always 1; an occasional
       // rejected question takes a cheap 2nd round. The bound caps worst-case
       // latency if the model keeps producing borderline answers, and the
-      // REFILL_STOP_AFTER_MS clock stops new rounds when the build runs slow.
+      // REFILL_STOP_AFTER_MS and REFILL_STOP_IF_ROUND_WOULD_END_AFTER_MS clocks
+      // stop new rounds when the build runs slow.
       maxRounds: 4,
       verifyPasses: 2,
       startedAtMs: opts.startedAtMs,
       stopRefillingAfterMs: REFILL_STOP_AFTER_MS,
+      stopRefillingIfRoundWouldEndAfterMs: REFILL_STOP_IF_ROUND_WOULD_END_AFTER_MS,
       onRefillStopped: ({ round, elapsedMs }) => {
         console.warn(
           `[generate] out of time; no refill round ${round} (${elapsedMs}ms elapsed)`,

@@ -95,7 +95,15 @@ export interface CollectVerifiedOptions {
    * start another round. Needs `startedAtMs`; with neither set there is no cutoff.
    */
   stopRefillingAfterMs?: number;
-  /** Called once if the cutoff ended the loop early. `round` is the one skipped. */
+  /**
+   * Second cutoff, for rounds that cannot be interrupted once started: do not
+   * start another round if the time already spent plus how long the previous
+   * round took would go past this many ms since `startedAtMs`. Needs
+   * `startedAtMs` and at least one finished round, so round 1 always runs.
+   * Works alongside `stopRefillingAfterMs`; either one can end the loop.
+   */
+  stopRefillingIfRoundWouldEndAfterMs?: number;
+  /** Called once if a cutoff ended the loop early. `round` is the one skipped. */
   onRefillStopped?: (event: {
     round: number;
     elapsedMs: number;
@@ -112,17 +120,24 @@ export async function collectVerifiedQuestions(
   );
   const seenPrompts: string[] = clean.map((question) => question.prompt);
   const now = opts.now ?? Date.now;
+  // How long the last finished round took; unknown until round 1 is done.
+  let previousRoundMs: number | undefined;
 
   for (let round = 0; round < opts.maxRounds && clean.length < opts.target; round++) {
     const roundStartedAtMs = now();
+    const elapsedMs =
+      opts.startedAtMs === undefined ? undefined : roundStartedAtMs - opts.startedAtMs;
     if (
-      opts.startedAtMs !== undefined &&
-      opts.stopRefillingAfterMs !== undefined &&
-      roundStartedAtMs - opts.startedAtMs > opts.stopRefillingAfterMs
+      elapsedMs !== undefined &&
+      ((opts.stopRefillingAfterMs !== undefined &&
+        elapsedMs > opts.stopRefillingAfterMs) ||
+        (opts.stopRefillingIfRoundWouldEndAfterMs !== undefined &&
+          previousRoundMs !== undefined &&
+          elapsedMs + previousRoundMs > opts.stopRefillingIfRoundWouldEndAfterMs))
     ) {
       await opts.onRefillStopped?.({
         round: round + 1,
-        elapsedMs: roundStartedAtMs - opts.startedAtMs,
+        elapsedMs,
       });
       break;
     }
@@ -158,13 +173,14 @@ export async function collectVerifiedQuestions(
     if (accepted.length > 0) {
       await opts.onAccepted?.(accepted);
     }
+    previousRoundMs = now() - roundStartedAtMs;
     await opts.onRoundComplete?.({
       round: round + 1,
       requested: need,
       generated: batch.length,
       accepted: accepted.length,
       rejected,
-      durationMs: now() - roundStartedAtMs,
+      durationMs: previousRoundMs,
     });
   }
 
