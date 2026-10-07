@@ -1,13 +1,9 @@
 // GET /api/questions/[id]/photos
 //
-// Returns up to 12 alternative Pexels photos for the swap UI. The query
-// is re-derived from the question:
-//   * Prefer the `photoQuery` Claude originally generated (we don't have
-//     it stored, so we fall back to a 2-4 word slice of the prompt).
-//   * In practice the original `photoQuery` is embedded in the existing
-//     image_url's referer for Pexels-sourced images, but Pexels doesn't
-//     give us a clean way to recover it; the prompt-derived query is
-//     adequate for the "show me more" use case.
+// Returns up to 12 alternative Pexels photos for the swap UI. The search uses
+// the `photo_query` Claude wrote for the question and we saved with it (the
+// same words the first photo was found with). Older questions that have no
+// saved query fall back to a 3-word slice of the question text.
 //
 // Host-only. Errors:
 //   503 → Pexels rate-limited or unreachable.
@@ -42,7 +38,7 @@ export async function GET(
   }
   const { question } = owned;
 
-  const query = derivePhotoQuery(question.prompt);
+  const query = question.photo_query?.trim() || derivePhotoQuery(question.prompt);
   try {
     const photos = await searchPexels(query, 12);
     return ok({ query, photos });
@@ -60,9 +56,9 @@ export async function GET(
 }
 
 /**
- * Best-effort query derivation. Picks the first 3 meaningful words of the
- * prompt — drops stopwords and the question mark. NOT a perfect inverse
- * of Claude's original photoQuery, but adequate for "show me 12 more."
+ * Fallback for questions with no saved `photo_query` (older rows, hand-written
+ * questions). Picks the first 3 meaningful words of the prompt — drops
+ * stopwords and the question mark. Only a rough guess at what to search for.
  */
 function derivePhotoQuery(prompt: string): string {
   const STOPWORDS = new Set([
