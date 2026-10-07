@@ -2,8 +2,10 @@
 //
 // Returns up to 12 alternative Pexels photos for the swap UI. The search uses
 // the `photo_query` Claude wrote for the question and we saved with it (the
-// same words the first photo was found with). Older questions that have no
-// saved query fall back to a 3-word slice of the question text.
+// same words the first photo was found with). If that finds nothing, or the
+// question has no saved query (older rows), it tries a 3-word slice of the
+// question text, then the category topic, so the host is not left with an
+// empty list when a broader search would have found photos.
 //
 // Host-only. Errors:
 //   503 → Pexels rate-limited or unreachable.
@@ -36,12 +38,31 @@ export async function GET(
     if (owned.status === 403) return forbidden(owned.error);
     return notFound(owned.error);
   }
-  const { question } = owned;
+  const { question, category } = owned;
 
-  const query = question.photo_query?.trim() || derivePhotoQuery(question.prompt);
+  // Same order the first auto-attached photo used (saved words, then topic),
+  // with the old 3-word guess between them. Blank and repeated queries skipped.
+  const queries: string[] = [];
+  for (const candidate of [
+    question.photo_query,
+    derivePhotoQuery(question.prompt),
+    category.topic,
+  ]) {
+    const trimmed = candidate?.trim();
+    if (!trimmed) continue;
+    if (queries.some((seen) => seen.toLowerCase() === trimmed.toLowerCase())) continue;
+    queries.push(trimmed);
+  }
+
   try {
-    const photos = await searchPexels(query, 12);
-    return ok({ query, photos });
+    let query = queries[0] ?? "";
+    for (const candidate of queries) {
+      query = candidate;
+      const photos = await searchPexels(candidate, 12);
+      if (photos.length > 0) return ok({ query, photos });
+    }
+    // Nothing matched any of them: the host sees the usual "no matches" message.
+    return ok({ query, photos: [] });
   } catch (err) {
     if (err instanceof PexelsRateLimitError) {
       return NextResponse.json(

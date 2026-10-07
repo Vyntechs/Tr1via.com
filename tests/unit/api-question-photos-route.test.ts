@@ -15,10 +15,14 @@ import { GET } from "@/app/api/questions/[id]/photos/route";
 
 const QUESTION_ID = "11111111-1111-4111-8111-111111111111";
 
+const TOPIC = "Alaska Travel";
+const PHOTO = { id: 1, src: { large: "https://img.test/1.jpg" }, photographer: "Pat" };
+
 function owned(question: { prompt: string; photo_query: string | null }) {
   authMock.requireOwnedQuestion.mockResolvedValue({
     ok: true,
     question: { id: QUESTION_ID, ...question },
+    category: { id: "cat-1", topic: TOPIC },
   });
 }
 
@@ -35,6 +39,7 @@ describe("GET /api/questions/[id]/photos search words", () => {
   });
 
   it("searches with the saved photo_query, not words from the question", async () => {
+    pexelsMock.searchPexels.mockResolvedValue([PHOTO]);
     owned({
       prompt: "Which U.S. state has more tidal coastline than all the others combined?",
       photo_query: "alaska coastline aerial",
@@ -44,7 +49,74 @@ describe("GET /api/questions/[id]/photos search words", () => {
 
     expect(pexelsMock.searchPexels).toHaveBeenCalledTimes(1);
     expect(pexelsMock.searchPexels).toHaveBeenCalledWith("alaska coastline aerial", 12);
-    expect(await res.json()).toMatchObject({ query: "alaska coastline aerial" });
+    expect(await res.json()).toMatchObject({
+      query: "alaska coastline aerial",
+      photos: [PHOTO],
+    });
+  });
+
+  it("tries the first 3 question words when the saved query finds nothing", async () => {
+    owned({
+      prompt: "Which U.S. state has more tidal coastline than all the others combined?",
+      photo_query: "alaska coastline aerial",
+    });
+    pexelsMock.searchPexels
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([PHOTO]);
+
+    const res = await callGet();
+
+    expect(pexelsMock.searchPexels).toHaveBeenCalledTimes(2);
+    expect(pexelsMock.searchPexels).toHaveBeenNthCalledWith(1, "alaska coastline aerial", 12);
+    expect(pexelsMock.searchPexels).toHaveBeenNthCalledWith(2, "state has more", 12);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ query: "state has more", photos: [PHOTO] });
+  });
+
+  it("then tries the category topic, and stops at the first search that finds photos", async () => {
+    owned({
+      prompt: "Which U.S. state has more tidal coastline than all the others combined?",
+      photo_query: "alaska coastline aerial",
+    });
+    pexelsMock.searchPexels
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([PHOTO]);
+
+    const res = await callGet();
+
+    expect(pexelsMock.searchPexels).toHaveBeenCalledTimes(3);
+    expect(pexelsMock.searchPexels).toHaveBeenNthCalledWith(3, TOPIC, 12);
+    expect(await res.json()).toMatchObject({ query: TOPIC, photos: [PHOTO] });
+  });
+
+  it("answers an empty list (the usual no-matches message) when every search is empty", async () => {
+    owned({
+      prompt: "Which U.S. state has more tidal coastline than all the others combined?",
+      photo_query: "alaska coastline aerial",
+    });
+
+    const res = await callGet();
+
+    expect(pexelsMock.searchPexels).toHaveBeenCalledTimes(3);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ photos: [] });
+  });
+
+  it("does not repeat a search it already made", async () => {
+    // The topic matches the saved words apart from case and spacing at the ends.
+    authMock.requireOwnedQuestion.mockResolvedValue({
+      ok: true,
+      question: { id: QUESTION_ID, prompt: "Any question here?", photo_query: " ALASKA travel " },
+      category: { id: "cat-1", topic: "alaska TRAVEL" },
+    });
+
+    await callGet();
+
+    expect(pexelsMock.searchPexels.mock.calls.map(([query]) => query)).toEqual([
+      "ALASKA travel",
+      "Any question here",
+    ]);
   });
 
   it("trims the saved photo_query", async () => {
@@ -68,6 +140,17 @@ describe("GET /api/questions/[id]/photos search words", () => {
     await callGet();
 
     expect(pexelsMock.searchPexels).toHaveBeenCalledWith("state has more", 12);
+  });
+
+  it("still answers 503 when Pexels is rate limited on a fallback search", async () => {
+    owned({ prompt: "Any question here?", photo_query: "alaska coastline aerial" });
+    pexelsMock.searchPexels
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new pexelsMock.PexelsRateLimitError("slow down"));
+
+    const res = await callGet();
+
+    expect(res.status).toBe(503);
   });
 
   it("still answers 503 when Pexels is rate limited", async () => {
