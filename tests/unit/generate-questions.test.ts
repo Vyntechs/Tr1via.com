@@ -218,6 +218,39 @@ describe("generateQuestions", () => {
     expect(system[0]?.text.length).toBeGreaterThan(500);
   });
 
+  it("sends the same cached prefix (tools + system) on every call; only the user message changes", async () => {
+    const capture: MockClientCall[] = [];
+    const client = makeMockClient({ questions: [validQuestion()] }, capture);
+
+    await generateQuestions({
+      topic: "Zzyzx quarry history",
+      // @ts-expect-error — narrowing
+      client,
+    });
+    await generateQuestions({
+      topic: "Quuxville bakeries",
+      difficulty: "hard",
+      flavor: ["more local"],
+      count: 3,
+      avoidPrompts: ["Already shown?"],
+      // @ts-expect-error — narrowing
+      client,
+    });
+
+    expect(capture).toHaveLength(2);
+    const [first, second] = capture.map((call) => call.params);
+    // Prompt caching matches the exact bytes of tools, then system. If either
+    // differs between calls, every call is a cache miss.
+    expect(JSON.stringify(second!.tools)).toBe(JSON.stringify(first!.tools));
+    expect(JSON.stringify(second!.system)).toBe(JSON.stringify(first!.system));
+    expect(JSON.stringify(first!.messages)).not.toBe(JSON.stringify(second!.messages));
+    // The part that varies per call must not leak into the cached block.
+    const cachedText = (first!.system as Array<{ text: string }>)[0]!.text;
+    expect(cachedText).not.toContain("Zzyzx");
+    expect(cachedText).not.toContain("Quuxville");
+    expect(cachedText).not.toMatch(/\d{4}-\d{2}-\d{2}T|[0-9a-f]{8}-[0-9a-f]{4}-/);
+  });
+
   it("forces the emit_questions tool via tool_choice and ships the tool schema", async () => {
     const capture: MockClientCall[] = [];
     const client = makeMockClient(

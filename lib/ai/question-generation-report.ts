@@ -42,11 +42,23 @@ export interface QuestionRiskTrace {
   flags: QuestionRiskFlag[];
 }
 
+/** Token totals for one model across a build. `cacheReadTokens` > 0 on the
+ *  writer model is the proof that prompt caching is hitting. */
+export interface ModelUsageTotals {
+  calls: number;
+  inputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
+  outputTokens: number;
+}
+
 export interface QuestionGenerationReportJson {
   reasonCounts: Partial<Record<QuestionRejectionReason, number>>;
   rounds: GenerationRoundTrace[];
   invalidCandidates: RejectedCandidateTrace[];
   riskFlags: QuestionRiskTrace[];
+  /** Per-model token totals, including prompt-cache reads and writes. */
+  usageByModel?: Record<string, ModelUsageTotals>;
 }
 
 export interface QuestionGenerationReportSnapshot {
@@ -132,6 +144,7 @@ export function createQuestionGenerationReportAccumulator(input: {
   const invalidCandidates: RejectedCandidateTrace[] = [];
   const reasonCounts: Partial<Record<QuestionRejectionReason, number>> = {};
   const riskFlags: QuestionRiskTrace[] = [];
+  const usageByModel: Record<string, ModelUsageTotals> = {};
   let llmCalls = 0;
   let tokensIn = 0;
   let tokensOut = 0;
@@ -153,6 +166,18 @@ export function createQuestionGenerationReportAccumulator(input: {
         (usage.cache_creation_input_tokens ?? 0);
       tokensOut += usage.output_tokens ?? 0;
       estimatedCostUsd += costUsd(model, usage);
+      const totals = (usageByModel[model] ??= {
+        calls: 0,
+        inputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 0,
+      });
+      totals.calls += 1;
+      totals.inputTokens += usage.input_tokens ?? 0;
+      totals.cacheReadTokens += usage.cache_read_input_tokens ?? 0;
+      totals.cacheCreationTokens += usage.cache_creation_input_tokens ?? 0;
+      totals.outputTokens += usage.output_tokens ?? 0;
     },
     recordRound(round) {
       rounds.push(round);
@@ -219,6 +244,7 @@ export function createQuestionGenerationReportAccumulator(input: {
           rounds,
           invalidCandidates,
           riskFlags,
+          usageByModel,
         },
       };
     },

@@ -64,6 +64,59 @@ describe("question generation report accumulator", () => {
     });
   });
 
+  it("records prompt-cache reads and writes per model in the report JSON", () => {
+    const acc = createQuestionGenerationReportAccumulator({
+      requestedCount: 20,
+      verifyPasses: 2,
+    });
+
+    // Writer round 1 writes the cache; the refill round reads it.
+    acc.recordUsage("claude-sonnet-4-6", {
+      input_tokens: 400,
+      output_tokens: 3_000,
+      cache_creation_input_tokens: 2_500,
+      cache_read_input_tokens: 0,
+    });
+    acc.recordUsage("claude-sonnet-4-6", {
+      input_tokens: 450,
+      output_tokens: 600,
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 2_500,
+    });
+    acc.recordUsage("claude-opus-4-8", { input_tokens: 900, output_tokens: 700 });
+
+    const snapshot = acc.snapshot("completed");
+
+    expect(snapshot.report.usageByModel).toEqual({
+      "claude-sonnet-4-6": {
+        calls: 2,
+        inputTokens: 850,
+        cacheReadTokens: 2_500,
+        cacheCreationTokens: 2_500,
+        outputTokens: 3_600,
+      },
+      "claude-opus-4-8": {
+        calls: 1,
+        inputTokens: 900,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+        outputTokens: 700,
+      },
+    });
+    // The numbers the host already sees are untouched by the new detail.
+    expect(snapshot.llmCalls).toBe(3);
+    expect(snapshot.tokensIn).toBe(850 + 2_500 + 2_500 + 900);
+    expect(Object.keys(hostAuditSummaryFromSnapshot(snapshot)).sort()).toEqual([
+      "acceptedCount",
+      "estimatedCostUsd",
+      "generatedCount",
+      "imageAttachedCount",
+      "imageTargetCount",
+      "riskFlagCount",
+      "verifyPasses",
+    ]);
+  });
+
   it("maps a snapshot to host summary and database insert shape", () => {
     const acc = createQuestionGenerationReportAccumulator({
       requestedCount: 20,
