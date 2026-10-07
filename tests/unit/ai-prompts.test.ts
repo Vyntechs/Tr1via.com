@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 
 import { SYSTEM_PROMPT, userPromptFor } from "@/lib/ai/prompts";
+import { blockingRiskFlagsForQuestion } from "@/lib/ai/question-risk-flags";
 
 describe("SYSTEM_PROMPT", () => {
   it("is non-empty and substantially-sized — this prompt is THE quality bar", () => {
@@ -40,6 +41,43 @@ describe("SYSTEM_PROMPT", () => {
 
   it("instructs Claude to call the emit_questions tool", () => {
     expect(SYSTEM_PROMPT).toMatch(/emit_questions/);
+  });
+
+  it("tells the writer which words the free word check rejects, and they are the real ones", () => {
+    const rejectedWords = [
+      "best",
+      "greatest",
+      "favorite",
+      "famous",
+      "popular",
+      "iconic",
+      "legendary",
+      "often called",
+    ];
+    const rejectedVisualTriggers = ["sign", "image", "photo", "picture", "logo", "flag", "symbol", "map", "chart"];
+    for (const word of rejectedWords) {
+      expect(SYSTEM_PROMPT).toContain(word);
+      expect(
+        blockingRiskFlagsForQuestion({
+          prompt: `Which one is ${word} in Texas?`,
+          options: ["a", "b", "c", "d"],
+          factBlurb: "A plain fact.",
+        }),
+      ).toContain("subjective_wording");
+    }
+    for (const word of rejectedVisualTriggers) {
+      expect(SYSTEM_PROMPT).toContain(word);
+      expect(
+        blockingRiskFlagsForQuestion({
+          prompt: `Which country uses the ${word} in Texas?`,
+          options: ["a", "b", "c", "d"],
+          factBlurb: "A plain fact.",
+        }),
+      ).toContain("image_required");
+    }
+    // The prompt stays one fixed block of text so it can be cached: the new
+    // line must not carry anything that changes from call to call.
+    expect(SYSTEM_PROMPT).not.toMatch(/\$\{|\d{4}-\d{2}-\d{2}|undefined/);
   });
 
   it("forbids image-dependent Original questions and requires a checked fact blurb", () => {

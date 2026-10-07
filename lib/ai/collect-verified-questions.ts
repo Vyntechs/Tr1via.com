@@ -10,6 +10,11 @@
 // reach 0% — some trivia is inherently debatable — so the make-good adjustment
 // path remains the catch for the rare residual.
 //
+// The free word check (`blockingRiskFlagsForQuestion`) runs BEFORE any paid
+// verify call: a question it would reject anyway never costs a verify call.
+// It looks only at the question's own text, so running it first cannot change
+// which questions end up accepted.
+//
 // Pure orchestration: `generate` and `verify` are injected so this is unit-
 // tested without the network. The route supplies the real implementations.
 
@@ -96,15 +101,7 @@ export async function collectVerifiedQuestions(
     }
     for (const q of batch) seenPrompts.push(q.prompt);
 
-    // Distinct verify passes, run concurrently. The pass identity lets the
-    // caller make pass 0 blind and later passes adversarial instead of asking
-    // the same anchored model question twice.
-    const passResults = await Promise.all(
-      Array.from({ length: passes }, (_, passIndex) =>
-        opts.verify(batch, passIndex),
-      ),
-    );
-    const classification = classifyVerifiedQuestions(batch, passResults);
+    const classification = await certifyBatch(batch, passes, opts.verify);
     const accepted: GeneratedQuestion[] = [];
     for (const index of classification.acceptedIndexes) {
       if (clean.length >= opts.target) break;
@@ -129,6 +126,55 @@ export async function collectVerifiedQuestions(
   }
 
   return clean.slice(0, opts.target);
+}
+
+/**
+ * Free word check first, then the paid verify passes on what is left.
+ * Returns the same shape as `classifyVerifiedQuestions`, with every index
+ * pointing into the original `batch`.
+ */
+async function certifyBatch(
+  batch: GeneratedQuestion[],
+  passes: number,
+  verify: CollectVerifiedOptions["verify"],
+): Promise<VerifiedQuestionClassification> {
+  const checkable: number[] = [];
+  const blocked: Array<CollectVerifiedRejectedCandidate & { index: number }> = [];
+  batch.forEach((question, index) => {
+    if (blockingRiskFlagsForQuestion(question).length > 0) {
+      blocked.push({
+        index,
+        prompt: question.prompt,
+        reasons: ["deterministic_risk"],
+      });
+    } else {
+      checkable.push(index);
+    }
+  });
+
+  // Distinct verify passes, run concurrently. The pass identity lets the
+  // caller make pass 0 blind and later passes adversarial instead of asking
+  // the same anchored model question twice.
+  const subset = checkable.map((index) => batch[index]!);
+  const passResults =
+    subset.length === 0
+      ? []
+      : await Promise.all(
+          Array.from({ length: passes }, (_, passIndex) =>
+            verify(subset, passIndex),
+          ),
+        );
+  const inner = classifyVerifiedQuestions(subset, passResults);
+  return {
+    acceptedIndexes: inner.acceptedIndexes.map((index) => checkable[index]!),
+    rejected: [
+      ...inner.rejected.map((item) => ({
+        ...item,
+        index: checkable[item.index]!,
+      })),
+      ...blocked,
+    ].sort((a, b) => a.index - b.index),
+  };
 }
 
 export function classifyVerifiedQuestions(

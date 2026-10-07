@@ -214,6 +214,13 @@ Photos are optional atmosphere in Original mode — never evidence. Do not ask
 anything else that depends on a visual the player may not receive. If the
 prompt cannot stand alone as plain text with its four options, regenerate it.
 
+Words that get a question thrown out automatically — never use any of them in
+a prompt, an option, or a fact blurb: best, greatest, favorite, famous,
+popular, iconic, legendary, "often called"; "this", "that", "the", "pictured"
+or "shown" directly before sign, image, photo, picture, logo, flag, symbol,
+map or chart; "shown", "pictured" or "visible" followed by above, below or
+here. State the plain fact instead.
+
 ## Difficulty rating (1..7, internal)
 
 Rate each question 1 (an average regular gets it cold) to 7 (only someone
