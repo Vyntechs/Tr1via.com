@@ -8,7 +8,7 @@
 # Privacy Policy
 
 TR1VIA · operated by Vyntechs · 1712 Raylene Dr, Cleburne, TX 76033 · support@vyntechs.com
-Effective June 1, 2026 · Last updated October 7, 2026
+Effective June 1, 2026 · Last updated June 1, 2026
 
 This policy explains what information TR1VIA collects when you play or host live trivia at tr1via.com, why we collect it, who we share it with, how long we keep it, and what choices you have. It is written to be read, not to hide anything.
 
@@ -34,8 +34,6 @@ If you are a parent or guardian and believe a child under 13 has played and you 
 **The live game connection.** Live games use a continuous connection provided by Supabase Realtime, a US-based service we use (see "Who we share data with"). Through that connection Supabase receives your IP address and connection timing. Some connection-liveness information — for example, when you were last seen and how long the game tab was in the background — is written to your player record and is kept along with that record after the game ends.
 
 **Answers, timing, and scores.** To score fairly, TR1VIA records which answer you chose and how quickly you locked it in. This information is stored in our database and is kept after the game ends — it powers the end-of-game recap, the leaderboard, and the host's ability to review past nights. It is linked to the device identifier described below.
-
-**Timing logs.** When we are investigating lag, we may switch on timing logs for live games. They record when each tap, button press and screen update happened and how long each step took, together with the device identifier and a short device summary (browser, operating system, connection type and rough screen size, but no IP address or name). Timing logs are deleted after 45 days.
 
 **Display names.** If you enter a display name to join, it is shown to other players and to the host during the game, and it is stored with your game data and the device identifier and kept after the game ends. Please pick a nickname rather than your full real name.
 
