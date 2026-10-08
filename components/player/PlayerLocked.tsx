@@ -27,14 +27,9 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import type { StandingRow } from "@/lib/player/betweenGames";
+import { PlayerSendStatus, type PlayerLockedSendState } from "./PlayerSendStatus";
 
-/** How far this phone's answer has got. Defaults to "locked" (gallery/demo). */
-export type PlayerLockedSendState =
-  | "sending"
-  | "retrying"
-  | "locked"
-  | "unconfirmed"
-  | "rejected";
+export type { PlayerLockedSendState };
 
 export interface PlayerLockedProps {
   themeKey?: ThemeKey;
@@ -77,7 +72,7 @@ export interface PlayerLockedProps {
   roomMagicEnabled?: boolean;
 }
 
-interface PlayerLockedStandingsRowProps {
+export interface PlayerLockedStandingsRowProps {
   row: StandingRow;
   pinned?: boolean;
   accent: string;
@@ -85,7 +80,7 @@ interface PlayerLockedStandingsRowProps {
   ink: string;
 }
 
-function PlayerLockedStandingsRow({
+export function PlayerLockedStandingsRow({
   row,
   pinned,
   accent,
@@ -155,11 +150,6 @@ export function PlayerLocked({
   const septemberQuestion = themeKey === "september";
   const bannerBottomGap = septemberQuestion ? 0 : 18;
   const isLocked = sendState === "locked";
-  const showLockedAt = isLocked && msToLock !== null;
-  const secondsToLock = msToLock === null ? "" : (msToLock / 1000).toFixed(1);
-  const speedBonus = msToLock !== null && msToLock < 5000;
-  const inFlight = sendState === "sending" || sendState === "retrying";
-  const offersRetry = sendState === "rejected" && !!onRetry;
   const hasStandings = !!standings && standings.top.length > 0;
 
   // Live "X of Y locked in" — the one thing on this screen that actually moves
@@ -207,101 +197,7 @@ export function PlayerLocked({
         }}
       >
         <TimerRing accent={catColor} seconds={seconds} />
-        <div
-          // Same height in every state (the saved-time line is the tallest), so
-          // Sending → Locked in → Locked at 2.3s never moves the cards below.
-          style={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 49,
-            // With a Try again button the text and the button sit side by
-            // side (the button is a real 44 px target inside the reserved
-            // height), so this state never grows the strip.
-            ...(offersRetry ? { display: "flex", alignItems: "center", gap: 6 } : null),
-          }}
-          role="status"
-          aria-live="polite"
-          data-testid="player-send-status"
-          data-send-state={sendState}
-        >
-          {showLockedAt ? (
-            <>
-              <Eyebrow color={t.inkMid} size={9}>LOCKED AT</Eyebrow>
-              <div style={{ marginTop: 2, fontSize: 14, color: t.ink, fontWeight: 600 }}>
-                <Numeric size={15} color={catColor}>{secondsToLock}s</Numeric>
-                <span style={{ color: t.inkMid, fontWeight: 400, marginLeft: 6, fontSize: 12 }}>
-                  {speedBonus ? "· speed bonus locked in" : "· locked in"}
-                </span>
-              </div>
-            </>
-          ) : (
-            <div style={{ flex: 1, minWidth: 0 }}>
-              {/* No label above the refusal: the line says it all, and the
-                  space is what lets it wrap to two lines beside the button
-                  on a 320 px phone without growing the strip. */}
-              {!offersRetry && (
-                <Eyebrow color={t.inkMid} size={9}>
-                  {sendState === "unconfirmed" ? "TIME\u2019S UP" : "YOUR ANSWER"}
-                </Eyebrow>
-              )}
-              <div
-                style={{
-                  marginTop: offersRetry ? 0 : 2,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  fontSize: 14,
-                  lineHeight: 1.2,
-                  color: sendState === "sending" ? t.inkMid : t.ink,
-                  fontWeight: 600,
-                }}
-              >
-                {(inFlight || isLocked) && (
-                  <span
-                    aria-hidden="true"
-                    data-testid="player-send-dot"
-                    style={{
-                      flexShrink: 0,
-                      width: 6,
-                      height: 6,
-                      borderRadius: 99,
-                      background: isLocked ? catColor : t.inkMid,
-                      animation: inFlight ? pulseAnimation : "none",
-                    }}
-                  />
-                )}
-                <span>
-                  {sendState === "sending" && "Sending\u2026"}
-                  {sendState === "retrying" && "Didn\u2019t go through \u2014 retrying"}
-                  {isLocked && "Locked in"}
-                  {sendState === "unconfirmed" && "We couldn\u2019t confirm your answer"}
-                  {sendState === "rejected" && "Couldn\u2019t send your answer"}
-                </span>
-              </div>
-            </div>
-          )}
-          {offersRetry && !showLockedAt && (
-            <button
-              type="button"
-              onClick={onRetry}
-              style={{
-                flexShrink: 0,
-                minHeight: 44,
-                padding: "0 8px",
-                background: "none",
-                border: "none",
-                color: t.ink,
-                font: "inherit",
-                fontSize: 14,
-                fontWeight: 700,
-                textDecoration: "underline",
-                cursor: "pointer",
-              }}
-            >
-              Try again
-            </button>
-          )}
-        </div>
+        <PlayerSendStatus sendState={sendState} msToLock={msToLock} accent={catColor} onRetry={onRetry} />
         {hasPhoneLayer(themeKey) && sendState !== "rejected" ? (
           // (Hidden once the answer is refused: it can no longer light, and
           // its width is what the Try again button needs on a small phone.)
@@ -363,7 +259,7 @@ export function PlayerLocked({
                   ? "idle"
                   : "locked-other"
             }
-            onTap={sendState === "rejected" && onPick ? () => onPick(slot) : undefined}
+            onTap={sendState === "rejected" && onPick && slot !== chosenSlot ? () => onPick(slot) : undefined}
             focusOnMount={slot === chosenSlot}
             data-testid={`player-locked-answer-${slot}`}
             // Continuation of the tap: the cards are already there, so they

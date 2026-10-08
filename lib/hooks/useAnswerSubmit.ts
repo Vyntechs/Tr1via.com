@@ -7,6 +7,9 @@
 //   pending  → 5xx / network / slow  → retrying    (keeps going; backoff, no cap)
 //   retrying → the same                → sent
 //   *        → other 4xx             → failed      (reason "rejected": usually a bug)
+//                                      408 / 425 / 429 are network-ish: they retry.
+//   failed (rejected) also stops every other request still out, so nothing can
+//   flip a refusal back to "retrying" or re-send the refused answer.
 //   *        → the answer window ends→ failed      (reason "closed": never confirmed)
 //   failed   → retry()               → pending     (manual re-attempt from the UI)
 //   failed   → submit(otherSlot)     → pending     (change of mind after a refusal)
@@ -131,16 +134,25 @@ export function clearPendingAnswer(): void {
 
 function isTerminalClientError(status: number): boolean {
   // 4xx that we won't retry. 409 is "already answered" which is success-equivalent.
-  return status >= 400 && status < 500 && status !== 409 && status !== 429;
+  // 408 (request timeout), 425 (too early) and 429 (too many requests) are
+  // what a slow venue proxy or a busy server says about the NETWORK, not about
+  // the answer, so they retry exactly like a dropped connection.
+  return status >= 400 && status < 500 && status !== 409 && status !== 408 && status !== 425 && status !== 429;
 }
 
-type Verdict = "sent" | "retry" | "rejected";
+/** "sent" = this very request was saved. "already" = the server said it already
+ *  holds an answer (maybe another slot of ours). */
+type Verdict = "sent" | "already" | "retry" | "rejected";
 
 /** Reads a reply body as JSON, or null when it is empty or not JSON. */
-async function readBody(res: Response): Promise<{ code?: unknown; error?: unknown } | null> {
+async function readBody(
+  res: Response,
+): Promise<{ code?: unknown; error?: unknown; confirmedSlot?: unknown } | null> {
   try {
     const parsed = JSON.parse(await res.text()) as unknown;
-    return parsed && typeof parsed === "object" ? (parsed as { code?: unknown; error?: unknown }) : null;
+    return parsed && typeof parsed === "object"
+      ? (parsed as { code?: unknown; error?: unknown; confirmedSlot?: unknown })
+      : null;
   } catch {
     return null;
   }
@@ -155,23 +167,31 @@ async function readBody(res: Response): Promise<{ code?: unknown; error?: unknow
  * again. If the answer was in fact saved, the next try gets 409 "already
  * answered" (or the saved row arrives) and locks in truthfully.
  */
-async function judgeResponse(res: Response): Promise<Verdict> {
-  if (res.status === 204) return "sent";
+async function judgeResponse(res: Response): Promise<{ verdict: Verdict; confirmedSlot?: 1 | 2 | 3 | 4 }> {
+  if (res.status === 204) return { verdict: "sent" };
   if (res.status === 409) {
     // 409 is "already answered" (the server has it: success) but the same
     // status also means "question is not live" and the like. Only the first
     // may say "Locked in". A 409 with no readable reason is unconfirmed.
     const reason = (await readBody(res))?.error;
-    if (typeof reason !== "string" || reason === "") return "retry";
-    return /already answered/i.test(reason) ? "sent" : "rejected";
+    if (typeof reason !== "string" || reason === "") return { verdict: "retry" };
+    return { verdict: /already answered/i.test(reason) ? "already" : "rejected" };
   }
   if (res.status >= 200 && res.status < 300) {
-    const code = (await readBody(res))?.code;
-    if (code === "confirmed") return "sent";
-    if (typeof code === "string" && code !== "retry_later") return "rejected";
-    return "retry";
+    const body = await readBody(res);
+    const code = body?.code;
+    if (code === "confirmed") {
+      // The server may name the card it holds; trust that over our own tap.
+      const slot = body?.confirmedSlot;
+      return {
+        verdict: "sent",
+        confirmedSlot: slot === 1 || slot === 2 || slot === 3 || slot === 4 ? slot : undefined,
+      };
+    }
+    if (typeof code === "string" && code !== "retry_later") return { verdict: "rejected" };
+    return { verdict: "retry" };
   }
-  return isTerminalClientError(res.status) ? "rejected" : "retry";
+  return { verdict: isTerminalClientError(res.status) ? "rejected" : "retry" };
 }
 
 export function useAnswerSubmit({
@@ -196,6 +216,13 @@ export function useAnswerSubmit({
   // a second tap in the same frame can never start a second send.
   const busyRef = useRef(false);
   const sentRef = useRef(false);
+  // The answer was refused or the window closed: nothing may flip it back to
+  // "retrying" or start another send until the player acts (Try again / pick).
+  const failedRef = useRef(false);
+  // Every slot this question has had a request for. A request we gave up on
+  // may still have been saved, so a bare "already answered" only tells us which
+  // card the server holds when exactly one slot was ever sent.
+  const sentSlotsRef = useRef<Set<number>>(new Set());
   const inFlightRef = useRef<Set<AbortController>>(new Set());
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const acceptingRef = useRef(accepting);
@@ -239,15 +266,23 @@ export function useAnswerSubmit({
   }, []);
 
   const settleSent = useCallback(
-    (gen: number, slot: number, tries: number) => {
+    (gen: number, slot: number, tries: number, how: "own" | "already", confirmedSlot?: 1 | 2 | 3 | 4) => {
       if (gen !== genRef.current || sentRef.current) return;
       sentRef.current = true;
       busyRef.current = true;
+      failedRef.current = false;
       stopAll();
       reportTap(slot, tries, true);
       clearPendingAnswer();
       setFailure(null);
       setConfirmedAt(Date.now());
+      // Show the card the server really holds. A 204 / "confirmed" is this
+      // request's own slot. "Already answered" is only that slot when it is the
+      // only one we ever sent; otherwise no card is marked until the saved row
+      // arrives and says which.
+      if (how === "own") setChosenSlot(confirmedSlot ?? (slot as 1 | 2 | 3 | 4));
+      else if (sentSlotsRef.current.size === 1) setChosenSlot(slot as 1 | 2 | 3 | 4);
+      else setChosenSlot(null);
       setStatus("sent");
     },
     [reportTap, stopAll],
@@ -257,10 +292,15 @@ export function useAnswerSubmit({
     (gen: number, slot: number, tries: number, reason: AnswerSubmitFailure, keepStoredAnswer: boolean) => {
       if (gen !== genRef.current || sentRef.current) return;
       busyRef.current = false;
+      failedRef.current = true;
       if (retryTimerRef.current) {
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
+      // A refusal ends this try for good: any other request still out must not
+      // later flip the line back to "retrying" or re-send the refused answer.
+      // (A window that closed leaves them alone: one may still land and lock in.)
+      if (reason === "rejected" && !keepStoredAnswer) stopAll();
       reportTap(slot, tries, false);
       // Out of window or refused: nothing useful to resume later. Out of
       // attempts (explicit maxAttempts): leave it so a refresh can re-fire.
@@ -268,7 +308,7 @@ export function useAnswerSubmit({
       setFailure(reason);
       setStatus("failed");
     },
-    [reportTap],
+    [reportTap, stopAll],
   );
 
   const runAttempt = useCallback(
@@ -300,7 +340,8 @@ export function useAnswerSubmit({
         flying.delete(ctrl);
       };
       const followUp = (quiet: boolean) => {
-        if (followed || gen !== genRef.current || sentRef.current) return;
+        if (followed || ctrl.signal.aborted || failedRef.current) return;
+        if (gen !== genRef.current || sentRef.current) return;
         if (!acceptingRef.current) {
           followed = true;
           settleFailed(gen, slot, tries, "closed", false);
@@ -353,11 +394,13 @@ export function useAnswerSubmit({
             body: JSON.stringify({ questionId, slotChosen: slot, scramble: optsRef.current.scramble }),
           });
           if (tapLogRef.current) tapLogRef.current.last = res.status;
-          if (gen !== genRef.current) return finish();
-          const verdict = await judgeResponse(res);
+          if (gen !== genRef.current || ctrl.signal.aborted) return finish();
+          const { verdict, confirmedSlot } = await judgeResponse(res);
           finish();
-          if (gen !== genRef.current) return;
-          if (verdict === "sent") settleSent(gen, slot, tries);
+          // Gave up on (answered elsewhere, refused, a new pick): not ours any more.
+          if (gen !== genRef.current || ctrl.signal.aborted) return;
+          if (verdict === "sent") settleSent(gen, slot, tries, "own", confirmedSlot);
+          else if (verdict === "already") settleSent(gen, slot, tries, "already", undefined);
           else if (verdict === "rejected") settleFailed(gen, slot, tries, "rejected", false);
           else followUp(false);
         } catch {
@@ -379,6 +422,8 @@ export function useAnswerSubmit({
     lastSlotRef.current = null;
     busyRef.current = false;
     sentRef.current = false;
+    failedRef.current = false;
+    sentSlotsRef.current = new Set();
     tapLogRef.current = null;
     setStatus("idle");
     setConfirmedAt(null);
@@ -395,6 +440,7 @@ export function useAnswerSubmit({
         if (acceptingRef.current && !serverHasAnswerRef.current) {
           busyRef.current = true;
           lastSlotRef.current = pending.slotChosen;
+          sentSlotsRef.current.add(pending.slotChosen);
           tapLogRef.current = { at: Date.now(), last: null, resumed: true }; // diagnostic log only
           setChosenSlot(pending.slotChosen);
           setStatus("pending");
@@ -447,6 +493,8 @@ export function useAnswerSubmit({
     hadServerAnswerRef.current = false;
     sentRef.current = false;
     busyRef.current = false;
+    failedRef.current = false;
+    sentSlotsRef.current = new Set();
     lastSlotRef.current = null;
     setChosenSlot(null);
     setFailure(null);
@@ -456,8 +504,13 @@ export function useAnswerSubmit({
 
   const begin = useCallback(
     (slot: 1 | 2 | 3 | 4) => {
+      // A new try (Try again, or a different card after a refusal) replaces
+      // whatever is still out from the last one.
+      stopAll();
       busyRef.current = true;
       sentRef.current = false;
+      failedRef.current = false;
+      sentSlotsRef.current.add(slot);
       tapLogRef.current = { at: Date.now(), last: null };
       lastSlotRef.current = slot;
       savePendingAnswer({ questionId, slotChosen: slot });
@@ -467,7 +520,7 @@ export function useAnswerSubmit({
       setStatus("pending");
       runAttempt(slot, 0);
     },
-    [runAttempt, questionId],
+    [runAttempt, questionId, stopAll],
   );
 
   const submit = useCallback(

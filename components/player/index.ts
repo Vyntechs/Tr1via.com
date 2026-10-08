@@ -5,7 +5,7 @@ export type { PlayerJoinProps } from "./PlayerJoin";
 export { PlayerLobby } from "./PlayerLobby";
 export type { PlayerLobbyProps } from "./PlayerLobby";
 export { PlayerQuestion } from "./PlayerQuestion";
-export type { PlayerQuestionProps, PlayerQuestionSlot } from "./PlayerQuestion";
+export type { PlayerQuestionProps, PlayerQuestionSlot, PlayerQuestionPick } from "./PlayerQuestion";
 export { RoomMagicReactionControls } from "./RoomMagicReactionControls";
 export type { RoomMagicReactionControlsProps } from "./RoomMagicReactionControls";
 export { PlayerLocked } from "./PlayerLocked";

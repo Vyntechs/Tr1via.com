@@ -51,7 +51,6 @@ import {
   PlayerLockInBolt,
   PlayerQuestion,
   RoomMagicReactionControls,
-  PlayerLocked,
   PlayerRevealCorrect,
   PlayerRevealCorrectSequence,
   PlayerRevealStandingsPanel,
@@ -914,7 +913,6 @@ function LiveQuestionView({
   themeKey,
   serverScramble,
   standings,
-  totalPlayers,
   roomMagicEnabled,
 }: {
   question: QuestionRow;
@@ -1038,21 +1036,11 @@ function LiveQuestionView({
     ? ((shownScramble.indexOf(myAnswer.chosen_index) + 1) as 1 | 2 | 3 | 4)
     : tappedSlot;
 
-  if (chosenSlot == null) {
-    return (
-      <PlayerQuestion
-        seconds={displaySeconds}
-        category={category.name}
-        value={question.point_value ?? 100}
-        options={optionsInScrambleOrder}
-        questionNumber={questionNumber}
-        prompt={question.prompt}
-        imageUrl={question.image_url}
-        onTap={handleTap}
-        disabled={hasExpired}
-      />
-    );
-  }
+  // The tap changes this one screen in place (same component, same cards,
+  // same question text): the chosen card highlights, the rest dim, and the
+  // status strip says Sending… and then Locked in. Nothing is swapped for a
+  // different screen, so nothing jumps.
+  const hasPicked = myAnswer != null || submitStatus !== "idle";
 
   const sendState: PlayerLockedSendState = myAnswer
     ? "locked"
@@ -1067,21 +1055,30 @@ function LiveQuestionView({
           : "sending";
 
   return (
-    <PlayerLocked
+    <PlayerQuestion
+      seconds={displaySeconds}
       category={category.name}
       value={question.point_value ?? 100}
       options={optionsInScrambleOrder}
-      chosenSlot={chosenSlot}
-      seconds={displaySeconds}
-      // Only the saved row knows the real time; before it arrives no time is claimed.
-      msToLock={myAnswer ? myAnswer.ms_to_lock : null}
-      sendState={sendState}
-      onRetry={retry}
-      onPick={handleTap}
       questionNumber={questionNumber}
-      totalPlayers={totalPlayers}
-      standings={standings}
+      prompt={question.prompt}
+      imageUrl={question.image_url}
+      onTap={handleTap}
+      disabled={hasExpired}
       roomMagicEnabled={roomMagicEnabled}
+      pick={
+        hasPicked
+          ? {
+              chosenSlot,
+              sendState,
+              // Only the saved row knows the real time; before it arrives no time is claimed.
+              msToLock: myAnswer ? myAnswer.ms_to_lock : null,
+              onRetry: retry,
+              onPick: handleTap,
+              standings,
+            }
+          : undefined
+      }
     />
   );
 }

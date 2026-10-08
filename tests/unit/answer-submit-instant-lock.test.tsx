@@ -410,4 +410,141 @@ describe("useAnswerSubmit — instant lock, sending, retrying", () => {
     act(() => result.current.submit(4));
     expect(calls).toHaveLength(1);
   });
+
+  // ── Round 2 ────────────────────────────────────────────────────────────
+
+  /** First send goes quiet (6 s), the retry of the same slot is out too. */
+  async function slowFirstSendThenRetry(result: { current: ReturnType<typeof useAnswerSubmit> }, slot: 1 | 2 | 3 | 4) {
+    act(() => result.current.submit(slot));
+    await advance(6000); // first request: no reply yet -> "retrying"
+    await advance(200); // the retry's pause is over: a second request is out
+  }
+
+  it("slow slot 1, a refused retry, then slot 3: the late slot-1 reply cannot make card 3 say Locked in", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    await slowFirstSendThenRetry(result, 1);
+    expect(calls).toHaveLength(2);
+
+    await act(async () => calls[1].resolve(reply(403))); // a venue proxy refuses the retry
+    expect(result.current.status).toBe("failed");
+    expect(calls[0].signal?.aborted).toBe(true); // the refusal ends the old request too
+
+    act(() => result.current.submit(3));
+    expect(result.current.chosenSlot).toBe(3);
+    expect(result.current.status).toBe("pending");
+    expect(calls[0].signal?.aborted).toBe(true);
+
+    // The slow slot-1 request finally answers. It is no longer ours: nothing changes.
+    await act(async () => calls[0].resolve(reply(204)));
+    expect(result.current.status).toBe("pending");
+    expect(result.current.chosenSlot).toBe(3);
+    expect(result.current.confirmedAt).toBeNull();
+
+    // Only slot 3's own confirm locks in, on card 3.
+    await act(async () => calls[2].resolve(reply(204)));
+    expect(result.current.status).toBe("sent");
+    expect(result.current.chosenSlot).toBe(3);
+  });
+
+  it("choosing a different card while a send is still out stops the old send", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    await slowFirstSendThenRetry(result, 1);
+    await act(async () => calls[1].resolve(reply(400, { error: "bad" })));
+    act(() => result.current.submit(4));
+    expect(calls[0].signal?.aborted).toBe(true); // the old, still-quiet request
+    expect(calls[2].signal?.aborted).toBe(false); // the new pick's own send
+  });
+
+  it("'Locked in' marks the card the server confirmed, even if that is not the one tapped", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    act(() => result.current.submit(2));
+    await act(async () => calls[0].resolve(reply(200, { code: "confirmed", confirmedSlot: 4 })));
+    expect(result.current.status).toBe("sent");
+    expect(result.current.chosenSlot).toBe(4);
+  });
+
+  it("a bare 'already answered' after two different cards were sent marks no card until the saved row says which", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    act(() => result.current.submit(1));
+    await act(async () => calls[0].resolve(reply(403)));
+    act(() => result.current.submit(3));
+    await act(async () => calls[1].resolve(reply(409, { error: "already answered" })));
+    expect(result.current.status).toBe("sent");
+    expect(result.current.chosenSlot).toBeNull();
+  });
+
+  it("a bare 'already answered' for the only card ever sent keeps that card", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    act(() => result.current.submit(2));
+    await act(async () => calls[0].reject(new TypeError("Failed to fetch"))); // reply lost after the server saved
+    await advance(200);
+    await act(async () => calls[1].resolve(reply(409, { error: "already answered" })));
+    expect(result.current.status).toBe("sent");
+    expect(result.current.chosenSlot).toBe(2);
+  });
+
+  for (const code of [408, 425, 429]) {
+    it(`a ${code} reply retries like a dropped connection (never "Try again" after one send)`, async () => {
+      const { calls } = openFetch();
+      const { result } = renderHook(() => useAnswerSubmit(OPTS));
+      act(() => result.current.submit(2));
+      await act(async () => calls[0].resolve(reply(code)));
+      expect(result.current.status).toBe("retrying");
+      expect(result.current.failure).toBeNull();
+      await advance(200);
+      expect(calls).toHaveLength(2);
+      await act(async () => calls[1].resolve(reply(204)));
+      expect(result.current.status).toBe("sent");
+    });
+  }
+
+  it("other 4xx replies (400, 401, 403, 404) are still final", async () => {
+    for (const code of [400, 401, 403, 404]) {
+      window.localStorage.clear();
+      const { calls } = openFetch();
+      const { result, unmount } = renderHook(() => useAnswerSubmit({ ...OPTS, questionId: `q-${code}` }));
+      act(() => result.current.submit(2));
+      await act(async () => calls[0].resolve(reply(code)));
+      expect(result.current.status).toBe("failed");
+      expect(result.current.failure).toBe("rejected");
+      unmount();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("a refusal stays a refusal: a lingering request going quiet later does not flip it back to retrying", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    await slowFirstSendThenRetry(result, 2);
+    expect(calls).toHaveLength(2);
+
+    // The OLD request is refused while the newer one is still out.
+    await act(async () => calls[0].resolve(reply(403)));
+    expect(result.current.status).toBe("failed");
+    expect(result.current.failure).toBe("rejected");
+
+    await advance(20_000); // long enough for any quiet timer / backoff to fire
+    expect(result.current.status).toBe("failed");
+    expect(result.current.failure).toBe("rejected");
+    expect(calls).toHaveLength(2); // the refused answer was not sent again
+    expect(calls[1].signal?.aborted).toBe(true);
+  });
+
+  it("after a refusal the player can still send again, and that send works normally", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    await slowFirstSendThenRetry(result, 2);
+    await act(async () => calls[0].resolve(reply(403)));
+    act(() => result.current.retry());
+    expect(result.current.status).toBe("pending");
+    expect(calls).toHaveLength(3);
+    await act(async () => calls[2].resolve(reply(204)));
+    expect(result.current.status).toBe("sent");
+    expect(result.current.chosenSlot).toBe(2);
+  });
 });

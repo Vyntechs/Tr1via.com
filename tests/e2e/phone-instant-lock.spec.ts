@@ -2,10 +2,14 @@
 // says "Sending…", then "Locked in" from the send reply itself; a slow or
 // failing network keeps the choice on screen and says so plainly.
 //
+// The tap changes the SAME screen in place: the question text and the four
+// cards must not move at any frame from the tap to "Locked in" (measured on
+// every animation frame, in the page, at 320 and 390 px wide).
+//
 // The network is simulated at the browser (page.route on /api/answers); the
 // server, its rules and its routes are the real local ones, untouched.
-// Screenshots go to PHONELOCK_SHOTS (default: the research folder) so the look
-// can be judged on every theme.
+// Screenshots go to PHONELOCK_SHOTS (default: test-results/) so the look can
+// be judged on every theme.
 
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import path from "node:path";
@@ -67,75 +71,193 @@ async function phoneOnQuestion(
 
 const status = (page: Page) => page.getByTestId(TID.playerLocked.status);
 
-/** Top/height of each answer card and of the status strip, to prove nothing moves. */
+/** Top/height of the question text, the strip and each answer card. */
 async function layoutOf(page: Page) {
-  return page.evaluate(() => {
-    const root = document.querySelector('[data-testid="player-locked"]')!;
-    const cards = Array.from(root.querySelectorAll<HTMLElement>("div, button")).filter(
-      (el) => el.style.minHeight === "64px",
-    );
-    const strip = document.querySelector('[data-testid="player-send-status"]')!.parentElement!;
-    const r = (el: Element) => {
+  return page.evaluate(() => (window as unknown as { __layout: () => Layout }).__layout());
+}
+
+interface Box {
+  top: number;
+  height: number;
+}
+interface Layout {
+  prompt: Box | null;
+  strip: Box;
+  cards: Box[];
+}
+
+/**
+ * Puts a probe in the page (not driven by Playwright, so a busy machine cannot
+ * skew it): `__layout()` reads the boxes now; `__startSample()` records, on
+ * every animation frame from the next click on, how far anything moved from its
+ * place before the tap, how soon after the click the sending state was up, and
+ * whether the very same elements are still there.
+ */
+async function installProbe(page: Page) {
+  await page.evaluate(() => {
+    type W = Window & Record<string, unknown>;
+    const w = window as unknown as W;
+    const rect = (el: Element) => {
       const b = el.getBoundingClientRect();
-      return { top: Math.round(b.top * 10) / 10, height: Math.round(b.height * 10) / 10 };
+      return { top: Math.round(b.top * 100) / 100, height: Math.round(b.height * 100) / 100 };
     };
-    return { strip: r(strip), cards: cards.map(r) };
+    const cardsNow = () =>
+      Array.from(document.querySelectorAll<HTMLElement>('[data-testid^="player-answer-"], [data-testid^="player-locked-answer-"]'));
+    const promptNow = () => document.querySelector<HTMLElement>('[data-testid="player-question-prompt"]');
+    w.__layout = () => {
+      const cards = cardsNow();
+      const strip = cards[0]?.parentElement?.previousElementSibling;
+      return {
+        prompt: promptNow() ? rect(promptNow()!) : null,
+        strip: strip ? rect(strip) : null,
+        cards: cards.map(rect),
+      };
+    };
+    w.__startSample = () => {
+      const base = (w.__layout as () => { prompt: { top: number; height: number } | null; strip: { top: number; height: number }; cards: { top: number; height: number }[] })();
+      const nodes0 = [promptNow(), ...cardsNow()];
+      const state = { frames: 0, maxMove: 0, maxResize: 0, lockedMs: -1 as number, t0: -1 as number, stopped: false };
+      const compare = () => {
+        const now = (w.__layout as typeof w.__layout & (() => typeof base))();
+        const pairs: Array<[{ top: number; height: number } | null, { top: number; height: number } | null]> = [
+          [base.prompt, now.prompt],
+          [base.strip, now.strip],
+          ...base.cards.map((c, i) => [c, now.cards[i] ?? null] as [typeof c, typeof c | null]),
+        ];
+        for (const [a, b] of pairs) {
+          if (!a) continue;
+          if (!b) {
+            state.maxMove = Infinity; // an element that was there is gone
+            continue;
+          }
+          state.maxMove = Math.max(state.maxMove, Math.abs(a.top - b.top));
+          state.maxResize = Math.max(state.maxResize, Math.abs(a.height - b.height));
+        }
+        if (now.cards.length !== base.cards.length) state.maxMove = Infinity;
+      };
+      document.addEventListener(
+        "click",
+        () => {
+          if (state.t0 < 0) state.t0 = performance.now();
+        },
+        { capture: true },
+      );
+      new MutationObserver(() => {
+        if (state.t0 >= 0 && state.lockedMs < 0 && document.querySelector('[data-send-state]')) {
+          state.lockedMs = performance.now() - state.t0;
+        }
+      }).observe(document.body, { subtree: true, childList: true, attributes: true });
+      const tick = () => {
+        if (state.stopped) return;
+        state.frames += 1;
+        compare();
+        requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+      w.__stopSample = () => {
+        state.stopped = true;
+        compare();
+        const nodes1 = [promptNow(), ...cardsNow()];
+        return {
+          frames: state.frames,
+          maxMove: state.maxMove,
+          maxResize: state.maxResize,
+          lockedMs: state.lockedMs,
+          sameNodes: nodes0.length === nodes1.length && nodes0.every((n, i) => n === nodes1[i] && n!.isConnected),
+        };
+      };
+    };
   });
+}
+
+type Sample = { frames: number; maxMove: number; maxResize: number; lockedMs: number; sameNodes: boolean };
+const stopSample = (page: Page) => page.evaluate(() => (window as unknown as { __stopSample: () => Sample }).__stopSample());
+
+/** Let the cards' entrance animation finish so the "before" boxes are the real ones. */
+const settleEntrance = (page: Page) => page.waitForTimeout(1200);
+
+/**
+ * The core promise. Tap with the reply held: the question text, the strip and
+ * the four cards stay exactly where they were on every frame (tap -> Sending
+ * -> Locked in), they are the same elements, the chosen card is highlighted and
+ * the others dimmed, and the page's own click-to-sending time is quick.
+ */
+async function tapKeepsEverythingInPlace(
+  browser: import("@playwright/test").Browser,
+  themeKey: string,
+  viewport: { width: number; height: number },
+  shotPrefix: string,
+) {
+  const { page, context } = await phoneOnQuestion(browser, themeKey, { viewport });
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/answers", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await settleEntrance(page);
+  await installProbe(page);
+  const before = await layoutOf(page);
+  expect(before.cards).toHaveLength(4); // never compare empty lists
+  expect(before.prompt).not.toBeNull();
+  await page.evaluate(() => (window as unknown as { __startSample: () => void }).__startSample());
+
+  await page.getByTestId(TID.playerQuestion.answer(2)).tap();
+  // Locked on screen while the reply is still held: this is the logical claim.
+  await expect(status(page)).toHaveAttribute("data-send-state", "sending", { timeout: 5000 });
+  await expect(status(page)).toContainText("Sending");
+  await expect(page.getByTestId(TID.playerLocked.root)).toBeVisible();
+  // The question text is still on screen under the finger.
+  await expect(page.getByTestId("player-question-prompt")).toBeVisible();
+  const justAfter = await layoutOf(page);
+  expect(justAfter).toEqual(before);
+
+  await page.waitForTimeout(700); // let the highlight / dimming finish
+  await page.screenshot({ path: path.join(SHOTS, `${shotPrefix}-1-sending.png`) });
+  // Chosen card clear, the others calmly dimmed.
+  const opacities = await page.evaluate(() =>
+    [1, 2, 3, 4].map((n) =>
+      Number(getComputedStyle(document.querySelector(`[data-testid="player-locked-answer-${n}"]`)!).opacity),
+    ),
+  );
+  expect(opacities[1]).toBe(1);
+  for (const n of [0, 2, 3]) expect(opacities[n]!).toBeLessThan(0.5);
+
+  release();
+  await expect(status(page)).toHaveAttribute("data-send-state", "locked", { timeout: 10_000 });
+  await expect(status(page)).toContainText(/locked/i);
+  await page.waitForTimeout(900);
+  await page.screenshot({ path: path.join(SHOTS, `${shotPrefix}-2-locked-in.png`) });
+  const afterLocked = await layoutOf(page);
+  expect(afterLocked).toEqual(before);
+
+  const sample = await stopSample(page);
+  expect(sample.frames).toBeGreaterThan(20);
+  expect(sample.maxMove).toBeLessThanOrEqual(0.5); // no vertical (or any) movement, any frame
+  expect(sample.maxResize).toBeLessThanOrEqual(0.5);
+  expect(sample.sameNodes).toBe(true);
+  // Measured in the page, so a busy machine cannot skew it. Generous bound:
+  // the claim is "at once, long before the held reply", not a stopwatch race.
+  expect(sample.lockedMs).toBeGreaterThanOrEqual(0);
+  expect(sample.lockedMs).toBeLessThan(1000);
+  const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+  expect(overflow).toBe(false);
+  await context.close();
+  return sample;
 }
 
 test.describe("phone answer: instant lock, sending, locked in", () => {
   test.setTimeout(120_000);
 
+  // The small phone is where the old jump was worst (cards moved ~116 px).
   for (const themeKey of THEME_KEYS) {
-    test(`${themeKey}: locks at once, Sending… then Locked in, nothing moves`, async ({ browser }) => {
-      const { page, context } = await phoneOnQuestion(browser, themeKey);
-
-      // The send reply is held for 2.5 s (a slow venue connection).
-      let release!: () => void;
-      const held = new Promise<void>((resolve) => (release = resolve));
-      await page.route("**/api/answers", async (route) => {
-        await held;
-        await route.continue();
-      });
-
-      await page.evaluate(() => {
-        (window as unknown as { __shifts: number }).__shifts = 0;
-        new PerformanceObserver((list) => {
-          for (const e of list.getEntries() as unknown as Array<{ value: number; hadRecentInput: boolean }>) {
-            if (!e.hadRecentInput) (window as unknown as { __shifts: number }).__shifts += e.value;
-          }
-        }).observe({ type: "layout-shift", buffered: true });
-      });
-
-      const tapAt = Date.now();
-      await page.getByTestId(TID.playerQuestion.answer(2)).tap();
-      // Locked screen up almost immediately, long before the (held) reply.
-      await expect(page.getByTestId(TID.playerLocked.root)).toBeVisible({ timeout: 800 });
-      const lockedAfter = Date.now() - tapAt;
-      expect(lockedAfter).toBeLessThan(800);
-      await expect(status(page)).toHaveAttribute("data-send-state", "sending");
-      await expect(status(page)).toContainText("Sending");
-      await page.waitForTimeout(700); // let any transition finish
-      await page.screenshot({ path: path.join(SHOTS, `${themeKey}-1-sending.png`) });
-      const whileSending = await layoutOf(page);
-      const lockedNode = await page.getByTestId(TID.playerLocked.root).elementHandle();
-
-      release();
-      await expect(status(page)).toHaveAttribute("data-send-state", "locked", { timeout: 10_000 });
-      await expect(status(page)).toContainText(/locked/i);
-      await page.waitForTimeout(900);
-      await page.screenshot({ path: path.join(SHOTS, `${themeKey}-2-locked-in.png`) });
-      const afterLocked = await layoutOf(page);
-
-      // Same screen element all the way through, and the cards/strip did not move.
-      expect(await lockedNode!.evaluate((el) => el.isConnected)).toBe(true);
-      expect(afterLocked.strip.top).toBeCloseTo(whileSending.strip.top, 0);
-      expect(afterLocked.cards).toEqual(whileSending.cards);
-      // Strip height may differ by at most the reserved second line (none expected).
-      expect(Math.abs(afterLocked.strip.height - whileSending.strip.height)).toBeLessThanOrEqual(1);
-      const shifts = await page.evaluate(() => (window as unknown as { __shifts: number }).__shifts);
-      expect(shifts).toBeLessThan(0.1);
-      await context.close();
+    test(`${themeKey} 320px: the tap changes nothing but the look (no card or text moves), Sending… then Locked in`, async ({ browser }) => {
+      await tapKeepsEverythingInPlace(browser, themeKey, { width: 320, height: 568 }, `${themeKey}-320`);
+    });
+  }
+  for (const themeKey of THEME_KEYS) {
+    test(`${themeKey} 390px: the tap changes nothing but the look (no card or text moves), Sending… then Locked in`, async ({ browser }) => {
+      await tapKeepsEverythingInPlace(browser, themeKey, { width: 390, height: 844 }, `${themeKey}-390`);
     });
   }
 
@@ -195,6 +317,24 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
     await context.close();
   });
 
+  test("house: a venue proxy's 408 / 425 is a network hiccup: it retries, never shows Try again", async ({ browser }) => {
+    const { page, context } = await phoneOnQuestion(browser, "house");
+    const replies = [408, 425];
+    let calls = 0;
+    await page.route("**/api/answers", async (route) => {
+      const code = replies[calls];
+      calls += 1;
+      if (code) return route.fulfill({ status: code, contentType: "text/plain", body: "" });
+      return route.continue();
+    });
+    await page.getByTestId(TID.playerQuestion.answer(2)).tap();
+    await expect(status(page)).toHaveAttribute("data-send-state", "retrying", { timeout: 5000 });
+    await expect(page.getByRole("button", { name: "Try again" })).toHaveCount(0);
+    await expect(status(page)).toHaveAttribute("data-send-state", "locked", { timeout: 15_000 });
+    expect(calls).toBe(3);
+    await context.close();
+  });
+
   test("october: failing network, retrying look", async ({ browser }) => {
     const { page, context } = await phoneOnQuestion(browser, "october");
     let calls = 0;
@@ -211,12 +351,18 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
     await context.close();
   });
 
-  test("house, small phone (320 wide): the longest line wraps inside the strip", async ({ browser }) => {
+  test("house, small phone (320 wide): the longest line (retrying) wraps inside the strip, nothing moves", async ({ browser }) => {
     const { page, context } = await phoneOnQuestion(browser, "house", { viewport: { width: 320, height: 568 } });
+    await settleEntrance(page);
+    await installProbe(page);
+    const before = await layoutOf(page);
+    expect(before.cards).toHaveLength(4);
     await page.route("**/api/answers", (route) => route.abort("connectionfailed"));
     await page.getByTestId(TID.playerQuestion.answer(1)).tap();
     await expect(status(page)).toHaveAttribute("data-send-state", "retrying", { timeout: 5000 });
     await page.waitForTimeout(500);
+    // The longest line wraps inside the strip: nothing moves (no 11 px growth).
+    expect(await layoutOf(page)).toEqual(before);
     await page.screenshot({ path: path.join(SHOTS, "house-320-retrying.png") });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(overflow).toBe(false);
@@ -230,6 +376,10 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
   ] as const) {
     test(`${themeKey} ${width}px: a refused answer shows a 44 px Try again, nothing moves, another answer can be picked`, async ({ browser }) => {
       const { page, context } = await phoneOnQuestion(browser, themeKey, { viewport: { width, height } });
+      await settleEntrance(page);
+      await installProbe(page);
+      const before = await layoutOf(page);
+      expect(before.cards).toHaveLength(4);
       let release!: () => void;
       const held = new Promise<void>((resolve) => (release = resolve));
       let calls = 0;
@@ -251,6 +401,7 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
       await expect(status(page)).toHaveAttribute("data-send-state", "sending");
       await page.waitForTimeout(700);
       const whileSending = await layoutOf(page);
+      expect(whileSending).toEqual(before);
 
       release();
       await expect(status(page)).toHaveAttribute("data-send-state", "rejected", { timeout: 5000 });
@@ -258,8 +409,7 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
       await page.waitForTimeout(700);
       await page.screenshot({ path: path.join(SHOTS, `${themeKey}-${width}-rejected.png`) });
       const afterRejected = await layoutOf(page);
-      expect(afterRejected.strip.height).toBeCloseTo(whileSending.strip.height, 0);
-      expect(afterRejected.cards).toEqual(whileSending.cards);
+      expect(afterRejected).toEqual(before);
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
       expect(overflow).toBe(false);
 
