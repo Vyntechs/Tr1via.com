@@ -29,7 +29,9 @@ import type { TVWorldSpec } from "@/lib/experience/packs";
 import { NO_MOMENT, sameMoment, type TVMoment } from "@/lib/experience/tvMoment";
 import {
   momentSecondsLeft,
+  nextHeadstoneTier,
   patchScene,
+  type HeadstoneTier,
   type MoonPose,
   type PatchAnswer,
   type PatchPlayer,
@@ -42,6 +44,7 @@ import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { gamePlayers } from "@/lib/tv/gamePlayers";
 import { HARVEST_MOON, HOLLOW_TV, PATCH_HILL, artUrl } from "./art";
+import { OctoberHeadstones } from "./OctoberHeadstones";
 import { OctoberPatchCanvas, type OctoberPatchInputs } from "./OctoberPatchCanvas";
 
 export interface OctoberTVWorldProps {
@@ -174,6 +177,13 @@ export function OctoberTVWorld({
     };
   }, [roster, answers, moment, off]);
 
+  // Which headstones stand, from the patch's own pumpkin count. Held as state
+  // so a night hovering near a line never flickers (see nextHeadstoneTier).
+  const pumpkinCount = players.length;
+  const [stoneTier, setStoneTier] = useState<HeadstoneTier>(() => nextHeadstoneTier(null, pumpkinCount));
+  const nextStoneTier = nextHeadstoneTier(stoneTier, pumpkinCount);
+  if (nextStoneTier !== stoneTier) setStoneTier(nextStoneTier); // adjusts during render, no extra effect pass
+
   // The scene only changes at moment changes and at the 5 s / 0 s marks, so
   // re-checking it 5× a second is plenty; the canvas animates in between.
   // Kept as state (updated from timers) so rendering stays pure.
@@ -259,6 +269,7 @@ export function OctoberTVWorld({
       data-world-phase={scene.phase}
       data-world-horseman={scene.horseman}
       data-world-pumpkins={off ? undefined : players.length}
+      data-world-stones={off ? undefined : stoneTier}
       data-world-off={off ? "true" : undefined}
       style={{
         position: "relative",
@@ -293,7 +304,7 @@ export function OctoberTVWorld({
       >
         {off ? null : (
           <ThemeLayerBoundary name="october:backdrop" onFail={onFail}>
-            <OctoberBackdrop scene={scene} tier={tier} />
+            <OctoberBackdrop scene={scene} tier={tier} stones={stoneTier} />
           </ThemeLayerBoundary>
         )}
 
@@ -352,7 +363,7 @@ function sameScene(a: PatchScene, b: PatchScene): boolean {
   return ak.every((k) => a.moods[k] === b.moods[k]);
 }
 
-// ── Backdrop: the hollow, the harvest moon, the hill ─────────────────────
+// ── Backdrop: the hollow, the harvest moon, the hill, the headstones ──
 // The moon rises behind the pumpkin patch at the bottom and shifts with the
 // moment (positions from the Figma frames), so the question area stays dark
 // and readable. In the last five seconds clouds slide over it.
@@ -374,7 +385,15 @@ const CLOUDS = [
 
 const pct = (v: number, of: number) => `${(v / of) * 100}%`;
 
-function OctoberBackdrop({ scene, tier }: { scene: PatchScene; tier: "full" | "still" }) {
+function OctoberBackdrop({
+  scene,
+  tier,
+  stones,
+}: {
+  scene: PatchScene;
+  tier: "full" | "still";
+  stones: HeadstoneTier;
+}) {
   const pose = MOON_POSES[scene.moon];
   const ease = tier === "still" ? "none" : "1.6s cubic-bezier(.4,0,.2,1)";
   const asking = scene.phase === "asking" || scene.phase === "final-seconds";
@@ -482,6 +501,8 @@ function OctoberBackdrop({ scene, tier }: { scene: PatchScene; tier: "full" | "s
             transition: tier === "still" ? "none" : `transform ${ease}`,
           }}
         />
+        {/* Headstones stand on the hill, behind the screens and the patch. */}
+        <OctoberHeadstones tier={stones} still={tier === "still"} />
       </div>
     </div>
   );

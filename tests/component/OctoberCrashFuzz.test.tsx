@@ -46,7 +46,9 @@ import { FlamingHead } from "@/components/experience/october/FlamingHead";
 import { OctoberPatchCanvas, type OctoberPatchInputs } from "@/components/experience/october/OctoberPatchCanvas";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import {
+  headstoneSpots,
   momentSecondsLeft,
+  nextHeadstoneTier,
   patchLayout,
   patchScene,
   type PatchAnswer,
@@ -938,6 +940,13 @@ describe("October crash fuzz", () => {
         }
       }
       if (Object.keys(scene.moods).length > players.length) bad.push(`scene has more moods than players`);
+      // The headstones take any count, any tier they were showing, and never throw.
+      const stoneCount = rng.chance(0.15) ? (rng.pick(WEIRD_NUMBERS) as number) : count;
+      const tier = nextHeadstoneTier(rng.pick([null, "three", "pair", "none"] as const), stoneCount);
+      if (!["three", "pair", "none"].includes(tier)) bad.push(`stones(${stoneCount}) gave tier ${String(tier)}`);
+      for (const st of headstoneSpots(tier)) {
+        if (![st.x, st.top, st.scale].every(Number.isFinite)) bad.push(`stone ${st.id} has a bad spot`);
+      }
       tally.logicCases++;
     }
     // A theme key that happens to be a built-in name never finds a world.

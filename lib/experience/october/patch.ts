@@ -293,3 +293,95 @@ export function patchLayout(count: number): PumpkinSlot[] {
   return slots;
 }
 
+
+// ─── Headstones ──────────────────────────────────────────────────────────
+// Heather asked for "a couple of headstones" (Oct 7). Three stones from the
+// Figma art kit stand on the hill wherever the pumpkin patch leaves room, and
+// step aside as the patch fills the hill. Pure decoration: this reads the
+// player count the patch already has and nothing else, never touches the
+// game, and never moves a pumpkin, a name stake or any screen content
+// (pumpkins and screen text always win).
+//
+// What shows, by how many pumpkins are in the patch:
+//   three    16 or fewer: leaning slab (left), cracked and mossy (right) and a
+//            small cross beside the slab
+//   pair     17 to 24: the same two stones, no cross
+//   none     25 or more
+//
+// Why nothing at 25+: from 29 pumpkins up the end pumpkin and its name stake
+// reach x 59-71, which is the TV's 56 px safe margin (everything else keeps
+// it, because TVs crop 2.5-5%). A stone small enough to squeeze in beside them
+// cannot stand on the hill (the pumpkins stand on it there) and floats in the
+// dark, so it reads as a sticker, not a gravestone. An earlier version drew
+// two small corner stones at 25-44; they sat in the overscan zone and floated
+// 60-85 px above the ridge, so they were removed. (The Figma prototype frames
+// for 29 and 41 players still show them: Figma and the code differ here.)
+//
+// The spots are FIXED (they do not follow the count), so people joining never
+// push a stone around. A stone only changes when the count crosses a line, and
+// only comes back after the count falls a little below it, so a night hovering
+// around 24/25 never flickers: a lobby filling from 0 to 30 changes the stones
+// exactly twice (the cross leaves at 17, the pair leaves at 25). Because of
+// the two-below rule, 23 and 24 show the pair when the room is filling up and
+// nothing when it is emptying down from above.
+
+export type HeadstoneTier = "three" | "pair" | "none";
+export type HeadstoneStyle = "slab" | "cross" | "mossy";
+
+/** The art kit's stones are drawn in a 160×200 box with the base at y 190. */
+export const HEADSTONE_ART = { w: 160, h: 200 } as const;
+
+export interface HeadstoneSpot {
+  id: "left" | "right" | "extra";
+  style: HeadstoneStyle;
+  /** Top-left of the art box on the 1600×900 stage. */
+  x: number;
+  top: number;
+  /** 1 = the art's native 160×200 box. */
+  scale: number;
+}
+
+/** Every spot a stone can stand in. Positions come from the Figma prototype
+ *  (page "05 · Headstones prototype"), except the right stone: the prototype's
+ *  mossy stone ends at x 1564, past the 56 px safe margin, so it is 0.9x and
+ *  tucked in to end at x 1544 (the slab's left edge is at x 56), with its base
+ *  7 px lower (buried deeper) so it clears the moon and the Horseman's hoof. */
+export const HEADSTONE_SPOTS: readonly HeadstoneSpot[] = [
+  { id: "left", style: "slab", x: 36, top: 692, scale: 1 },
+  { id: "right", style: "mossy", x: 1410.8, top: 718, scale: 0.9 },
+  { id: "extra", style: "cross", x: 175.2, top: 719.2, scale: 0.8 },
+];
+
+const TIER_SPOTS: Record<HeadstoneTier, readonly HeadstoneSpot["id"][]> = {
+  three: ["left", "right", "extra"],
+  pair: ["left", "right"],
+  none: [],
+};
+
+/** The stones standing in a tier. */
+export function headstoneSpots(tier: HeadstoneTier): HeadstoneSpot[] {
+  const ids = TIER_SPOTS[tier];
+  return HEADSTONE_SPOTS.filter((s) => ids.includes(s.id));
+}
+
+const TIERS: readonly HeadstoneTier[] = ["three", "pair", "none"];
+/** Going up, the count that moves the stones to the next tier… */
+const UP_AT = [17, 25];
+/** …and the count at or below which each tier gives way to the one before it
+ *  (two below the line it was crossed at, so the edge never flickers). */
+const DOWN_AT = [Number.NEGATIVE_INFINITY, 14, 22];
+
+/** Which tier of stones to show for a pumpkin count, given the tier showing
+ *  now (null on the very first look). Only changes after the count crosses a
+ *  line, so the stones hold still while a night hovers near one. */
+export function nextHeadstoneTier(prev: HeadstoneTier | null, count: number): HeadstoneTier {
+  const n = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+  // First look: climb from the bottom. After that: start from what shows now,
+  // climb on crossing a line up, fall only on dropping to a line down (a big
+  // jump resolves in one call).
+  const was = prev === null ? -1 : TIERS.indexOf(prev);
+  let i = Math.max(0, was);
+  while (i < UP_AT.length && n >= UP_AT[i]) i++;
+  if (was >= 0) while (i > 0 && n <= DOWN_AT[i]) i--;
+  return TIERS[i];
+}
