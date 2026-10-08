@@ -26,6 +26,7 @@ import { useRoomRoutePoll } from "@/lib/hooks/useRoomRoutePoll";
 import { pickCurrentGame } from "@/lib/room/pickCurrentGame";
 import { fetchRoomSnapshotPayload } from "@/lib/room/fetchRoomSnapshot";
 import { diagBroadcastHeard } from "@/lib/diagnostics/client";
+import { useDiagQuestionOpen } from "@/lib/diagnostics/useQuestionOpen";
 import {
   payloadToRoomSnapshot,
   toRoomFallbackPayload,
@@ -205,6 +206,9 @@ const PLAYER_QUESTION_COLUMNS =
 
 export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs): RoomSnapshot {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(EMPTY);
+  // Diagnostic log only: whether a question is live on this screen, so the
+  // device reporter stays quiet until it closes. Nothing reads the result.
+  useDiagQuestionOpen(snapshot.currentQuestion !== null && !snapshot.currentQuestion.finished_at);
   const playerRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const hostRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const hostTVKeyRefreshSequenceRef = useRef(0);

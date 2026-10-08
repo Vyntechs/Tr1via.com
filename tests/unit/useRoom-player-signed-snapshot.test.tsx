@@ -107,6 +107,7 @@ vi.mock("@/lib/hooks/useRoomRoutePoll", () => ({
 }));
 
 import { useRoom } from "@/lib/hooks/useRoom";
+import { __resetDiagClientForTests, setDiagSink } from "@/lib/diagnostics/client";
 import {
   __resetReachabilityForTests,
   getReachability,
@@ -238,6 +239,33 @@ describe("useRoom player audience", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("tells the diagnostic reporter a question is live until the room says it closed (not when the player locks in)", async () => {
+    const open: boolean[] = [];
+    setDiagSink({ event: () => {}, questionOpen: (value) => open.push(value) });
+    try {
+      h.fetchSnapshot
+        .mockResolvedValueOnce(playerPayload("live"))
+        // the room moved on: no live question any more
+        .mockResolvedValueOnce({ ...playerPayload("closed"), currentQuestion: null });
+      const { result } = renderHook(() =>
+        useRoom({ roomCode: "ABCDEF", audience: "player", sessionReady: true }),
+      );
+      await waitFor(() => expect(result.current.night?.venue_name).toBe("live"));
+      expect(open).toEqual([true]);
+
+      act(() => {
+        h.broadcastHandlers.get("resolve")?.({
+          payload: { questionId: "question-1", serverNow: "2026-07-18T18:06:26.000Z" },
+        });
+      });
+      await waitFor(() => expect(result.current.night?.venue_name).toBe("closed"));
+      expect(open).toEqual([true, false]);
+    } finally {
+      setDiagSink(null);
+      __resetDiagClientForTests();
+    }
   });
 
   it("waits for session readiness, then consumes the signed player payload without raw reads", async () => {

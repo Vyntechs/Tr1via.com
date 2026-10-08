@@ -3,13 +3,21 @@
 // Runs on a player's phone, the venue TV and the host laptop, but only when
 // the server rendered <DiagnosticsMount /> (DIAGNOSTIC_LOGGING on). It
 // collects a few small facts, holds them in memory, and sends them to
-// /api/diag/report about every 10 seconds and when the page is hidden.
+// /api/diag/report about every 10 seconds, but only BETWEEN questions (reveal,
+// lobby, board) and when the page is hidden.
 //
 // What it will never do:
 //   - change anything the person sees, or add any button
-//   - send anything while a player's question is on screen (it holds events
-//     until the question closes, then sends after a random short wait so a
-//     whole room doesn't report in the same instant)
+//   - send anything while a question is live on this screen. Everything is
+//     held in memory (capped at MAX_QUEUE events; when full the oldest routine
+//     event goes first, slow or failed ones are kept longest) and goes out
+//     after the question closes, after a random 2-8 s wait so a whole room
+//     doesn't report in the same instant. The only exception is the page being
+//     hidden or closed (a phone locking, a tab closing): then the queue is
+//     handed to the browser's send-on-exit (sendBeacon) so it isn't lost.
+//     "Live question" comes from the room state (useRoom / useTVRoom), not
+//     from this file, so a phone that has already locked its answer in still
+//     counts as inside the question until the question closes.
 //   - throw: every callback is wrapped, and a failed send is quietly retried
 //     or dropped
 //   - touch theme code. The October frame-rate check reads the page from the
@@ -56,6 +64,7 @@ const ROUTINE_PATHS = [/^\/api\/answers/, /^\/api\/questions\/:id\/resolve/, /^\
 // The snapshot downloads are reported with more detail by their own hooks.
 const SKIP_PATHS = [/^\/api\/diag\//, /^\/api\/room\/:code\/snapshot/, /^\/api\/tv\/:code\/snapshot/];
 
+/** Connection type and the browser's own rounded quality estimate. Nothing else. */
 function connectionInfo(): DiagData | undefined {
   const c = (navigator as unknown as { connection?: Record<string, unknown> }).connection;
   if (!c) return undefined;
@@ -64,9 +73,16 @@ function connectionInfo(): DiagData | undefined {
     et: typeof c.effectiveType === "string" ? c.effectiveType : undefined,
     dl: num(c.downlink),
     rtt: num(c.rtt),
-    sd: typeof c.saveData === "boolean" ? c.saveData : undefined,
     ty: typeof c.type === "string" ? c.type : undefined,
   };
+}
+
+/** A coarse screen size class from the window width (the exact size is never sent). */
+function screenClass(width: number): string {
+  if (width < 480) return "s";
+  if (width < 900) return "m";
+  if (width < 1440) return "l";
+  return "xl";
 }
 
 function randomId(): string {
@@ -173,9 +189,9 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
     flushTimer = setTimeout(() => {
       flushTimer = null;
       try {
-        // Stay quiet while a question is on screen, unless the backlog is big
-        // or the page is going away.
-        if (!questionIsOpen || queue.length >= 100 || document.visibilityState === "hidden") {
+        // Stay quiet while a question is live, however big the backlog is
+        // (the queue is capped). A hidden page is the one exception.
+        if (!questionIsOpen || document.visibilityState === "hidden") {
           flush(false);
         }
       } catch {
@@ -215,17 +231,15 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
   // ─── what is this device? (once per page load) ─────────────────────
   try {
     const media = (q: string) => typeof window.matchMedia === "function" && window.matchMedia(q).matches;
+    // A short summary only (see DIAG_DEVICE_KEYS in config.ts). The browser,
+    // OS and device class are added by the server from the request. The exact
+    // screen size, memory and CPU-core counts are NOT collected: the long-task
+    // and frame-rate events measure lag directly.
     push(
       "device",
       {
-        s: surface,
-        w: window.innerWidth,
-        h: window.innerHeight,
-        dpr: window.devicePixelRatio,
-        cores: navigator.hardwareConcurrency,
-        mem: (navigator as unknown as { deviceMemory?: number }).deviceMemory,
+        sc: screenClass(window.innerWidth),
         ol: navigator.onLine,
-        app: media("(display-mode: standalone)"),
         rm: media("(prefers-reduced-motion: reduce)"),
         theme: document.documentElement.getAttribute("data-theme") ?? undefined,
         ...connectionInfo(),

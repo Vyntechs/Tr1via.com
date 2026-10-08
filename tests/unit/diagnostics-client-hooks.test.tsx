@@ -7,11 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   __resetDiagClientForTests,
+  diagQuestionOpen,
   setDiagSink,
   type DiagData,
   type DiagSink,
 } from "@/lib/diagnostics/client";
 import { useAnswerSubmit, clearPendingAnswer } from "@/lib/hooks/useAnswerSubmit";
+import { useDiagQuestionOpen } from "@/lib/diagnostics/useQuestionOpen";
 import { useConnectionStatus } from "@/lib/hooks/useConnectionStatus";
 import { fetchJsonWithRetry } from "@/lib/realtime/fetchWithRetry";
 import { __resetChannelHealthForTests, setChannelHealth } from "@/lib/realtime/channelHealth";
@@ -77,7 +79,6 @@ describe("useAnswerSubmit", () => {
     attachSink();
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(204));
     const { result } = renderHook(() => useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3] }));
-    expect(open).toEqual([true]); // a question is on screen: reports are held
     const before = Date.now();
     act(() => result.current.submit(3));
     await waitFor(() => expect(result.current.status).toBe("sent"));
@@ -135,17 +136,67 @@ describe("useAnswerSubmit", () => {
     expect(seen.find((e) => e.kind === "tapx")).toMatchObject({ forced: true, data: { q: "q1", slot: 2, why: "closed" } });
   });
 
-  it("tells the reporter the question has closed when the timer ends or the screen leaves", () => {
+  it("does not touch the question-open flag: locking in must not look like the question closing", async () => {
     attachSink();
-    const { rerender, unmount } = renderHook(
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(204));
+    const { result, rerender, unmount } = renderHook(
       ({ accepting }) => useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3], accepting }),
       { initialProps: { accepting: true } },
     );
-    expect(open).toEqual([true]);
+    act(() => result.current.submit(1));
+    await waitFor(() => expect(result.current.status).toBe("sent"));
     rerender({ accepting: false });
+    unmount(); // the question screen swaps to the locked-in screen at lock-in
+    expect(open).toEqual([]);
+  });
+
+  it("sends an answer saved before a refresh without claiming a tap time, and says it was resumed", async () => {
+    attachSink();
+    window.localStorage.setItem("tr1via:pending-answer", JSON.stringify({ questionId: "q1", slotChosen: 3 }));
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(204));
+    const { result } = renderHook(() => useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3] }));
+    await waitFor(() => expect(result.current.status).toBe("sent"));
+    const headers = (fetchSpy.mock.calls[0]![1] as { headers: Record<string, string> }).headers;
+    expect(headers).not.toHaveProperty("x-tr1via-tap-at"); // unknown, not "now"
+    expect(Number(headers["x-tr1via-sent-at"])).toBeGreaterThan(0);
+    expect(seen.find((e) => e.kind === "tap")).toMatchObject({ forced: true, data: { q: "q1", slot: 3, ok: true, rs: true } });
+  });
+});
+
+describe("useDiagQuestionOpen", () => {
+  it("passes the live-question flag to the reporter and clears it when the screen goes away", () => {
+    attachSink();
+    const { rerender, unmount } = renderHook(({ live }) => useDiagQuestionOpen(live), {
+      initialProps: { live: false },
+    });
+    expect(open).toEqual([]); // false -> false is not news
+    rerender({ live: true });
+    expect(open).toEqual([true]);
+    rerender({ live: true });
+    expect(open).toEqual([true]);
+    rerender({ live: false });
     expect(open).toEqual([true, false]);
+    rerender({ live: true });
     unmount();
-    expect(open).toEqual([true, false, false]);
+    expect(open).toEqual([true, false, true, false]);
+  });
+
+  it("is remembered for a reporter that starts later (it is loaded a moment after the page)", () => {
+    renderHook(() => useDiagQuestionOpen(true));
+    attachSink(); // the reporter arrives after the question was already open
+    expect(open).toEqual([true]);
+  });
+
+  it("does nothing, and costs nothing, while no reporter is running", () => {
+    const timers = vi.useFakeTimers();
+    try {
+      const { unmount } = renderHook(() => useDiagQuestionOpen(true));
+      expect(timers.getTimerCount()).toBe(0);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+    diagQuestionOpen(false);
   });
 });
 

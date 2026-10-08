@@ -30,6 +30,7 @@ import {
 } from "@/lib/room-magic/reactions";
 import type { LiveRoomProjection } from "@/lib/live-answer/contracts";
 import { diagBroadcastHeard, diagSnap } from "@/lib/diagnostics/client";
+import { useDiagQuestionOpen } from "@/lib/diagnostics/useQuestionOpen";
 
 const SAFETY_REFETCH_MS = 4000;
 
@@ -190,6 +191,9 @@ interface RoomScopedState<T> {
 export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const [status, setStatus] = useState<TVRoomStatus>("loading");
   const [snapshot, setSnapshot] = useState<TVSnapshot | null>(null);
+  // Diagnostic log only: whether a question is live on the TV, so the device
+  // reporter stays quiet until it closes. Nothing reads the result.
+  useDiagQuestionOpen(Boolean(snapshot?.liveQuestionId));
   const [lastBroadcast, setLastBroadcast] =
     useState<RoomScopedState<TVBroadcast> | null>(null);
   const [lastFireworksBeat, setLastFireworksBeat] =

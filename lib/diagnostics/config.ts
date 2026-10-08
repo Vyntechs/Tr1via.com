@@ -2,8 +2,10 @@
 //
 // Off unless the DIAGNOSTIC_LOGGING env var is exactly "on" (any case).
 // Unset, "off", or anything else = off, and every wrapper goes straight to
-// the original code. Changing the value on Vercel needs a redeploy, so it
-// cannot be flipped in the middle of a show.
+// the original code. The server reads the value on every request (not once at
+// start-up), but Vercel hands a running deployment the settings it was built
+// with, so changing the value in Vercel only takes effect on a NEW deployment.
+// That is why it cannot be flipped in the middle of a show.
 
 export function diagnosticsEnabled(
   env: Record<string, string | undefined> = process.env,
@@ -18,6 +20,12 @@ export const DIAG_RETENTION_DAYS = 45;
 export const DIAG_MAX_BODY_BYTES = 24_000;
 export const DIAG_MAX_EVENTS_PER_BATCH = 60;
 export const DIAG_MAX_EVENT_BYTES = 1_000;
+
+// Database write limits (lib/diagnostics/write.ts). A log write that takes
+// longer than this is given up on; more than this many at once and the extra
+// ones are dropped (and counted) instead of piling up behind a slow database.
+export const DIAG_WRITE_TIMEOUT_MS = 2_000;
+export const DIAG_MAX_WRITES_IN_FLIGHT = 50;
 
 /** Event types a device may report. Anything else is dropped. */
 export const DIAG_DEVICE_KINDS = [
@@ -39,3 +47,34 @@ export type DiagDeviceKind = (typeof DIAG_DEVICE_KINDS)[number];
 
 export const DIAG_SURFACES = ["player", "tv", "host"] as const;
 export type DiagSurface = (typeof DIAG_SURFACES)[number];
+
+/**
+ * Exactly what is stored about a device, by event kind. The server rebuilds
+ * these two kinds from this list, so a crafted request or an old cached page
+ * cannot get anything else into the table (no exact screen size, no memory or
+ * CPU-core numbers, no raw user-agent text).
+ *
+ *   br   browser family + major version, from the request ("Safari 17")
+ *   os   operating-system family only ("iOS", "Android", "macOS")
+ *   dc   device class: phone, tablet, laptop or tv (unknown if no browser text)
+ *   sc   coarse screen class from the window width: s, m, l, xl
+ *   ol   the browser said it was online
+ *   rm   "reduce motion" is on (the October scene draws less, so frame
+ *        rates are not comparable with a phone that has it off)
+ *   theme the night's theme key (which scene was drawing)
+ *   et   connection type as the browser rounds it: slow-2g, 2g, 3g, 4g
+ *   ty   connection medium when the browser tells us: wifi, cellular, ...
+ *   rtt  round-trip estimate in ms, rounded by the browser itself
+ *   dl   download estimate in Mbit/s, rounded by the browser itself
+ *
+ * rtt and dl are kept on purpose: they are the browser's own rough read on
+ * how good the connection is, which is the first thing to check when one
+ * phone lags. They are rounded by the browser and cannot identify a phone.
+ */
+export const DIAG_DEVICE_KEYS = ["br", "os", "dc", "sc", "ol", "rm", "theme", "et", "ty", "rtt", "dl"] as const;
+
+/** Keys a `net` event (online / offline / connection changed) may carry. */
+export const DIAG_NET_KEYS = ["ev", "ol", "et", "ty", "rtt", "dl"] as const;
+
+export const DIAG_SCREEN_CLASSES = ["s", "m", "l", "xl"] as const;
+export const DIAG_DEVICE_CLASSES = ["phone", "tablet", "laptop", "tv", "unknown"] as const;

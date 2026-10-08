@@ -16,6 +16,7 @@ vi.mock("@/lib/api/auth", () => authMock);
 vi.mock("@/lib/diagnostics/write", () => writeMock);
 
 const NIGHT_ID = "33333333-3333-3333-3333-333333333333";
+const OTHER_NIGHT_ID = "44444444-4444-4444-4444-444444444444";
 const DEVICE_ID = "66666666-6666-6666-6666-666666666666";
 const HOST_ID = "99999999-9999-4999-8999-999999999999";
 const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1";
@@ -37,7 +38,7 @@ function batch(extra: Record<string, unknown> = {}) {
     sid: "abc123def456",
     sent: now,
     ev: [
-      { t: now - 2000, k: "device", d: { w: 390, h: 844 }, f: 1 },
+      { t: now - 2000, k: "device", d: { sc: "s", ol: true, et: "4g" }, f: 1 },
       { t: now - 1000, k: "bcast", d: { ev: "reveal", lag: 80 } },
     ],
     ...extra,
@@ -92,8 +93,11 @@ describe("POST /api/diag/report", () => {
       kind: "device",
       forced: true,
     });
-    // The server reads the device description from the request, not the body.
-    expect((rows[0]!.data as Record<string, unknown>).uas).toBe("iPhone · iOS 17.5 · Safari 17.5");
+    // The server reads the browser, OS and device class from the request, and
+    // keeps no raw user-agent text.
+    expect(rows[0]!.data).toEqual({ sc: "s", ol: true, et: "4g", br: "Safari 17", os: "iOS", dc: "phone" });
+    expect(JSON.stringify(rows)).not.toContain("Mozilla");
+    expect(JSON.stringify(rows)).not.toContain("17.5");
     expect(rows[1]).toMatchObject({ kind: "bcast", forced: false });
     expect(typeof rows[1]!.at_est).toBe("string");
     expect(typeof rows[1]!.offset_ms).toBe("number");
@@ -164,15 +168,41 @@ describe("POST /api/diag/report", () => {
       }
     });
 
-    it("still stops a cookie-less sender that keeps inventing new page-load ids", async () => {
+    it("stops a TV sender that keeps inventing new page-load ids for one room", async () => {
       authMock.getDeviceId.mockResolvedValue(null);
       const { POST } = await loadRoute();
       const statuses: number[] = [];
-      for (let i = 0; i < 80; i++) {
+      for (let i = 0; i < 40; i++) {
         statuses.push((await POST(fromVenue(batch({ surface: "tv", sid: `invented-${i}-xyz` })))).status);
       }
-      expect(statuses.filter((s) => s === 204)).toHaveLength(60);
-      expect(statuses.slice(60).every((s) => s === 429)).toBe(true);
+      expect(statuses.filter((s) => s === 204)).toHaveLength(12);
+      expect(statuses.slice(12).every((s) => s === 429)).toBe(true);
+    });
+
+    it("still holds one address to its allowance when it keeps minting fresh device cookies", async () => {
+      // A device cookie is free to get, so having one must not skip the address check.
+      const { POST } = await loadRoute();
+      let n = 0;
+      authMock.getDeviceId.mockImplementation(async () => `00000000-0000-4000-8000-${String(n++).padStart(12, "0")}`);
+      const statuses: number[] = [];
+      for (let i = 0; i < 300; i++) {
+        statuses.push((await POST(fromVenue(batch({ sid: `minted-session-${i}` })))).status);
+      }
+      const ok = statuses.filter((s) => s === 204).length;
+      expect(ok).toBeGreaterThanOrEqual(120); // a whole venue's burst fits...
+      expect(ok).toBeLessThan(130); // ...but not an endless stream
+      expect(statuses.at(-1)).toBe(429);
+      // Nothing was written for the refused ones.
+      expect(writeMock.scheduleDiagWrite.mock.calls.length).toBe(ok);
+    });
+
+    it("does not let one noisy address use up another address's allowance", async () => {
+      const { POST } = await loadRoute();
+      authMock.getDeviceId.mockResolvedValue(null);
+      for (let i = 0; i < 200; i++) await POST(fromVenue(batch({ surface: "tv", sid: `noisy-${i}-abc` })));
+      authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+      const quiet = await POST(report(batch({ sid: "quiet-phone-1" }), { "x-forwarded-for": "198.51.100.9" }));
+      expect(quiet.status).toBe(204);
     });
   });
 
@@ -181,6 +211,15 @@ describe("POST /api/diag/report", () => {
     expect((await POST(report("{not json"))).status).toBe(400);
     expect((await POST(report({ surface: "player" }))).status).toBe(400);
     expect((await POST(report(batch({ room: "bad/code" })))).status).toBe(400);
+    expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
+  });
+
+  it("only a host report may name a night id; phones and TVs must name a room code", async () => {
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+    const { POST } = await loadRoute();
+    expect((await POST(report(batch({ room: undefined, night: NIGHT_ID })))).status).toBe(400); // player
+    expect((await POST(report(batch({ surface: "tv", room: undefined, night: NIGHT_ID })))).status).toBe(400); // tv
+    expect((await POST(report(batch({ surface: "host", room: "K9PR4M" })))).status).toBe(400); // host without a night
     expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
   });
 
@@ -209,13 +248,99 @@ describe("POST /api/diag/report", () => {
     expect(writeMock.insertDiagRows).not.toHaveBeenCalled();
   });
 
-  it("takes TV reports without a cookie and stores no device id for them", async () => {
-    authMock.getDeviceId.mockResolvedValue(null);
+  describe("the TV (no login, no cookie)", () => {
+    it("takes TV reports without a cookie and stores no device id for them", async () => {
+      authMock.getDeviceId.mockResolvedValue(null);
+      const { POST } = await loadRoute();
+      expect((await POST(report(batch({ surface: "tv" })))).status).toBe(204);
+      await flushScheduled();
+      const rows = writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
+      expect(rows[0]!.device_id).toBeNull();
+      expect(rows[0]!.night_id).toBe(NIGHT_ID);
+      expect((rows[0]!.data as Record<string, unknown>).dc).toBe("tv");
+    });
+
+    it("ignores a night id sent by a TV: the night comes from the room code, looked up on the server", async () => {
+      authMock.getDeviceId.mockResolvedValue(null);
+      const { POST } = await loadRoute();
+      await POST(report(batch({ surface: "tv", room: "K9PR4M", night: OTHER_NIGHT_ID })));
+      await flushScheduled();
+      expect(writeMock.lookupRoomNight).toHaveBeenCalledWith("K9PR4M");
+      expect(writeMock.lookupNightOwner).not.toHaveBeenCalled();
+      const rows = writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
+      expect(rows.every((r) => r.night_id === NIGHT_ID)).toBe(true);
+      expect(JSON.stringify(rows)).not.toContain(OTHER_NIGHT_ID);
+    });
+
+    it("refuses a TV report that names only a night id, with no room code", async () => {
+      authMock.getDeviceId.mockResolvedValue(null);
+      const { POST } = await loadRoute();
+      expect((await POST(report(batch({ surface: "tv", room: undefined, night: OTHER_NIGHT_ID })))).status).toBe(400);
+      expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
+    });
+
+    it("stores nothing for a room code that does not exist", async () => {
+      authMock.getDeviceId.mockResolvedValue(null);
+      writeMock.lookupRoomNight.mockResolvedValue(null);
+      const { POST } = await loadRoute();
+      expect((await POST(report(batch({ surface: "tv", room: "ZZZZZZ" })))).status).toBe(204);
+      await flushScheduled();
+      expect(writeMock.lookupRoomNight).toHaveBeenCalledWith("ZZZZZZ");
+      expect(writeMock.insertDiagRows).not.toHaveBeenCalled();
+    });
+
+    it("accepts a room code written the way it is shown on the screen", async () => {
+      authMock.getDeviceId.mockResolvedValue(null);
+      const { POST } = await loadRoute();
+      expect((await POST(report(batch({ surface: "tv", room: "K9P·R4M" })))).status).toBe(204);
+      await flushScheduled();
+      expect(writeMock.lookupRoomNight).toHaveBeenCalledWith("K9PR4M");
+    });
+  });
+
+  it("a phone's night comes from its room code too; a night id it sends is ignored", async () => {
     const { POST } = await loadRoute();
-    expect((await POST(report(batch({ surface: "tv" })))).status).toBe(204);
+    await POST(report(batch({ night: OTHER_NIGHT_ID })));
+    await flushScheduled();
+    expect(writeMock.lookupRoomNight).toHaveBeenCalledWith("K9PR4M");
+    expect(writeMock.lookupPlayerId).toHaveBeenCalledWith(NIGHT_ID, DEVICE_ID);
+    const rows = writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
+    expect(rows.every((r) => r.night_id === NIGHT_ID)).toBe(true);
+  });
+
+  it("a host report uses the night it names, after checking the signed-in host owns it", async () => {
+    const { POST } = await loadRoute();
+    await POST(report(batch({ surface: "host", room: undefined, night: NIGHT_ID, sid: "host-laptop-1" })));
+    await flushScheduled();
+    expect(writeMock.lookupNightOwner).toHaveBeenCalledWith(NIGHT_ID);
+    expect(writeMock.lookupRoomNight).not.toHaveBeenCalled();
+    const rows = writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
+    expect(rows[0]!.night_id).toBe(NIGHT_ID);
+  });
+
+  it("stores only the short device summary, whatever a device or an old cached page sends", async () => {
+    const { POST } = await loadRoute();
+    const now = Date.now();
+    await POST(
+      report(
+        batch({
+          ev: [
+            {
+              t: now - 1000,
+              k: "device",
+              f: 1,
+              d: { sc: "m", w: 390, h: 844, dpr: 3, cores: 6, mem: 4, app: true, sd: true, ua: UA, uas: "x", s: "player" },
+            },
+            { t: now - 900, k: "net", d: { ev: "online", ol: true, w: 390, mem: 4 } },
+          ],
+        }),
+      ),
+    );
     await flushScheduled();
     const rows = writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
-    expect(rows[0]!.device_id).toBeNull();
+    expect(Object.keys(rows[0]!.data as object).sort()).toEqual(["br", "dc", "os", "sc"]);
+    expect(rows[1]!.data).toEqual({ ev: "online", ol: true });
+    expect(JSON.stringify(rows)).not.toContain("Mozilla");
   });
 
   it("never turns an internal problem into an error for the device", async () => {

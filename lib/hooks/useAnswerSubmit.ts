@@ -23,7 +23,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { diagActive, diagEvent, diagQuestionOpen } from "@/lib/diagnostics/client";
+import { diagActive, diagEvent } from "@/lib/diagnostics/client";
 
 export type AnswerSubmitStatus = "idle" | "pending" | "sent" | "failed";
 
@@ -123,8 +123,10 @@ export function useAnswerSubmit({
   const acceptingRef = useRef(accepting);
   acceptingRef.current = accepting;
   // Diagnostic log only: when this tap happened on the phone's own clock and
-  // what the server last said. Never read by the answer logic.
-  const tapLogRef = useRef<{ at: number; last: number | string | null } | null>(null);
+  // what the server last said. Never read by the answer logic. `resumed` marks
+  // an answer re-sent after a refresh: its real tap time is not known, so none
+  // is claimed (the server stores "unknown" rather than the resume time).
+  const tapLogRef = useRef<{ at: number; last: number | string | null; resumed?: boolean } | null>(null);
   const reportTap = useCallback(
     (slot: number, tries: number, ok: boolean) => {
       const tap = tapLogRef.current;
@@ -133,8 +135,8 @@ export function useAnswerSubmit({
       const ms = Date.now() - tap.at;
       diagEvent(
         "tap",
-        { q: questionId, slot, tries, ms, ok, st: tap.last },
-        !ok || tries > 1 || ms > 2000,
+        { q: questionId, slot, tries, ms, ok, st: tap.last, rs: tap.resumed },
+        !ok || tries > 1 || ms > 2000 || tap.resumed === true,
       );
     },
     [questionId],
@@ -157,7 +159,10 @@ export function useAnswerSubmit({
             // the body the server validates is unchanged).
             ...(diagActive()
               ? {
-                  "x-tr1via-tap-at": String(tapLogRef.current?.at ?? Date.now()),
+                  // A resumed answer has no known tap time: leave it out.
+                  ...(tapLogRef.current?.resumed
+                    ? {}
+                    : { "x-tr1via-tap-at": String(tapLogRef.current?.at ?? Date.now()) }),
                   "x-tr1via-sent-at": String(Date.now()),
                   "x-tr1via-attempt": String(attempt),
                 }
@@ -212,7 +217,6 @@ export function useAnswerSubmit({
 
   useEffect(() => {
     // Reset on question change.
-    diagQuestionOpen(true); // diagnostic log: hold reports while a question is open
     lastSlotRef.current = null;
     cancelledRef.current = false;
     setStatus("idle");
@@ -227,6 +231,7 @@ export function useAnswerSubmit({
       if (pending.questionId === questionId) {
         if (acceptingRef.current) {
           lastSlotRef.current = pending.slotChosen;
+          tapLogRef.current = { at: Date.now(), last: null, resumed: true }; // diagnostic log only
           setStatus("pending");
           void runAttempt(pending.slotChosen, 0);
         } else {
@@ -240,7 +245,6 @@ export function useAnswerSubmit({
 
     return () => {
       cancelledRef.current = true;
-      diagQuestionOpen(false);
     };
     // runAttempt depends on the same `questionId` that gates this effect, so
     // including it would create a redundant re-run on every render.
@@ -249,7 +253,6 @@ export function useAnswerSubmit({
 
   useEffect(() => {
     if (accepting) return;
-    diagQuestionOpen(false);
     const pending = loadPendingAnswer();
     if (pending?.questionId === questionId) clearPendingAnswer();
   }, [accepting, questionId]);

@@ -20,9 +20,21 @@ export interface DiagSink {
 }
 
 let sink: DiagSink | null = null;
+// Whether a question is live on this device RIGHT NOW. Kept here, with or
+// without a reporter, because the reporter is loaded a moment after the page
+// (a dynamic import): a phone that opens or reloads in the middle of a
+// question would otherwise never be told the question was already open.
+let questionOpenNow = false;
 
 export function setDiagSink(next: DiagSink | null): void {
   sink = next;
+  if (next && questionOpenNow) {
+    try {
+      next.questionOpen(true);
+    } catch {
+      // never reaches the caller
+    }
+  }
 }
 
 /** True once the reporter is running. */
@@ -40,7 +52,14 @@ export function diagEvent(kind: DiagDeviceKind, data?: DiagData, forced = false)
   }
 }
 
+/**
+ * A question is live on this device (true) or is not (false). The reporter
+ * sends nothing while it is true and sends what it held once it turns false.
+ * Works before the reporter has started: the value is remembered.
+ */
 export function diagQuestionOpen(open: boolean): void {
+  if (questionOpenNow === open) return;
+  questionOpenNow = open;
   if (!sink) return;
   try {
     sink.questionOpen(open);
@@ -164,6 +183,7 @@ export function diagRibbon(
 /** Test hook. */
 export function __resetDiagClientForTests(): void {
   sink = null;
+  questionOpenNow = false;
   snapCounter = 0;
   lastRibbon = undefined;
 }

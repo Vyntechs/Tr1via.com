@@ -2,13 +2,18 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  cleanDeviceData,
   cleanEventData,
+  cleanNetData,
   createRateLimiter,
   sanitizeBatch,
-  summarizeUserAgent,
+  summarizeDevice,
 } from "@/lib/diagnostics/ingest";
 import {
+  DIAG_DEVICE_CLASSES,
+  DIAG_DEVICE_KEYS,
   DIAG_DEVICE_KINDS,
+  DIAG_NET_KEYS,
   DIAG_MAX_EVENTS_PER_BATCH,
   DIAG_MAX_EVENT_BYTES,
   diagnosticsEnabled,
@@ -156,24 +161,123 @@ describe("createRateLimiter", () => {
   });
 });
 
-describe("summarizeUserAgent", () => {
-  it("describes common phones and laptops", () => {
+describe("what a device may say about itself", () => {
+  const crafted = {
+    // the good ones
+    sc: "m",
+    ol: true,
+    rm: false,
+    theme: "october",
+    et: "4g",
+    ty: "wifi",
+    rtt: 74.6,
+    dl: 9.54,
+    // the ones an old cached page or a crafted request might still send
+    s: "player",
+    w: 390,
+    h: 844,
+    dpr: 3,
+    cores: 6,
+    mem: 4,
+    app: true,
+    sd: true,
+    ua: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X)",
+    uas: "iPhone · iOS 17.5 · Safari 17.5",
+    br: "Totally Real Browser 99",
+    os: "BeOS",
+    dc: "toaster",
+  };
+
+  it("keeps only the fixed list of keys in a device event, whatever was sent", () => {
+    const data = cleanDeviceData(crafted);
+    expect(Object.keys(data).sort()).toEqual(["dl", "et", "ol", "rm", "rtt", "sc", "theme", "ty"]);
+    expect(Object.keys(data).every((key) => (DIAG_DEVICE_KEYS as readonly string[]).includes(key))).toBe(true);
+    expect(data).toEqual({ sc: "m", ol: true, rm: false, theme: "october", et: "4g", ty: "wifi", rtt: 75, dl: 9.5 });
+  });
+
+  it("never takes the browser, OS or device class from the device (the server adds those)", () => {
+    const data = cleanDeviceData({ br: "Chrome 1", os: "iOS", dc: "phone" });
+    expect(data).toEqual({});
+  });
+
+  it("drops values outside the allowed vocabulary and ranges", () => {
     expect(
-      summarizeUserAgent(
-        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-      ),
-    ).toBe("iPhone · iOS 17.5 · Safari 17.5");
+      cleanDeviceData({ sc: "gigantic", et: "5g", ty: "carrier-pigeon", rtt: -5, dl: 1e9, theme: "not ok!", ol: "yes" }),
+    ).toEqual({});
+    expect(cleanDeviceData("nope")).toEqual({});
+    expect(cleanDeviceData(null)).toEqual({});
+    expect(cleanDeviceData([1, 2])).toEqual({});
+  });
+
+  it("rebuilds net events the same way", () => {
+    const data = cleanNetData({ ev: "conn", ol: true, et: "3g", rtt: 300, w: 390, mem: 4, sd: true, ua: "x" });
+    expect(data).toEqual({ ev: "conn", ol: true, et: "3g", rtt: 300 });
+    expect(Object.keys(data).every((key) => (DIAG_NET_KEYS as readonly string[]).includes(key))).toBe(true);
+    expect(cleanNetData({ ev: "explode" })).toEqual({});
+  });
+
+  it("is applied to device and net events inside a batch, but not to other kinds", () => {
+    const batch = sanitizeBatch({
+      ...base,
+      ev: [
+        { t: NOW - 100, k: "device", d: crafted },
+        { t: NOW - 90, k: "net", d: { ev: "online", ol: true, w: 390, mem: 4 } },
+        { t: NOW - 80, k: "bcast", d: { ev: "reveal", lag: 5 } },
+      ],
+    });
+    expect(batch!.events[0]!.d).toEqual(cleanDeviceData(crafted));
+    expect(batch!.events[1]!.d).toEqual({ ev: "online", ol: true });
+    expect(batch!.events[2]!.d).toEqual({ ev: "reveal", lag: 5 });
+  });
+});
+
+describe("summarizeDevice", () => {
+  const IPHONE =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5.1 Mobile/15E148 Safari/604.1";
+  const PIXEL =
+    "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.71 Mobile Safari/537.36";
+  const MAC =
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+
+  it("gives the browser family and major version, the OS family and the device class, nothing more", () => {
+    expect(summarizeDevice(IPHONE, "player")).toEqual({ br: "Safari 17", os: "iOS", dc: "phone" });
+    expect(summarizeDevice(PIXEL, "player")).toEqual({ br: "Chrome 126", os: "Android", dc: "phone" });
+    expect(summarizeDevice(MAC, "host")).toEqual({ br: "Chrome 126", os: "macOS", dc: "laptop" });
+  });
+
+  it("never carries the phone model, the OS version or a minor version", () => {
+    const all = JSON.stringify([IPHONE, PIXEL, MAC].map((ua) => summarizeDevice(ua, "player")));
+    for (const leaked of ["Pixel", "17.5", "17_5", "14", "10_15", "126.0", "605", "Mobile"]) {
+      expect(all).not.toContain(leaked);
+    }
+  });
+
+  it("tells tablets, TVs and in-app pages apart", () => {
     expect(
-      summarizeUserAgent(
-        "Mozilla/5.0 (Linux; Android 14; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36",
+      summarizeDevice(
+        "Mozilla/5.0 (iPad; CPU OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        "host",
       ),
-    ).toBe("Pixel 7 · Android 14 · Chrome 126");
+    ).toEqual({ br: "Safari 17", os: "iPadOS", dc: "tablet" });
     expect(
-      summarizeUserAgent(
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      ),
-    ).toBe("macOS 10.15.7 · Chrome 126");
-    expect(summarizeUserAgent("")).toBe("unknown");
-    expect(summarizeUserAgent(null)).toBe("unknown");
+      summarizeDevice(
+        "Mozilla/5.0 (Linux; Android 13; SM-X700) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "player",
+      ).dc,
+    ).toBe("tablet");
+    // The TV screen is a TV whatever is plugged in behind it.
+    expect(summarizeDevice(MAC, "tv").dc).toBe("tv");
+    expect(summarizeDevice("Mozilla/5.0 (SMART-TV; Linux; Tizen 6.5) AppleWebKit/537.36 Chrome/94 TV Safari/537.36", "player").dc).toBe("tv");
+    expect(summarizeDevice(IPHONE + " [FBAN/FBIOS;FBAV/450.0]", "player").br).toBe("Safari 17 (Facebook app)");
+  });
+
+  it("handles missing or odd text without throwing, and always returns known classes", () => {
+    expect(summarizeDevice("", "player")).toEqual({ br: "unknown", os: "unknown", dc: "unknown" });
+    expect(summarizeDevice(null, "tv")).toEqual({ br: "unknown", os: "unknown", dc: "tv" });
+    const odd = summarizeDevice("\u0000weird\u0007 agent", "player");
+    expect(odd.br).toBe("other");
+    for (const ua of [IPHONE, PIXEL, MAC, "", "x"]) {
+      expect(DIAG_DEVICE_CLASSES).toContain(summarizeDevice(ua, "player").dc);
+    }
   });
 });

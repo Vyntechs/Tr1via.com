@@ -2,6 +2,7 @@
 // that never drops slow/failed events, beacon on hide, silent failure.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { DIAG_DEVICE_KEYS, DIAG_NET_KEYS } from "@/lib/diagnostics/config";
 import {
   __resetDiagClientForTests,
   diagActive,
@@ -164,6 +165,75 @@ describe("staying quiet while a question is open", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(sentBatches()[0]!.ev.map((e) => e.k)).toEqual(["device", "net"]);
   });
+
+  it("sends nothing at all while a question is open, however long it lasts and however much piles up", async () => {
+    start({ surface: "tv", room: "K9PR4M" });
+    diagQuestionOpen(true);
+    for (let i = 0; i < 150; i++) diagEvent("net", { i }, true);
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(beaconMock).not.toHaveBeenCalled();
+  });
+
+  it("does not report in the middle of a question just because the phone locked its answer in", async () => {
+    // The question stays open on the phone until the room says it closed; the
+    // answer screen swapping to the locked-in screen does not change that.
+    start({ surface: "player", room: "K9PR4M" });
+    diagQuestionOpen(true);
+    diagEvent("tap", { q: "q1", slot: 2, tries: 2, ms: 2600, ok: true, st: 204 }, true);
+    // (nothing tells the reporter the question is over)
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    diagQuestionOpen(false);
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBatches()[0]!.ev.map((e) => e.k)).toContain("tap");
+  });
+
+  it("still holds when the question was already open before the reporter finished loading", async () => {
+    // The reporter is loaded a moment after the page; a phone that reloads
+    // mid-question has already said "open" by then.
+    diagQuestionOpen(true);
+    start({ surface: "player", room: "K9PR4M" });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    diagQuestionOpen(false);
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps slow and failed events through a long question, and drops routine ones first when full", async () => {
+    start({ surface: "tv", room: "K9PR4M" });
+    diagQuestionOpen(true);
+    for (let i = 0; i < 40; i++) diagEvent("net", { slow: i }, true); // forced
+    for (let i = 0; i < 400; i++) diagEvent("bcast", { ev: "reveal", i }); // routine
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    diagQuestionOpen(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    const events = sentBatches().flatMap((b) => b.ev);
+    expect(events.length).toBeLessThanOrEqual(210);
+    // every slow/failed event (and the device description) survived
+    expect(events.filter((e) => e.f === 1)).toHaveLength(41);
+  });
+
+  it("goes back to normal between questions", async () => {
+    start({ surface: "player", room: "K9PR4M" });
+    diagQuestionOpen(true);
+    diagQuestionOpen(false);
+    diagEvent("net", { ev: "conn" }, true);
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a page that is hidden mid-question still hands its events to the browser (so they are not lost)", async () => {
+    start({ surface: "player", room: "K9PR4M" });
+    diagQuestionOpen(true);
+    diagEvent("net", { ev: "offline" }, true);
+    setVisibility("hidden");
+    expect(beaconMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("leaving the page", () => {
@@ -249,18 +319,34 @@ describe("what it listens to", () => {
     connection.dispatchEvent(new Event("change"));
     await vi.advanceTimersByTimeAsync(13_000);
     const evs = sentBatches().flatMap((b) => b.ev);
-    expect(evs.find((e) => e.k === "device")!.d).toMatchObject({ et: "3g", rtt: 300, s: "player" });
+    expect(evs.find((e) => e.k === "device")!.d).toMatchObject({ et: "3g", rtt: 300 });
     expect(evs.filter((e) => e.k === "net").map((e) => e.d!.ev)).toEqual(["offline", "online", "conn"]);
     expect(evs.filter((e) => e.k === "net")[2]!.d).toMatchObject({ et: "4g" });
     delete (navigator as unknown as { connection?: unknown }).connection;
   });
 
-  it("describes the device without sending the user agent or any identity", async () => {
+  it("describes the device with a short summary only: no user agent, exact size, memory, cores or identity", async () => {
+    const connection = new EventTarget() as EventTarget & Record<string, unknown>;
+    Object.assign(connection, { effectiveType: "4g", rtt: 50, downlink: 9.5, saveData: true, type: "wifi" });
+    Object.defineProperty(navigator, "connection", { value: connection, configurable: true });
+    Object.defineProperty(navigator, "deviceMemory", { value: 8, configurable: true });
     start({ surface: "player", room: "K9PR4M" });
+    window.dispatchEvent(new Event("offline"));
     await vi.advanceTimersByTimeAsync(13_000);
     const raw = (fetchMock.mock.calls[0]![1] as { body: string }).body;
     expect(raw).not.toContain(navigator.userAgent);
     expect(raw.toLowerCase()).not.toContain("cookie");
+    const evs = sentBatches().flatMap((b) => b.ev);
+    const device = evs.find((e) => e.k === "device")!.d!;
+    // Only keys from the fixed list, and in particular none of the old ones.
+    expect(Object.keys(device).every((key) => (DIAG_DEVICE_KEYS as readonly string[]).includes(key))).toBe(true);
+    for (const gone of ["w", "h", "dpr", "cores", "mem", "app", "s", "sd", "ua"]) expect(device).not.toHaveProperty(gone);
+    expect(device).toMatchObject({ sc: "l", et: "4g", rtt: 50, dl: 9.5, ty: "wifi" });
+    for (const e of evs.filter((x) => x.k === "net")) {
+      expect(Object.keys(e.d!).every((key) => (DIAG_NET_KEYS as readonly string[]).includes(key))).toBe(true);
+    }
+    delete (navigator as unknown as { connection?: unknown }).connection;
+    delete (navigator as unknown as { deviceMemory?: unknown }).deviceMemory;
   });
 
   it("turns the ribbon, channel and broadcast helpers into events", async () => {

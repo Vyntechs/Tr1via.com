@@ -1,11 +1,12 @@
 // @vitest-environment node
 
 // Migration 20261007180000_diagnostic_logs.sql on real Postgres (pglite).
-// Proves: the three tables and the timeline view are closed to the browser
-// roles (RLS with no policies, no grants), the service role can write and
-// read, constraints hold, there are no foreign keys, cleanup keeps 45 days
-// and refuses a typo, and every query documented in
-// docs/diagnostics/night-timeline.md runs against a realistic night.
+// Proves: the three tables and the timeline function are closed to the
+// browser roles (RLS with no policies, no grants), the service role can write
+// and read, constraints hold, there are no foreign keys, cleanup keeps 45 days
+// and refuses a typo, the migration can be run twice, the timeline never
+// blocks a later change to the game's own tables, and every query documented
+// in docs/diagnostics/night-timeline.md runs against a realistic night.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -17,6 +18,8 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const MIGRATIONS = path.join(ROOT, "supabase/migrations");
 const DOCS = path.join(ROOT, "docs/diagnostics/night-timeline.md");
 const TABLES = ["diag_answer_events", "diag_server_actions", "diag_device_events"] as const;
+const MIGRATION_FILE = "20261007180000_diagnostic_logs.sql";
+const TIMELINE_FN = "public.diag_night_timeline(uuid, timestamptz, timestamptz)";
 
 async function freshDb(): Promise<PGlite> {
   const db = new PGlite();
@@ -41,7 +44,7 @@ async function freshDb(): Promise<PGlite> {
     alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
     alter default privileges in schema public grant all on functions to anon, authenticated, service_role;
   `);
-  await db.exec(readFileSync(path.join(MIGRATIONS, "20261007180000_diagnostic_logs.sql"), "utf8"));
+  await db.exec(readFileSync(path.join(MIGRATIONS, MIGRATION_FILE), "utf8"));
   return db;
 }
 
@@ -156,35 +159,39 @@ describe("diagnostic logs schema", () => {
     }
   });
 
-  test("the browser roles have no rights on the tables, the view or the cleanup function", async () => {
+  test("the browser roles have no rights on the tables or either function", async () => {
     for (const role of ["anon", "authenticated"]) {
-      for (const relation of [...TABLES, "diag_night_timeline"]) {
+      for (const table of TABLES) {
         const r = await one<{ s: boolean; i: boolean; d: boolean }>(
-          `select has_table_privilege('${role}', 'public.${relation}', 'select') as s,
-                  has_table_privilege('${role}', 'public.${relation}', 'insert') as i,
-                  has_table_privilege('${role}', 'public.${relation}', 'delete') as d`,
+          `select has_table_privilege('${role}', 'public.${table}', 'select') as s,
+                  has_table_privilege('${role}', 'public.${table}', 'insert') as i,
+                  has_table_privilege('${role}', 'public.${table}', 'delete') as d`,
         );
-        expect(r, `${role} on ${relation}`).toEqual({ s: false, i: false, d: false });
+        expect(r, `${role} on ${table}`).toEqual({ s: false, i: false, d: false });
       }
-      const fn = await one<{ x: boolean }>(
-        `select has_function_privilege('${role}', 'public.cleanup_diagnostic_logs(integer)', 'execute') as x`,
-      );
-      expect(fn.x).toBe(false);
+      for (const fn of ["public.cleanup_diagnostic_logs(integer)", TIMELINE_FN]) {
+        const r = await one<{ x: boolean }>(`select has_function_privilege('${role}', '${fn}', 'execute') as x`);
+        expect(r.x, `${role} may run ${fn}`).toBe(false);
+      }
     }
-    const service = await one<{ s: boolean; i: boolean; x: boolean }>(
+    const service = await one<{ i: boolean; x: boolean; t: boolean }>(
       `select has_table_privilege('service_role', 'public.diag_device_events', 'insert') as i,
-              has_table_privilege('service_role', 'public.diag_night_timeline', 'select') as s,
+              has_function_privilege('service_role', '${TIMELINE_FN}', 'execute') as t,
               has_function_privilege('service_role', 'public.cleanup_diagnostic_logs(integer)', 'execute') as x`,
     );
-    expect(service).toEqual({ s: true, i: true, x: true });
+    expect(service).toEqual({ i: true, t: true, x: true });
   });
 
   test.each(["anon", "authenticated"] as const)("%s cannot read or write any diagnostic row", async (role) => {
     await db.exec(`set role ${role}`);
     try {
-      for (const relation of [...TABLES, "diag_night_timeline"]) {
-        await expect(db.query(`select * from public.${relation}`)).rejects.toThrow(/permission denied/i);
+      for (const table of TABLES) {
+        await expect(db.query(`select * from public.${table}`)).rejects.toThrow(/permission denied/i);
       }
+      await expect(
+        db.query("select * from public.diag_night_timeline($1)", [nightId]),
+      ).rejects.toThrow(/permission denied/i);
+      await expect(db.query("select public.cleanup_diagnostic_logs(45)")).rejects.toThrow(/permission denied/i);
       await expect(
         db.query(
           `insert into public.diag_device_events (surface, session_id, kind, device_at, at_est)
@@ -196,11 +203,58 @@ describe("diagnostic logs schema", () => {
     }
   });
 
-  test("the timeline view obeys the caller's rights (security_invoker)", async () => {
-    const view = await one<{ reloptions: string[] }>(
-      "select reloptions from pg_class where oid = 'public.diag_night_timeline'::regclass",
+  test("the timeline is a function that obeys the caller's rights, not a view", async () => {
+    const fn = await one<{ prosecdef: boolean; provolatile: string }>(
+      `select prosecdef, provolatile from pg_proc where oid = '${TIMELINE_FN}'::regprocedure`,
     );
-    expect(view.reloptions).toContain("security_invoker=true");
+    expect(fn.prosecdef).toBe(false); // security invoker
+    expect(fn.provolatile).toBe("s"); // stable: read-only
+    const view = await one<{ r: string | null }>("select to_regclass('public.diag_night_timeline')::text as r");
+    expect(view.r).toBeNull();
+  });
+
+  test("the migration can be run twice: nothing breaks, nothing is lost, the locks stay", async () => {
+    const before = await one<{ n: number }>("select count(*)::int as n from public.diag_answer_events");
+    expect(before.n).toBeGreaterThan(0);
+    await db.exec(readFileSync(path.join(MIGRATIONS, MIGRATION_FILE), "utf8"));
+    const after = await one<{ n: number }>("select count(*)::int as n from public.diag_answer_events");
+    expect(after.n).toBe(before.n);
+    const policies = await one<{ n: number }>(
+      "select count(*)::int as n from pg_policies where tablename like 'diag_%'",
+    );
+    expect(policies.n).toBe(0);
+    const open = await one<{ x: boolean }>(
+      `select has_function_privilege('anon', '${TIMELINE_FN}', 'execute')
+           or has_table_privilege('authenticated', 'public.diag_device_events', 'select') as x`,
+    );
+    expect(open.x).toBe(false);
+    // It also replaces an old draft that had the timeline as a view.
+    await db.exec(`
+      drop function ${TIMELINE_FN};
+      create view public.diag_night_timeline as select 1 as night_id;
+    `);
+    await db.exec(readFileSync(path.join(MIGRATIONS, MIGRATION_FILE), "utf8"));
+    const view = await one<{ r: string | null }>("select to_regclass('public.diag_night_timeline')::text as r");
+    expect(view.r).toBeNull();
+    const rows = await db.query("select * from public.diag_night_timeline($1)", [nightId]);
+    expect(rows.rows.length).toBeGreaterThan(0);
+  });
+
+  test("the timeline does not block a later change to the game's own tables", async () => {
+    // Control: a view over the same column DOES block the change...
+    await db.exec("create view public.tmp_control_view as select locked_at from public.answers");
+    await expect(
+      db.exec("alter table public.answers alter column locked_at type timestamp"),
+    ).rejects.toThrow(/used by a view or rule/i);
+    await db.exec("drop view public.tmp_control_view");
+    // ...but with only the timeline function in place, changing columns the
+    // timeline reads goes through, and the function still runs afterwards.
+    await db.exec("alter table public.answers alter column locked_at type timestamp");
+    await db.exec("alter table public.reveals alter column occurred_at type timestamp");
+    await db.exec("alter table public.answers alter column locked_at type timestamptz");
+    await db.exec("alter table public.reveals alter column occurred_at type timestamptz");
+    const rows = await db.query("select * from public.diag_night_timeline($1)", [nightId]);
+    expect(rows.rows.length).toBeGreaterThan(0);
   });
 
   test("has no foreign keys, so a reset or an unknown id never loses or blocks a row", async () => {
@@ -279,7 +333,7 @@ describe("diagnostic logs schema", () => {
       [nightId],
     );
     const rows = await db.query<{ source: string; who: string; what: string; at: Date }>(
-      `select source, who, what, at from diag_night_timeline where night_id = $1 order by at`,
+      "select source, who, what, at from public.diag_night_timeline($1) order by at",
       [nightId],
     );
     await db.exec("reset role");
@@ -296,6 +350,27 @@ describe("diagnostic logs schema", () => {
     expect(rows.rows.find((r) => r.what === "late: deadline_passed")?.who).toBe("Quiet Quinn");
     expect(rows.rows.find((r) => r.what === "rejected: no_device_session")?.who).toMatch(/^device [0-9a-f]{8}$/);
     expect(rows.rows.find((r) => r.source === "device:tv")?.who).toBe("tv sess-t");
+  });
+
+  test("the timeline takes only the night asked for, and an optional time window", async () => {
+    await db.exec("set role service_role");
+    try {
+      const other = await db.query("select * from public.diag_night_timeline(gen_random_uuid())");
+      expect(other.rows).toHaveLength(0);
+      const window = await db.query<{ source: string }>(
+        "select source from public.diag_night_timeline($1, $2::timestamptz, $3::timestamptz)",
+        [nightId, "2026-10-08T00:06:09Z", "2026-10-08T00:06:13Z"],
+      );
+      expect(window.rows.map((r) => r.source).sort()).toEqual(["device:player", "device:tv"]);
+      const sinceOnly = await db.query<{ source: string }>(
+        "select source from public.diag_night_timeline($1, $2::timestamptz)",
+        [nightId, "2026-10-08T00:06:25Z"],
+      );
+      expect(sinceOnly.rows.map((r) => r.source)).toContain("action");
+      expect(sinceOnly.rows.map((r) => r.source)).not.toContain("db_reveal");
+    } finally {
+      await db.exec("reset role");
+    }
   });
 
   test("cleanup removes rows older than 45 days, keeps newer ones, and refuses a typo", async () => {

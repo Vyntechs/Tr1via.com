@@ -15,8 +15,12 @@
 --                       laptop: broadcast heard, room re-download times,
 --                       connection changes, the "switch to a hotspot"
 --                       screen, slow frames.
---   diag_night_timeline a read-only view that lines all of it up by time for
---                       one night (see docs/diagnostics/night-timeline.md).
+--   diag_night_timeline() a read-only FUNCTION (not a view, see below) that
+--                       lines all of it up by time for one night (see
+--                       docs/diagnostics/night-timeline.md).
+--
+-- Safe to run more than once: tables and indexes are "if not exists",
+-- functions are "create or replace", grants are repeatable.
 --
 -- Rules:
 --   - Written ONLY by the server with the service-role key, and only when
@@ -26,8 +30,17 @@
 --   - No foreign keys on purpose: a turned-down tap can carry ids the
 --     database has never seen, and a reset must not wipe the evidence.
 --   - Personal data is limited to the device id already stored on `players`
---     and (device events only) a short user-agent description. Display names
---     are NOT copied here; the timeline view joins them from `players`.
+--     and (device events only) a short device summary: browser family +
+--     major version, OS family, device class, connection type, coarse screen
+--     class. No raw user-agent text, exact screen size, memory or CPU-core
+--     numbers. Display names are NOT copied here; the timeline function joins
+--     them from `players`.
+--   - The timeline is a function on purpose. A view would be recorded as
+--     depending on the columns of players, answers, reveals, games, questions
+--     and categories, and Postgres would then refuse to change or drop any of
+--     them. A function written with a plain string body is looked up only when
+--     it runs, so later changes to those tables are never blocked by this
+--     migration.
 --   - Retention: 45 days. cleanup_diagnostic_logs() deletes older rows.
 --     Nothing in this migration schedules it. See the docs file for the
 --     one-line pg_cron job or the manual query.
@@ -35,7 +48,7 @@
 set search_path = public, extensions;
 
 -- ─── every answer tap ──────────────────────────────────────────────────
-create table public.diag_answer_events (
+create table if not exists public.diag_answer_events (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
   -- Server arrival time: the clock the deadline check really used.
@@ -77,15 +90,15 @@ create table public.diag_answer_events (
 comment on table public.diag_answer_events is
   'One row per answer tap the server received, saved or not. Service role only. 45-day retention.';
 
-create index diag_answer_events_night_time_idx
+create index if not exists diag_answer_events_night_time_idx
   on public.diag_answer_events (night_id, received_at);
-create index diag_answer_events_question_time_idx
+create index if not exists diag_answer_events_question_time_idx
   on public.diag_answer_events (question_id, received_at);
-create index diag_answer_events_created_idx
+create index if not exists diag_answer_events_created_idx
   on public.diag_answer_events (created_at);
 
 -- ─── host control presses and timer-end resolves ───────────────────────
-create table public.diag_server_actions (
+create table if not exists public.diag_server_actions (
   id uuid primary key default gen_random_uuid(),
   created_at timestamptz not null default now(),
   -- Press-received time on the server.
@@ -120,15 +133,15 @@ create table public.diag_server_actions (
 comment on table public.diag_server_actions is
   'One row per host control press or timer-end resolve call, with step timings. Service role only. 45-day retention.';
 
-create index diag_server_actions_night_time_idx
+create index if not exists diag_server_actions_night_time_idx
   on public.diag_server_actions (night_id, received_at);
-create index diag_server_actions_question_time_idx
+create index if not exists diag_server_actions_question_time_idx
   on public.diag_server_actions (question_id, received_at);
-create index diag_server_actions_created_idx
+create index if not exists diag_server_actions_created_idx
   on public.diag_server_actions (created_at);
 
 -- ─── reports from phones, the TV and the host laptop ───────────────────
-create table public.diag_device_events (
+create table if not exists public.diag_device_events (
   id uuid primary key default gen_random_uuid(),
   -- When the server received the batch.
   created_at timestamptz not null default now(),
@@ -155,11 +168,11 @@ create table public.diag_device_events (
 comment on table public.diag_device_events is
   'Small batched reports from player phones, the TV and the host laptop. Service role only. 45-day retention.';
 
-create index diag_device_events_night_time_idx
+create index if not exists diag_device_events_night_time_idx
   on public.diag_device_events (night_id, at_est);
-create index diag_device_events_device_time_idx
+create index if not exists diag_device_events_device_time_idx
   on public.diag_device_events (night_id, device_id, at_est);
-create index diag_device_events_created_idx
+create index if not exists diag_device_events_created_idx
   on public.diag_device_events (created_at);
 
 -- ─── lock it down ──────────────────────────────────────────────────────
@@ -178,9 +191,11 @@ grant select, insert, delete on table public.diag_server_actions to service_role
 grant select, insert, delete on table public.diag_device_events to service_role;
 
 -- ─── retention: 45 days ────────────────────────────────────────────────
--- Callable only by trusted server code or an operator. NOTHING schedules it
--- here. To run it automatically, see docs/diagnostics/night-timeline.md.
-create function public.cleanup_diagnostic_logs(p_days integer default 45)
+-- Callable only by trusted server code or an operator. NOTHING in this file
+-- schedules it. The app calls it once a day from /api/cron/diag-cleanup, and
+-- that route does nothing at all unless DIAGNOSTIC_LOGGING is on. It can also
+-- be run by hand (see docs/diagnostics/night-timeline.md).
+create or replace function public.cleanup_diagnostic_logs(p_days integer default 45)
 returns bigint
 language plpgsql
 security definer
@@ -218,109 +233,152 @@ revoke all privileges on function public.cleanup_diagnostic_logs(integer)
 grant execute on function public.cleanup_diagnostic_logs(integer) to service_role;
 
 -- ─── the night timeline ────────────────────────────────────────────────
--- Everything for one night in one list, ordered by `at`. Filter it:
---   select * from diag_night_timeline
---    where night_id = '...' and at between '...' and '...' order by at;
+-- Everything for one night in one list, ordered by time. Call it:
+--   select * from public.diag_night_timeline('<night id>');
+--   select * from public.diag_night_timeline('<night id>', '<from>', '<to>');
 -- Sources: answer (every tap), action (host presses + timer-end resolves),
 -- device:<surface> (phone/TV/host reports), db_reveal (the reveals table),
 -- db_answer (answers the database actually saved).
 --
--- security_invoker makes the view obey the caller's table rights, so the
--- no-policy RLS above still locks it for the browser roles.
-create view public.diag_night_timeline
-with (security_invoker = true)
-as
-  select
-    a.night_id,
-    a.received_at as at,
-    'answer'::text as source,
-    coalesce(p.display_name, 'device ' || left(a.device_id::text, 8)) as who,
-    a.outcome || ': ' || a.reason as what,
-    jsonb_strip_nulls(jsonb_build_object(
-      'question_id', a.question_id,
-      'status', a.http_status,
-      'ms_after_open', a.ms_after_open,
-      'deadline_s', a.deadline_s,
-      'tap_held_ms', case
-        when a.client_sent_at is not null and a.client_tap_at is not null
-        then (extract(epoch from (a.client_sent_at - a.client_tap_at)) * 1000)::bigint end,
-      'client_attempt', a.client_attempt,
-      'total_ms', a.total_ms,
-      'steps', a.steps,
-      'cold_start', a.cold_start,
-      'region', a.region
-    )) as detail
-  from public.diag_answer_events a
-  left join public.players p
-    on p.night_id = a.night_id and p.device_id = a.device_id
+-- Every branch is filtered to the one night (and time window) first, so it
+-- reads only that night's rows. It still reads real game tables, so do not
+-- run it during a show.
+--
+-- SECURITY INVOKER: it obeys the caller's table rights, so the no-policy RLS
+-- above still locks it for the browser roles (and they also have no execute
+-- right). The body is a plain string (not BEGIN ATOMIC) on purpose: see the
+-- note at the top about not blocking changes to other tables.
+drop view if exists public.diag_night_timeline;
 
-  union all
+create or replace function public.diag_night_timeline(
+  p_night_id uuid,
+  p_from timestamptz default null,
+  p_to timestamptz default null
+)
+returns table (
+  night_id uuid,
+  at timestamptz,
+  source text,
+  who text,
+  what text,
+  detail jsonb
+)
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select * from (
+    select
+      a.night_id::uuid as night_id,
+      a.received_at::timestamptz as at,
+      'answer'::text as source,
+      coalesce(p.display_name, 'device ' || left(a.device_id::text, 8))::text as who,
+      (a.outcome || ': ' || a.reason)::text as what,
+      jsonb_strip_nulls(jsonb_build_object(
+        'question_id', a.question_id,
+        'status', a.http_status,
+        'ms_after_open', a.ms_after_open,
+        'deadline_s', a.deadline_s,
+        'tap_held_ms', case
+          when a.client_sent_at is not null and a.client_tap_at is not null
+          then (extract(epoch from (a.client_sent_at - a.client_tap_at)) * 1000)::bigint end,
+        'client_attempt', a.client_attempt,
+        'total_ms', a.total_ms,
+        'steps', a.steps,
+        'cold_start', a.cold_start,
+        'region', a.region
+      ))::jsonb as detail
+    from public.diag_answer_events a
+    left join public.players p
+      on p.night_id = a.night_id and p.device_id = a.device_id
+    where a.night_id = p_night_id
+      and (p_from is null or a.received_at >= p_from)
+      and (p_to is null or a.received_at <= p_to)
 
-  select
-    s.night_id,
-    s.received_at,
-    'action',
-    s.actor,
-    s.action || ': ' || s.outcome,
-    jsonb_strip_nulls(jsonb_build_object(
-      'question_id', s.question_id,
-      'status', s.http_status,
-      'reason', s.reason,
-      'total_ms', s.total_ms,
-      'auth_ms', s.auth_ms,
-      'db_done_ms', s.db_done_ms,
-      'broadcast_start_ms', s.broadcast_start_ms,
-      'broadcast_done_ms', s.broadcast_done_ms,
-      'broadcast_ok', s.broadcast_ok,
-      'broadcast_error', s.broadcast_error,
-      'steps', s.steps,
-      'cold_start', s.cold_start,
-      'region', s.region
-    ))
-  from public.diag_server_actions s
+    union all
 
-  union all
+    select
+      s.night_id::uuid,
+      s.received_at::timestamptz,
+      'action'::text,
+      s.actor::text,
+      (s.action || ': ' || s.outcome)::text,
+      jsonb_strip_nulls(jsonb_build_object(
+        'question_id', s.question_id,
+        'status', s.http_status,
+        'reason', s.reason,
+        'total_ms', s.total_ms,
+        'auth_ms', s.auth_ms,
+        'db_done_ms', s.db_done_ms,
+        'broadcast_start_ms', s.broadcast_start_ms,
+        'broadcast_done_ms', s.broadcast_done_ms,
+        'broadcast_ok', s.broadcast_ok,
+        'broadcast_error', s.broadcast_error,
+        'steps', s.steps,
+        'cold_start', s.cold_start,
+        'region', s.region
+      ))::jsonb
+    from public.diag_server_actions s
+    where s.night_id = p_night_id
+      and (p_from is null or s.received_at >= p_from)
+      and (p_to is null or s.received_at <= p_to)
 
-  select
-    d.night_id,
-    d.at_est,
-    'device:' || d.surface,
-    coalesce(p.display_name, d.surface || ' ' || left(d.session_id, 6)),
-    d.kind || coalesce(': ' || (d.data ->> 'ev'), ''),
-    d.data || jsonb_build_object('forced', d.forced, 'offset_ms', d.offset_ms)
-  from public.diag_device_events d
-  left join public.players p
-    on p.night_id = d.night_id and p.device_id = d.device_id
+    union all
 
-  union all
+    select
+      d.night_id::uuid,
+      d.at_est::timestamptz,
+      ('device:' || d.surface)::text,
+      coalesce(p.display_name, d.surface || ' ' || left(d.session_id, 6))::text,
+      (d.kind || coalesce(': ' || (d.data ->> 'ev'), ''))::text,
+      (d.data || jsonb_build_object('forced', d.forced, 'offset_ms', d.offset_ms))::jsonb
+    from public.diag_device_events d
+    left join public.players p
+      on p.night_id = d.night_id and p.device_id = d.device_id
+    where d.night_id = p_night_id
+      and (p_from is null or d.at_est >= p_from)
+      and (p_to is null or d.at_est <= p_to)
 
-  select
-    g.night_id,
-    r.occurred_at,
-    'db_reveal',
-    'database',
-    r.event,
-    jsonb_build_object('question_id', r.question_id)
-  from public.reveals r
-  join public.games g on g.id = r.game_id
+    union all
 
-  union all
+    select
+      g.night_id::uuid,
+      r.occurred_at::timestamptz,
+      'db_reveal'::text,
+      'database'::text,
+      r.event::text,
+      jsonb_build_object('question_id', r.question_id)::jsonb
+    from public.reveals r
+    join public.games g on g.id = r.game_id
+    where g.night_id = p_night_id
+      and (p_from is null or r.occurred_at >= p_from)
+      and (p_to is null or r.occurred_at <= p_to)
 
-  select
-    g.night_id,
-    ans.locked_at,
-    'db_answer',
-    p.display_name,
-    'saved answer',
-    jsonb_build_object('question_id', ans.question_id, 'ms_to_lock', ans.ms_to_lock)
-  from public.answers ans
-  join public.players p on p.id = ans.player_id
-  join public.questions q on q.id = ans.question_id
-  join public.categories c on c.id = q.category_id
-  join public.games g on g.id = c.game_id;
+    union all
 
-comment on view public.diag_night_timeline is
-  'Read-only: diagnostic rows plus the reveals and answers tables for one night, ordered by `at`. Service role only.';
+    select
+      g.night_id::uuid,
+      ans.locked_at::timestamptz,
+      'db_answer'::text,
+      p.display_name::text,
+      'saved answer'::text,
+      jsonb_build_object('question_id', ans.question_id, 'ms_to_lock', ans.ms_to_lock)::jsonb
+    from public.answers ans
+    join public.players p on p.id = ans.player_id
+    join public.questions q on q.id = ans.question_id
+    join public.categories c on c.id = q.category_id
+    join public.games g on g.id = c.game_id
+    where g.night_id = p_night_id
+      and (p_from is null or ans.locked_at >= p_from)
+      and (p_to is null or ans.locked_at <= p_to)
+  ) timeline
+  order by 2
+$$;
 
-revoke all privileges on table public.diag_night_timeline from public, anon, authenticated;
-grant select on table public.diag_night_timeline to service_role;
+comment on function public.diag_night_timeline(uuid, timestamptz, timestamptz) is
+  'Read-only: diagnostic rows plus the reveals and answers tables for one night, ordered by time. Service role only. Do not run during a show.';
+
+revoke all privileges on function public.diag_night_timeline(uuid, timestamptz, timestamptz)
+  from public, anon, authenticated;
+grant execute on function public.diag_night_timeline(uuid, timestamptz, timestamptz) to service_role;

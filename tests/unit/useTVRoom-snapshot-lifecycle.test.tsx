@@ -49,6 +49,7 @@ vi.mock("@/lib/supabase/client", () => ({
 }));
 
 import { useTVRoom } from "@/lib/hooks/useTVRoom";
+import { __resetDiagClientForTests, setDiagSink } from "@/lib/diagnostics/client";
 
 function snapshot(code: string, venueName: string): TVSnapshot {
   return {
@@ -108,6 +109,32 @@ describe("useTVRoom snapshot request lifecycle", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it("tells the diagnostic reporter a question is live on the TV until the snapshot says it closed", async () => {
+    const open: boolean[] = [];
+    setDiagSink({ event: () => {}, questionOpen: (value) => open.push(value) });
+    try {
+      const live = { ...snapshot("ABCDEF", "Question up"), liveQuestionId: "q1" };
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(response(live))
+        .mockResolvedValueOnce(response(snapshot("ABCDEF", "Answer reveal")));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { result } = renderHook(() => useTVRoom("ABCDEF"));
+      await waitFor(() => expect(result.current.snapshot?.night.venueName).toBe("Question up"));
+      expect(open).toEqual([true]);
+
+      act(() => {
+        h.broadcast("ABCDEF", "game-started", { gameId: "g", serverNow: "2026-07-19T00:00:01.000Z" });
+      });
+      await waitFor(() => expect(result.current.snapshot?.night.venueName).toBe("Answer reveal"));
+      expect(open).toEqual([true, false]);
+    } finally {
+      setDiagSink(null);
+      __resetDiagClientForTests();
+    }
   });
 
   it("refetches immediately when a game-started wake-up arrives", async () => {

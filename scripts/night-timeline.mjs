@@ -8,6 +8,7 @@
 // --from / --to are Central time. Without them it prints the first --limit
 // rows of the night (default 400). DATABASE_URL defaults to the local
 // Supabase database. It only runs a SELECT inside a read-only transaction.
+// Do not run it during a show (it reads the live game tables too).
 // See docs/diagnostics/night-timeline.md.
 
 import pg from "pg";
@@ -40,27 +41,17 @@ try {
   }
   const { id, venue_name: venue } = night.rows[0];
 
-  const params = [id];
-  let where = "night_id = $1";
-  const from = flag("from");
-  const to = flag("to");
-  if (from) {
-    params.push(from);
-    where += ` and at >= ($${params.length}::timestamp at time zone 'America/Chicago')`;
-  }
-  if (to) {
-    params.push(to);
-    where += ` and at <= ($${params.length}::timestamp at time zone 'America/Chicago')`;
-  }
-  params.push(limit);
+  // --from / --to are Central time; the function takes real timestamps.
   const rows = await client.query(
     `select to_char(at at time zone 'America/Chicago', 'YYYY-MM-DD HH24:MI:SS.MS') as local_time,
             source, who, what, detail
-       from diag_night_timeline
-      where ${where}
+       from public.diag_night_timeline(
+              $1::uuid,
+              ($2::text)::timestamp at time zone 'America/Chicago',
+              ($3::text)::timestamp at time zone 'America/Chicago')
       order by at
-      limit $${params.length}`,
-    params,
+      limit $4`,
+    [id, flag("from"), flag("to"), limit],
   );
 
   console.log(`Night ${venue} (${room.toUpperCase()}), ${rows.rowCount} rows, Central time\n`);
