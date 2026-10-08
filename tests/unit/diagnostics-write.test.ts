@@ -12,6 +12,7 @@ vi.mock("next/server", async (importOriginal) => ({
 vi.mock("@/lib/supabase/admin", () => adminMock);
 
 import { DiagLookupSlow } from "@/lib/diagnostics/deadline";
+import { unknownKeys } from "../helpers/diag-columns";
 import {
   __clearDiagCacheForTests,
   __diagWriteCountersForTests,
@@ -28,8 +29,11 @@ import {
   scheduleDiagWrite,
 } from "@/lib/diagnostics/write";
 import {
+  DIAG_ABORT_HOLD_MS,
   DIAG_BUCKET_ROW_CAPS,
+  DIAG_CALL_CEILING_MS,
   DIAG_CLEANUP_MAX_BATCHES,
+  DIAG_DB_STATEMENT_TIMEOUT_MS,
   DIAG_DEVICE_ROW_CAPS,
   DIAG_JOB_DEADLINE_MS,
   DIAG_MAX_WRITES_IN_FLIGHT,
@@ -37,12 +41,38 @@ import {
   DIAG_QUOTA_BUSY_BACKOFF_MS,
   DIAG_QUOTA_BUSY_RETRIES,
   DIAG_WRITE_QUEUE_MAX,
+  DIAG_NIGHT_PRESS_ROW_CAP,
   DIAG_NIGHT_ROW_CAP,
   DIAG_NIGHT_SERVER_ROW_CAP,
+  DIAG_PAUSE_MS,
   DIAG_QUOTA_FULL_MEMORY_MS,
   DIAG_QUOTA_LEASE_ROWS,
   DIAG_WRITE_TIMEOUT_MS,
 } from "@/lib/diagnostics/config";
+
+/**
+ * The insert goes through the database function diag_insert_rows. A fake
+ * `rpc` that answers it with `handler(rows, table)` (and anything else with
+ * `other`), shaped like supabase-js (the answer is awaited, and abortSignal exists).
+ */
+function rpcFake(
+  insert: (rows: Record<string, unknown>[], table: string) => unknown,
+  other?: (fn: string, args: Record<string, unknown>) => unknown,
+) {
+  return {
+    rpc: (fn: string, args: Record<string, unknown>) => {
+      const run = () =>
+        fn === "diag_insert_rows"
+          ? insert(args.p_rows as Record<string, unknown>[], String(args.p_table))
+          : (other ?? (() => ({ data: null, error: null })))(fn, args);
+      const builder: { abortSignal: (s: AbortSignal) => unknown; then: PromiseLike<unknown>["then"] } = {
+        abortSignal: () => builder,
+        then: (resolve, reject) => Promise.resolve().then(run).then(resolve, reject),
+      };
+      return builder;
+    },
+  };
+}
 
 let warn: ReturnType<typeof vi.spyOn>;
 let info: ReturnType<typeof vi.spyOn>;
@@ -51,6 +81,9 @@ beforeEach(() => {
   info = vi.spyOn(console, "info").mockImplementation(() => {});
   __resetDiagWriteForTests();
   __clearDiagCacheForTests();
+  // A harmless database unless a test sets up its own (a job also writes its owed drop counts, which is a call).
+  adminMock.getSupabaseAdmin.mockReset();
+  adminMock.getSupabaseAdmin.mockReturnValue(rpcFake(async (rows) => ({ data: rows.length, error: null })));
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -102,13 +135,11 @@ describe("scheduleDiagWrite", () => {
 describe("insertDiagRows", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("inserts one batch with the service-role client", async () => {
-    const insert = vi.fn(async () => ({ error: null }));
-    const from = vi.fn(() => ({ insert }));
-    adminMock.getSupabaseAdmin.mockReturnValue({ from });
+  it("inserts one batch with the service-role client, through the database function that has its own time limit", async () => {
+    const rpc = vi.fn(() => ({ abortSignal: () => ({ then: (r: (v: unknown) => unknown) => r({ data: 1, error: null }) }) }));
+    adminMock.getSupabaseAdmin.mockReturnValue({ rpc, from: () => { throw new Error("must not touch a table directly"); } });
     await insertDiagRows("diag_device_events", [{ kind: "net" }]);
-    expect(from).toHaveBeenCalledWith("diag_device_events");
-    expect(insert).toHaveBeenCalledWith([{ kind: "net" }]);
+    expect(rpc).toHaveBeenCalledWith("diag_insert_rows", { p_table: "diag_device_events", p_rows: [{ kind: "net" }] });
   });
 
   it("does nothing for an empty batch", async () => {
@@ -117,13 +148,11 @@ describe("insertDiagRows", () => {
   });
 
   it("ignores a missing table, a rejected insert and a broken client", async () => {
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      from: () => ({
-        insert: async () => {
-          throw new Error('relation "diag_answer_events" does not exist');
-        },
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(() => {
+        throw new Error('relation "diag_answer_events" does not exist');
       }),
-    });
+    );
     await expect(insertDiagRows("diag_answer_events", [{ a: 1 }])).resolves.toBeUndefined();
 
     adminMock.getSupabaseAdmin.mockImplementation(() => {
@@ -252,7 +281,7 @@ describe("cached lookups", () => {
 // ─── a failed or stuck insert is seen, never felt ─────────────────────
 describe("a failing insert", () => {
   function adminInsert(insert: (rows: unknown, ...rest: unknown[]) => unknown) {
-    adminMock.getSupabaseAdmin.mockReturnValue({ from: () => ({ insert }) });
+    adminMock.getSupabaseAdmin.mockReturnValue(rpcFake((rows) => insert(rows)));
   }
   const lines = () => warn.mock.calls.map((c) => String(c[0]));
 
@@ -304,40 +333,79 @@ describe("a failing insert", () => {
     expect(lines()).toHaveLength(3);
   });
 
-  it("gives up after the short deadline instead of waiting on a stuck database, and cancels the request", async () => {
+  it("does NOT hang up after 2 s: it waits for the database's own answer (the request is cancelled only at the ceiling)", async () => {
     vi.useFakeTimers();
     let signal: AbortSignal | undefined;
+    let answer: ((v: unknown) => void) | undefined;
     adminMock.getSupabaseAdmin.mockReturnValue({
-      from: () => ({
-        insert: () => {
-          const pendingForever = new Promise(() => {}) as Promise<unknown> & { abortSignal: (s: AbortSignal) => unknown };
-          pendingForever.abortSignal = (s) => {
-            signal = s;
-            return pendingForever;
-          };
-          return pendingForever;
-        },
-      }),
+      rpc: () => {
+        const pendingUntilAnswered = new Promise((resolve) => {
+          answer = resolve;
+        }) as Promise<unknown> & { abortSignal: (s: AbortSignal) => unknown };
+        pendingUntilAnswered.abortSignal = (s) => {
+          signal = s;
+          return pendingUntilAnswered;
+        };
+        return pendingUntilAnswered;
+      },
     });
     const done = insertDiagRows("diag_answer_events", [{ a: 1 }]);
     let finished = false;
     void done.then(() => {
       finished = true;
     });
-    await vi.advanceTimersByTimeAsync(DIAG_WRITE_TIMEOUT_MS - 100);
+    await vi.advanceTimersByTimeAsync(DIAG_WRITE_TIMEOUT_MS + 3_000);
+    expect(finished).toBe(false); // 5 s in and still waiting: a hung-up request would not stop the statement
+    expect(signal?.aborted).toBe(false);
+    // the database answers after 5 s (say its own statement timeout fired late): that is the ending
+    answer!({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } });
+    await vi.advanceTimersByTimeAsync(1);
+    expect(finished).toBe(true);
+    expect(signal?.aborted).toBe(false);
+    expect(lines()).toEqual(["[diag] insert failed table=diag_answer_events code=57014"]);
+    expect(__diagWriteCountersForTests()).toMatchObject({ timedOut: 1, failed: 0 });
+  });
+
+  it("a write the DATABASE cancelled (statement timeout, error 57014) is counted as timed out, not as a failure", async () => {
+    adminInsert(async () => ({ data: null, error: { code: "57014" } }));
+    await insertDiagRows("diag_answer_events", [{ a: 1 }]);
+    expect(lines()).toEqual(["[diag] insert failed table=diag_answer_events code=57014"]);
+    expect(__diagWriteCountersForTests()).toMatchObject({ timedOut: 1, failed: 0 });
+  });
+
+  it("cancels the request at the ceiling, never before, and says timeout", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      rpc: () => {
+        const pendingForever = new Promise(() => {}) as Promise<unknown> & { abortSignal: (s: AbortSignal) => unknown };
+        pendingForever.abortSignal = (s) => {
+          signal = s;
+          return pendingForever;
+        };
+        return pendingForever;
+      },
+    });
+    const done = insertDiagRows("diag_answer_events", [{ a: 1 }]);
+    let finished = false;
+    void done.then(() => {
+      finished = true;
+    });
+    await vi.advanceTimersByTimeAsync(DIAG_CALL_CEILING_MS - 100);
     expect(finished).toBe(false);
+    expect(signal?.aborted).toBe(false);
     await vi.advanceTimersByTimeAsync(200);
     expect(finished).toBe(true);
     expect(signal?.aborted).toBe(true);
     expect(lines()).toEqual(["[diag] insert failed table=diag_answer_events code=timeout"]);
-    expect(__diagWriteCountersForTests().failed).toBe(1);
+    expect(__diagWriteCountersForTests()).toMatchObject({ timedOut: 1, failed: 0 });
   });
 
-  it("stops waiting on a client that ignores the cancel signal", async () => {
+  it("stops waiting on a client that ignores the cancel signal (at the ceiling)", async () => {
     vi.useFakeTimers();
     adminInsert(() => new Promise(() => {}));
     const done = insertDiagRows("diag_answer_events", [{ a: 1 }]);
-    await vi.advanceTimersByTimeAsync(DIAG_WRITE_TIMEOUT_MS + 10);
+    await vi.advanceTimersByTimeAsync(DIAG_CALL_CEILING_MS + 10);
     await expect(done).resolves.toBeUndefined();
   });
 });
@@ -384,13 +452,14 @@ describe("how many log writes may touch the database at once", () => {
     release[0]!();
     await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(DIAG_MAX_WRITES_IN_FLIGHT + 1));
     expect(counters().inFlight).toBe(DIAG_MAX_WRITES_IN_FLIGHT);
-    // drain everything
-    for (let guard = 0; guard < total * 2 && started.mock.calls.length < DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX; guard++) {
-      release.forEach((r) => r());
-      await Promise.resolve();
-    }
-    release.forEach((r) => r());
-    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX));
+    // drain everything: keep releasing what has started until every accepted job has had its turn
+    await vi.waitFor(
+      () => {
+        release.forEach((r) => r());
+        expect(started).toHaveBeenCalledTimes(DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX);
+      },
+      { timeout: 10_000, interval: 2 },
+    );
     release.forEach((r) => r());
     await Promise.all(running);
     expect(counters()).toMatchObject({ inFlight: 0, queued: 0 });
@@ -428,7 +497,7 @@ describe("how many log writes may touch the database at once", () => {
     const running = queued.map((job) => job());
     await vi.advanceTimersByTimeAsync(DIAG_QUEUE_WAIT_MS + 100);
     expect(late).not.toHaveBeenCalled();
-    expect(counters()).toMatchObject({ dropped: 1 });
+    expect(counters()).toMatchObject({ dropped: 1, waitedTooLong: 1, queueFull: 0, busy: 0 });
     expect(lines()).toContain("[diag] dropping log writes: waited too long for a turn");
     await vi.advanceTimersByTimeAsync(DIAG_JOB_DEADLINE_MS * 2);
     await Promise.all(running);
@@ -482,8 +551,8 @@ describe("how many log writes may touch the database at once", () => {
     await vi.advanceTimersByTimeAsync(10);
     expect(counters().inFlight).toBe(1);
     // (the last-resort limit for work that hangs outside any database call: the
-    // job deadline plus one call's time plus a second)
-    await vi.advanceTimersByTimeAsync(DIAG_JOB_DEADLINE_MS + DIAG_WRITE_TIMEOUT_MS + 1_100);
+    // job deadline plus a call's ceiling plus a sign-in check's time plus a second)
+    await vi.advanceTimersByTimeAsync(DIAG_JOB_DEADLINE_MS + DIAG_CALL_CEILING_MS + DIAG_WRITE_TIMEOUT_MS + 1_100);
     await running;
     expect(counters().inFlight).toBe(0);
   });
@@ -513,14 +582,12 @@ describe("how many log writes may touch the database at once", () => {
     }
     const running = queued.map((job) => job());
     const inserts: Array<{ table: string; rows: Record<string, unknown>[] }> = [];
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      from: (table: string) => ({
-        insert: async (rows: Record<string, unknown>[]) => {
-          inserts.push({ table, rows });
-          return { error: null };
-        },
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(async (rows, table) => {
+        inserts.push({ table, rows });
+        return { data: rows.length, error: null };
       }),
-    });
+    );
     for (let guard = 0; guard < 2_000 && (hold.length < DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX || hold.some(Boolean)); guard++) {
       hold.splice(0).forEach((r) => r());
       await Promise.resolve();
@@ -529,23 +596,48 @@ describe("how many log writes may touch the database at once", () => {
     await Promise.all(running);
     await vi.waitFor(() => expect(inserts).toHaveLength(1));
     expect(inserts[0]!.table).toBe("diag_server_actions");
+    expect(unknownKeys("diag_server_actions", inserts[0]!.rows)).toEqual([]);
     expect(inserts[0]!.rows[0]).toMatchObject({
       actor: "system",
       action: "diag_drops",
       http_status: 0,
       outcome: "gap",
-      reason: "dropped=3 failed=0 capped=0",
-      steps: { dropped: 3, failed: 0, capped: 0 },
+      reason: "dropped=3 busy=0 timed_out=0 paused=0 failed=0 capped=0",
+      steps: { dropped: 3, queue_full: 3, waited_too_long: 0, busy: 0, timed_out: 0, paused: 0, failed: 0, capped: 0 },
     });
     await vi.waitFor(() => expect(counters()).toMatchObject({ dropped: 0, failed: 0 }));
+    // the summary line says the true reason: these were jobs that found the queue full
+    expect(lines()).toContain(
+      "[diag] dropped 3 log writes (jobs that never got a turn: 3 found the queue full, 0 waited too long)",
+    );
+    expect(lines().join("\n")).not.toContain("counter was busy");
     now += 1;
+  });
+
+  it("says 'the row-cap counter was busy' (not 'too many waiting') when rows were dropped because another server held the night's counter", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(
+        async (rows) => ({ data: rows.length, error: null }),
+        async () => ({ data: -1, error: null }), // the counter is busy every time
+      ),
+    );
+    const queued = manualScheduler();
+    scheduleDiagWrite(() =>
+      recordDiagRows("diag_answer_events", [{ a: 1 }], "44444444-4444-4444-4444-444444444444", { kind: "tap", deviceId: "d1" }),
+    );
+    await queued[0]!();
+    await vi.waitFor(() => expect(counters().busy).toBe(0)); // written to the "gap" row, so no longer owed
+    expect(lines()).toContain("[diag] row-cap check busy: dropping log rows instead of waiting");
+    expect(lines()).toContain("[diag] dropped 1 log row batches (the row-cap counter was busy)");
+    expect(lines().join("\n")).not.toContain("too many waiting");
+    expect(lines().join("\n")).not.toContain("never got a turn");
   });
 
   it("keeps the counts if the row could not be written, and tries again later", async () => {
     let now = 9_000_000;
     __resetDiagWriteForTests({ now: () => now });
     const queued = manualScheduler();
-    adminMock.getSupabaseAdmin.mockReturnValue({ from: () => ({ insert: async () => ({ error: { code: "57P01" } }) }) });
+    adminMock.getSupabaseAdmin.mockReturnValue(rpcFake(async () => ({ error: { code: "57P01" } })));
     // one failed write is counted
     await insertDiagRows("diag_answer_events", [{ a: 1 }]);
     scheduleDiagWrite(async () => {});
@@ -554,19 +646,17 @@ describe("how many log writes may touch the database at once", () => {
     expect(__diagWriteCountersForTests().failed).toBe(1); // still owed
 
     const inserts: Array<Record<string, unknown>[]> = [];
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      from: () => ({
-        insert: async (rows: Record<string, unknown>[]) => {
-          inserts.push(rows);
-          return { error: null };
-        },
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(async (rows) => {
+        inserts.push(rows);
+        return { data: rows.length, error: null };
       }),
-    });
+    );
     now += 11_000; // past the once-per-10-seconds limit
     scheduleDiagWrite(async () => {});
     await queued[1]!();
     await vi.waitFor(() => expect(inserts).toHaveLength(1));
-    expect(inserts[0]![0]).toMatchObject({ reason: "dropped=0 failed=1 capped=0" });
+    expect(inserts[0]![0]).toMatchObject({ reason: "dropped=0 busy=0 timed_out=0 paused=0 failed=1 capped=0" });
   });
 });
 
@@ -708,20 +798,20 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
     const rpcs: Array<{ fn: string; args: Record<string, unknown> }> = [];
     const inserted: Array<{ table: string; rows: Record<string, unknown>[] }> = [];
     let left = typeof room === "number" ? room : room();
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      rpc: async (fn: string, args: Record<string, unknown>) => {
-        rpcs.push({ fn, args });
-        const grant = Math.min(Number(args.p_want), left);
-        left -= grant;
-        return { data: grant, error: null };
-      },
-      from: (table: string) => ({
-        insert: async (rows: Record<string, unknown>[]) => {
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(
+        async (rows, table) => {
           inserted.push({ table, rows });
-          return { error: null };
+          return { data: rows.length, error: null };
         },
-      }),
-    });
+        async (fn, args) => {
+          rpcs.push({ fn, args });
+          const grant = Math.min(Number(args.p_want), left);
+          left -= grant;
+          return { data: grant, error: null };
+        },
+      ),
+    );
     return { rpcs, inserted };
   }
   const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ i }));
@@ -753,32 +843,34 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
       ["tv", DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP],
       ["host", DIAG_BUCKET_ROW_CAPS.host, DIAG_NIGHT_ROW_CAP],
       ["taps", DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP],
-      ["press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP],
+      ["press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_PRESS_ROW_CAP],
     ]);
-    // the server's own rows have room above the cap on reports
+    // the server's own rows have room above the cap on reports, and presses have a reserve above THAT:
+    // the whole press allowance sits above everything else's night cap
     expect(DIAG_NIGHT_SERVER_ROW_CAP).toBeGreaterThan(DIAG_NIGHT_ROW_CAP);
+    expect(DIAG_NIGHT_PRESS_ROW_CAP).toBe(DIAG_NIGHT_SERVER_ROW_CAP + DIAG_BUCKET_ROW_CAPS.press);
   });
 
   it("a night whose reports have used up their share still stores a late tap and a host press", async () => {
     // A fake database that applies the same two caps as diag_take_rows.
     const taken = new Map<string, number>();
     const inserted: string[] = [];
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      rpc: async (_fn: string, a: Record<string, unknown>) => {
-        const night = taken.get("_night") ?? 0;
-        const bucket = taken.get(String(a.p_bucket)) ?? 0;
-        const grant = Math.max(0, Math.min(Number(a.p_want), Number(a.p_night_cap) - night, Number(a.p_bucket_cap) - bucket));
-        taken.set("_night", night + grant);
-        taken.set(String(a.p_bucket), bucket + grant);
-        return { data: grant, error: null };
-      },
-      from: (table: string) => ({
-        insert: async (batch: unknown[]) => {
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(
+        async (batch, table) => {
           for (let i = 0; i < batch.length; i++) inserted.push(table);
-          return { error: null };
+          return { data: batch.length, error: null };
         },
-      }),
-    });
+        async (_fn, a) => {
+          const night = taken.get("_night") ?? 0;
+          const bucket = taken.get(String(a.p_bucket)) ?? 0;
+          const grant = Math.max(0, Math.min(Number(a.p_want), Number(a.p_night_cap) - night, Number(a.p_bucket_cap) - bucket));
+          taken.set("_night", night + grant);
+          taken.set(String(a.p_bucket), bucket + grant);
+          return { data: grant, error: null };
+        },
+      ),
+    );
     // Many phones, the TV and the host screens fill the night with reports...
     for (let phone = 0; phone < 40; phone++) {
       const source = { kind: "player", deviceId: `phone-${phone}` } as const;
@@ -796,6 +888,45 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
     await recordDiagRows("diag_answer_events", rows(1), NIGHT, { kind: "tap", deviceId: DEVICE });
     await recordDiagRows("diag_server_actions", rows(1), NIGHT, { kind: "press" });
     expect(inserted.slice(reportsBefore)).toEqual(["diag_answer_events", "diag_server_actions"]);
+  });
+
+  it("host presses have a reserve of their own: however the other sources fill the night, a press still gets its full allowance", async () => {
+    // A fake database that applies the same two caps as diag_take_rows, in the worst order the tester used:
+    // phones, TV and host fill the reports, then taps fill up to the night's cap, and only THEN do presses come.
+    const taken = new Map<string, number>();
+    const stored: Record<string, number> = {};
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(
+        async (batch, table) => {
+          stored[table] = (stored[table] ?? 0) + batch.length;
+          return { data: batch.length, error: null };
+        },
+        async (_fn, a) => {
+          const night = taken.get("_night") ?? 0;
+          const bucket = taken.get(String(a.p_bucket)) ?? 0;
+          const grant = Math.max(0, Math.min(Number(a.p_want), Number(a.p_night_cap) - night, Number(a.p_bucket_cap) - bucket));
+          taken.set("_night", night + grant);
+          taken.set(String(a.p_bucket), bucket + grant);
+          return { data: grant, error: null };
+        },
+      ),
+    );
+    const fill = async (table: Parameters<typeof recordDiagRows>[0], source: Parameters<typeof recordDiagRows>[3], batches: number) => {
+      for (let i = 0; i < batches; i++) await recordDiagRows(table, rows(100), NIGHT, source);
+    };
+    for (let phone = 0; phone < 30; phone++) await fill("diag_device_events", { kind: "player", deviceId: `p${phone}` }, 10);
+    await fill("diag_device_events", { kind: "tv" }, 90);
+    await fill("diag_device_events", { kind: "host" }, 90);
+    for (let phone = 0; phone < 20; phone++) await fill("diag_answer_events", { kind: "tap", deviceId: `t${phone}` }, 15); // asks for 30,000: only the room left is given
+    expect(taken.get("_night")).toBe(DIAG_NIGHT_SERVER_ROW_CAP); // everything but presses is exactly at its cap
+    await fill("diag_server_actions", { kind: "press" }, 25); // asks for 2,500
+    expect(taken.get("press")).toBe(DIAG_BUCKET_ROW_CAPS.press); // all 2,000 presses stored
+    expect(stored["diag_server_actions"]).toBe(DIAG_BUCKET_ROW_CAPS.press);
+    expect(taken.get("_night")).toBe(DIAG_NIGHT_PRESS_ROW_CAP);
+    // ...and the room the presses use is room nobody else could have had
+    await fill("diag_answer_events", { kind: "tap", deviceId: "late-phone" }, 1);
+    expect(taken.get("_night")).toBe(DIAG_NIGHT_PRESS_ROW_CAP);
+    expect(taken.get("taps")).toBeLessThanOrEqual(DIAG_BUCKET_ROW_CAPS.tap);
   });
 
   it("asks for a block of rows at a time, so a busy night is not one extra call per row", async () => {
@@ -874,10 +1005,9 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
 
   it("stores nothing when the database cannot say how much room there is, and counts it as a failure", async () => {
     const inserts = vi.fn(async () => ({ error: null }));
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      rpc: async () => ({ data: null, error: { code: "42883", message: "function diag_take_rows does not exist" } }),
-      from: () => ({ insert: inserts }),
-    });
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(inserts, async () => ({ data: null, error: { code: "42883", message: "function diag_take_rows does not exist" } })),
+    );
     await expect(recordDiagRows("diag_device_events", rows(2), NIGHT, player)).resolves.toBeUndefined();
     expect(inserts).not.toHaveBeenCalled();
     expect(__diagWriteCountersForTests().failed).toBe(1);
@@ -885,34 +1015,46 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
     expect(lines().join("\n")).not.toContain("does not exist");
   });
 
-  it("gives up on a stuck row-cap check and never throws", async () => {
+  it("gives up on a stuck row-cap check (at the ceiling) and never throws", async () => {
     vi.useFakeTimers();
     const inserts = vi.fn();
     adminMock.getSupabaseAdmin.mockReturnValue({ rpc: () => new Promise(() => {}), from: () => ({ insert: inserts }) });
     const done = recordDiagRows("diag_device_events", rows(1), NIGHT, player);
-    await vi.advanceTimersByTimeAsync(DIAG_WRITE_TIMEOUT_MS + 10);
+    await vi.advanceTimersByTimeAsync(DIAG_CALL_CEILING_MS + 10);
     await expect(done).resolves.toBeUndefined();
     expect(inserts).not.toHaveBeenCalled();
     expect(lines()).toEqual(["[diag] row-cap check failed code=timeout"]);
+    expect(__diagWriteCountersForTests()).toMatchObject({ timedOut: 1, failed: 0 });
+  });
+
+  it("a row-cap check the DATABASE cancelled (statement timeout) is counted as timed out and stores nothing", async () => {
+    const inserts = vi.fn(async () => ({ error: null }));
+    adminMock.getSupabaseAdmin.mockReturnValue(
+      rpcFake(inserts, async () => ({ data: null, error: { code: "57014", message: "canceling statement due to statement timeout" } })),
+    );
+    await recordDiagRows("diag_device_events", rows(2), NIGHT, player);
+    expect(inserts).not.toHaveBeenCalled();
+    expect(__diagWriteCountersForTests()).toMatchObject({ timedOut: 1, failed: 0, busy: 0, dropped: 0 });
+    expect(lines()).toEqual(["[diag] row-cap check failed code=57014"]);
   });
 
   describe("never waits for a database lock: a busy answer means back off briefly, ask again, then drop", () => {
     function busyDb(answers: Array<number | "error">) {
       const calls: number[] = [];
       const inserted: unknown[][] = [];
-      adminMock.getSupabaseAdmin.mockReturnValue({
-        rpc: async () => {
-          const next = answers[Math.min(calls.length, answers.length - 1)]!;
-          calls.push(Date.now());
-          return next === "error" ? { data: null, error: { code: "55P03" } } : { data: next, error: null };
-        },
-        from: () => ({
-          insert: async (batch: unknown[]) => {
+      adminMock.getSupabaseAdmin.mockReturnValue(
+        rpcFake(
+          async (batch) => {
             inserted.push(batch);
-            return { error: null };
+            return { data: batch.length, error: null };
           },
-        }),
-      });
+          async () => {
+            const next = answers[Math.min(calls.length, answers.length - 1)]!;
+            calls.push(Date.now());
+            return next === "error" ? { data: null, error: { code: "55P03" } } : { data: next, error: null };
+          },
+        ),
+      );
       return { calls, inserted };
     }
 
@@ -927,7 +1069,7 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
       expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(DIAG_QUOTA_BUSY_BACKOFF_MS);
       expect(calls[1]! - calls[0]!).toBeLessThan(DIAG_QUOTA_BUSY_BACKOFF_MS * 3);
       expect(inserted).toEqual([rows(3)]);
-      expect(__diagWriteCountersForTests()).toMatchObject({ dropped: 0, failed: 0, capped: 0 });
+      expect(__diagWriteCountersForTests()).toMatchObject({ dropped: 0, busy: 0, failed: 0, capped: 0 });
     });
 
     it("if it is still busy after the retries it DROPS the rows and counts them, instead of waiting on", async () => {
@@ -938,7 +1080,8 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
       await done;
       expect(calls).toHaveLength(DIAG_QUOTA_BUSY_RETRIES + 1);
       expect(inserted).toHaveLength(0);
-      expect(__diagWriteCountersForTests()).toMatchObject({ dropped: 1, failed: 0 });
+      // it was the busy counter, not a full queue: counted as busy, and not as a job that got no turn
+      expect(__diagWriteCountersForTests()).toMatchObject({ busy: 1, dropped: 0, queueFull: 0, waitedTooLong: 0, failed: 0 });
       expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
         "[diag] row-cap check busy: dropping log rows instead of waiting",
       ]);
@@ -1008,10 +1151,24 @@ describe("noteIgnored: a request with no verified player or host stores nothing 
 describe("under load: logging never takes more than its small share of the database and does not lose the timer-end taps", () => {
   const NIGHT = "44444444-4444-4444-4444-444444444444";
 
-  /** A fake database whose calls take time, can be cancelled, and are counted while they are in flight. */
+  /**
+   * A fake database that behaves like PostgREST in front of Postgres:
+   *  - every call is a STATEMENT that runs for its time at the database;
+   *  - a client that gives up (aborts) stops WAITING, but the statement carries on
+   *    until it ends by itself. This is what the old fake got wrong (it ended the
+   *    statement on abort), which is why a test could pass while the real database
+   *    saw twice the limit;
+   *  - the log functions (the row-cap check and diag_insert_rows) carry a statement
+   *    timeout of DIAG_DB_STATEMENT_TIMEOUT_MS: the database cuts the statement
+   *    there and answers 57014 (switch it off with `statementTimeout: false`
+   *    to see what happens where that setting is not applied);
+   *  - `stats.active` counts statements still running at the database, whoever is
+   *    still waiting for them.
+   */
   function timedDb(options: {
     callMs: number | ((kind: string) => number);
     onRpc?: (args: Record<string, unknown>) => { data: number } | null;
+    statementTimeout?: boolean;
   }) {
     const stats = {
       active: 0,
@@ -1021,31 +1178,31 @@ describe("under load: logging never takes more than its small share of the datab
       busy: 0,
       inserted: 0,
       insertedBy: {} as Record<string, number>,
+      cancelledByDatabase: 0,
       systemRows: [] as Array<Record<string, unknown>>,
       started: [] as number[],
     };
-    function call<T>(kind: string, result: () => T, signal?: AbortSignal): Promise<T | { data: null; error: { code: string } }> {
+    type Answer = { data: unknown; error: { code: string } | null };
+    function call(kind: string, result: () => Answer, signal?: AbortSignal): Promise<Answer> {
       return new Promise((resolve) => {
         stats.calls += 1;
         stats.active += 1;
         stats.peak = Math.max(stats.peak, stats.active);
         stats.started.push(Date.now());
-        let finished = false;
-        const finish = (value: T | { data: null; error: { code: string } }) => {
-          if (finished) return;
-          finished = true;
-          stats.active -= 1;
-          clearTimeout(timer);
-          resolve(value);
-        };
-        const ms = typeof options.callMs === "function" ? options.callMs(kind) : options.callMs;
-        const timer = setTimeout(() => finish(result()), ms);
-        // like supabase-js: a cancelled request ends at once
-        signal?.addEventListener("abort", () => finish({ data: null, error: { code: "ABORT" } }));
+        const wanted = typeof options.callMs === "function" ? options.callMs(kind) : options.callMs;
+        const limit = kind !== "lookup" && options.statementTimeout !== false ? DIAG_DB_STATEMENT_TIMEOUT_MS : Infinity;
+        const cut = wanted > limit;
+        setTimeout(() => {
+          stats.active -= 1; // the statement has really ended
+          if (cut) stats.cancelledByDatabase += 1;
+          resolve(cut ? { data: null, error: { code: "57014" } } : result());
+        }, Math.min(wanted, limit));
+        // like supabase-js: a cancelled request stops waiting at once. The statement does NOT stop.
+        signal?.addEventListener("abort", () => resolve({ data: null, error: { code: "ABORT" } }));
       });
     }
-    function thenable<T>(kind: string, result: () => T, firstSignal?: AbortSignal) {
-      let signal: AbortSignal | undefined = firstSignal;
+    function thenable(kind: string, result: () => Answer) {
+      let signal: AbortSignal | undefined;
       const builder = {
         abortSignal(s: AbortSignal) {
           signal = s;
@@ -1056,7 +1213,17 @@ describe("under load: logging never takes more than its small share of the datab
       return builder;
     }
     const db = {
-      rpc: (_fn: string, args: Record<string, unknown>) => {
+      rpc: (fn: string, args: Record<string, unknown>) => {
+        if (fn === "diag_insert_rows") {
+          const batch = args.p_rows as Array<Record<string, unknown>>;
+          return thenable("insert", () => {
+            stats.inserted += batch.length;
+            const table = String(args.p_table);
+            stats.insertedBy[table] = (stats.insertedBy[table] ?? 0) + batch.length;
+            for (const row of batch) if (row.action === "diag_drops") stats.systemRows.push(row);
+            return { data: batch.length, error: null };
+          });
+        }
         stats.rpcs += 1;
         return thenable("rpc", () => {
           const custom = options.onRpc?.(args);
@@ -1067,18 +1234,16 @@ describe("under load: logging never takes more than its small share of the datab
           return { data: Number(args.p_want), error: null };
         });
       },
-      from: (table: string) => {
+      from: () => {
         let signal: AbortSignal | undefined;
         const chain = {
           select: () => chain,
           eq: () => chain,
-          insert: (batch: unknown[]) => {
-            stats.inserted += batch.length;
-            stats.insertedBy[table] = (stats.insertedBy[table] ?? 0) + batch.length;
-            for (const row of batch as Array<Record<string, unknown>>) if (row.action === "diag_drops") stats.systemRows.push(row);
-            return thenable("insert", () => ({ data: null, error: null }));
+          maybeSingle: () => {
+            const builder = thenable("lookup", () => ({ data: { id: "found-row" }, error: null }));
+            if (signal) builder.abortSignal(signal);
+            return builder;
           },
-          maybeSingle: () => thenable("lookup", () => ({ data: { id: "found-row" }, error: null }), signal),
           abortSignal: (s: AbortSignal) => {
             signal = s;
             return chain;
@@ -1108,8 +1273,8 @@ describe("under load: logging never takes more than its small share of the datab
   });
   afterEach(() => vi.restoreAllMocks());
 
-  it("a slow database never sees more than 5 log calls at once, because a job keeps its turn until it has really stopped", async () => {
-    // Every call takes just under its 2 s limit. A job is 4 calls in a row (check the room, check the
+  it("a slow database never sees more than 5 log calls at once, because a job keeps its turn until its calls have really returned", async () => {
+    // Every call takes just under 2 s. A job is 4 calls in a row (check the room, check the
     // player, check the game, store the row): 7.6 s of work, more than the 5 s a job is allowed.
     const stats = timedDb({ callMs: 1_900 });
     for (let i = 0; i < 40; i++) {
@@ -1127,7 +1292,7 @@ describe("under load: logging never takes more than its small share of the datab
     expect(__diagWriteCountersForTests()).toMatchObject({ inFlight: 0, queued: 0 });
   });
 
-  it("a job stops at its deadline: no call starts after it and none runs past it", async () => {
+  it("a job starts no call after its deadline, and the calls it started are let finish (it keeps its turn until they have)", async () => {
     const stats = timedDb({ callMs: 1_900 });
     const startedAt = Date.now();
     let finishedAt = 0;
@@ -1139,10 +1304,221 @@ describe("under load: logging never takes more than its small share of the datab
       }
     });
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(finishedAt - startedAt).toBeLessThanOrEqual(DIAG_JOB_DEADLINE_MS + 50);
+    // no call STARTED after the deadline...
     expect(stats.started.every((t) => t - startedAt < DIAG_JOB_DEADLINE_MS)).toBe(true);
     expect(stats.calls).toBeLessThan(10);
+    // ...the task itself is over about when the deadline passes (it may be waiting on the last call)...
+    expect(finishedAt - startedAt).toBeLessThanOrEqual(DIAG_JOB_DEADLINE_MS + 1_900 + 50);
+    // ...and everything has really ended at the database by the end
     expect(stats.active).toBe(0);
+    expect(__diagWriteCountersForTests()).toMatchObject({ inFlight: 0 });
+  });
+
+  describe("a log write that STALLS at the database (the case that used to slow real play)", () => {
+    const burst = () => {
+      // 60 phones' taps: each log job asks for room once (shared) and then stores its row
+      for (let phone = 0; phone < 60; phone++) {
+        scheduleDiagWrite(() =>
+          recordDiagRows("diag_answer_events", [{ phone }], NIGHT, { kind: "tap", deviceId: `phone-${phone}` }),
+        );
+      }
+    };
+
+    it("is cancelled by the database itself, the turn comes back with that answer, and the database never runs more than 5", async () => {
+      // every insert would sleep 3 s; the log function's own statement timeout cuts it at 1.5 s
+      const stats = timedDb({ callMs: (kind) => (kind === "insert" ? 3_000 : 3) });
+      burst();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(stats.peak).toBe(DIAG_MAX_WRITES_IN_FLIGHT); // it really did run 5 at a time (not a vacuous pass)...
+      expect(stats.peak).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT); // ...and never more
+      expect(stats.cancelledByDatabase).toBeGreaterThan(0);
+      expect(stats.inserted).toBe(0); // a cancelled write stores nothing
+      expect(stats.active).toBe(0);
+      // every one of the 60 is accounted for: timed out, paused (logging stopped asking the database), or never got a turn
+      const c = __diagWriteCountersForTests();
+      expect(c.timedOut).toBeGreaterThan(0);
+      expect(c.timedOut + c.paused + c.dropped).toBe(60);
+      expect(c).toMatchObject({ inFlight: 0, queued: 0, failed: 0, busy: 0 });
+    });
+
+    it("still never runs more than 5 where the database does NOT apply the statement timeout: the turn waits for the real end of the write", async () => {
+      const stats = timedDb({ callMs: (kind) => (kind === "insert" ? 3_000 : 3), statementTimeout: false });
+      burst();
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(stats.peak).toBe(DIAG_MAX_WRITES_IN_FLIGHT);
+      expect(stats.cancelledByDatabase).toBe(0);
+      expect(stats.inserted).toBeGreaterThan(0); // the slow writes were let finish, and they stored their rows
+      expect(stats.active).toBe(0);
+      expect(__diagWriteCountersForTests()).toMatchObject({ inFlight: 0, queued: 0 });
+    });
+
+    it("a request cancelled at the ceiling keeps its turn for a moment longer (the statement may still be running)", async () => {
+      // The first insert lives 13 s and nothing cuts it; the request is cancelled at 12 s.
+      let inserts = 0;
+      const stats = timedDb({ callMs: (kind) => (kind === "insert" ? (inserts++ === 0 ? 13_000 : 10) : 3), statementTimeout: false });
+      scheduleDiagWrite(() => recordDiagRows("diag_answer_events", [{ a: 1 }], NIGHT, { kind: "tap", deviceId: "phone-1" }));
+      await vi.advanceTimersByTimeAsync(DIAG_CALL_CEILING_MS - 500);
+      expect(__diagWriteCountersForTests().inFlight).toBe(1);
+      await vi.advanceTimersByTimeAsync(600); // ceiling passed: the request is cancelled, the statement is not
+      expect(stats.active).toBe(1);
+      expect(__diagWriteCountersForTests().inFlight).toBe(1);
+      await vi.advanceTimersByTimeAsync(1_000); // 13.1 s: the statement has ended by itself...
+      expect(stats.active).toBe(0);
+      expect(__diagWriteCountersForTests().inFlight).toBe(1); // ...but the turn is held for the safety margin
+      await vi.advanceTimersByTimeAsync(DIAG_ABORT_HOLD_MS);
+      expect(__diagWriteCountersForTests().inFlight).toBe(0);
+      // the timeout is counted; it is written to the "gap" row once a write has gone through again (not right after a slow one)
+      expect(__diagWriteCountersForTests().timedOut).toBe(1);
+      expect(stats.systemRows).toHaveLength(0);
+      scheduleDiagWrite(() => insertDiagRows("diag_answer_events", [{ a: 2 }])); // the second insert is quick (10 ms)
+      await vi.advanceTimersByTimeAsync(500);
+      expect(stats.systemRows).toHaveLength(1);
+      expect(stats.systemRows[0]).toMatchObject({ reason: expect.stringContaining("timed_out=1") });
+    });
+
+    it("a lookup the caller gave up on is still a statement at the database: its job keeps the turn until the read returns", async () => {
+      const stats = timedDb({ callMs: 4_000 }); // reads cannot be cut by a log-only timeout
+      scheduleDiagWrite(async () => {
+        await lookupPlayerId(NIGHT, "device-slow");
+      });
+      await vi.advanceTimersByTimeAsync(DIAG_WRITE_TIMEOUT_MS + 100);
+      // the task has been told "too slow" and is over...
+      expect(info.mock.calls.map((c) => String(c[0])).join("\n")).toContain("slow=1");
+      // ...but the read is still running at the database, and the turn is still held
+      expect(stats.active).toBe(1);
+      expect(__diagWriteCountersForTests().inFlight).toBe(1);
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(stats.active).toBe(0);
+      expect(__diagWriteCountersForTests().inFlight).toBe(0);
+    });
+
+    it("many slow lookups at once still never put more than 5 reads at the database", async () => {
+      const stats = timedDb({ callMs: 4_000 });
+      for (let i = 0; i < 40; i++) {
+        scheduleDiagWrite(async () => {
+          await lookupPlayerId(NIGHT, `device-${i}`);
+        });
+      }
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(stats.peak).toBe(DIAG_MAX_WRITES_IN_FLIGHT);
+      expect(stats.active).toBe(0);
+    });
+
+    describe("logging pauses itself when the database keeps cancelling log writes (so it stops holding connections the game needs)", () => {
+      const tapJob = (phone: number) => () =>
+        recordDiagRows("diag_answer_events", [{ phone }], NIGHT, { kind: "tap", deviceId: `phone-${phone}` });
+      const insertCalls = (stats: { cancelledByDatabase: number; inserted: number }) => stats.cancelledByDatabase + stats.inserted;
+      const tapRows = (stats: { insertedBy: Record<string, number> }) => stats.insertedBy["diag_answer_events"] ?? 0;
+
+      it("opens after a few cancelled writes in a row, drops new jobs without asking the database, then lets ONE job try again", async () => {
+        let stalled = true;
+        const stats = timedDb({ callMs: (kind) => (kind === "insert" && stalled ? 3_000 : 3) });
+        for (let phone = 0; phone < 60; phone++) scheduleDiagWrite(tapJob(phone));
+        await vi.advanceTimersByTimeAsync(DIAG_QUEUE_WAIT_MS + 3_000);
+        // the first five jobs each lost a write to the database's own time limit (a turn handed on in the same
+        // instant may let one or two more start before the third cancel is counted)...
+        const stalledAtFirst = stats.cancelledByDatabase;
+        expect(stalledAtFirst).toBeGreaterThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT);
+        expect(stalledAtFirst).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT + 2);
+        // ...and then everything else was dropped at once, not queued up to stall the same way
+        expect(stats.calls).toBe(1 /* the shared row-cap check */ + stalledAtFirst);
+        const first = __diagWriteCountersForTests();
+        expect(first.timedOut + first.paused).toBe(60);
+        expect(first.paused).toBeGreaterThanOrEqual(60 - stalledAtFirst);
+        expect(first).toMatchObject({ inFlight: 0, queued: 0 });
+        expect(stats.peak).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT);
+
+        // still paused 5 s on: nothing reaches the database
+        await vi.advanceTimersByTimeAsync(5_000);
+        for (let phone = 100; phone < 120; phone++) scheduleDiagWrite(tapJob(phone));
+        await vi.advanceTimersByTimeAsync(100);
+        expect(insertCalls(stats)).toBe(stalledAtFirst);
+
+        // after the pause ONE job is let through; the others arriving at the same time are still dropped
+        await vi.advanceTimersByTimeAsync(DIAG_PAUSE_MS);
+        for (let phone = 200; phone < 210; phone++) scheduleDiagWrite(tapJob(phone));
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(insertCalls(stats)).toBe(stalledAtFirst + 1); // one probe, cancelled again by the database
+        expect(stats.peak).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT);
+
+        // the database recovers: the next probe succeeds and logging is back to normal
+        stalled = false;
+        await vi.advanceTimersByTimeAsync(DIAG_PAUSE_MS + 100);
+        scheduleDiagWrite(tapJob(300));
+        await vi.advanceTimersByTimeAsync(500);
+        expect(tapRows(stats)).toBe(1);
+        for (let phone = 400; phone < 410; phone++) scheduleDiagWrite(tapJob(phone));
+        await vi.advanceTimersByTimeAsync(500);
+        expect(tapRows(stats)).toBe(11); // all ten went through: the pause is over
+        // what was lost is written down, with the true reason
+        const reported = stats.systemRows.map((r) => r.steps as Record<string, number>);
+        expect(reported.reduce((n, steps) => n + steps.paused!, 0)).toBeGreaterThan(55);
+        expect(reported.reduce((n, steps) => n + steps.timed_out!, 0)).toBe(stalledAtFirst + 1);
+        expect(warn.mock.calls.map((c) => String(c[0]))).toContain(
+          "[diag] pausing log writes: the database keeps cancelling them for being slow",
+        );
+      });
+
+      it("a write that comes back with an ordinary error is an answer, not a stall: it never pauses logging", async () => {
+        const missingTable = async () => ({ data: null, error: { code: "42P01" } });
+        adminMock.getSupabaseAdmin.mockReturnValue(rpcFake(missingTable, missingTable));
+        for (let phone = 0; phone < 20; phone++) scheduleDiagWrite(tapJob(phone));
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(__diagWriteCountersForTests()).toMatchObject({ paused: 0, failed: expect.any(Number), inFlight: 0 });
+        expect(__diagWriteCountersForTests().failed + __diagWriteCountersForTests().timedOut).toBeGreaterThan(0);
+      });
+
+      it("a job that ran out of time before it could send its write says nothing about the database", async () => {
+        // three 1.9 s reads use up most of the job's 5 s; the 4th call (the write) is never sent
+        const stats = timedDb({ callMs: (kind) => (kind === "lookup" ? 1_900 : 3) });
+        for (let i = 0; i < 12; i++) {
+          scheduleDiagWrite(async () => {
+            await lookupRoomNight(`R${i}`);
+            await lookupPlayerId(NIGHT, `d${i}`);
+            await lookupQuestionContext(`q${i}`);
+            await insertDiagRows("diag_answer_events", [{ i }]);
+          });
+        }
+        await vi.advanceTimersByTimeAsync(5 * 60_000);
+        expect(stats.cancelledByDatabase).toBe(0);
+        expect(__diagWriteCountersForTests().paused).toBe(0);
+        expect(stats.active).toBe(0);
+      });
+
+      it("a pause-probe that has nothing to write does not leave logging stuck", async () => {
+        let stalled = true;
+        const stats = timedDb({ callMs: (kind) => (kind === "insert" && stalled ? 3_000 : 3) });
+        for (let phone = 0; phone < 10; phone++) scheduleDiagWrite(tapJob(phone));
+        await vi.advanceTimersByTimeAsync(3_000);
+        expect(__diagWriteCountersForTests().paused).toBeGreaterThan(0);
+        stalled = false;
+        await vi.advanceTimersByTimeAsync(DIAG_PAUSE_MS + 100);
+        scheduleDiagWrite(async () => {}); // the probe: it never touches the database
+        await vi.advanceTimersByTimeAsync(10);
+        scheduleDiagWrite(tapJob(77)); // so the next job is a probe in its turn, and succeeds
+        await vi.advanceTimersByTimeAsync(500);
+        expect(tapRows(stats)).toBe(1);
+      });
+    });
+
+    it("writing the drop counts also takes a turn, so even that write cannot make a sixth call", async () => {
+      const stats = timedDb({ callMs: (kind) => (kind === "insert" ? 500 : kind === "lookup" ? 300 : 3) });
+      // something is owed: one earlier failure
+      adminMock.getSupabaseAdmin.mockReturnValueOnce(rpcFake(async () => ({ error: { code: "57P01" } })));
+      await insertDiagRows("diag_answer_events", [{ a: 1 }]);
+      expect(__diagWriteCountersForTests().failed).toBe(1);
+      for (let i = 0; i < 30; i++) {
+        scheduleDiagWrite(async () => {
+          await lookupPlayerId(NIGHT, `device-${i}`);
+          await insertDiagRows("diag_answer_events", [{ i }]);
+        });
+      }
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(stats.systemRows).toHaveLength(1); // the owed count was written...
+      expect(stats.peak).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT); // ...inside a turn
+      expect(stats.peak).toBe(DIAG_MAX_WRITES_IN_FLIGHT);
+      expect(__diagWriteCountersForTests().failed).toBe(0);
+    });
   });
 
   it("60 phones' first taps and timer-end calls at once, with other servers asking about the same night, lose no row to 'busy'", async () => {
@@ -1198,9 +1574,10 @@ describe("under load: logging never takes more than its small share of the datab
     await vi.advanceTimersByTimeAsync(60_000);
     expect(stats.insertedBy["diag_answer_events"] ?? 0).toBe(0);
     expect(stats.peak).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT);
-    // every one of the 60 is accounted for: still counted, or already written to the "gap" row
-    const reported = stats.systemRows.reduce((n, row) => n + Number((row.steps as { dropped: number }).dropped), 0);
-    expect(__diagWriteCountersForTests().dropped + reported).toBe(60);
+    // every one of the 60 is accounted for as "busy": still counted, or already written to the "gap" row
+    const reported = stats.systemRows.reduce((n, row) => n + Number((row.steps as { busy: number }).busy), 0);
+    expect(__diagWriteCountersForTests().busy + reported).toBe(60);
+    expect(__diagWriteCountersForTests().dropped).toBe(0); // not blamed on a full queue
     expect(__diagWriteCountersForTests()).toMatchObject({ inFlight: 0, queued: 0 });
   });
 });

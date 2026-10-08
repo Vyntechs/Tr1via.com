@@ -25,8 +25,8 @@ import "server-only";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isSupabaseSessionCookie } from "@/lib/auth/session-cookies";
-import { DIAG_WRITE_TIMEOUT_MS } from "./config";
-import { DiagLookupSlow, withDeadline } from "./deadline";
+import { DIAG_ABORT_HOLD_MS, DIAG_CALL_CEILING_MS, DIAG_WRITE_TIMEOUT_MS } from "./config";
+import { DiagLookupSlow, trackedCall, withDeadline } from "./deadline";
 
 const BASE64_PREFIX = "base64-";
 /** An access token with less than this left is treated as expired (no network call). */
@@ -135,15 +135,20 @@ export async function verifyHostSessionReadOnly(cookies: SessionCookie[]): Promi
       return null;
     }
     const userId = data.user.id;
-    const host = await withDeadline(DIAG_WRITE_TIMEOUT_MS, async (signal) => {
-      const query = getSupabaseAdmin().from("hosts").select("id").eq("user_id", userId);
-      const result = await (typeof (query as { abortSignal?: unknown }).abortSignal === "function"
-        ? (query as unknown as { abortSignal(s: AbortSignal): typeof query }).abortSignal(signal)
-        : query
-      ).maybeSingle();
-      if (result.error) throw result.error;
-      return result.data as { id?: unknown } | null;
-    });
+    // A read of the database: the job that makes it keeps its turn until the read
+    // has returned, even if we stop waiting after DIAG_WRITE_TIMEOUT_MS (deadline.ts).
+    const host = await trackedCall(
+      async (signal) => {
+        const query = getSupabaseAdmin().from("hosts").select("id").eq("user_id", userId);
+        const result = await (typeof (query as { abortSignal?: unknown }).abortSignal === "function"
+          ? (query as unknown as { abortSignal(s: AbortSignal): typeof query }).abortSignal(signal)
+          : query
+        ).maybeSingle();
+        if (result.error) throw result.error;
+        return result.data as { id?: unknown } | null;
+      },
+      { ceilingMs: DIAG_CALL_CEILING_MS, holdAfterAbortMs: DIAG_ABORT_HOLD_MS, giveUpAfterMs: DIAG_WRITE_TIMEOUT_MS },
+    );
     return host && typeof host.id === "string" ? host.id : null;
   } catch (error) {
     if (error instanceof DiagLookupSlow) throw error;

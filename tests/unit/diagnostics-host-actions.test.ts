@@ -11,6 +11,7 @@ import { NextRequest } from "next/server";
 import { signDeviceCookie } from "@/lib/auth/device-cookie";
 import { diagNote } from "@/lib/diagnostics/trace";
 import { DiagLookupSlow } from "@/lib/diagnostics/deadline";
+import { unknownKeys } from "../helpers/diag-columns";
 
 const authMock = vi.hoisted(() => ({
   requireOwnedGame: vi.fn(),
@@ -167,6 +168,8 @@ describe("host control diagnostic log", () => {
       expect(typeof rows[0]!.received_at).toBe("string");
       expect(rows[0]!.total_ms).toEqual(expect.any(Number));
       expect(rows[0]).toHaveProperty("cold_start");
+      // every key is a real column of the table (the database function ignores any other key)
+      expect(unknownKeys("diag_server_actions", rows)).toEqual([]);
     });
   });
 

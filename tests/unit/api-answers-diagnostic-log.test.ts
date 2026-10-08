@@ -30,6 +30,7 @@ vi.mock("@/lib/api/broadcast", () => broadcastMock);
 vi.mock("@/lib/diagnostics/write", () => writeMock);
 
 import { DiagLookupSlow } from "@/lib/diagnostics/deadline";
+import { diagTableColumns, unknownKeys } from "../helpers/diag-columns";
 
 const QUESTION_ID = "11111111-1111-1111-1111-111111111111";
 const CATEGORY_ID = "22222222-2222-2222-2222-222222222222";
@@ -330,6 +331,9 @@ describe("POST /api/answers diagnostic log", () => {
         client_attempt: 2,
       });
       expect(rows[0]!.received_at).toBe(new Date(scn.now).toISOString());
+      // every key is a real column of the table (the database function ignores any other key)
+      expect(unknownKeys("diag_answer_events", rows)).toEqual([]);
+      expect(diagTableColumns("diag_answer_events")).toContain("received_at");
     });
   });
 

@@ -15,7 +15,14 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import { DIAG_BUCKET_ROW_CAPS, DIAG_NIGHT_ROW_CAP, DIAG_NIGHT_SERVER_ROW_CAP } from "@/lib/diagnostics/config";
+import {
+  DIAG_BUCKET_ROW_CAPS,
+  DIAG_DB_STATEMENT_TIMEOUT_MS,
+  DIAG_NIGHT_PRESS_ROW_CAP,
+  DIAG_NIGHT_ROW_CAP,
+  DIAG_NIGHT_SERVER_ROW_CAP,
+} from "@/lib/diagnostics/config";
+import { diagTableColumns } from "../helpers/diag-columns";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MIGRATIONS = path.join(ROOT, "supabase/migrations");
@@ -24,6 +31,7 @@ const TABLES = ["diag_answer_events", "diag_server_actions", "diag_device_events
 const LOCKED_TABLES = [...TABLES, "diag_quota"] as const;
 const CLEANUP_FN = "public.cleanup_diagnostic_logs(integer, integer)";
 const TAKE_ROWS_FN = "public.diag_take_rows(uuid, text, integer, integer, integer)";
+const INSERT_ROWS_FN = "public.diag_insert_rows(text, jsonb)";
 const MIGRATION_FILE = "20261007180000_diagnostic_logs.sql";
 const TIMELINE_FN = "public.diag_night_timeline(uuid, timestamptz, timestamptz)";
 
@@ -165,7 +173,7 @@ describe("diagnostic logs schema", () => {
     }
   });
 
-  test("the browser roles have no rights on the tables or either function", async () => {
+  test("the browser roles have no rights on the tables or any of the functions", async () => {
     for (const role of ["anon", "authenticated"]) {
       for (const table of LOCKED_TABLES) {
         const r = await one<{ s: boolean; i: boolean; d: boolean }>(
@@ -175,18 +183,19 @@ describe("diagnostic logs schema", () => {
         );
         expect(r, `${role} on ${table}`).toEqual({ s: false, i: false, d: false });
       }
-      for (const fn of [CLEANUP_FN, TAKE_ROWS_FN, TIMELINE_FN]) {
+      for (const fn of [CLEANUP_FN, TAKE_ROWS_FN, INSERT_ROWS_FN, TIMELINE_FN]) {
         const r = await one<{ x: boolean }>(`select has_function_privilege('${role}', '${fn}', 'execute') as x`);
         expect(r.x, `${role} may run ${fn}`).toBe(false);
       }
     }
-    const service = await one<{ i: boolean; x: boolean; t: boolean; q: boolean }>(
+    const service = await one<{ i: boolean; x: boolean; t: boolean; q: boolean; w: boolean }>(
       `select has_table_privilege('service_role', 'public.diag_device_events', 'insert') as i,
               has_function_privilege('service_role', '${TIMELINE_FN}', 'execute') as t,
               has_function_privilege('service_role', '${CLEANUP_FN}', 'execute') as x,
-              has_function_privilege('service_role', '${TAKE_ROWS_FN}', 'execute') as q`,
+              has_function_privilege('service_role', '${TAKE_ROWS_FN}', 'execute') as q,
+              has_function_privilege('service_role', '${INSERT_ROWS_FN}', 'execute') as w`,
     );
-    expect(service).toEqual({ i: true, t: true, x: true, q: true });
+    expect(service).toEqual({ i: true, t: true, x: true, q: true, w: true });
   });
 
   test.each(["anon", "authenticated"] as const)("%s cannot read or write any diagnostic row", async (role) => {
@@ -201,6 +210,9 @@ describe("diagnostic logs schema", () => {
       await expect(db.query("select public.cleanup_diagnostic_logs(45)")).rejects.toThrow(/permission denied/i);
       await expect(
         db.query("select public.diag_take_rows($1, 'tv', 5, 100, 100)", [nightId]),
+      ).rejects.toThrow(/permission denied/i);
+      await expect(
+        db.query(`select public.diag_insert_rows('diag_device_events', '[{"surface":"player"}]'::jsonb)`),
       ).rejects.toThrow(/permission denied/i);
       await expect(
         db.query(
@@ -578,8 +590,8 @@ describe("diagnostic logs schema", () => {
         expect(await take(night, "phones", 10, DIAG_BUCKET_ROW_CAPS.player, DIAG_NIGHT_ROW_CAP)).toBe(0); // reports are shut out
         // ...but the server's own rows have their own kinds and a higher night cap.
         expect(await take(night, "taps", 1, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(1);
-        expect(await take(night, "press", 1, DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(1);
-        // the whole night never goes past the server ceiling
+        expect(await take(night, "press", 1, DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_PRESS_ROW_CAP)).toBe(1);
+        // taps and reports together never go past the server ceiling; the presses' reserve sits above it
         const more = await drain(night, "taps", DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP);
         expect(more + 1 + 1 + DIAG_NIGHT_ROW_CAP).toBeLessThanOrEqual(DIAG_NIGHT_SERVER_ROW_CAP);
         expect((await quota(night))._night![0]).toBeLessThanOrEqual(DIAG_NIGHT_SERVER_ROW_CAP);
@@ -596,9 +608,53 @@ describe("diagnostic logs schema", () => {
           DIAG_BUCKET_ROW_CAPS.tap,
         );
         expect(await take(night, "taps", 1, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(0);
-        expect(await drain(night, "press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(
+        expect(await drain(night, "press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_PRESS_ROW_CAP)).toBe(
           DIAG_BUCKET_ROW_CAPS.press,
         );
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("the tester's worst case: reports fill to 40,000, taps to the night's ceiling, and a host press STILL gets its full allowance", async () => {
+      await db.exec("set role service_role");
+      try {
+        const night = crypto.randomUUID();
+        // phones 30,000 + TV 8,000 + host 2,000 = 40,000 report rows
+        const reports =
+          (await drain(night, "phones", DIAG_BUCKET_ROW_CAPS.player, DIAG_NIGHT_ROW_CAP)) +
+          (await drain(night, "tv", DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP)) +
+          (await drain(night, "host", DIAG_BUCKET_ROW_CAPS.host, DIAG_NIGHT_ROW_CAP));
+        expect(reports).toBe(DIAG_NIGHT_ROW_CAP);
+        // then taps until the night is at its ceiling (4 times the expected tap volume)
+        const taps = await drain(night, "taps", DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP);
+        expect(taps).toBe(DIAG_BUCKET_ROW_CAPS.tap);
+        expect((await quota(night))._night![0]).toBe(DIAG_NIGHT_SERVER_ROW_CAP);
+        // the old behaviour: a press asked with the same night ceiling as the taps got 0
+        expect(await take(night, "press", 1, DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(0);
+        // with its own reserve above the ceiling it gets every row of its allowance, and not one more
+        expect(await drain(night, "press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_PRESS_ROW_CAP)).toBe(
+          DIAG_BUCKET_ROW_CAPS.press,
+        );
+        expect((await quota(night))._night![0]).toBe(DIAG_NIGHT_PRESS_ROW_CAP);
+        // and nothing else can use that room: the other sources are still stopped at the ceiling
+        expect(await take(night, "taps", 1, DIAG_BUCKET_ROW_CAPS.tap + 10, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(0);
+        expect(await take(night, "phones", 1, DIAG_BUCKET_ROW_CAPS.player + 10, DIAG_NIGHT_ROW_CAP)).toBe(0);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("and the other order: presses first take at most their own allowance, and the others keep (ceiling minus presses)", async () => {
+      await db.exec("set role service_role");
+      try {
+        const night = crypto.randomUUID();
+        expect(await drain(night, "press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_PRESS_ROW_CAP)).toBe(DIAG_BUCKET_ROW_CAPS.press);
+        const reports = await drain(night, "phones", DIAG_BUCKET_ROW_CAPS.player, DIAG_NIGHT_ROW_CAP);
+        expect(reports).toBe(DIAG_BUCKET_ROW_CAPS.player);
+        const taps = await drain(night, "taps", DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP);
+        expect(taps).toBe(DIAG_BUCKET_ROW_CAPS.tap); // 2,000 + 30,000 + 20,000 is still under the ceiling
+        expect((await quota(night))._night![0]).toBe(DIAG_BUCKET_ROW_CAPS.press + reports + taps);
       } finally {
         await db.exec("reset role");
       }
@@ -668,6 +724,219 @@ describe("diagnostic logs schema", () => {
       } finally {
         await db.exec("reset role");
       }
+    });
+  });
+
+  describe("diag_insert_rows: the one way the app stores log rows, with a time limit of its own", () => {
+    const insertRows = async (table: string, rows: unknown) =>
+      Number((await one<{ n: number }>("select public.diag_insert_rows($1, $2::jsonb) as n", [table, JSON.stringify(rows)])).n);
+    const asService = async (fn: () => Promise<void>) => {
+      await db.exec("set role service_role");
+      try {
+        await fn();
+      } finally {
+        await db.exec("reset role");
+      }
+    };
+
+    // rows shaped exactly like the ones the app builds (lib/diagnostics/serverLog.ts, app/api/diag/report/route.ts)
+    const answerRow = (night: string) => ({
+      received_at: "2026-10-08T01:00:00.123Z",
+      engine: "legacy",
+      night_id: night,
+      game_id: crypto.randomUUID(),
+      question_id: crypto.randomUUID(),
+      play_id: null,
+      player_id: crypto.randomUUID(),
+      device_id: crypto.randomUUID(),
+      slot_chosen: 2,
+      chosen_index: 1,
+      client_tap_at: "2026-10-08T01:00:00.000Z",
+      client_sent_at: "2026-10-08T01:00:00.050Z",
+      client_attempt: 1,
+      question_played_at: "2026-10-08T00:59:36.000Z",
+      question_finished_at: null,
+      ms_after_open: 24123,
+      deadline_s: 25,
+      outcome: "saved",
+      reason: "saved",
+      http_status: 204,
+      total_ms: 41,
+      steps: { question: 7, player: 12, insert: 20 },
+      cold_start: false,
+      instance_id: "abc123",
+      region: "iad1",
+      deployment: "dpl_123",
+    });
+    const actionRow = (night: string) => ({
+      received_at: "2026-10-08T01:00:01.000Z",
+      action: "reveal",
+      actor: "host",
+      night_id: night,
+      http_status: 200,
+      outcome: "ok",
+      reason: "ok",
+      total_ms: 300,
+      steps: {},
+    });
+    const deviceRow = (night: string, kind: string) => ({
+      night_id: night,
+      surface: "player",
+      session_id: "sess-abc",
+      device_id: crypto.randomUUID(),
+      kind,
+      device_at: "2026-10-08T01:00:02.000Z",
+      at_est: "2026-10-08T01:00:02.250Z",
+      offset_ms: 250,
+      forced: true,
+      data: { ev: "reveal", lag: 410 },
+    });
+
+    test("stores rows of all three kinds, returns how many, and leaves the columns the rows omit at their defaults", async () => {
+      await asService(async () => {
+        const night = crypto.randomUUID();
+        expect(await insertRows("diag_answer_events", [answerRow(night), answerRow(night)])).toBe(2);
+        expect(await insertRows("diag_server_actions", [actionRow(night)])).toBe(1);
+        expect(await insertRows("diag_device_events", [deviceRow(night, "bcast"), deviceRow(night, "snap")])).toBe(2);
+
+        const a = await one<{ n: number; ids: number; created: number; q: string; steps: unknown }>(
+          `select count(*)::int as n, count(id)::int as ids, count(created_at)::int as created,
+                  min(question_played_at)::text as q, min(steps::text) as steps
+             from diag_answer_events where night_id = $1`,
+          [night],
+        );
+        expect(a).toMatchObject({ n: 2, ids: 2, created: 2 });
+        expect(JSON.parse(String(a.steps))).toEqual({ question: 7, player: 12, insert: 20 });
+        // a row that carries no `steps` / `forced` / `data` gets the table's default, as a plain insert would
+        const bare = { received_at: "2026-10-08T01:00:03Z", action: "next", actor: "host", night_id: night, http_status: 200, outcome: "ok", reason: "ok" };
+        expect(await insertRows("diag_server_actions", [bare])).toBe(1);
+        const d = await one<{ steps: string; id: string | null; created: string | null }>(
+          "select steps::text as steps, id::text as id, created_at::text as created from diag_server_actions where night_id = $1 and action = 'next'",
+          [night],
+        );
+        expect(d.steps).toBe("{}");
+        expect(d.id).not.toBeNull();
+        expect(d.created).not.toBeNull();
+        const e = await one<{ forced: boolean; data: string }>(
+          "select forced, data::text as data from diag_device_events where night_id = $1 and kind = 'snap'",
+          [night],
+        );
+        expect(e.forced).toBe(true);
+        const noForced = { ...deviceRow(night, "net") } as Record<string, unknown>;
+        delete noForced.forced;
+        delete noForced.data;
+        expect(await insertRows("diag_device_events", [noForced])).toBe(1);
+        const f = await one<{ forced: boolean; data: string }>(
+          "select forced, data::text as data from diag_device_events where night_id = $1 and kind = 'net'",
+          [night],
+        );
+        expect(f).toEqual({ forced: false, data: "{}" });
+      });
+    });
+
+    test("every column of every table can be written through it (so no column is forgotten)", async () => {
+      await asService(async () => {
+        const night = crypto.randomUUID();
+        // the sample rows above name these columns; every column of the table must be one of them or a default
+        const named = {
+          diag_answer_events: Object.keys(answerRow(night)),
+          diag_server_actions: [...Object.keys(actionRow(night)), "game_id", "question_id", "play_id", "auth_ms", "db_done_ms", "broadcast_start_ms", "broadcast_done_ms", "broadcast_ok", "broadcast_error", "cold_start", "instance_id", "region", "deployment"],
+          diag_device_events: Object.keys(deviceRow(night, "net")),
+        } as const;
+        for (const table of TABLES) {
+          const missing = diagTableColumns(table).filter((c) => !named[table].includes(c) && !["id", "created_at"].includes(c));
+          expect(missing, `${table}: columns the test rows never name`).toEqual([]);
+        }
+        // and a server action carrying all of its columns goes in whole
+        const full = {
+          ...actionRow(night),
+          game_id: crypto.randomUUID(),
+          question_id: crypto.randomUUID(),
+          play_id: crypto.randomUUID(),
+          auth_ms: 12,
+          db_done_ms: 80,
+          broadcast_start_ms: 81,
+          broadcast_done_ms: 130,
+          broadcast_ok: true,
+          broadcast_error: null,
+          cold_start: true,
+          instance_id: "i-1",
+          region: "iad1",
+          deployment: "dpl_1",
+        };
+        expect(await insertRows("diag_server_actions", [full])).toBe(1);
+      });
+    });
+
+    test("rows that carry different sets of keys still go in (a column missing from one row is null there)", async () => {
+      await asService(async () => {
+        const night = crypto.randomUUID();
+        const withIds = { ...answerRow(night), play_id: crypto.randomUUID() };
+        const without = { ...answerRow(night) } as Record<string, unknown>;
+        delete without.play_id;
+        expect(await insertRows("diag_answer_events", [withIds, without])).toBe(2);
+        const r = await one<{ n: number; with_play: number }>(
+          "select count(*)::int as n, count(play_id)::int as with_play from diag_answer_events where night_id = $1",
+          [night],
+        );
+        expect(r).toEqual({ n: 2, with_play: 1 });
+      });
+    });
+
+    test("does nothing for an empty list, and refuses what is not a list of rows", async () => {
+      await asService(async () => {
+        expect(await insertRows("diag_device_events", [])).toBe(0);
+        await expect(insertRows("diag_device_events", { not: "a list" })).rejects.toThrow(/must be a json array/);
+        await expect(insertRows("diag_device_events", "text")).rejects.toThrow(/must be a json array/);
+        await expect(insertRows("diag_device_events", [{ nothing: "known" }])).rejects.toThrow(/no known column/);
+        await expect(insertRows("diag_device_events", Array.from({ length: 1001 }, () => ({ kind: "net" })))).rejects.toThrow(/at most 1000/);
+      });
+    });
+
+    test("only the three log tables can be written: any other name, and anything shaped like SQL, is refused", async () => {
+      await asService(async () => {
+        const row = [{ id: crypto.randomUUID() }];
+        for (const table of ["players", "answers", "diag_quota", "public.players", "diag_answer_events; drop table public.players", 'diag_answer_events"', ""]) {
+          await expect(insertRows(table, row), table).rejects.toThrow(/unknown table/);
+        }
+        await expect(db.query("select public.diag_insert_rows(null, '[]'::jsonb)")).rejects.toThrow(/unknown table/);
+        // keys that are not columns are never turned into SQL: they are ignored
+        const night = crypto.randomUUID();
+        const row2 = { ...deviceRow(night, "net"), 'x"; drop table public.players; --': 1, "night_id) values (1); --": 2 };
+        expect(await insertRows("diag_device_events", [row2])).toBe(1);
+        expect((await one<{ n: number }>("select count(*)::int as n from public.players")).n).toBeGreaterThan(0);
+      });
+    });
+
+    test("a row the table refuses fails the whole call and stores nothing from it", async () => {
+      await asService(async () => {
+        const night = crypto.randomUUID();
+        const bad = { ...answerRow(night), outcome: "maybe" };
+        await expect(insertRows("diag_answer_events", [answerRow(night), bad])).rejects.toThrow(/violates check constraint/);
+        expect((await one<{ n: number }>("select count(*)::int as n from diag_answer_events where night_id = $1", [night])).n).toBe(0);
+      });
+    });
+
+    test("the log functions carry their own statement timeout, and nothing else in the migration does", async () => {
+      const fns = await db.query<{ proname: string; proconfig: string[] }>(
+        `select proname, proconfig from pg_proc
+          where pronamespace = 'public'::regnamespace and proconfig::text like '%statement_timeout%'
+          order by proname`,
+      );
+      expect(fns.rows.map((r) => r.proname)).toEqual(["diag_insert_rows", "diag_take_rows"]);
+      for (const row of fns.rows) {
+        expect(row.proconfig, row.proname).toContain(`statement_timeout=${DIAG_DB_STATEMENT_TIMEOUT_MS}ms`);
+        expect(row.proconfig, row.proname).toContain('search_path=""');
+      }
+      // The limit is a setting on those two functions only: no role, database or
+      // system-wide setting is changed, so no other query anywhere gets a limit.
+      const sql = readFileSync(path.join(MIGRATIONS, MIGRATION_FILE), "utf8");
+      const code = sql.split("\n").filter((line) => !line.trim().startsWith("--")).join("\n");
+      expect(code).not.toMatch(/alter\s+(role|user|database|system)\b/i);
+      expect(code).not.toMatch(/set_config\(\s*'statement_timeout'/i);
+      expect(code).not.toMatch(/\bset\s+local\s+statement_timeout/i);
+      const attributes = code.match(/^set statement_timeout = '[0-9]+ms'$/gim) ?? [];
+      expect(attributes).toEqual([`set statement_timeout = '${DIAG_DB_STATEMENT_TIMEOUT_MS}ms'`, `set statement_timeout = '${DIAG_DB_STATEMENT_TIMEOUT_MS}ms'`]);
     });
   });
 

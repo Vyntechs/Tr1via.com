@@ -105,8 +105,8 @@ whether the page was added to the home screen. Lag is measured directly by the
 * Who a row is about is decided on the server, and only a verified source gets
   a row (see "Who gets a row").
 * Nothing is readable from a browser: row level security is on with no
-  policies and the browser roles have no access to the tables or the two
-  functions. Only the service-role key (the server) can read or write.
+  policies and the browser roles have no access to the tables or to the
+  functions (`diag_insert_rows`, `diag_take_rows`, the cleanup and the timeline). Only the service-role key (the server) can read or write.
 
 ### Who gets a row
 
@@ -141,7 +141,8 @@ and in the `diag_drops` row below as `capped=N`).
 | Counter (`bucket`) | Cap | What it holds |
 | --- | --- | --- |
 | `_night` (reports) | 40,000 | everything the devices report, all kinds together |
-| `_night` (server rows) | 60,000 | the same counter, with 20,000 of extra room that only the server's own rows may use |
+| `_night` (taps and timer-end calls) | 60,000 | the same counter, with 20,000 of extra room that only the server's own tap and timer-end rows may use |
+| `_night` (host presses) | 62,000 | the same counter again, with a **reserve of 2,000** above the 60,000 that nothing but a host press may use, so a press always gets its whole allowance, however full the night is |
 | `phones` | 30,000 | every player phone's reports together |
 | `tv` | 8,000 | the venue TV(s) of the night, reports |
 | `host` | 8,000 | the host laptop and phone, reports |
@@ -158,9 +159,14 @@ and night caps still hold for everyone.
 
 Chatty device reports stop at 40,000 for the night; the server's own rows (taps,
 timer-end calls, presses) are the evidence this is for, so they keep room above
-that, and a night full of reports never blocks a late tap. A busy 40-phone night
-is roughly 20,000 to 35,000 rows in all; the worst case is 60,000 small rows,
-about 25 MB. To keep it cheap, a server asks for rows in blocks (100 at a time
+that, and a night full of reports never blocks a late tap. Host presses have a
+small reserve of their own on top of that (62,000 against the others' 60,000),
+so even a night where the reports and the taps have both hit their ceilings
+(taps at four times the expected volume) still stores every press: the press
+allowance is 2,000 rows and all of them are always available. (The price is that
+in that extreme the others share 58,000 to 60,000, depending on how many presses
+came first.) A busy 40-phone night is roughly 20,000 to 35,000 rows in all; the
+worst case is 62,000 small rows, about 26 MB. To keep it cheap, a server asks for rows in blocks (100 at a time
 for phones' reports and taps, 25 for the rest), and the jobs that find a block
 spent at the same moment share ONE call; a full kind is not asked about again
 for a minute (so the caps can overshoot by up to one block per server). **The
@@ -185,19 +191,57 @@ where rows_refused > 0 or bucket = '_night' order by rows_taken desc limit 20;
 Log writes never change a response, and they must never compete with real
 answers for the database. At most **5 log jobs per server** touch the database
 at once; the rest wait in a short queue (200 jobs). A job that waits more than 8
-seconds for its turn, or arrives to a full queue, is dropped and counted. A job
-runs against a 5 second clock: inside it no database call may start after the
-clock runs out and none may run past it, and the job keeps its turn until it has
-really stopped, so the database itself never sees more than 5 log calls at once
-from one server, however slow it is. If a write fails, times out
-(2 seconds) or is dropped, the server prints one short line to its console, at
-most one per kind a minute:
+seconds for its turn, or arrives to a full queue, is dropped and counted.
+
+**A slow log write is cancelled by the database itself.** Hanging up the HTTP
+request does not stop the statement behind it (PostgREST keeps running it after
+the app has gone, and runs a request that was still waiting for a connection
+later), so the app does not rely on that. Every log write goes through the
+database function `diag_insert_rows` (and the row-cap check is
+`diag_take_rows`), and both carry a statement timeout of 1.5 seconds as a setting
+on the function itself. PostgREST applies a function's own `statement_timeout`
+to the call of that function only, so no other query (nothing the game runs) gets
+a shorter limit, and nothing is set on a role or on the database. A write that
+runs past 1.5 seconds is cancelled and rolled back with error `57014`; the app
+sees that answer and counts a timed-out write. (This relies on PostgREST applying
+function-level `statement_timeout`, which it does by default; if a PostgREST
+ever stopped doing that, a stalled write would simply last as long as the
+stall, and the limit below would still hold.)
+
+**The turn is not given back until the database is done.** A job keeps its turn
+until every database call it made has *returned*: a normal answer, the
+database's own "cancelled" error, or, only if nothing answers for 12 seconds,
+the app cancels the request and holds the turn 2 seconds longer. No call starts
+after the job's 5 second clock, and one job makes one call at a time (reading
+the drop counts back out to the database is a call too, and happens inside the
+turn). So the database never sees more than 5 log statements from one server,
+however slow it is, and the app never counts a statement as finished when it
+is still running. **Logging pauses itself when the database keeps cancelling log writes.** Even
+five stalled log statements at a time would keep half of PostgREST's connections
+busy for as long as taps keep coming, and those are the connections the
+question-close calls at timer end need. So after 3 log writes in a row are
+cancelled as too slow, this server drops new log jobs, without asking the
+database anything, for 10 seconds (counted as `paused`). After that ONE job is
+let through to see whether the database is back; a good answer ends the pause,
+another cancel starts a new one. A log row lost this way is the intended price;
+a slower tap or press is not. (An ordinary error answer, such as a missing
+table, is an answer and never starts a pause; neither does a job that simply ran
+out of time before it could send its write.)
+
+The id lookups ("is this device a player of the night?") are
+reads of the game's own tables, which cannot be given a log-only time limit;
+the job that started one keeps its turn until it returns, even if the log gave
+up waiting for the answer after 2 seconds (and counted the caller as "slow").
+If a write fails, times out or is dropped, the server prints one short line to
+its console, at most one per kind a minute:
 
 ```
 [diag] insert failed table=diag_answer_events code=42P01
+[diag] insert failed table=diag_answer_events code=57014
 [diag] dropping log writes: too many waiting
 [diag] dropping log writes: waited too long for a turn
 [diag] row-cap check busy: dropping log rows instead of waiting
+[diag] pausing log writes: the database keeps cancelling them for being slow
 [diag] stored nothing for requests with no verified player or host (slow = could not be checked in time): answer=3 report=12 slow=2
 ```
 
@@ -206,10 +250,25 @@ means a check (is this device a player of the night? does this host own it?)
 could not be answered in time; those callers are NOT counted as strangers.
 
 (`code` is the database's error code, or `timeout`; never the message, which
-could contain row contents.) The count of dropped, failed and capped writes is saved as
-one row in `diag_server_actions` (`actor = 'system'`, `action = 'diag_drops'`,
-`reason = 'dropped=N failed=M capped=K'`) as soon as the database takes a write again, so
-a gap in a night's evidence says so:
+could contain row contents. `57014` is the database cancelling a write that ran
+past its 1.5 seconds; `timeout` is the app cancelling a request nothing answered
+for in 12 seconds.) The counts are saved as one row in `diag_server_actions`
+(`actor = 'system'`, `action = 'diag_drops'`,
+`reason = 'dropped=N busy=B timed_out=T paused=P failed=M capped=K'`) as soon as the database
+takes a write again, so a gap in a night's evidence says so, and says why:
+
+| Count | The true reason |
+| --- | --- |
+| `dropped` | jobs that never got a turn: `queue_full` (too many waiting) plus `waited_too_long` (8 seconds without a turn), both in `steps` |
+| `busy` | the row-cap counter of the night was held by another server at that instant, even after retries |
+| `timed_out` | the database cancelled the write (`57014`) or nothing answered in 12 seconds |
+| `paused` | dropped on purpose while logging was paused because the database kept cancelling log writes |
+| `failed` | the database answered with some other error (a missing table, for example) |
+| `capped` | rows past a row cap |
+
+The console line that follows a successful save names the same reasons, for
+example `[diag] dropped 3 log writes (jobs that never got a turn: 3 found the queue full, 0 waited too long)` or
+`[diag] dropped 1 log row batches (the row-cap counter was busy)`.
 
 ```sql
 select received_at, reason from diag_server_actions where action = 'diag_drops' order by received_at desc;

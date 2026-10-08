@@ -45,6 +45,7 @@ vi.mock("next/headers", () => ({ cookies: signIn.cookiesFn }));
 vi.mock("@/lib/supabase/admin", () => adminMock);
 
 import { signTvPass } from "@/lib/diagnostics/tvPass";
+import { unknownKeys } from "../helpers/diag-columns";
 
 const SECRET = "test-session-secret-0123456789";
 const NIGHT_ID = "33333333-3333-3333-3333-333333333333";
@@ -174,6 +175,8 @@ describe("POST /api/diag/report", () => {
     expect(night).toBe(NIGHT_ID);
     expect(source).toEqual({ kind: "player", deviceId: DEVICE_ID });
     expect(rows).toHaveLength(2);
+    // every key is a real column of the table (the database function ignores any other key)
+    expect(unknownKeys("diag_device_events", rows)).toEqual([]);
     expect(rows[0]).toMatchObject({
       night_id: NIGHT_ID,
       surface: "player",

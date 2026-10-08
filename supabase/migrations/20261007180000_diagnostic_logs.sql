@@ -18,6 +18,10 @@
 --   diag_quota          how many rows each night (and each phone / TV / host
 --                       inside it) has been given so far, so a flood of junk
 --                       cannot fill the disk. See diag_take_rows() below.
+--   diag_insert_rows()  the one way the app stores log rows. It carries a
+--                       statement timeout of its own (see "a time limit of
+--                       its own" below), so the DATABASE cancels a slow log
+--                       write by itself.
 --   diag_night_timeline() a read-only FUNCTION (not a view, see below) that
 --                       lines all of it up by time for one night (see
 --                       docs/diagnostics/night-timeline.md).
@@ -247,6 +251,7 @@ returns integer
 language plpgsql
 security definer
 set search_path = ''
+set statement_timeout = '1500ms'
 as $$
 declare
   v_want integer;
@@ -298,6 +303,84 @@ $$;
 revoke all privileges on function public.diag_take_rows(uuid, text, integer, integer, integer)
   from public, anon, authenticated;
 grant execute on function public.diag_take_rows(uuid, text, integer, integer, integer) to service_role;
+
+-- ─── a time limit of its own, for log writes only ──────────────────────
+-- A slow log write must be cancelled BY THE DATABASE. Hanging up the HTTP
+-- request does not do it: PostgREST keeps running the statement after the client
+-- has gone (and runs a request that was still waiting for a connection later),
+-- so a stalled log insert used to go on holding a connection for as long as it
+-- liked, long after the app had given up on it.
+--
+-- The limit is a setting on THESE FUNCTIONS (statement_timeout = 1500 ms here
+-- and on diag_take_rows above), not on a role or the database: PostgREST applies
+-- a function's own statement_timeout to the call of that function only, so no
+-- other query (nothing the game runs) gets a shorter limit. (The app-side
+-- constant DIAG_DB_STATEMENT_TIMEOUT_MS in lib/diagnostics/config.ts must equal
+-- it; a test checks.) A write that runs past it is cancelled and rolled back
+-- with error 57014, which the app counts as a timed-out log write.
+--
+-- This is the same insert PostgREST used to run for `.from(table).insert(rows)`:
+-- the columns are the ones the rows actually carry, taken from the table itself,
+-- so a column the rows leave out keeps its default (id, created_at, steps...).
+-- The table name is checked against a fixed list and column names come from the
+-- catalog and are quoted, so nothing from the caller is ever pasted into SQL.
+-- Service role only; one call stores at most 1000 rows. Returns how many rows
+-- were stored.
+create or replace function public.diag_insert_rows(
+  p_table text,
+  p_rows jsonb
+)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+set statement_timeout = '1500ms'
+as $$
+declare
+  v_cols text;
+  v_count integer;
+begin
+  if p_table is null
+     or p_table not in ('diag_answer_events', 'diag_server_actions', 'diag_device_events') then
+    raise exception 'diag_insert_rows: unknown table' using errcode = '22023';
+  end if;
+  if p_rows is null or pg_catalog.jsonb_typeof(p_rows) <> 'array' then
+    raise exception 'diag_insert_rows: rows must be a json array' using errcode = '22023';
+  end if;
+  if pg_catalog.jsonb_array_length(p_rows) = 0 then
+    return 0;
+  end if;
+  if pg_catalog.jsonb_array_length(p_rows) > 1000 then
+    raise exception 'diag_insert_rows: at most 1000 rows per call' using errcode = '22023';
+  end if;
+
+  select pg_catalog.string_agg(pg_catalog.quote_ident(a.attname::text), ', ' order by a.attnum)
+    into v_cols
+    from pg_catalog.pg_attribute a
+   where a.attrelid = pg_catalog.format('public.%I', p_table)::pg_catalog.regclass
+     and a.attnum > 0
+     and not a.attisdropped
+     and exists (
+       select 1 from pg_catalog.jsonb_array_elements(p_rows) as e(r)
+        where pg_catalog.jsonb_typeof(e.r) = 'object'
+          and pg_catalog.jsonb_exists(e.r, a.attname::text)
+     );
+  if v_cols is null then
+    raise exception 'diag_insert_rows: the rows carry no known column' using errcode = '22023';
+  end if;
+
+  execute pg_catalog.format(
+    'insert into public.%1$I (%2$s) select %2$s from pg_catalog.jsonb_populate_recordset(null::public.%1$I, $1)',
+    p_table, v_cols
+  ) using p_rows;
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
+$$;
+
+revoke all privileges on function public.diag_insert_rows(text, jsonb)
+  from public, anon, authenticated;
+grant execute on function public.diag_insert_rows(text, jsonb) to service_role;
 
 -- ─── retention: 45 days ────────────────────────────────────────────────
 -- Callable only by trusted server code or an operator. NOTHING in this file
