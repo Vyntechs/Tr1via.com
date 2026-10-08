@@ -17,6 +17,8 @@ export interface DiagSink {
   event(kind: DiagDeviceKind, data: DiagData | undefined, forced: boolean): void;
   /** A player question is on screen (true) or has closed (false). */
   questionOpen(open: boolean): void;
+  /** The first room download has finished, so what is on screen is known. */
+  roomReady(): void;
 }
 
 let sink: DiagSink | null = null;
@@ -25,6 +27,12 @@ let sink: DiagSink | null = null;
 // (a dynamic import): a phone that opens or reloads in the middle of a
 // question would otherwise never be told the question was already open.
 let questionOpenNow = false;
+// Whether the first room download of this page load has finished. Remembered
+// here for the same reason: the reporter may start after the room has loaded.
+let roomReadyNow = false;
+// The signed pass the server gave the venue TV page (see tvPass.ts). Only the
+// TV page sets it; the reporter attaches it to every TV report.
+let tvPass: string | null = null;
 
 export function setDiagSink(next: DiagSink | null): void {
   sink = next;
@@ -35,6 +43,33 @@ export function setDiagSink(next: DiagSink | null): void {
       // never reaches the caller
     }
   }
+  if (next && roomReadyNow) {
+    try {
+      next.roomReady();
+    } catch {
+      // never reaches the caller
+    }
+  }
+}
+
+/** The room has downloaded for the first time (or failed for good). The reporter sends nothing before this. */
+export function diagRoomReady(): void {
+  if (roomReadyNow) return;
+  roomReadyNow = true;
+  if (!sink) return;
+  try {
+    sink.roomReady();
+  } catch {
+    // never reaches the caller
+  }
+}
+
+export function setDiagTvPass(pass: string | null): void {
+  tvPass = pass;
+}
+
+export function getDiagTvPass(): string | null {
+  return tvPass;
 }
 
 /** True once the reporter is running. */
@@ -184,6 +219,8 @@ export function diagRibbon(
 export function __resetDiagClientForTests(): void {
   sink = null;
   questionOpenNow = false;
+  roomReadyNow = false;
+  tvPass = null;
   snapCounter = 0;
   lastRibbon = undefined;
 }

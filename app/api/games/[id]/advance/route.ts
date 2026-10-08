@@ -102,6 +102,4 @@ async function postAdvance(
   return ok({ state: "standings-board", occurredAt, repeated: false });
 }
 
-// Wrapped so the press is timed in the diagnostic log AFTER the response is
-// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
 export const POST = withActionLog("advance", postAdvance, { idKind: "game" });

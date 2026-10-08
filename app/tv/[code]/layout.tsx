@@ -4,7 +4,9 @@
 // non-scrolling viewport. The page handles the 16:9 stage scaling itself.
 
 import type { Metadata } from "next";
-import type { ReactNode } from "react";
+import { Suspense, type ReactNode } from "react";
+import { DiagTvPass } from "@/components/diagnostics/DiagTvPass";
+import { diagnosticsEnabled } from "@/lib/diagnostics/config";
 
 export const metadata: Metadata = {
   title: "TR1VIA · TV",
@@ -13,9 +15,23 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function TVLayout({ children }: { children: ReactNode }) {
+export default function TVLayout({
+  children,
+  params,
+}: {
+  children: ReactNode;
+  params: Promise<{ code: string }>;
+}) {
   return (
     <>
+      {/* Diagnostic logging only: gives this TV page the signed pass its
+          reports need. Left out entirely unless DIAGNOSTIC_LOGGING is on, and
+          wrapped so the TV never waits for it. Draws nothing. */}
+      {diagnosticsEnabled() ? (
+        <Suspense fallback={null}>
+          <DiagTvPass params={params} />
+        </Suspense>
+      ) : null}
       {/* Reset body padding + lock the viewport to non-scrolling so the
           TV stage owns the whole screen. Scoped to this route only via the
           layout — does not affect player or host surfaces. */}

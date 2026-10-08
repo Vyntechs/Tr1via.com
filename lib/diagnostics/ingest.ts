@@ -1,35 +1,42 @@
 // Intake rules for device reports (POST /api/diag/report).
 //
 // Pure functions, no I/O, so the size / shape / rate limits are easy to test.
-// Nothing a device sends is trusted: the batch is rebuilt field by field from
-// an allowlist, every number and string is bounded, and anything unexpected
-// is dropped rather than stored.
+// Nothing a device sends is trusted: the batch is rebuilt field by field, and
+// EVERY event kind is rebuilt from a fixed list of fields (DIAG_EVENT_FIELDS
+// below). A field that is not on the list is thrown away. A number is rounded
+// and clamped to its range, text must be one of a few fixed words, and the only
+// free text left (a few short names such as an error name or a path) may only
+// use letters, digits and a few separators and is cut to 40 characters.
 
 import {
   DIAG_DEVICE_CLASSES,
   DIAG_DEVICE_KINDS,
   DIAG_MAX_EVENTS_PER_BATCH,
-  DIAG_MAX_EVENT_BYTES,
   DIAG_SCREEN_CLASSES,
+  DIAG_SURFACE_KINDS,
   DIAG_SURFACES,
+  type DiagDeviceKind,
   type DiagSurface,
 } from "./config";
 
-export type DiagValue = string | number | boolean | null | DiagValue[] | { [key: string]: DiagValue };
+export type DiagValue = string | number | boolean;
 
 export interface CleanEvent {
   /** Device clock, ms since epoch. */
   t: number;
-  k: string;
+  k: DiagDeviceKind;
   d: Record<string, DiagValue>;
   forced: boolean;
 }
 
 export interface CleanBatch {
   surface: DiagSurface;
-  /** Room code (phones, TV) or night id (host). */
+  /** Room code (phones). */
   room: string | null;
+  /** Night id (host laptop / phone only). */
   night: string | null;
+  /** The signed pass the server gave the TV page (TV only). */
+  pass: string | null;
   sid: string;
   /** Device clock when the batch was sent, ms since epoch. */
   sentAt: number;
@@ -38,63 +45,168 @@ export interface CleanBatch {
 
 const KIND_SET = new Set<string>(DIAG_DEVICE_KINDS);
 const SURFACE_SET = new Set<string>(DIAG_SURFACES);
-const KEY_RE = /^[a-z][a-z0-9_]{0,19}$/i;
 const SID_RE = /^[A-Za-z0-9_-]{6,48}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const ROOM_RE = /^[A-Za-z0-9·.\- ]{4,12}$/;
-const MAX_STRING = 80;
+const PASS_RE = /^[A-Za-z0-9._-]{20,200}$/;
 // An event older than this when the batch is sent, or from the future, is junk.
 const MAX_AGE_MS = 30 * 60_000;
 const MAX_FUTURE_MS = 60_000;
 const MIN_EPOCH_MS = 1_577_836_800_000; // 2020-01-01
 const MAX_EPOCH_MS = 4_102_444_800_000; // 2100-01-01
 
-function cleanString(value: string): string {
-  // Control characters out, query strings and fragments off anything URL-shaped.
-  let out = value.replace(/[\u0000-\u001f\u007f]/g, "");
-  if (out.startsWith("/") || out.startsWith("http")) out = out.split(/[?#]/)[0];
-  return out.slice(0, MAX_STRING);
-}
+// ─── the fixed list of fields, by event kind ─────────────────────────
+type FieldSpec =
+  /** A number, rounded to `decimals` places and clamped. `words`: or one of these words. */
+  | { t: "num"; min: number; max: number; decimals?: number; words?: readonly string[] }
+  | { t: "bool" }
+  /** Exactly one of these words. */
+  | { t: "enum"; values: readonly string[] }
+  /** The little free text there is: letters, digits and `_ - . : / space`, at most `max` (40) long. */
+  | { t: "word"; max: number }
+  | { t: "uuid" };
 
-function cleanValue(value: unknown, depth: number): DiagValue | undefined {
-  if (value === null) return null;
-  switch (typeof value) {
-    case "boolean":
-      return value;
-    case "number":
-      return Number.isFinite(value) ? Math.round(value * 1000) / 1000 : undefined;
-    case "string":
-      return cleanString(value);
-    case "object": {
-      if (depth >= 2) return undefined;
-      if (Array.isArray(value)) {
-        const items: DiagValue[] = [];
-        for (const item of value.slice(0, 8)) {
-          const clean = cleanValue(item, depth + 1);
-          if (clean !== undefined) items.push(clean);
-        }
-        return items;
-      }
-      const out: { [key: string]: DiagValue } = {};
-      for (const [key, inner] of Object.entries(value as Record<string, unknown>).slice(0, 24)) {
-        if (!KEY_RE.test(key)) continue;
-        const clean = cleanValue(inner, depth + 1);
-        if (clean !== undefined) out[key] = clean;
-      }
-      return out;
+const EFFECTIVE_TYPES = ["slow-2g", "2g", "3g", "4g"] as const;
+const MEDIA = ["bluetooth", "cellular", "ethernet", "none", "wifi", "wimax", "other", "unknown"] as const;
+const NET_EVENTS = ["online", "offline", "conn"] as const;
+const RIBBON_STATES = ["online", "backup", "reconnecting", "unreachable", "offline"] as const;
+const REACH_STATES = ["ok", "unreachable"] as const;
+
+const connection = {
+  et: { t: "enum", values: EFFECTIVE_TYPES },
+  ty: { t: "enum", values: MEDIA },
+  rtt: { t: "num", min: 0, max: 60_000 },
+  dl: { t: "num", min: 0, max: 10_000, decimals: 1 },
+} satisfies Record<string, FieldSpec>;
+
+/**
+ * Everything a device may say, by event kind. The names are the ones the
+ * device code sends (see lib/diagnostics/client.ts, reporter.ts and the hooks
+ * that call it). Nothing else is ever stored.
+ */
+export const DIAG_EVENT_FIELDS: Record<DiagDeviceKind, Record<string, FieldSpec>> = {
+  // what the device is (the server adds browser, OS family and device class itself)
+  device: {
+    sc: { t: "enum", values: DIAG_SCREEN_CLASSES },
+    ol: { t: "bool" },
+    rm: { t: "bool" },
+    theme: { t: "word", max: 24 },
+    ...connection,
+  },
+  net: { ev: { t: "enum", values: NET_EVENTS }, ol: { t: "bool" }, ...connection },
+  vis: { ev: { t: "enum", values: ["hidden", "visible"] } },
+  // a game-change broadcast was heard: which one, the server's send time, how late
+  bcast: {
+    ev: { t: "word", max: 40 },
+    srv: { t: "num", min: MIN_EPOCH_MS, max: MAX_EPOCH_MS },
+    lag: { t: "num", min: -1_000_000_000, max: 1_000_000_000 },
+  },
+  // a room re-download: which one, how long, did it work, tries, why not
+  snap: {
+    w: { t: "word", max: 40 },
+    ms: { t: "num", min: 0, max: 3_600_000 },
+    ok: { t: "bool" },
+    n: { t: "num", min: 0, max: 50 },
+    err: { t: "word", max: 40 },
+  },
+  // another API call that was slow or failed: which, how long, first byte, status
+  res: {
+    p: { t: "word", max: 40 },
+    ms: { t: "num", min: 0, max: 3_600_000 },
+    ttfb: { t: "num", min: 0, max: 3_600_000 },
+    st: { t: "num", min: 0, max: 999 },
+  },
+  ribbon: {
+    from: { t: "enum", values: ["start", ...RIBBON_STATES] },
+    to: { t: "enum", values: RIBBON_STATES },
+    chan: { t: "word", max: 24 },
+    reach: { t: "enum", values: REACH_STATES },
+    bk: { t: "bool" },
+    ol: { t: "bool" },
+  },
+  chan: { from: { t: "word", max: 24 }, to: { t: "word", max: 24 } },
+  reach: { from: { t: "enum", values: REACH_STATES }, to: { t: "enum", values: REACH_STATES } },
+  // an answer tap as the phone saw it
+  tap: {
+    q: { t: "uuid" },
+    slot: { t: "num", min: 0, max: 4 },
+    tries: { t: "num", min: 0, max: 99 },
+    ms: { t: "num", min: 0, max: 3_600_000 },
+    ok: { t: "bool" },
+    st: { t: "num", min: 0, max: 999, words: ["network"] },
+    rs: { t: "bool" },
+  },
+  // a tap the phone ignored because its question had closed
+  tapx: {
+    q: { t: "uuid" },
+    slot: { t: "num", min: 0, max: 4 },
+    why: { t: "enum", values: ["closed"] },
+  },
+  // main-thread stalls in the last window
+  lt: {
+    n: { t: "num", min: 0, max: 100_000 },
+    max: { t: "num", min: 0, max: 600_000 },
+    sum: { t: "num", min: 0, max: 60_000_000 },
+    win: { t: "num", min: 0, max: 3_600_000 },
+  },
+  // TV scene frame rate
+  fps: {
+    scene: { t: "word", max: 24 },
+    fps: { t: "num", min: 0, max: 240, decimals: 1 },
+    slow: { t: "num", min: 0, max: 1000 },
+    worst: { t: "num", min: 0, max: 60_000 },
+    n: { t: "num", min: 0, max: 1000 },
+  },
+};
+
+const WORD_RE = /^[A-Za-z0-9_ .:/-]+$/;
+
+function cleanField(spec: FieldSpec, value: unknown): DiagValue | undefined {
+  switch (spec.t) {
+    case "bool":
+      return typeof value === "boolean" ? value : undefined;
+    case "enum":
+      return typeof value === "string" && spec.values.includes(value) ? value : undefined;
+    case "uuid":
+      return typeof value === "string" && UUID_RE.test(value) ? value.toLowerCase() : undefined;
+    case "word": {
+      if (typeof value !== "string") return undefined;
+      const text = value.slice(0, spec.max);
+      return text.length > 0 && WORD_RE.test(text) ? text : undefined;
     }
-    default:
-      return undefined;
+    case "num": {
+      if (typeof value === "string" && spec.words?.includes(value)) return value;
+      if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+      const scale = 10 ** (spec.decimals ?? 0);
+      return Math.round(Math.min(spec.max, Math.max(spec.min, value)) * scale) / scale;
+    }
   }
 }
 
-/** Rebuild an event payload from the allowlist, or null if it can't be kept. */
-export function cleanEventData(raw: unknown): Record<string, DiagValue> {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const clean = cleanValue(raw, 0);
-  if (!clean || typeof clean !== "object" || Array.isArray(clean)) return {};
-  if (JSON.stringify(clean).length > DIAG_MAX_EVENT_BYTES) return { trunc: true };
-  return clean;
+/** Rebuild an event's data from the fixed list for its kind. Unknown fields are thrown away. */
+export function cleanEventFields(kind: DiagDeviceKind, raw: unknown): Record<string, DiagValue> {
+  const r = asRecord(raw);
+  const out: Record<string, DiagValue> = {};
+  for (const [name, spec] of Object.entries(DIAG_EVENT_FIELDS[kind])) {
+    if (!Object.prototype.hasOwnProperty.call(r, name)) continue;
+    const clean = cleanField(spec, r[name]);
+    if (clean !== undefined) out[name] = clean;
+  }
+  return out;
+}
+
+function asRecord(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
+}
+
+/** The `device` event as stored (the browser, OS and device class are added from the request). */
+export function cleanDeviceData(raw: unknown): Record<string, DiagValue> {
+  return cleanEventFields("device", raw);
+}
+
+/** A `net` event as stored: what changed, and the connection type after it. */
+export function cleanNetData(raw: unknown): Record<string, DiagValue> {
+  return cleanEventFields("net", raw);
 }
 
 export function sanitizeBatch(raw: unknown): CleanBatch | null {
@@ -109,79 +221,33 @@ export function sanitizeBatch(raw: unknown): CleanBatch | null {
   // Any believable date (a phone with a wrong clock is still useful to us).
   if (typeof sentAt !== "number" || !(sentAt > MIN_EPOCH_MS && sentAt < MAX_EPOCH_MS)) return null;
 
-  const room = typeof body.room === "string" && ROOM_RE.test(body.room) ? body.room : null;
-  const night = typeof body.night === "string" && UUID_RE.test(body.night) ? body.night : null;
-  if (!room && !night) return null;
+  // Who the batch is about depends on the screen: a phone names its room, the
+  // host names its night, the TV carries the signed pass the server gave it
+  // (it names nothing itself). Anything a surface should not send is ignored.
+  const room = surface === "player" && typeof body.room === "string" && ROOM_RE.test(body.room) ? body.room : null;
+  const night = surface === "host" && typeof body.night === "string" && UUID_RE.test(body.night) ? body.night : null;
+  const pass = surface === "tv" && typeof body.tok === "string" && PASS_RE.test(body.tok) ? body.tok : null;
+  if (!room && !night && !pass) return null;
 
+  const allowedKinds = new Set<string>(DIAG_SURFACE_KINDS[surface as DiagSurface]);
   const list = Array.isArray(body.ev) ? body.ev.slice(0, DIAG_MAX_EVENTS_PER_BATCH) : [];
   const events: CleanEvent[] = [];
   for (const item of list) {
     if (!item || typeof item !== "object") continue;
     const e = item as Record<string, unknown>;
-    if (typeof e.k !== "string" || !KIND_SET.has(e.k)) continue;
+    if (typeof e.k !== "string" || !KIND_SET.has(e.k) || !allowedKinds.has(e.k)) continue;
     if (typeof e.t !== "number" || !Number.isFinite(e.t)) continue;
     const age = sentAt - e.t;
     if (age > MAX_AGE_MS || age < -MAX_FUTURE_MS) continue;
+    const kind = e.k as DiagDeviceKind;
     events.push({
       t: Math.round(e.t),
-      k: e.k,
-      // What a device says about ITSELF is rebuilt from a fixed list of keys
-      // (see DIAG_DEVICE_KEYS in config.ts); everything else is bounded
-      // generically.
-      d: e.k === "device" ? cleanDeviceData(e.d) : e.k === "net" ? cleanNetData(e.d) : cleanEventData(e.d),
+      k: kind,
+      d: cleanEventFields(kind, e.d),
       forced: e.f === 1 || e.f === true,
     });
   }
-  return { surface: surface as DiagSurface, room, night, sid, sentAt, events };
-}
-
-// ─── what the device says about itself: a fixed list of keys ─────────
-const SCREEN_SET = new Set<string>(DIAG_SCREEN_CLASSES);
-const EFFECTIVE_TYPES = new Set(["slow-2g", "2g", "3g", "4g"]);
-const MEDIA = new Set(["bluetooth", "cellular", "ethernet", "none", "wifi", "wimax", "other", "unknown"]);
-const NET_EVENTS = new Set(["online", "offline", "conn"]);
-const THEME_RE = /^[a-z0-9_-]{1,24}$/i;
-
-function asRecord(raw: unknown): Record<string, unknown> {
-  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-}
-
-function connectionFields(raw: Record<string, unknown>): Record<string, DiagValue> {
-  const out: Record<string, DiagValue> = {};
-  if (typeof raw.et === "string" && EFFECTIVE_TYPES.has(raw.et)) out.et = raw.et;
-  if (typeof raw.ty === "string" && MEDIA.has(raw.ty)) out.ty = raw.ty;
-  if (typeof raw.rtt === "number" && Number.isFinite(raw.rtt) && raw.rtt >= 0 && raw.rtt <= 60_000) {
-    out.rtt = Math.round(raw.rtt);
-  }
-  if (typeof raw.dl === "number" && Number.isFinite(raw.dl) && raw.dl >= 0 && raw.dl <= 10_000) {
-    out.dl = Math.round(raw.dl * 10) / 10;
-  }
-  return out;
-}
-
-/**
- * The `device` event as stored: connection type, coarse screen class,
- * online / reduce-motion flags and the theme. The browser, OS and device class
- * are added by the server from the request itself (summarizeDevice), never
- * taken from the body, so a device cannot claim anything else here.
- */
-export function cleanDeviceData(raw: unknown): Record<string, DiagValue> {
-  const r = asRecord(raw);
-  const out: Record<string, DiagValue> = {};
-  if (typeof r.sc === "string" && SCREEN_SET.has(r.sc)) out.sc = r.sc;
-  if (typeof r.ol === "boolean") out.ol = r.ol;
-  if (typeof r.rm === "boolean") out.rm = r.rm;
-  if (typeof r.theme === "string" && THEME_RE.test(r.theme)) out.theme = r.theme;
-  return { ...out, ...connectionFields(r) };
-}
-
-/** A `net` event as stored: what changed, and the connection type after it. */
-export function cleanNetData(raw: unknown): Record<string, DiagValue> {
-  const r = asRecord(raw);
-  const out: Record<string, DiagValue> = {};
-  if (typeof r.ev === "string" && NET_EVENTS.has(r.ev)) out.ev = r.ev;
-  if (typeof r.ol === "boolean") out.ol = r.ol;
-  return { ...out, ...connectionFields(r) };
+  return { surface: surface as DiagSurface, room, night, pass, sid, sentAt, events };
 }
 
 // ─── a short description of the device, from the request ─────────────

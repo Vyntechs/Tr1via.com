@@ -136,6 +136,4 @@ async function postStartGame(
   return ok({ state: "live", startedAt });
 }
 
-// Wrapped so the press is timed in the diagnostic log AFTER the response is
-// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
 export const POST = withActionLog("start_game", postStartGame, { idKind: "game" });

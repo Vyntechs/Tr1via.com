@@ -192,8 +192,9 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const [status, setStatus] = useState<TVRoomStatus>("loading");
   const [snapshot, setSnapshot] = useState<TVSnapshot | null>(null);
   // Diagnostic log only: whether a question is live on the TV, so the device
-  // reporter stays quiet until it closes. Nothing reads the result.
-  useDiagQuestionOpen(Boolean(snapshot?.liveQuestionId));
+  // reporter stays quiet until it closes (and until the first room download is
+  // done). Nothing reads the result.
+  useDiagQuestionOpen(Boolean(snapshot?.liveQuestionId), snapshot !== null);
   const [lastBroadcast, setLastBroadcast] =
     useState<RoomScopedState<TVBroadcast> | null>(null);
   const [lastFireworksBeat, setLastFireworksBeat] =

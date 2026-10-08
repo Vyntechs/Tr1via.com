@@ -119,6 +119,4 @@ async function postEndGame(
   return ok({ state: data.state, endedAt: data.ended_at });
 }
 
-// Wrapped so the press is timed in the diagnostic log AFTER the response is
-// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
 export const POST = withActionLog("end_game", postEndGame, { idKind: "game" });

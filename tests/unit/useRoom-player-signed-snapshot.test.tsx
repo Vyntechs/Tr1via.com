@@ -243,7 +243,15 @@ describe("useRoom player audience", () => {
 
   it("tells the diagnostic reporter a question is live until the room says it closed (not when the player locks in)", async () => {
     const open: boolean[] = [];
-    setDiagSink({ event: () => {}, questionOpen: (value) => open.push(value) });
+    const log: string[] = [];
+    setDiagSink({
+      event: () => {},
+      questionOpen: (value) => {
+        open.push(value);
+        log.push(`open:${value}`);
+      },
+      roomReady: () => log.push("ready"),
+    });
     try {
       h.fetchSnapshot
         .mockResolvedValueOnce(playerPayload("live"))
@@ -254,6 +262,9 @@ describe("useRoom player audience", () => {
       );
       await waitFor(() => expect(result.current.night?.venue_name).toBe("live"));
       expect(open).toEqual([true]);
+      // "the room has loaded" is told AFTER what is on screen, so the reporter
+      // never sees a loaded room whose open question it has not heard about.
+      expect(log).toEqual(["open:true", "ready"]);
 
       act(() => {
         h.broadcastHandlers.get("resolve")?.({

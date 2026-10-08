@@ -8,20 +8,29 @@
 //
 // What it will never do:
 //   - change anything the person sees, or add any button
-//   - send anything while a question is live on this screen. Everything is
-//     held in memory (capped at MAX_QUEUE events; when full the oldest routine
-//     event goes first, slow or failed ones are kept longest) and goes out
+//   - send anything while a question is live on this screen, or before the
+//     room has finished its first download (until then nobody knows whether a
+//     question is live). Everything is held in memory (capped at MAX_QUEUE
+//     events; when full the oldest ROUTINE event goes first, and slow or failed
+//     ones are kept longest, also when a failed send is put back) and goes out
 //     after the question closes, after a random 2-8 s wait so a whole room
-//     doesn't report in the same instant. The only exception is the page being
-//     hidden or closed (a phone locking, a tab closing): then the queue is
-//     handed to the browser's send-on-exit (sendBeacon) so it isn't lost.
+//     doesn't report in the same instant. There is NO exception for a hidden
+//     page: a phone locking its screen mid-question keeps its events in memory
+//     and sends them once it is awake and the question has closed. (A tab
+//     closed in the middle of a question loses what it was holding, on
+//     purpose: quiet comes first.) A page that is hidden or closed between
+//     questions hands what it holds to the browser's send-on-exit
+//     (sendBeacon) so it isn't lost.
 //     "Live question" comes from the room state (useRoom / useTVRoom), not
 //     from this file, so a phone that has already locked its answer in still
 //     counts as inside the question until the question closes.
 //   - throw: every callback is wrapped, and a failed send is quietly retried
-//     or dropped
+//     (routine events 3 times, slow or failed ones 10) or dropped
 //   - touch theme code. The October frame-rate check reads the page from the
 //     outside (the world's own data-* markers) and never calls into the theme.
+//
+// The venue TV also needs the signed pass its page was given (see tvPass.ts);
+// without one it holds everything and sends nothing.
 //
 // What it records, by kind (see config.ts): device, net, vis, bcast, snap,
 // res, ribbon, chan, reach, tap, tapx, lt, fps. Slow or failed events are
@@ -29,7 +38,7 @@
 // phones (decided once per page load) and always on the TV and host laptop.
 
 import { DIAG_MAX_EVENTS_PER_BATCH, type DiagDeviceKind, type DiagSurface } from "./config";
-import { pathTemplate, setDiagSink, type DiagData } from "./client";
+import { getDiagTvPass, pathTemplate, setDiagSink, type DiagData } from "./client";
 
 export interface ReporterOptions {
   surface: DiagSurface;
@@ -55,6 +64,8 @@ const ENDPOINT = "/api/diag/report";
 const FLUSH_EVERY_MS = 10_000;
 const MAX_QUEUE = 200;
 const MAX_RETRIES = 3;
+// Slow or failed events are the evidence; they get more tries.
+const MAX_RETRIES_FORCED = 10;
 const SAMPLE_RATE_PLAYER = 0.5;
 const FRAME_CHECK_EVERY_MS = 10_000;
 const FRAME_WINDOW_MS = 2_000;
@@ -107,6 +118,7 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
   let stopped = false;
   let queue: QueuedEvent[] = [];
   let questionIsOpen = false;
+  let roomReady = false;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let soonTimer: ReturnType<typeof setTimeout> | null = null;
   let frameTimer: ReturnType<typeof setInterval> | null = null;
@@ -115,15 +127,30 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
   let frameRoutineCount = 0;
 
   // ─── queue ──────────────────────────────────────────────────────────
-  function push(kind: DiagDeviceKind, data: DiagData | undefined, forced: boolean): void {
-    if (stopped) return;
-    if (!forced && !sampled) return;
-    if (queue.length >= MAX_QUEUE) {
-      // Make room: drop the oldest routine event, else the oldest of all.
+  /** Over the cap: routine events go first (oldest first); slow or failed ones are kept longest. */
+  function trim(): void {
+    while (queue.length > MAX_QUEUE) {
       const routine = queue.findIndex((e) => e.f === 0);
       queue.splice(routine === -1 ? 0 : routine, 1);
     }
+  }
+
+  function push(kind: DiagDeviceKind, data: DiagData | undefined, forced: boolean): void {
+    if (stopped) return;
+    if (!forced && !sampled) return;
     queue.push({ t: Date.now(), k: kind, d: data, f: forced ? 1 : 0, r: 0 });
+    trim();
+  }
+
+  /**
+   * May anything be sent right now? Not while a question is live, not before
+   * the room has finished its first download, and (TV) not without the pass.
+   * This is the one rule every send goes through, hidden page or not.
+   */
+  function canSend(): boolean {
+    if (questionIsOpen || !roomReady) return false;
+    if (surface === "tv" && !getDiagTvPass()) return false;
+    return true;
   }
 
   function takeWindowStats(): void {
@@ -140,8 +167,11 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
 
   // ─── sending ────────────────────────────────────────────────────────
   function requeue(batch: QueuedEvent[]): void {
-    const keep = batch.filter((e) => e.r < MAX_RETRIES).map((e) => ({ ...e, r: e.r + 1 }));
-    queue = [...keep, ...queue].slice(-MAX_QUEUE);
+    const keep = batch
+      .filter((e) => e.r < (e.f ? MAX_RETRIES_FORCED : MAX_RETRIES))
+      .map((e) => ({ ...e, r: e.r + 1 }));
+    queue = [...keep, ...queue];
+    trim();
   }
 
   function flush(viaBeacon: boolean): void {
@@ -154,6 +184,7 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
       surface,
       room: options.room,
       night: options.night,
+      tok: surface === "tv" ? (getDiagTvPass() ?? undefined) : undefined,
       sid,
       sent: Date.now(),
       ev: batch.map((e) => ({ t: e.t, k: e.k, d: e.d, f: e.f })),
@@ -189,11 +220,9 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
     flushTimer = setTimeout(() => {
       flushTimer = null;
       try {
-        // Stay quiet while a question is live, however big the backlog is
-        // (the queue is capped). A hidden page is the one exception.
-        if (!questionIsOpen || document.visibilityState === "hidden") {
-          flush(false);
-        }
+        // Stay quiet while a question is live (or before the room has loaded),
+        // however big the backlog is: the queue is capped. No exceptions.
+        if (canSend()) flush(false);
       } catch {
         // ignore
       }
@@ -208,7 +237,7 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
       () => {
         soonTimer = null;
         try {
-          if (!questionIsOpen) flush(false);
+          if (canSend()) flush(false);
         } catch {
           // ignore
         }
@@ -224,6 +253,9 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
       const wasOpen = questionIsOpen;
       questionIsOpen = open;
       if (wasOpen && !open) scheduleSoon(2000, 8000);
+    },
+    roomReady: () => {
+      roomReady = true;
     },
   });
   cleanups.push(() => setDiagSink(null));
@@ -259,9 +291,12 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
   const onVisibility = () => {
     const hidden = document.visibilityState === "hidden";
     push("vis", { ev: hidden ? "hidden" : "visible" }, true);
-    if (hidden) flush(true);
+    // A locked screen mid-question sends nothing: it is held, in memory.
+    if (hidden && canSend()) flush(true);
   };
-  const onPageHide = () => flush(true);
+  const onPageHide = () => {
+    if (canSend()) flush(true);
+  };
   window.addEventListener("online", onOnline);
   window.addEventListener("offline", onOffline);
   document.addEventListener("visibilitychange", onVisibility);
@@ -386,7 +421,7 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
   return () => {
     if (stopped) return;
     try {
-      flush(true);
+      if (canSend()) flush(true);
     } catch {
       // ignore
     }

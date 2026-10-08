@@ -28,6 +28,7 @@ interface Seen {
 
 let seen: Seen[];
 let open: boolean[];
+let ready: number;
 
 function attachSink() {
   const sink: DiagSink = {
@@ -36,6 +37,9 @@ function attachSink() {
     },
     questionOpen: (value) => {
       open.push(value);
+    },
+    roomReady: () => {
+      ready += 1;
     },
   };
   setDiagSink(sink);
@@ -50,6 +54,7 @@ beforeEach(() => {
   window.localStorage.clear();
   seen = [];
   open = [];
+  ready = 0;
   __resetDiagClientForTests();
   __resetChannelHealthForTests();
   __resetReachabilityForTests();
@@ -166,7 +171,7 @@ describe("useAnswerSubmit", () => {
 describe("useDiagQuestionOpen", () => {
   it("passes the live-question flag to the reporter and clears it when the screen goes away", () => {
     attachSink();
-    const { rerender, unmount } = renderHook(({ live }) => useDiagQuestionOpen(live), {
+    const { rerender, unmount } = renderHook(({ live }) => useDiagQuestionOpen(live, true), {
       initialProps: { live: false },
     });
     expect(open).toEqual([]); // false -> false is not news
@@ -182,15 +187,29 @@ describe("useDiagQuestionOpen", () => {
   });
 
   it("is remembered for a reporter that starts later (it is loaded a moment after the page)", () => {
-    renderHook(() => useDiagQuestionOpen(true));
+    renderHook(() => useDiagQuestionOpen(true, true));
     attachSink(); // the reporter arrives after the question was already open
     expect(open).toEqual([true]);
+    expect(ready).toBe(1); // ...and after the room had loaded
+  });
+
+  it("tells the reporter the room is loaded only once the room has loaded, and only once", () => {
+    attachSink();
+    const { rerender } = renderHook(({ loaded }) => useDiagQuestionOpen(false, loaded), {
+      initialProps: { loaded: false },
+    });
+    expect(ready).toBe(0);
+    rerender({ loaded: true });
+    expect(ready).toBe(1);
+    rerender({ loaded: false });
+    rerender({ loaded: true });
+    expect(ready).toBe(1); // once per page load
   });
 
   it("does nothing, and costs nothing, while no reporter is running", () => {
     const timers = vi.useFakeTimers();
     try {
-      const { unmount } = renderHook(() => useDiagQuestionOpen(true));
+      const { unmount } = renderHook(() => useDiagQuestionOpen(true, true));
       expect(timers.getTimerCount()).toBe(0);
       unmount();
     } finally {

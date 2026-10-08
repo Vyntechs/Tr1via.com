@@ -1,8 +1,9 @@
 // Diagnostic logging on POST /api/answers.
 //
-// The promise under test: logging records every tap (saved, late, early,
-// duplicate, turned down) AFTER the response, and a logging problem of any
-// kind can never change the status or the body the phone gets.
+// The promise under test: logging records every tap from a REAL player of the
+// night (saved, late, early, duplicate, turned down) AFTER the response, stores
+// nothing for a caller who is not one, and a logging problem of any kind can
+// never change the status or the body the phone gets.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
@@ -13,7 +14,9 @@ const projectionMock = vi.hoisted(() => ({ projectExactLiveEvent: vi.fn() }));
 const broadcastMock = vi.hoisted(() => ({ broadcastAppliedLiveRoomEvent: vi.fn() }));
 const writeMock = vi.hoisted(() => ({
   scheduleDiagWrite: vi.fn(),
-  insertDiagRows: vi.fn(),
+  recordDiagRows: vi.fn(),
+  noteIgnored: vi.fn(),
+  lookupNightOwner: vi.fn(),
   lookupQuestionContext: vi.fn(),
   lookupPlayerId: vi.fn(),
   lookupGameNight: vi.fn(),
@@ -240,7 +243,7 @@ async function run(scn: Scenario, mode: Mode, headers: Record<string, string> = 
     if (mode === "on-scheduler-throws") throw new Error("scheduler exploded");
     pending.push(task);
   });
-  writeMock.insertDiagRows.mockImplementation(async () => {
+  writeMock.recordDiagRows.mockImplementation(async () => {
     if (mode === "on-insert-throws") throw new Error("diag table missing");
   });
 
@@ -279,7 +282,7 @@ describe("POST /api/answers diagnostic log", () => {
     const response = await POST(post(await scn.body()));
     expect(response.status).toBe(204);
     expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
-    expect(writeMock.insertDiagRows).not.toHaveBeenCalled();
+    expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
   });
 
   describe.each(SCENARIOS)("$name", (scn) => {
@@ -295,16 +298,24 @@ describe("POST /api/answers diagnostic log", () => {
       }
     });
 
-    it("records the tap with its outcome and reason", async () => {
+    it("records the tap with its outcome and reason, for the real player who sent it", async () => {
       await run(scn, "on", {
         "x-tr1via-tap-at": "1784422809000",
         "x-tr1via-sent-at": "1784422809400",
         "x-tr1via-attempt": "2",
       });
-      expect(writeMock.insertDiagRows).toHaveBeenCalledTimes(1);
-      const [table, rows] = writeMock.insertDiagRows.mock.calls[0] as [string, Record<string, unknown>[]];
+      expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(1);
+      const [table, rows, night, source] = writeMock.recordDiagRows.mock.calls[0] as [
+        string,
+        Record<string, unknown>[],
+        string,
+        unknown,
+      ];
       expect(table).toBe("diag_answer_events");
+      expect(night).toBe(NIGHT_ID);
+      expect(source).toEqual({ kind: "player", deviceId: DEVICE_ID });
       expect(rows).toHaveLength(1);
+      expect(writeMock.noteIgnored).not.toHaveBeenCalled();
       expect(rows[0]).toMatchObject({
         outcome: scn.outcome,
         reason: scn.reason,
@@ -324,7 +335,7 @@ describe("POST /api/answers diagnostic log", () => {
     // A late tap is refused before the route ever looks the player up.
     const late = SCENARIOS[1]!;
     await run(late, "on");
-    const rows = writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
+    const rows = writeMock.recordDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
     expect(rows[0]).toMatchObject({ player_id: PLAYER_ID, night_id: NIGHT_ID, game_id: GAME_ID });
     expect(rows[0]!.ms_after_open).toBe(26_000);
     expect(rows[0]!.deadline_s).toBe(25);
@@ -334,7 +345,7 @@ describe("POST /api/answers diagnostic log", () => {
   it("records step timings and ignores a nonsense tap header", async () => {
     const scn = SCENARIOS[0]!;
     await run(scn, "on", { "x-tr1via-tap-at": "not-a-number", "x-tr1via-attempt": "999" });
-    const row = (writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[])[0]!;
+    const row = (writeMock.recordDiagRows.mock.calls[0]![1] as Record<string, unknown>[])[0]!;
     expect(row.client_tap_at).toBeNull();
     expect(row.client_attempt).toBeNull();
     expect(Object.keys(row.steps as object)).toEqual(
@@ -342,12 +353,47 @@ describe("POST /api/answers diagnostic log", () => {
     );
   });
 
-  it("records a turned-away tap with no device session too", async () => {
-    authMock.getDeviceId.mockResolvedValue(null);
-    const scn = SCENARIOS[0]!;
-    await run(scn, "on");
-    const row = (writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[])[0]!;
-    expect(row).toMatchObject({ outcome: "rejected", reason: "no_device_session", http_status: 401, device_id: null });
+  describe("a caller who is not a verified player stores NOTHING", () => {
+    it("a tap with no device session: the phone still gets its 401, and not even an after-the-response job is queued", async () => {
+      authMock.getDeviceId.mockResolvedValue(null);
+      const scn = SCENARIOS[0]!;
+      const result = await run(scn, "on");
+      expect(result.status).toBe(401);
+      expect(result.pending).toBe(0);
+      expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+      expect(writeMock.lookupQuestionContext).not.toHaveBeenCalled();
+      expect(writeMock.lookupPlayerId).not.toHaveBeenCalled(); // no database reads for it either
+      expect(writeMock.noteIgnored).toHaveBeenCalledWith("answer");
+    });
+
+    it("a real cookie that never joined this night (a free cookie from /api/session/init)", async () => {
+      writeMock.lookupPlayerId.mockResolvedValue(null);
+      // a late tap is turned away before the route looks the player up
+      const late = SCENARIOS[1]!;
+      await run(late, "on");
+      expect(writeMock.lookupPlayerId).toHaveBeenCalledWith(NIGHT_ID, DEVICE_ID);
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+      expect(writeMock.noteIgnored).toHaveBeenCalledWith("answer");
+    });
+
+    it("a tap about a question that does not exist", async () => {
+      writeMock.lookupQuestionContext.mockResolvedValue({ gameId: null, nightId: null });
+      await run(SCENARIOS[2]!, "on");
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+      expect(writeMock.lookupPlayerId).not.toHaveBeenCalled();
+      expect(writeMock.noteIgnored).toHaveBeenCalledWith("answer");
+    });
+
+    it("but a real player's late, early and duplicate taps ARE stored (that is the whole point)", async () => {
+      for (const scn of [SCENARIOS[1]!, SCENARIOS[2]!, SCENARIOS[3]!, SCENARIOS[4]!]) {
+        writeMock.recordDiagRows.mockClear();
+        await run(scn, "on");
+        expect(writeMock.recordDiagRows, scn.name).toHaveBeenCalledTimes(1);
+        const row = (writeMock.recordDiagRows.mock.calls[0]![1] as Record<string, unknown>[])[0]!;
+        expect(row, scn.name).toMatchObject({ outcome: scn.outcome, player_id: PLAYER_ID });
+      }
+    });
   });
 
   it("logs a thrown error and re-throws the very same error", async () => {
@@ -363,7 +409,7 @@ describe("POST /api/answers diagnostic log", () => {
     const { POST } = await import("@/app/api/answers/route");
     await expect(POST(post(await legacyBody()))).rejects.toBe(boom);
     for (const task of pending) await task();
-    const row = (writeMock.insertDiagRows.mock.calls[0]![1] as Record<string, unknown>[])[0]!;
+    const row = (writeMock.recordDiagRows.mock.calls[0]![1] as Record<string, unknown>[])[0]!;
     expect(row).toMatchObject({ outcome: "error", reason: "exception" });
   });
 });

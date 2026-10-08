@@ -15,6 +15,9 @@
 --                       laptop: broadcast heard, room re-download times,
 --                       connection changes, the "switch to a hotspot"
 --                       screen, slow frames.
+--   diag_quota          how many rows each night (and each phone / TV / host
+--                       inside it) has been given so far, so a flood of junk
+--                       cannot fill the disk. See diag_take_rows() below.
 --   diag_night_timeline() a read-only FUNCTION (not a view, see below) that
 --                       lines all of it up by time for one night (see
 --                       docs/diagnostics/night-timeline.md).
@@ -41,9 +44,9 @@
 --     them. A function written with a plain string body is looked up only when
 --     it runs, so later changes to those tables are never blocked by this
 --     migration.
---   - Retention: 45 days. cleanup_diagnostic_logs() deletes older rows.
---     Nothing in this migration schedules it. See the docs file for the
---     one-line pg_cron job or the manual query.
+--   - Retention: 45 days. cleanup_diagnostic_logs() deletes older rows, one
+--     small batch per call. Nothing in this migration schedules it: the app
+--     calls it daily from /api/cron/diag-cleanup. See the docs file.
 
 set search_path = public, extensions;
 
@@ -175,27 +178,118 @@ create index if not exists diag_device_events_device_time_idx
 create index if not exists diag_device_events_created_idx
   on public.diag_device_events (created_at);
 
+-- ─── row caps ──────────────────────────────────────────────────────────
+-- One row per (night, source). bucket "_night" is the whole night; the others
+-- are "p:<device id>" (one player phone), "tv" and "host". The server asks
+-- diag_take_rows() for room BEFORE it stores rows, and stores only as many as
+-- it was granted, so the caps hold across every server instance.
+create table if not exists public.diag_quota (
+  night_id uuid not null,
+  bucket text not null check (length(bucket) between 1 and 48),
+  rows_taken integer not null default 0,
+  -- Rows turned away because a cap was reached (useful after a flood).
+  rows_refused integer not null default 0,
+  updated_at timestamptz not null default now(),
+  primary key (night_id, bucket)
+);
+
+comment on table public.diag_quota is
+  'How many diagnostic rows each night and each source inside it has used. Service role only. 45-day retention.';
+
+create index if not exists diag_quota_updated_idx
+  on public.diag_quota (updated_at);
+
 -- ─── lock it down ──────────────────────────────────────────────────────
 -- Supabase's default privileges hand new public tables to the browser
 -- roles; take them back. RLS on with no policies is the second lock.
 alter table public.diag_answer_events enable row level security;
 alter table public.diag_server_actions enable row level security;
 alter table public.diag_device_events enable row level security;
+alter table public.diag_quota enable row level security;
 
 revoke all privileges on table public.diag_answer_events from public, anon, authenticated;
 revoke all privileges on table public.diag_server_actions from public, anon, authenticated;
 revoke all privileges on table public.diag_device_events from public, anon, authenticated;
+revoke all privileges on table public.diag_quota from public, anon, authenticated;
 
 grant select, insert, delete on table public.diag_answer_events to service_role;
 grant select, insert, delete on table public.diag_server_actions to service_role;
 grant select, insert, delete on table public.diag_device_events to service_role;
+grant select, delete on table public.diag_quota to service_role;
+
+-- ─── ask for room before storing rows ──────────────────────────────────
+-- Returns how many of p_want rows may be stored (0 when a cap is reached) and
+-- counts the rest as refused. Both caps are checked in one step: the night as a
+-- whole (p_night_cap) and the source inside it (p_bucket_cap). The caps come
+-- from the caller, which is trusted server code (service role only).
+create or replace function public.diag_take_rows(
+  p_night_id uuid,
+  p_bucket text,
+  p_want integer,
+  p_bucket_cap integer,
+  p_night_cap integer
+)
+returns integer
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_want integer;
+  v_night integer;
+  v_bucket integer;
+  v_grant integer;
+begin
+  if p_night_id is null or p_bucket is null or p_want is null or p_want < 1
+     or p_bucket_cap is null or p_night_cap is null
+     or pg_catalog.length(p_bucket) not between 1 and 48 then
+    return 0;
+  end if;
+  v_want := least(p_want, 1000);
+
+  -- Always lock the night's row first, then the source's row.
+  insert into public.diag_quota (night_id, bucket) values (p_night_id, '_night')
+    on conflict do nothing;
+  select q.rows_taken into v_night from public.diag_quota q
+    where q.night_id = p_night_id and q.bucket = '_night' for update;
+  insert into public.diag_quota (night_id, bucket) values (p_night_id, p_bucket)
+    on conflict do nothing;
+  select q.rows_taken into v_bucket from public.diag_quota q
+    where q.night_id = p_night_id and q.bucket = p_bucket for update;
+
+  v_grant := greatest(0, least(v_want, p_night_cap - v_night, p_bucket_cap - v_bucket));
+
+  update public.diag_quota
+     set rows_taken = rows_taken + v_grant,
+         rows_refused = rows_refused + (v_want - v_grant),
+         updated_at = pg_catalog.now()
+   where night_id = p_night_id and bucket in ('_night', p_bucket);
+  return v_grant;
+end;
+$$;
+
+revoke all privileges on function public.diag_take_rows(uuid, text, integer, integer, integer)
+  from public, anon, authenticated;
+grant execute on function public.diag_take_rows(uuid, text, integer, integer, integer) to service_role;
 
 -- ─── retention: 45 days ────────────────────────────────────────────────
 -- Callable only by trusted server code or an operator. NOTHING in this file
--- schedules it. The app calls it once a day from /api/cron/diag-cleanup, and
--- that route does nothing at all unless DIAGNOSTIC_LOGGING is on. It can also
+-- schedules it. The app calls it once a day from /api/cron/diag-cleanup (it
+-- runs whenever CRON_SECRET is set, whether or not logging is on). It can also
 -- be run by hand (see docs/diagnostics/night-timeline.md).
-create or replace function public.cleanup_diagnostic_logs(p_days integer default 45)
+--
+-- One call deletes at most p_batch old rows from each table and returns how
+-- many it removed. The caller repeats it until it returns 0. Each call is its
+-- own transaction, so after a flood the cleanup still makes progress even if a
+-- single run is cut short (one giant delete would be rolled back and never
+-- finish). The old one-argument version is dropped first so a database that
+-- already has it does not end up with two.
+drop function if exists public.cleanup_diagnostic_logs(integer);
+
+create or replace function public.cleanup_diagnostic_logs(
+  p_days integer default 45,
+  p_batch integer default 5000
+)
 returns bigint
 language plpgsql
 security definer
@@ -210,17 +304,30 @@ begin
   if p_days is null or p_days < 7 then
     raise exception 'cleanup_diagnostic_logs: keep at least 7 days';
   end if;
+  if p_batch is null or p_batch < 1 or p_batch > 50000 then
+    raise exception 'cleanup_diagnostic_logs: batch must be 1 to 50000';
+  end if;
   v_cutoff := pg_catalog.now() - pg_catalog.make_interval(days => p_days);
 
-  delete from public.diag_answer_events where created_at < v_cutoff;
+  delete from public.diag_answer_events
+   where id in (select e.id from public.diag_answer_events e where e.created_at < v_cutoff limit p_batch);
   get diagnostics v_rows = row_count;
   v_total := v_total + v_rows;
 
-  delete from public.diag_server_actions where created_at < v_cutoff;
+  delete from public.diag_server_actions
+   where id in (select e.id from public.diag_server_actions e where e.created_at < v_cutoff limit p_batch);
   get diagnostics v_rows = row_count;
   v_total := v_total + v_rows;
 
-  delete from public.diag_device_events where created_at < v_cutoff;
+  delete from public.diag_device_events
+   where id in (select e.id from public.diag_device_events e where e.created_at < v_cutoff limit p_batch);
+  get diagnostics v_rows = row_count;
+  v_total := v_total + v_rows;
+
+  delete from public.diag_quota q
+   where (q.night_id, q.bucket) in (
+     select o.night_id, o.bucket from public.diag_quota o where o.updated_at < v_cutoff limit p_batch
+   );
   get diagnostics v_rows = row_count;
   v_total := v_total + v_rows;
 
@@ -228,9 +335,9 @@ begin
 end;
 $$;
 
-revoke all privileges on function public.cleanup_diagnostic_logs(integer)
+revoke all privileges on function public.cleanup_diagnostic_logs(integer, integer)
   from public, anon, authenticated;
-grant execute on function public.cleanup_diagnostic_logs(integer) to service_role;
+grant execute on function public.cleanup_diagnostic_logs(integer, integer) to service_role;
 
 -- ─── the night timeline ────────────────────────────────────────────────
 -- Everything for one night in one list, ordered by time. Call it:

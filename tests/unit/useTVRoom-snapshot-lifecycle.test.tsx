@@ -113,7 +113,15 @@ describe("useTVRoom snapshot request lifecycle", () => {
 
   it("tells the diagnostic reporter a question is live on the TV until the snapshot says it closed", async () => {
     const open: boolean[] = [];
-    setDiagSink({ event: () => {}, questionOpen: (value) => open.push(value) });
+    const log: string[] = [];
+    setDiagSink({
+      event: () => {},
+      questionOpen: (value) => {
+        open.push(value);
+        log.push(`open:${value}`);
+      },
+      roomReady: () => log.push("ready"),
+    });
     try {
       const live = { ...snapshot("ABCDEF", "Question up"), liveQuestionId: "q1" };
       const fetchMock = vi
@@ -125,6 +133,7 @@ describe("useTVRoom snapshot request lifecycle", () => {
       const { result } = renderHook(() => useTVRoom("ABCDEF"));
       await waitFor(() => expect(result.current.snapshot?.night.venueName).toBe("Question up"));
       expect(open).toEqual([true]);
+      expect(log).toEqual(["open:true", "ready"]);
 
       act(() => {
         h.broadcast("ABCDEF", "game-started", { gameId: "g", serverNow: "2026-07-19T00:00:01.000Z" });

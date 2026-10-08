@@ -118,6 +118,4 @@ function isExactRecord(
   );
 }
 
-// Wrapped so the press is timed in the diagnostic log AFTER the response is
-// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
 export const POST = withActionLog("open_night", postOpenNight, { idKind: "night" });

@@ -17,22 +17,37 @@ import {
   __resetDiagWriteForTests,
   __setDiagSchedulerForTests,
   insertDiagRows,
+  lookupNightOwner,
   lookupPlayerId,
   lookupQuestionContext,
   lookupRoomNight,
+  noteIgnored,
+  recordDiagRows,
   runDiagCleanup,
   scheduleDiagWrite,
 } from "@/lib/diagnostics/write";
-import { DIAG_MAX_WRITES_IN_FLIGHT, DIAG_WRITE_TIMEOUT_MS } from "@/lib/diagnostics/config";
+import {
+  DIAG_BUCKET_ROW_CAPS,
+  DIAG_CLEANUP_MAX_BATCHES,
+  DIAG_MAX_WRITES_IN_FLIGHT,
+  DIAG_NIGHT_ROW_CAP,
+  DIAG_QUOTA_FULL_MEMORY_MS,
+  DIAG_QUOTA_LEASE_ROWS,
+  DIAG_WRITE_TIMEOUT_MS,
+} from "@/lib/diagnostics/config";
 
 let warn: ReturnType<typeof vi.spyOn>;
+let info: ReturnType<typeof vi.spyOn>;
 beforeEach(() => {
   warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  info = vi.spyOn(console, "info").mockImplementation(() => {});
   __resetDiagWriteForTests();
+  __clearDiagCacheForTests();
 });
 afterEach(() => {
   vi.useRealTimers();
   warn.mockRestore();
+  info.mockRestore();
   __setDiagSchedulerForTests(null);
 });
 
@@ -155,11 +170,60 @@ describe("cached lookups", () => {
     expect(calls).toEqual(["players"]);
   });
 
-  it("does not remember a miss (the row may not exist yet)", async () => {
+  it("remembers a miss for a few seconds (a made-up id costs one read), then asks again (the row may exist by now)", async () => {
+    vi.useFakeTimers();
     const { admin, calls } = adminWith({ players: null });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
     expect(await lookupPlayerId("n1", "d1")).toBeNull();
     expect(await lookupPlayerId("n1", "d1")).toBeNull();
+    expect(calls).toEqual(["players"]); // the second look came from memory
+    await vi.advanceTimersByTimeAsync(11_000);
+    expect(await lookupPlayerId("n1", "d1")).toBeNull();
+    expect(calls).toEqual(["players", "players"]);
+  });
+
+  it("every kind of lookup remembers a miss, not just room codes", async () => {
+    const { admin, calls } = adminWith({ games: null, questions: null, nights: null });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    for (let i = 0; i < 3; i++) {
+      await lookupQuestionContext("q-junk");
+      await lookupNightOwner("n-junk");
+      await lookupRoomNight("ZZZZZZ");
+    }
+    expect(calls.sort()).toEqual(["nights", "nights", "questions"]);
+  });
+
+  it("a flood of made-up ids does not push the good entries out of memory", async () => {
+    const tables: Record<string, Record<string, unknown> | null> = { players: { id: "p1" } };
+    const { admin, calls } = adminWith(tables);
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    expect(await lookupPlayerId("n1", "real-device")).toBe("p1");
+    tables.players = null;
+    for (let i = 0; i < 1500; i++) await lookupPlayerId("n1", `made-up-${i}`);
+    const before = calls.length;
+    tables.players = { id: "p1" };
+    expect(await lookupPlayerId("n1", "real-device")).toBe("p1");
+    expect(calls.length).toBe(before); // still remembered
+  });
+
+  it("does not take a database error for 'no such row', so it is not remembered as a miss", async () => {
+    const calls: string[] = [];
+    let failing = true;
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      from: (table: string) => {
+        calls.push(table);
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          maybeSingle: async () =>
+            failing ? { data: null, error: { code: "57014" } } : { data: { id: "p1" }, error: null },
+        };
+        return chain;
+      },
+    });
+    expect(await lookupPlayerId("n1", "d1")).toBeNull();
+    failing = false;
+    expect(await lookupPlayerId("n1", "d1")).toBe("p1"); // asked again straight away
     expect(calls).toEqual(["players", "players"]);
   });
 
@@ -287,7 +351,13 @@ describe("how many log writes may run at once", () => {
       );
     }
     expect(queued).toHaveLength(DIAG_MAX_WRITES_IN_FLIGHT); // the 7 extra were never queued
-    expect(__diagWriteCountersForTests()).toEqual({ dropped: 7, failed: 0, inFlight: DIAG_MAX_WRITES_IN_FLIGHT });
+    expect(__diagWriteCountersForTests()).toEqual({
+      dropped: 7,
+      failed: 0,
+      capped: 0,
+      ignored: 0,
+      inFlight: DIAG_MAX_WRITES_IN_FLIGHT,
+    });
     expect(lines()).toEqual(["[diag] dropping log writes: too many in flight"]);
 
     const running = queued.map((task) => task());
@@ -353,8 +423,8 @@ describe("how many log writes may run at once", () => {
       action: "diag_drops",
       http_status: 0,
       outcome: "gap",
-      reason: "dropped=3 failed=0",
-      steps: { dropped: 3, failed: 0 },
+      reason: "dropped=3 failed=0 capped=0",
+      steps: { dropped: 3, failed: 0, capped: 0 },
     });
     await vi.waitFor(() => expect(__diagWriteCountersForTests()).toMatchObject({ dropped: 0, failed: 0 }));
     now += 1;
@@ -385,7 +455,7 @@ describe("how many log writes may run at once", () => {
     scheduleDiagWrite(async () => {});
     await queued[1]!();
     await vi.waitFor(() => expect(inserts).toHaveLength(1));
-    expect(inserts[0]![0]).toMatchObject({ reason: "dropped=0 failed=1" });
+    expect(inserts[0]![0]).toMatchObject({ reason: "dropped=0 failed=1 capped=0" });
   });
 });
 
@@ -446,18 +516,63 @@ describe("lookups give up quickly too", () => {
 describe("runDiagCleanup", () => {
   const lines = () => warn.mock.calls.map((c) => String(c[0]));
 
-  it("calls the 45-day cleanup function with a fixed day count", async () => {
-    const rpc = vi.fn(async () => ({ data: 12, error: null }));
+  it("calls the cleanup function with a fixed day count and a fixed batch size, until nothing is left", async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValueOnce({ data: 12, error: null })
+      .mockResolvedValueOnce({ data: 3, error: null })
+      .mockResolvedValueOnce({ data: 0, error: null });
     adminMock.getSupabaseAdmin.mockReturnValue({ rpc });
-    await expect(runDiagCleanup()).resolves.toEqual({ ok: true, removed: 12 });
-    expect(rpc).toHaveBeenCalledWith("cleanup_diagnostic_logs", { p_days: 45 });
+    await expect(runDiagCleanup()).resolves.toEqual({ ok: true, removed: 15, batches: 3, more: false });
+    expect(rpc).toHaveBeenCalledTimes(3);
+    for (const call of rpc.mock.calls) {
+      expect(call).toEqual(["cleanup_diagnostic_logs", { p_days: 45, p_batch: 5000 }]);
+    }
   });
 
-  it("reports a database error as one short line and a result, never a throw", async () => {
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      rpc: async () => ({ data: null, error: { code: "42883", message: "function does not exist" } }),
+  it("is one quick call on empty tables", async () => {
+    const rpc = vi.fn(async () => ({ data: 0, error: null }));
+    adminMock.getSupabaseAdmin.mockReturnValue({ rpc });
+    await expect(runDiagCleanup()).resolves.toEqual({ ok: true, removed: 0, batches: 1, more: false });
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops after a fixed number of batches per run and says there is more (the next run carries on)", async () => {
+    const rpc = vi.fn(async () => ({ data: 20_000, error: null }));
+    adminMock.getSupabaseAdmin.mockReturnValue({ rpc });
+    const result = await runDiagCleanup();
+    expect(result).toEqual({
+      ok: true,
+      removed: 20_000 * DIAG_CLEANUP_MAX_BATCHES,
+      batches: DIAG_CLEANUP_MAX_BATCHES,
+      more: true,
     });
-    await expect(runDiagCleanup()).resolves.toEqual({ ok: false, code: "42883" });
+    expect(rpc).toHaveBeenCalledTimes(DIAG_CLEANUP_MAX_BATCHES);
+  });
+
+  it("stops when its time is up, keeping what it already removed", async () => {
+    vi.useFakeTimers();
+    const rpc = vi.fn(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 6_000));
+      return { data: 5_000, error: null };
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue({ rpc });
+    const result = runDiagCleanup();
+    await vi.advanceTimersByTimeAsync(60_000);
+    const done = await result;
+    expect(done).toMatchObject({ ok: true, more: true });
+    expect(done.ok && done.batches).toBeLessThan(DIAG_CLEANUP_MAX_BATCHES);
+    expect(done.ok && done.removed).toBeGreaterThan(0);
+  });
+
+  it("reports a database error as one short line and a result, never a throw (with what was already removed)", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      rpc: vi
+        .fn()
+        .mockResolvedValueOnce({ data: 7, error: null })
+        .mockResolvedValueOnce({ data: null, error: { code: "42883", message: "function does not exist" } }),
+    });
+    await expect(runDiagCleanup()).resolves.toEqual({ ok: false, code: "42883", removed: 7, batches: 1 });
     expect(lines()).toEqual(["[diag] cleanup failed code=42883"]);
   });
 
@@ -466,6 +581,161 @@ describe("runDiagCleanup", () => {
     adminMock.getSupabaseAdmin.mockReturnValue({ rpc: () => new Promise(() => {}) });
     const result = runDiagCleanup();
     await vi.advanceTimersByTimeAsync(30_000);
-    await expect(result).resolves.toEqual({ ok: false, code: "timeout" });
+    await expect(result).resolves.toEqual({ ok: false, code: "timeout", removed: 0, batches: 0 });
+  });
+});
+
+// ─── row caps (kept in the database) ──────────────────────────────────
+describe("recordDiagRows: the night and each source have a row cap", () => {
+  const NIGHT = "44444444-4444-4444-4444-444444444444";
+  const DEVICE = "66666666-6666-6666-6666-666666666666";
+  const player = { kind: "player", deviceId: DEVICE } as const;
+  const lines = () => warn.mock.calls.map((c) => String(c[0]));
+
+  /** A fake database: diag_take_rows grants up to `room`, inserts are recorded. */
+  function fakeDb(room: number | (() => number)) {
+    const rpcs: Array<{ fn: string; args: Record<string, unknown> }> = [];
+    const inserted: Array<{ table: string; rows: Record<string, unknown>[] }> = [];
+    let left = typeof room === "number" ? room : room();
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        rpcs.push({ fn, args });
+        const grant = Math.min(Number(args.p_want), left);
+        left -= grant;
+        return { data: grant, error: null };
+      },
+      from: (table: string) => ({
+        insert: async (rows: Record<string, unknown>[]) => {
+          inserted.push({ table, rows });
+          return { error: null };
+        },
+      }),
+    });
+    return { rpcs, inserted };
+  }
+  const rows = (n: number) => Array.from({ length: n }, (_, i) => ({ i }));
+
+  it("asks the database for room, with the caps for this kind of source, and stores what it was given", async () => {
+    const { rpcs, inserted } = fakeDb(1000);
+    await recordDiagRows("diag_device_events", rows(3), NIGHT, player);
+    expect(rpcs).toHaveLength(1);
+    expect(rpcs[0]).toEqual({
+      fn: "diag_take_rows",
+      args: {
+        p_night_id: NIGHT,
+        p_bucket: `p:${DEVICE}`,
+        p_want: DIAG_QUOTA_LEASE_ROWS,
+        p_bucket_cap: DIAG_BUCKET_ROW_CAPS.player,
+        p_night_cap: DIAG_NIGHT_ROW_CAP,
+      },
+    });
+    expect(inserted).toEqual([{ table: "diag_device_events", rows: rows(3) }]);
+  });
+
+  it("uses the TV and host caps and their own buckets", async () => {
+    const { rpcs } = fakeDb(1000);
+    await recordDiagRows("diag_device_events", rows(1), NIGHT, { kind: "tv" });
+    await recordDiagRows("diag_device_events", rows(1), NIGHT, { kind: "host" });
+    expect(rpcs.map((r) => [r.args.p_bucket, r.args.p_bucket_cap])).toEqual([
+      ["tv", DIAG_BUCKET_ROW_CAPS.tv],
+      ["host", DIAG_BUCKET_ROW_CAPS.host],
+    ]);
+  });
+
+  it("asks for a block of rows at a time, so a busy night is not one extra call per row", async () => {
+    const { rpcs, inserted } = fakeDb(1000);
+    for (let i = 0; i < DIAG_QUOTA_LEASE_ROWS; i++) await recordDiagRows("diag_answer_events", rows(1), NIGHT, player);
+    expect(rpcs).toHaveLength(1);
+    expect(inserted).toHaveLength(DIAG_QUOTA_LEASE_ROWS);
+    await recordDiagRows("diag_answer_events", rows(1), NIGHT, player); // the block is spent: ask again
+    expect(rpcs).toHaveLength(2);
+  });
+
+  it("stores only as many rows as the cap allows, drops the rest and counts them", async () => {
+    const { inserted } = fakeDb(2);
+    await recordDiagRows("diag_device_events", rows(5), NIGHT, player);
+    expect(inserted).toEqual([{ table: "diag_device_events", rows: rows(2) }]);
+    expect(__diagWriteCountersForTests().capped).toBe(3);
+    expect(lines()).toEqual(["[diag] row cap reached: not storing more log rows for a night or source"]);
+  });
+
+  it("once a source is full it stores nothing and does not ask the database again for a minute", async () => {
+    let now = 1_000_000;
+    __resetDiagWriteForTests({ now: () => now });
+    const { rpcs, inserted } = fakeDb(0);
+    for (let i = 0; i < 20; i++) await recordDiagRows("diag_device_events", rows(4), NIGHT, player);
+    expect(inserted).toHaveLength(0);
+    expect(rpcs).toHaveLength(1); // one question, then silence
+    expect(__diagWriteCountersForTests().capped).toBe(80);
+    now += DIAG_QUOTA_FULL_MEMORY_MS + 1;
+    await recordDiagRows("diag_device_events", rows(4), NIGHT, player);
+    expect(rpcs).toHaveLength(2); // asks again after the minute
+  });
+
+  it("a source being full does not stop another source of the same night from asking", async () => {
+    const { rpcs } = fakeDb(0);
+    await recordDiagRows("diag_device_events", rows(1), NIGHT, player);
+    await recordDiagRows("diag_device_events", rows(1), NIGHT, { kind: "tv" });
+    await recordDiagRows("diag_device_events", rows(1), "55555555-5555-5555-5555-555555555555", player);
+    expect(rpcs).toHaveLength(3);
+  });
+
+  it("stores nothing when the database cannot say how much room there is, and counts it as a failure", async () => {
+    const inserts = vi.fn(async () => ({ error: null }));
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      rpc: async () => ({ data: null, error: { code: "42883", message: "function diag_take_rows does not exist" } }),
+      from: () => ({ insert: inserts }),
+    });
+    await expect(recordDiagRows("diag_device_events", rows(2), NIGHT, player)).resolves.toBeUndefined();
+    expect(inserts).not.toHaveBeenCalled();
+    expect(__diagWriteCountersForTests().failed).toBe(1);
+    expect(lines()).toEqual(["[diag] row-cap check failed code=42883"]);
+    expect(lines().join("\n")).not.toContain("does not exist");
+  });
+
+  it("gives up on a stuck row-cap check and never throws", async () => {
+    vi.useFakeTimers();
+    const inserts = vi.fn();
+    adminMock.getSupabaseAdmin.mockReturnValue({ rpc: () => new Promise(() => {}), from: () => ({ insert: inserts }) });
+    const done = recordDiagRows("diag_device_events", rows(1), NIGHT, player);
+    await vi.advanceTimersByTimeAsync(DIAG_WRITE_TIMEOUT_MS + 10);
+    await expect(done).resolves.toBeUndefined();
+    expect(inserts).not.toHaveBeenCalled();
+    expect(lines()).toEqual(["[diag] row-cap check failed code=timeout"]);
+  });
+
+  it("does nothing at all for an empty list", async () => {
+    adminMock.getSupabaseAdmin.mockClear();
+    await recordDiagRows("diag_device_events", [], NIGHT, player);
+    expect(adminMock.getSupabaseAdmin).not.toHaveBeenCalled();
+  });
+});
+
+describe("noteIgnored: a request with no verified player or host stores nothing and costs no database call", () => {
+  const lines = () => info.mock.calls.map((c) => String(c[0]));
+
+  it("only counts, and prints one summary line a minute", () => {
+    let now = 10_000_000;
+    __resetDiagWriteForTests({ now: () => now });
+    adminMock.getSupabaseAdmin.mockClear();
+    for (let i = 0; i < 5; i++) noteIgnored("report");
+    noteIgnored("answer");
+    expect(adminMock.getSupabaseAdmin).not.toHaveBeenCalled();
+    // The very first one speaks at once; the rest are held for the minute.
+    expect(lines()).toEqual(["[diag] stored nothing for requests with no verified player or host: report=1"]);
+    now += 61_000;
+    noteIgnored("action");
+    expect(lines()).toHaveLength(2);
+    expect(lines()[1]).toBe(
+      "[diag] stored nothing for requests with no verified player or host: report=4 answer=1 action=1",
+    );
+    expect(__diagWriteCountersForTests().ignored).toBe(0);
+  });
+
+  it("never throws, even with a broken console", () => {
+    info.mockImplementation(() => {
+      throw new Error("console broke");
+    });
+    expect(() => noteIgnored("answer")).not.toThrow();
   });
 });

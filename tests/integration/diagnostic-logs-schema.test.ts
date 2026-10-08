@@ -1,12 +1,13 @@
 // @vitest-environment node
 
 // Migration 20261007180000_diagnostic_logs.sql on real Postgres (pglite).
-// Proves: the three tables and the timeline function are closed to the
-// browser roles (RLS with no policies, no grants), the service role can write
-// and read, constraints hold, there are no foreign keys, cleanup keeps 45 days
-// and refuses a typo, the migration can be run twice, the timeline never
-// blocks a later change to the game's own tables, and every query documented
-// in docs/diagnostics/night-timeline.md runs against a realistic night.
+// Proves: the tables and the functions are closed to the browser roles (RLS
+// with no policies, no grants), the service role can write and read,
+// constraints hold, there are no foreign keys, cleanup keeps 45 days, works in
+// small batches and refuses a typo, the per-night row caps hold, the migration
+// can be run twice (even over an older draft), the timeline never blocks a
+// later change to the game's own tables, and every query documented in
+// docs/diagnostics/night-timeline.md runs against a realistic night.
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -18,6 +19,9 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 const MIGRATIONS = path.join(ROOT, "supabase/migrations");
 const DOCS = path.join(ROOT, "docs/diagnostics/night-timeline.md");
 const TABLES = ["diag_answer_events", "diag_server_actions", "diag_device_events"] as const;
+const LOCKED_TABLES = [...TABLES, "diag_quota"] as const;
+const CLEANUP_FN = "public.cleanup_diagnostic_logs(integer, integer)";
+const TAKE_ROWS_FN = "public.diag_take_rows(uuid, text, integer, integer, integer)";
 const MIGRATION_FILE = "20261007180000_diagnostic_logs.sql";
 const TIMELINE_FN = "public.diag_night_timeline(uuid, timestamptz, timestamptz)";
 
@@ -147,7 +151,7 @@ describe("diagnostic logs schema", () => {
   });
 
   test("RLS is on for every table, with no policies", async () => {
-    for (const table of TABLES) {
+    for (const table of LOCKED_TABLES) {
       const rls = await one<{ relrowsecurity: boolean }>(
         `select relrowsecurity from pg_class where oid = 'public.${table}'::regclass`,
       );
@@ -161,7 +165,7 @@ describe("diagnostic logs schema", () => {
 
   test("the browser roles have no rights on the tables or either function", async () => {
     for (const role of ["anon", "authenticated"]) {
-      for (const table of TABLES) {
+      for (const table of LOCKED_TABLES) {
         const r = await one<{ s: boolean; i: boolean; d: boolean }>(
           `select has_table_privilege('${role}', 'public.${table}', 'select') as s,
                   has_table_privilege('${role}', 'public.${table}', 'insert') as i,
@@ -169,29 +173,33 @@ describe("diagnostic logs schema", () => {
         );
         expect(r, `${role} on ${table}`).toEqual({ s: false, i: false, d: false });
       }
-      for (const fn of ["public.cleanup_diagnostic_logs(integer)", TIMELINE_FN]) {
+      for (const fn of [CLEANUP_FN, TAKE_ROWS_FN, TIMELINE_FN]) {
         const r = await one<{ x: boolean }>(`select has_function_privilege('${role}', '${fn}', 'execute') as x`);
         expect(r.x, `${role} may run ${fn}`).toBe(false);
       }
     }
-    const service = await one<{ i: boolean; x: boolean; t: boolean }>(
+    const service = await one<{ i: boolean; x: boolean; t: boolean; q: boolean }>(
       `select has_table_privilege('service_role', 'public.diag_device_events', 'insert') as i,
               has_function_privilege('service_role', '${TIMELINE_FN}', 'execute') as t,
-              has_function_privilege('service_role', 'public.cleanup_diagnostic_logs(integer)', 'execute') as x`,
+              has_function_privilege('service_role', '${CLEANUP_FN}', 'execute') as x,
+              has_function_privilege('service_role', '${TAKE_ROWS_FN}', 'execute') as q`,
     );
-    expect(service).toEqual({ i: true, t: true, x: true });
+    expect(service).toEqual({ i: true, t: true, x: true, q: true });
   });
 
   test.each(["anon", "authenticated"] as const)("%s cannot read or write any diagnostic row", async (role) => {
     await db.exec(`set role ${role}`);
     try {
-      for (const table of TABLES) {
+      for (const table of LOCKED_TABLES) {
         await expect(db.query(`select * from public.${table}`)).rejects.toThrow(/permission denied/i);
       }
       await expect(
         db.query("select * from public.diag_night_timeline($1)", [nightId]),
       ).rejects.toThrow(/permission denied/i);
       await expect(db.query("select public.cleanup_diagnostic_logs(45)")).rejects.toThrow(/permission denied/i);
+      await expect(
+        db.query("select public.diag_take_rows($1, 'tv', 5, 100, 100)", [nightId]),
+      ).rejects.toThrow(/permission denied/i);
       await expect(
         db.query(
           `insert into public.diag_device_events (surface, session_id, kind, device_at, at_est)
@@ -257,11 +265,33 @@ describe("diagnostic logs schema", () => {
     expect(rows.rows.length).toBeGreaterThan(0);
   });
 
+  test("run over an older draft that had the one-argument cleanup function, it leaves exactly one cleanup function", async () => {
+    await db.exec(`
+      drop function ${CLEANUP_FN};
+      create function public.cleanup_diagnostic_logs(p_days integer default 45) returns bigint
+        language sql as $$ select 0::bigint $$;
+    `);
+    await db.exec(readFileSync(path.join(MIGRATIONS, MIGRATION_FILE), "utf8"));
+    const fns = await db.query<{ args: string }>(
+      `select pg_get_function_identity_arguments(oid) as args from pg_proc
+        where proname = 'cleanup_diagnostic_logs' and pronamespace = 'public'::regnamespace`,
+    );
+    expect(fns.rows.map((r) => r.args)).toEqual(["p_days integer, p_batch integer"]);
+    // and a call with just the day count still works, with no "is not unique" error
+    await db.exec("set role service_role");
+    try {
+      await expect(db.query("select public.cleanup_diagnostic_logs(45)")).resolves.toBeDefined();
+    } finally {
+      await db.exec("reset role");
+    }
+  });
+
   test("has no foreign keys, so a reset or an unknown id never loses or blocks a row", async () => {
     const fks = await one<{ n: number }>(
       `select count(*)::int as n from pg_constraint
         where contype = 'f' and conrelid in (
-          'public.diag_answer_events'::regclass, 'public.diag_server_actions'::regclass, 'public.diag_device_events'::regclass)`,
+          'public.diag_answer_events'::regclass, 'public.diag_server_actions'::regclass,
+          'public.diag_device_events'::regclass, 'public.diag_quota'::regclass)`,
     );
     expect(fks.n).toBe(0);
     await db.exec("set role service_role");
@@ -373,26 +403,197 @@ describe("diagnostic logs schema", () => {
     }
   });
 
-  test("cleanup removes rows older than 45 days, keeps newer ones, and refuses a typo", async () => {
-    await db.exec("set role service_role");
-    try {
-      await db.query(
+  describe("cleanup", () => {
+    const insertDevices = (count: number, ageDays: number, tag: string) =>
+      db.query(
         `insert into diag_device_events (created_at, night_id, surface, session_id, kind, device_at, at_est)
-         values (now() - interval '46 days', $1, 'tv', 'old-session', 'net', now(), now()),
-                (now() - interval '44 days', $1, 'tv', 'new-session', 'net', now(), now())`,
-        [nightId],
+         select now() - ($1 || ' days')::interval, $2, 'tv', $3 || g, 'net', now(), now()
+           from generate_series(1, $4) g`,
+        [String(ageDays), nightId, tag, count],
       );
-      await expect(db.query("select public.cleanup_diagnostic_logs(0)")).rejects.toThrow(/at least 7 days/);
-      await expect(db.query("select public.cleanup_diagnostic_logs(null)")).rejects.toThrow(/at least 7 days/);
-      const removed = await one<{ n: string }>("select public.cleanup_diagnostic_logs(45) as n");
-      expect(Number(removed.n)).toBe(1);
-      const left = await db.query<{ session_id: string }>(
-        "select session_id from diag_device_events where session_id in ('old-session','new-session')",
+    const countTag = async (tag: string) =>
+      (await one<{ n: number }>("select count(*)::int as n from diag_device_events where session_id like $1", [`${tag}%`])).n;
+
+    test("removes rows older than 45 days, keeps newer ones, and refuses a typo", async () => {
+      await db.exec("set role service_role");
+      try {
+        await db.query(
+          `insert into diag_device_events (created_at, night_id, surface, session_id, kind, device_at, at_est)
+           values (now() - interval '46 days', $1, 'tv', 'old-session', 'net', now(), now()),
+                  (now() - interval '44 days', $1, 'tv', 'new-session', 'net', now(), now())`,
+          [nightId],
+        );
+        await expect(db.query("select public.cleanup_diagnostic_logs(0)")).rejects.toThrow(/at least 7 days/);
+        await expect(db.query("select public.cleanup_diagnostic_logs(null)")).rejects.toThrow(/at least 7 days/);
+        await expect(db.query("select public.cleanup_diagnostic_logs(45, 0)")).rejects.toThrow(/batch must be/);
+        await expect(db.query("select public.cleanup_diagnostic_logs(45, null)")).rejects.toThrow(/batch must be/);
+        await expect(db.query("select public.cleanup_diagnostic_logs(45, 999999)")).rejects.toThrow(/batch must be/);
+        const removed = await one<{ n: string }>("select public.cleanup_diagnostic_logs(45) as n");
+        expect(Number(removed.n)).toBeGreaterThanOrEqual(1);
+        const left = await db.query<{ session_id: string }>(
+          "select session_id from diag_device_events where session_id in ('old-session','new-session')",
+        );
+        expect(left.rows.map((r) => r.session_id)).toEqual(["new-session"]);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("removes one small batch per call, so a big backlog is cleared over several calls, each its own transaction", async () => {
+      await db.exec("set role service_role");
+      try {
+        await insertDevices(250, 60, "flood-");
+        await insertDevices(20, 3, "fresh-");
+        const removedEach: number[] = [];
+        for (let i = 0; i < 10; i++) {
+          const r = await one<{ n: string }>("select public.cleanup_diagnostic_logs(45, 100) as n");
+          removedEach.push(Number(r.n));
+          if (Number(r.n) === 0) break;
+        }
+        expect(removedEach).toEqual([100, 100, 50, 0]);
+        expect(await countTag("flood-")).toBe(0);
+        expect(await countTag("fresh-")).toBe(20); // nothing recent was touched
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("is a no-op on tables with nothing old in them", async () => {
+      await db.exec("set role service_role");
+      try {
+        const r = await one<{ n: string }>("select public.cleanup_diagnostic_logs(45, 5000) as n");
+        expect(Number(r.n)).toBe(0);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("also clears old row-cap counters, and only old ones", async () => {
+      await db.exec("set role service_role");
+      try {
+        const oldNight = crypto.randomUUID();
+        const newNight = crypto.randomUUID();
+        await db.query("select public.diag_take_rows($1, 'tv', 3, 100, 100)", [oldNight]);
+        await db.query("select public.diag_take_rows($1, 'tv', 3, 100, 100)", [newNight]);
+        await db.exec("reset role");
+        await db.query("update diag_quota set updated_at = now() - interval '50 days' where night_id = $1", [oldNight]);
+        await db.exec("set role service_role");
+        await db.query("select public.cleanup_diagnostic_logs(45)");
+        const left = await db.query<{ night_id: string }>(
+          "select distinct night_id from diag_quota where night_id in ($1, $2)",
+          [oldNight, newNight],
+        );
+        expect(left.rows.map((r) => r.night_id)).toEqual([newNight]);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+  });
+
+  describe("diag_take_rows: the per-night row caps", () => {
+    const take = async (night: string, bucket: string, want: number, bucketCap: number, nightCap: number) =>
+      Number(
+        (await one<{ n: number }>("select public.diag_take_rows($1, $2, $3, $4, $5) as n", [night, bucket, want, bucketCap, nightCap]))
+          .n,
       );
-      expect(left.rows.map((r) => r.session_id)).toEqual(["new-session"]);
-    } finally {
-      await db.exec("reset role");
-    }
+    const quota = async (night: string) =>
+      Object.fromEntries(
+        (
+          await db.query<{ bucket: string; rows_taken: number; rows_refused: number }>(
+            "select bucket, rows_taken, rows_refused from diag_quota where night_id = $1 order by bucket",
+            [night],
+          )
+        ).rows.map((r) => [r.bucket, [r.rows_taken, r.rows_refused]]),
+      );
+
+    test("hands out rows until the source's cap, then none, and counts what it turned away", async () => {
+      await db.exec("set role service_role");
+      try {
+        const night = crypto.randomUUID();
+        expect(await take(night, "tv", 25, 60, 1000)).toBe(25);
+        expect(await take(night, "tv", 25, 60, 1000)).toBe(25);
+        expect(await take(night, "tv", 25, 60, 1000)).toBe(10); // only 10 left under the TV's cap
+        expect(await take(night, "tv", 25, 60, 1000)).toBe(0);
+        expect(await quota(night)).toEqual({ _night: [60, 40], tv: [60, 40] });
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("one source reaching its cap does not take room from another source of the same night", async () => {
+      await db.exec("set role service_role");
+      try {
+        const night = crypto.randomUUID();
+        const device = "p:" + crypto.randomUUID();
+        expect(await take(night, "tv", 50, 50, 1000)).toBe(50);
+        expect(await take(night, "tv", 1, 50, 1000)).toBe(0);
+        expect(await take(night, device, 30, 50, 1000)).toBe(30);
+        expect(await take(night, "host", 30, 50, 1000)).toBe(30);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("the whole night has a cap too, whatever the sources add up to", async () => {
+      await db.exec("set role service_role");
+      try {
+        const night = crypto.randomUUID();
+        // three sources each under their own cap (50), but the night allows 100 in all
+        expect(await take(night, "tv", 40, 50, 100)).toBe(40);
+        expect(await take(night, "host", 40, 50, 100)).toBe(40);
+        expect(await take(night, "p:a", 40, 50, 100)).toBe(20); // the night only had 20 left
+        expect(await take(night, "p:b", 40, 50, 100)).toBe(0);
+        expect(await take(night, "tv", 5, 50, 100)).toBe(0);
+        const q = await quota(night);
+        expect(q._night).toEqual([100, 20 + 40 + 5]); // turned away: 20 of the third ask, all 40 of the fourth, all 5 of the last
+        expect(q["p:b"]).toEqual([0, 40]);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("another night is untouched", async () => {
+      await db.exec("set role service_role");
+      try {
+        const full = crypto.randomUUID();
+        const other = crypto.randomUUID();
+        expect(await take(full, "tv", 10, 10, 10)).toBe(10);
+        expect(await take(full, "tv", 10, 10, 10)).toBe(0);
+        expect(await take(other, "tv", 10, 10, 10)).toBe(10);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("asks for nothing sensible, gets nothing (and nothing breaks)", async () => {
+      await db.exec("set role service_role");
+      try {
+        const night = crypto.randomUUID();
+        expect(await take(night, "tv", 0, 10, 10)).toBe(0);
+        expect(await take(night, "tv", -5, 10, 10)).toBe(0);
+        expect(await take(night, "", 5, 10, 10)).toBe(0);
+        expect(await take(night, "x".repeat(49), 5, 10, 10)).toBe(0);
+        expect(await take(night, "tv", 5, 0, 10)).toBe(0);
+        expect((await one<{ n: number | null }>("select public.diag_take_rows(null, 'tv', 5, 10, 10) as n")).n).toBe(0);
+        expect((await one<{ n: number | null }>("select public.diag_take_rows($1, null, 5, 10, 10) as n", [night])).n).toBe(0);
+        // a huge ask is held to 1000 at a time
+        expect(await take(night, "tv", 1_000_000, 5000, 5000)).toBe(1000);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("never goes over the cap when many asks arrive at once", async () => {
+      await db.exec("set role service_role");
+      try {
+        const night = crypto.randomUUID();
+        const grants = await Promise.all(Array.from({ length: 20 }, () => take(night, "tv", 7, 50, 1000)));
+        expect(grants.reduce((a, b) => a + b, 0)).toBe(50);
+        expect((await quota(night))._night).toEqual([50, 140 - 50]);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
   });
 
   describe("the example queries in docs/diagnostics/night-timeline.md", () => {

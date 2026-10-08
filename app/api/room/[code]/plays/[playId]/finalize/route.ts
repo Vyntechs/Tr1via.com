@@ -194,6 +194,4 @@ async function postFinalize(
   return ok({ result, live: responseLive });
 }
 
-// Wrapped so the press is timed in the diagnostic log AFTER the response is
-// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
 export const POST = withActionLog("finalize", postFinalize, { actor: "timer", idKind: "room" });

@@ -24,6 +24,7 @@ export const metadata: Metadata = {
 };
 
 const EFFECTIVE = "June 1, 2026";
+const UPDATED = "October 7, 2026";
 
 export default function PrivacyPolicyPage() {
   return (
@@ -39,7 +40,7 @@ export default function PrivacyPolicyPage() {
           Privacy Policy
         </h1>
         <p className="mt-3 text-sm text-ink/60">
-          Effective {EFFECTIVE} · Last updated {EFFECTIVE}
+          Effective {EFFECTIVE} · Last updated {UPDATED}
         </p>
         <p className="mt-6 text-[15px] leading-relaxed text-ink/80">
           This policy explains what information TR1VIA collects when you play or
@@ -132,6 +133,15 @@ export default function PrivacyPolicyPage() {
           kept after the game ends</B> — it powers the end-of-game recap, the
           leaderboard, and the host’s ability to review past nights. It is
           linked to the device identifier described below.
+        </P>
+        <H3>Timing logs</H3>
+        <P>
+          When we are investigating lag, we may switch on timing logs for live
+          games. They record when each tap, button press and screen update
+          happened and how long each step took, together with the device
+          identifier and a short device summary (browser, operating system,
+          connection type and rough screen size, but no IP address or name).
+          Timing logs are deleted after 45 days.
         </P>
         <H3>Display names</H3>
         <P>

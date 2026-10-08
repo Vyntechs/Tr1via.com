@@ -60,6 +60,4 @@ async function postAdjust(req: NextRequest) {
   return ok({ adjustmentId: data.id, delta: data.delta }, 201);
 }
 
-// Wrapped so the press is timed in the diagnostic log AFTER the response is
-// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
 export const POST = withActionLog("adjust", postAdjust);

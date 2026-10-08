@@ -11,7 +11,7 @@ answered.
 
 | `DIAGNOSTIC_LOGGING` | Result |
 | --- | --- |
-| unset, `off`, anything else | Off (the default). The code runs exactly as before. Nothing is written, no phone or TV sends anything, and the daily cleanup call does nothing. |
+| unset, `off`, anything else | Off (the default). The code runs exactly as before. Nothing is written and no phone or TV sends anything. (The daily cleanup is separate: it runs whenever `CRON_SECRET` is set.) |
 | `on` | Server rows are written after each response; phones, TV and host laptop send small batched reports between questions. |
 
 The server checks the value on every request, not once at start-up. But Vercel
@@ -32,6 +32,7 @@ database as production). Turning it on needs Brandon's typed yes.
 | `diag_answer_events` | answer tap the server received, saved or not | outcome (`saved`, `duplicate`, `late`, `early`, `rejected`, `error`), reason, the phone's tap and send times, server arrival time, milliseconds after the question opened, step timings, cold-start flag |
 | `diag_server_actions` | host press (reveal, next, end early, undo, start, end, close, open, score adjust) and every timer-end resolve / finalize call | action, actor (`host` or `timer`), outcome, total / sign-in / database / broadcast milliseconds, broadcast result, cold-start flag |
 | `diag_device_events` | small report from a phone, the TV or the host laptop | kind, device time, server-corrected time, small `data` payload |
+| `diag_quota` | night and source inside it (`_night`, `p:<device id>`, `tv`, `host`) | rows used so far and rows turned away at a cap (see "Who gets a row") |
 
 Device report kinds: `device` (what the device is), `net` (online / offline /
 connection type), `vis` (tab hidden / shown), `bcast` (a game change was
@@ -45,14 +46,19 @@ Slow or failed events are always kept. Routine ones are kept for about half of
 the player phones (decided once per page load) and for the TV and host laptop
 always.
 
-When a device reports: **never while a question is live on that screen.**
-Reports are held in the device's memory (at most 200 events; when full the
-oldest routine one goes first and slow or failed ones are kept longest) and sent
-a few seconds after the question closes (on the reveal), in the lobby or on the
-board. A phone that has already locked in still counts as inside the question
-until it closes. The one exception is the page being hidden or closed (a phone
-locking its screen, a tab closing), when the held events are handed to the
-browser's send-on-exit so they are not lost.
+When a device reports: **never while a question is live on that screen, and
+never before the room has finished its first download** (until then nobody
+knows whether a question is live). Reports are held in the device's memory (at
+most 200 events; when full the oldest routine one goes first and slow or failed
+ones are kept longest, also when a failed send is put back) and sent a few
+seconds after the question closes (on the reveal), in the lobby or on the board.
+A phone that has already locked in still counts as inside the question until it
+closes. There is no exception for a hidden page: a phone that locks its screen
+mid-question keeps what it holds in memory and sends it once it is awake and the
+question has closed. A page that is hidden or closed BETWEEN questions hands
+what it holds to the browser's send-on-exit so it is not lost; a tab closed in
+the middle of a question loses what it held, on purpose. The venue TV also
+needs the signed pass its page was given (below) and sends nothing without it.
 
 ### The device summary (exactly what is stored about a device)
 
@@ -92,14 +98,53 @@ whether the page was added to the home screen. Lag is measured directly by the
 * No IP address (it is used in memory for rate limiting and never stored), no
   answer text, no cookies, no raw error messages (the server maps every reason
   to a fixed word).
-* Who a device report is about is decided on the server. A phone needs its
-  device cookie and a player row in that night. The host laptop needs a
-  signed-in host who owns the night. The TV has no login, so it can only name a
-  real, existing room code: a night id sent by a TV is ignored, the night is
-  looked up from the code, and a made-up code stores nothing.
+* Who a row is about is decided on the server, and only a verified source gets
+  a row (see "Who gets a row").
 * Nothing is readable from a browser: row level security is on with no
   policies and the browser roles have no access to the tables or the two
   functions. Only the service-role key (the server) can read or write.
+
+### Who gets a row
+
+The answer, host-press and timer-end routes and the report route can be called
+by anyone, so a row is stored only for a caller the server has verified.
+Everything else stores **nothing**; it is only counted, and one summary line a
+minute is printed (`[diag] stored nothing for requests with no verified player
+or host: answer=3 report=12`).
+
+| Source | Stored when |
+| --- | --- |
+| Answer tap | the signed device cookie is valid AND that device is a player of the night the tap is about. Late, early, duplicate and turned-down taps from real players are stored (that is the point); a tap with no cookie, or from a device that never joined that night, is not. |
+| Host press (reveal, next, ...) | the request is from a signed-in host who owns the night |
+| Timer-end call (resolve / finalize) | the signed device cookie is a player of that night. The venue TV sends these without any login, so its calls are not stored (the TV's own `res` reports show them). |
+| Phone report | valid device cookie + a player row in the night its room code names |
+| Host laptop / phone report | a signed-in host who owns the night. This is checked after the 204 reply, so the host screen never waits on the sign-in service, and a session that passed in the last 5 minutes is remembered (by a hash of its cookies, in memory), so reports do not add a sign-in call each. |
+| TV report | the signed pass the server gave the TV page when it loaded. The pass names one night and lasts 8 hours; the night is read from the pass, never from the report. No pass, a forged or expired pass: nothing stored. |
+
+The TV page is public by design (anyone with the room code can open it), so the
+pass is not a login. It means a report cannot be invented for a night without
+first loading that night's TV page, passes die on their own, and every report
+is rebuilt from a fixed list of kinds and fields (a screen may only send the
+kinds it really produces: taps only from phones, frame rates only from the TV
+and host laptop; numbers are clamped, text must be one of a few fixed words, and
+the little free text left, such as an error name, only allows letters, digits
+and `_ - . : /` and is cut at 40 characters).
+
+**Row caps, kept in the database** (`diag_quota`, `diag_take_rows`), so they hold
+across every server instance: 30,000 rows per night, and inside it 2,000 per
+player phone (taps, timer-end calls and reports together), 4,000 for the TV and
+6,000 for the host laptop/phone. Rows past a cap are dropped and counted (in
+`diag_quota.rows_refused`, and in the `diag_drops` row below as `capped=N`).
+A normal 40-phone night is roughly 5,000 to 10,000 rows. To keep it cheap, a
+server asks for 25 rows at a time and a full source is not asked about again for
+a minute. Per-instance rate limits (per address, per device, per TV night) stay
+as a first filter only.
+
+```sql
+-- how close was each night to its caps?
+select night_id, bucket, rows_taken, rows_refused from diag_quota
+where rows_refused > 0 or bucket = '_night' order by rows_taken desc limit 20;
+```
 
 ### When logging itself has trouble
 
@@ -113,9 +158,9 @@ short line to its console, at most one per kind a minute:
 ```
 
 (`code` is the database's error code, or `timeout`; never the message, which
-could contain row contents.) The count of dropped and failed writes is saved as
+could contain row contents.) The count of dropped, failed and capped writes is saved as
 one row in `diag_server_actions` (`actor = 'system'`, `action = 'diag_drops'`,
-`reason = 'dropped=N failed=M'`) as soon as the database takes a write again, so
+`reason = 'dropped=N failed=M capped=K'`) as soon as the database takes a write again, so
 a gap in a night's evidence says so:
 
 ```sql
@@ -139,36 +184,42 @@ at time zone 'America/Chicago'
 
 ## Retention: 45 days
 
-`cleanup_diagnostic_logs()` deletes rows older than 45 days from all three
-tables and returns how many it removed. It refuses fewer than 7 days so a typo
-cannot wipe a live night.
+`cleanup_diagnostic_logs(days, batch)` deletes rows older than 45 days from all
+the diagnostic tables, at most 5,000 rows per table per call, and returns how
+many it removed. It refuses fewer than 7 days so a typo cannot wipe a live
+night. Each call is its own database transaction, so after a flood the cleanup
+still makes progress (one giant delete would be rolled back if it ran too long
+and never finish).
 
 It runs by itself once a day (09:17 UTC, which is 4:17 am Central in summer and
 3:17 am in winter) from a Vercel cron entry in `vercel.json`, which calls
-`GET /api/cron/diag-cleanup`. Vercel's delivery is best effort (a run can be
-missed or doubled); that is fine here, because the cleanup is the same
-"delete what is older than 45 days" every time:
+`GET /api/cron/diag-cleanup`. Each run repeats the function until it removes
+nothing, up to 20 calls or about 15 seconds, then stops and says so
+(`"more": true`); the next day's run carries on. Vercel's delivery is best
+effort (a run can be missed or doubled); that is fine, because every run is the
+same "delete what is older than 45 days".
 
-* **With `DIAGNOSTIC_LOGGING` off (or unset) the route answers 204 and does
-  nothing**: it does not read the secret, touch the database or run the
-  function. So merging this with logging off schedules a daily call that exits
-  at once.
-* With logging on it needs the header `Authorization: Bearer <CRON_SECRET>`,
-  which Vercel sends by itself once a `CRON_SECRET` environment variable (a
-  random string of at least 16 characters) is set for Production. With no secret set it refuses
+* It runs **whenever `CRON_SECRET` is set, whether or not logging is on**, so
+  turning logging off never leaves old rows behind. On empty tables it removes
+  nothing.
+* It needs the header `Authorization: Bearer <CRON_SECRET>`, which Vercel sends
+  by itself once a `CRON_SECRET` environment variable (a random string of at
+  least 16 characters) is set for Production. With no secret set it refuses
   (401) and cleans nothing. It never takes a day count from the request.
 * Vercel calls the project's Production deployment URL, so preview copies of a
   branch never run it.
+* If the migration has not been applied it answers 500 with the database's
+  error code instead of 200. **Before switching logging on, confirm the first
+  cron run (or a manual `GET` with the secret) answers 200.**
 
-One gap to know about: **turning logging off also stops the cleanup**, so rows
-already in the tables stay until someone runs it by hand once:
+To clean up by hand, repeat this until it returns 0:
 
 ```sql
-select public.cleanup_diagnostic_logs(45);
+select public.cleanup_diagnostic_logs(45, 5000);
 ```
 
-(or removes everything for good with `truncate diag_answer_events,
-diag_server_actions, diag_device_events;`).
+(or remove everything for good with `truncate diag_answer_events,
+diag_server_actions, diag_device_events, diag_quota;`).
 
 ## The night timeline
 

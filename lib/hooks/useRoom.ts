@@ -207,8 +207,12 @@ const PLAYER_QUESTION_COLUMNS =
 export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs): RoomSnapshot {
   const [snapshot, setSnapshot] = useState<RoomSnapshot>(EMPTY);
   // Diagnostic log only: whether a question is live on this screen, so the
-  // device reporter stays quiet until it closes. Nothing reads the result.
-  useDiagQuestionOpen(snapshot.currentQuestion !== null && !snapshot.currentQuestion.finished_at);
+  // device reporter stays quiet until it closes (and until the first room
+  // download is done). Nothing reads the result.
+  useDiagQuestionOpen(
+    snapshot.currentQuestion !== null && !snapshot.currentQuestion.finished_at,
+    snapshot.night !== null,
+  );
   const playerRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const hostRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const hostTVKeyRefreshSequenceRef = useRef(0);

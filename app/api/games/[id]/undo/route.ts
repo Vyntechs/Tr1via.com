@@ -137,6 +137,4 @@ async function postUndo(
   return ok({ undoneQuestionId: latest.question_id });
 }
 
-// Wrapped so the press is timed in the diagnostic log AFTER the response is
-// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
 export const POST = withActionLog("undo", postUndo, { idKind: "game" });

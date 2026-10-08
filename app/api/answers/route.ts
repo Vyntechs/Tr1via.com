@@ -439,6 +439,4 @@ async function handleAnswer(req: NextRequest) {
   return noContent();
 }
 
-// Wrapped so every tap (saved or not) lands in the diagnostic log AFTER the
-// response is sent. With DIAGNOSTIC_LOGGING off this is the handler above.
 export const POST = withAnswerLog(handleAnswer);

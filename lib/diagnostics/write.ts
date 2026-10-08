@@ -6,6 +6,10 @@
 //                             swallowed: logging can never break or slow a
 //                             request. At most DIAG_MAX_WRITES_IN_FLIGHT tasks
 //                             run at once; extra ones are dropped and counted.
+//   recordDiagRows(...)       the way every normal row is stored. It first
+//                             asks the database for room under the night's
+//                             row caps (see "row caps" below), then inserts
+//                             only as many rows as were granted.
 //   insertDiagRows(table, r)  one insert with the service-role client, given
 //                             up on after DIAG_WRITE_TIMEOUT_MS. A failed
 //                             insert prints ONE short line to the server
@@ -14,9 +18,16 @@
 //   lookup*                   small cached id lookups used to fill in the
 //                             night / player on rows whose handler returned
 //                             before it knew them (a late tap is turned away
-//                             before the player is even looked up).
+//                             before the player is even looked up), and to
+//                             check that the caller really is a player of
+//                             that night or the host who owns it. A lookup
+//                             that finds nothing is remembered for a short
+//                             time too, so made-up ids cost one read each.
+//   noteIgnored(kind)         a request that was not from a verified player or
+//                             host stores nothing; it only bumps a counter,
+//                             printed as one summary line a minute.
 //
-// Dropped and failed writes are counted. The counts are written as one
+// Dropped, failed and capped writes are counted. The counts are written as one
 // `diag_server_actions` row (actor "system", action "diag_drops") as soon as
 // the database accepts a write again, so a gap in a night's evidence says so.
 //
@@ -27,7 +38,18 @@ import "server-only";
 
 import { after } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { DIAG_MAX_WRITES_IN_FLIGHT, DIAG_RETENTION_DAYS, DIAG_WRITE_TIMEOUT_MS } from "./config";
+import {
+  DIAG_BUCKET_ROW_CAPS,
+  DIAG_CLEANUP_BATCH_ROWS,
+  DIAG_CLEANUP_BUDGET_MS,
+  DIAG_CLEANUP_MAX_BATCHES,
+  DIAG_MAX_WRITES_IN_FLIGHT,
+  DIAG_NIGHT_ROW_CAP,
+  DIAG_QUOTA_FULL_MEMORY_MS,
+  DIAG_QUOTA_LEASE_ROWS,
+  DIAG_RETENTION_DAYS,
+  DIAG_WRITE_TIMEOUT_MS,
+} from "./config";
 
 export type DiagTable =
   | "diag_answer_events"
@@ -88,7 +110,7 @@ function withDeadline<T>(ms: number, work: (signal: AbortSignal) => PromiseLike<
 }
 
 // ─── counters, and one short console line per kind of failure ────────
-const pending = { dropped: 0, failed: 0 };
+const pending = { dropped: 0, failed: 0, capped: 0 };
 const LOG_EVERY_MS = 60_000;
 const COUNTER_FLUSH_EVERY_MS = 10_000;
 const lastLine = new Map<string, { at: number; skipped: number }>();
@@ -129,6 +151,11 @@ function failureCode(error: unknown): string {
 export function __resetDiagWriteForTests(options: { now?: () => number } = {}): void {
   pending.dropped = 0;
   pending.failed = 0;
+  pending.capped = 0;
+  ignored.clear();
+  lastIgnoredLineAt = 0;
+  leases.clear();
+  fullUntil.clear();
   lastLine.clear();
   lastCounterFlushAt = 0;
   counterFlushRunning = false;
@@ -136,9 +163,47 @@ export function __resetDiagWriteForTests(options: { now?: () => number } = {}): 
   clock = options.now ?? (() => Date.now());
 }
 
-/** Test hook: how many writes were dropped / failed and not yet recorded. */
-export function __diagWriteCountersForTests(): { dropped: number; failed: number; inFlight: number } {
-  return { dropped: pending.dropped, failed: pending.failed, inFlight: writesInFlight };
+/** Test hook: how many writes were dropped / failed / capped and not yet recorded. */
+export function __diagWriteCountersForTests(): {
+  dropped: number;
+  failed: number;
+  capped: number;
+  inFlight: number;
+  ignored: number;
+} {
+  let ignoredTotal = 0;
+  for (const n of ignored.values()) ignoredTotal += n;
+  return {
+    dropped: pending.dropped,
+    failed: pending.failed,
+    capped: pending.capped,
+    inFlight: writesInFlight,
+    ignored: ignoredTotal,
+  };
+}
+
+// ─── requests that are not from a verified player or host ────────────
+// Nothing is stored for them. They are only counted, and one summary line a
+// minute says how many there were, so a flood is visible without costing a
+// database write.
+const ignored = new Map<string, number>();
+let lastIgnoredLineAt = 0;
+
+export type IgnoredKind = "answer" | "action" | "report";
+
+/** Never throws, never touches the database. */
+export function noteIgnored(kind: IgnoredKind): void {
+  try {
+    ignored.set(kind, (ignored.get(kind) ?? 0) + 1);
+    const now = clock();
+    if (lastIgnoredLineAt !== 0 && now - lastIgnoredLineAt < LOG_EVERY_MS) return;
+    lastIgnoredLineAt = now;
+    const parts = [...ignored].map(([name, count]) => `${name}=${count}`).join(" ");
+    ignored.clear();
+    console.info(`[diag] stored nothing for requests with no verified player or host: ${parts}`);
+  } catch {
+    // counting is best-effort
+  }
 }
 
 // ─── scheduling, with a cap on how many run at once ──────────────────
@@ -190,12 +255,12 @@ export function scheduleDiagWrite(task: () => Promise<void>): void {
 async function flushCounters(): Promise<void> {
   try {
     if (counterFlushRunning) return;
-    if (pending.dropped === 0 && pending.failed === 0) return;
+    if (pending.dropped === 0 && pending.failed === 0 && pending.capped === 0) return;
     const now = clock();
     if (lastCounterFlushAt !== 0 && now - lastCounterFlushAt < COUNTER_FLUSH_EVERY_MS) return;
     counterFlushRunning = true;
     lastCounterFlushAt = now;
-    const { dropped, failed } = pending;
+    const { dropped, failed, capped } = pending;
     try {
       const ok = await insertCore("diag_server_actions", [
         {
@@ -204,8 +269,8 @@ async function flushCounters(): Promise<void> {
           actor: "system",
           http_status: 0,
           outcome: "gap",
-          reason: `dropped=${dropped} failed=${failed}`,
-          steps: { dropped, failed },
+          reason: `dropped=${dropped} failed=${failed} capped=${capped}`,
+          steps: { dropped, failed, capped },
           region: process.env.VERCEL_REGION?.slice(0, 32) ?? null,
           deployment: process.env.VERCEL_DEPLOYMENT_ID?.slice(0, 64) ?? null,
         },
@@ -213,6 +278,7 @@ async function flushCounters(): Promise<void> {
       if (ok) {
         pending.dropped = Math.max(0, pending.dropped - dropped);
         pending.failed = Math.max(0, pending.failed - failed);
+        pending.capped = Math.max(0, pending.capped - capped);
         if (dropped > 0) logOnce("dropped", `dropped ${dropped} log writes (too many at once)`);
       }
     } finally {
@@ -280,57 +346,192 @@ export async function insertDiagRows(
   }
 }
 
-// ─── the 45-day cleanup ───────────────────────────────────────────────
-const CLEANUP_TIMEOUT_MS = 25_000;
+// ─── row caps ─────────────────────────────────────────────────────────
+// Every normal row is stored through recordDiagRows(), which first asks the
+// database (function diag_take_rows, table diag_quota) how many rows this
+// night and this source may still have. The answer holds across every server
+// instance. To keep it cheap, an instance asks for a block of rows at a time
+// (DIAG_QUOTA_LEASE_ROWS), spends them from memory, and a source found to be
+// full is not asked about again for a minute. A block that is never spent
+// (an instance that goes away) just counts toward the cap, which is the safe
+// direction.
+export type DiagSource = { kind: "player"; deviceId: string } | { kind: "tv" } | { kind: "host" };
+
+function bucketOf(source: DiagSource): string {
+  return source.kind === "player" ? `p:${source.deviceId}` : source.kind;
+}
+
+const leases = new Map<string, { left: number }>();
+const fullUntil = new Map<string, number>();
+const QUOTA_MEMORY_MAX = 2000;
+
+/** Rows granted (0 = full), or null when the database could not be asked. */
+async function takeRows(nightId: string, source: DiagSource, want: number): Promise<number | null> {
+  const bucket = bucketOf(source);
+  const key = `${nightId}|${bucket}`;
+  const now = clock();
+  const blockedUntil = fullUntil.get(key);
+  if (blockedUntil !== undefined) {
+    if (now < blockedUntil) return 0;
+    fullUntil.delete(key);
+  }
+  let lease = leases.get(key);
+  if (!lease) {
+    if (leases.size >= QUOTA_MEMORY_MAX) leases.clear();
+    lease = { left: 0 };
+    leases.set(key, lease);
+  }
+  if (lease.left < want) {
+    const ask = Math.max(want - lease.left, DIAG_QUOTA_LEASE_ROWS);
+    let granted: number;
+    try {
+      const result = await withDeadline(DIAG_WRITE_TIMEOUT_MS, async (signal) => {
+        const call = admin().rpc("diag_take_rows", {
+          p_night_id: nightId,
+          p_bucket: bucket,
+          p_want: ask,
+          p_bucket_cap: DIAG_BUCKET_ROW_CAPS[source.kind],
+          p_night_cap: DIAG_NIGHT_ROW_CAP,
+        });
+        return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
+      });
+      if (result && result.error) {
+        logOnce(`quota:${failureCode(result.error)}`, `row-cap check failed code=${failureCode(result.error)}`);
+        return null;
+      }
+      granted = Number(result?.data);
+      if (!Number.isFinite(granted) || granted < 0) return null;
+    } catch (error) {
+      logOnce(`quota:${failureCode(error)}`, `row-cap check failed code=${failureCode(error)}`);
+      return null;
+    }
+    if (granted === 0) {
+      if (fullUntil.size >= QUOTA_MEMORY_MAX) fullUntil.clear();
+      fullUntil.set(key, clock() + DIAG_QUOTA_FULL_MEMORY_MS);
+    }
+    lease.left += Math.floor(granted);
+  }
+  const give = Math.min(want, lease.left);
+  lease.left -= give;
+  return give;
+}
 
 /**
- * Runs cleanup_diagnostic_logs(45) once. The day count is fixed here, never
- * taken from a request. Used only by the protected daily cron route. A failure
- * prints one short line and is returned, never thrown.
+ * Store rows for a verified source, within the night's row caps. Rows past a
+ * cap are dropped and counted. Never throws.
  */
-export async function runDiagCleanup(): Promise<{ ok: true; removed: number } | { ok: false; code: string }> {
+export async function recordDiagRows(
+  table: DiagTable,
+  rows: Record<string, unknown>[],
+  nightId: string,
+  source: DiagSource,
+): Promise<void> {
+  if (rows.length === 0) return;
   try {
-    const result = await withDeadline(CLEANUP_TIMEOUT_MS, async (signal) => {
-      const call = admin().rpc("cleanup_diagnostic_logs", { p_days: DIAG_RETENTION_DAYS });
-      return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
-    });
-    if (result && result.error) {
-      const code = failureCode(result.error);
-      logOnce(`cleanup:${code}`, `cleanup failed code=${code}`);
-      return { ok: false, code };
+    const granted = await takeRows(nightId, source, rows.length);
+    if (granted === null) {
+      pending.failed += 1;
+      return;
     }
-    const removed = Number(result?.data ?? 0);
-    return { ok: true, removed: Number.isFinite(removed) ? removed : 0 };
-  } catch (error) {
-    const code = failureCode(error);
-    logOnce(`cleanup:${code}`, `cleanup failed code=${code}`);
-    return { ok: false, code };
+    if (granted < rows.length) {
+      pending.capped += rows.length - granted;
+      logOnce("capped", "row cap reached: not storing more log rows for a night or source");
+    }
+    if (granted > 0) await insertDiagRows(table, rows.slice(0, granted));
+  } catch {
+    // ignore
   }
 }
 
+// ─── the 45-day cleanup ───────────────────────────────────────────────
+const CLEANUP_CALL_TIMEOUT_MS = 10_000;
+
+export type DiagCleanupResult =
+  | { ok: true; removed: number; batches: number; more: boolean }
+  | { ok: false; code: string; removed: number; batches: number };
+
+/**
+ * Runs cleanup_diagnostic_logs(45, 5000) over and over until it removes
+ * nothing, up to DIAG_CLEANUP_MAX_BATCHES calls or DIAG_CLEANUP_BUDGET_MS. Each
+ * call is its own small database transaction, so progress is kept even if a
+ * run is cut short, and a big backlog is finished by the next day's run
+ * (`more` says it was not finished). The day count is fixed here, never taken
+ * from a request. Used only by the protected daily cron route. A failure
+ * prints one short line and is returned, never thrown.
+ */
+export async function runDiagCleanup(): Promise<DiagCleanupResult> {
+  const startedAt = Date.now();
+  let removed = 0;
+  let batches = 0;
+  while (batches < DIAG_CLEANUP_MAX_BATCHES) {
+    if (batches > 0 && Date.now() - startedAt > DIAG_CLEANUP_BUDGET_MS) {
+      return { ok: true, removed, batches, more: true };
+    }
+    try {
+      const result = await withDeadline(CLEANUP_CALL_TIMEOUT_MS, async (signal) => {
+        const call = admin().rpc("cleanup_diagnostic_logs", {
+          p_days: DIAG_RETENTION_DAYS,
+          p_batch: DIAG_CLEANUP_BATCH_ROWS,
+        });
+        return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
+      });
+      if (result && result.error) {
+        const code = failureCode(result.error);
+        logOnce(`cleanup:${code}`, `cleanup failed code=${code}`);
+        return { ok: false, code, removed, batches };
+      }
+      const n = Number(result?.data ?? 0);
+      batches += 1;
+      if (!Number.isFinite(n) || n <= 0) return { ok: true, removed, batches, more: false };
+      removed += n;
+    } catch (error) {
+      const code = failureCode(error);
+      logOnce(`cleanup:${code}`, `cleanup failed code=${code}`);
+      return { ok: false, code, removed, batches };
+    }
+  }
+  return { ok: true, removed, batches, more: true };
+}
+
 // ─── cached id lookups ────────────────────────────────────────────────
-// Remembered for ten minutes. A burst of taps for one question asks the same
-// thing at once, so concurrent asks share one in-flight lookup. A lookup also
-// stops waiting after DIAG_WRITE_TIMEOUT_MS.
+// A found id is remembered for ten minutes. A burst of taps for one question
+// asks the same thing at once, so concurrent asks share one in-flight lookup.
+// A lookup also stops waiting after DIAG_WRITE_TIMEOUT_MS.
+//
+// "No such row" is remembered too, but only briefly (a player can join a
+// moment after something was asked about them) and in a SEPARATE small list, so
+// a flood of made-up ids costs one read each and cannot push the good entries
+// out of the main list. A failed or timed-out lookup is never remembered.
 const CACHE_MAX = 500;
 const CACHE_TTL_MS = 10 * 60_000;
-const cache = new Map<string, { value: string | null; at: number }>();
+const MISS_TTL_MS = 30_000;
+const PLAYER_MISS_TTL_MS = 10_000;
+const MISS_MAX = 1000;
+const cache = new Map<string, { value: string; at: number }>();
+const misses = new Map<string, number>();
 const inFlight = new Map<string, Promise<string | null>>();
 
 function signalled<Q extends { abortSignal?: (signal: AbortSignal) => Q }>(query: Q, signal: AbortSignal): Q {
   return typeof query.abortSignal === "function" ? query.abortSignal(signal) : query;
 }
 
+/** supabase-js hands failures back as `error`; turn one into a throw so it is not taken for "no row". */
+function rowOrThrow<T>(result: LooseResult<T>): T | null {
+  if (result.error) throw result.error;
+  return result.data ?? null;
+}
+
 async function cached(
   key: string,
   load: (signal: AbortSignal) => Promise<string | null>,
-  /** Remember "no such row" for this long (omit to never remember a miss). */
-  missTtlMs = 0,
+  missTtlMs = MISS_TTL_MS,
 ): Promise<string | null> {
   const hit = cache.get(key);
-  if (hit) {
-    const ttl = hit.value === null ? missTtlMs : CACHE_TTL_MS;
-    if (Date.now() - hit.at < ttl) return hit.value;
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
+  const missUntil = misses.get(key);
+  if (missUntil !== undefined) {
+    if (Date.now() < missUntil) return null;
+    misses.delete(key);
   }
   const waiting = inFlight.get(key);
   if (waiting) return waiting;
@@ -341,11 +542,12 @@ async function cached(
     } catch {
       return null;
     }
-    // A miss may be a row that doesn't exist yet, so it is only remembered
-    // when the caller asked for that, and then only briefly.
-    if (value !== null || missTtlMs > 0) {
+    if (value !== null) {
       if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
       cache.set(key, { value, at: Date.now() });
+    } else if (missTtlMs > 0) {
+      if (misses.size >= MISS_MAX) misses.delete(misses.keys().next().value as string);
+      misses.set(key, Date.now() + missTtlMs);
     }
     return value;
   })().finally(() => inFlight.delete(key));
@@ -358,17 +560,15 @@ export async function lookupQuestionContext(
   questionId: string,
 ): Promise<{ gameId: string | null; nightId: string | null }> {
   const gameId = await cached(`q-game:${questionId}`, async (signal) => {
-    const q = await signalled(
-      admin().from("questions").select("category_id").eq("id", questionId),
-      signal,
-    ).maybeSingle();
-    const categoryId = q.data?.category_id;
+    const q = rowOrThrow(
+      await signalled(admin().from("questions").select("category_id").eq("id", questionId), signal).maybeSingle(),
+    );
+    const categoryId = q?.category_id;
     if (typeof categoryId !== "string") return null;
-    const c = await signalled(
-      admin().from("categories").select("game_id").eq("id", categoryId),
-      signal,
-    ).maybeSingle();
-    return typeof c.data?.game_id === "string" ? c.data.game_id : null;
+    const c = rowOrThrow(
+      await signalled(admin().from("categories").select("game_id").eq("id", categoryId), signal).maybeSingle(),
+    );
+    return typeof c?.game_id === "string" ? c.game_id : null;
   });
   if (!gameId) return { gameId: null, nightId: null };
   return { gameId, nightId: await lookupGameNight(gameId) };
@@ -376,46 +576,52 @@ export async function lookupQuestionContext(
 
 export function lookupGameNight(gameId: string): Promise<string | null> {
   return cached(`game-night:${gameId}`, async (signal) => {
-    const g = await signalled(admin().from("games").select("night_id").eq("id", gameId), signal).maybeSingle();
-    return typeof g.data?.night_id === "string" ? g.data.night_id : null;
+    const g = rowOrThrow(
+      await signalled(admin().from("games").select("night_id").eq("id", gameId), signal).maybeSingle(),
+    );
+    return typeof g?.night_id === "string" ? g.night_id : null;
   });
 }
 
-/**
- * room code -> night id. Room codes are unique across all nights. A code that
- * does not exist is remembered for 30 seconds, so someone sending reports for
- * made-up codes cannot make the database look each one up again and again.
- */
+/** room code -> night id. Room codes are unique across all nights. */
 export function lookupRoomNight(roomCode: string): Promise<string | null> {
-  return cached(
-    `room-night:${roomCode}`,
-    async (signal) => {
-      const n = await signalled(admin().from("nights").select("id").eq("room_code", roomCode), signal).maybeSingle();
-      return typeof n.data?.id === "string" ? n.data.id : null;
-    },
-    30_000,
-  );
+  return cached(`room-night:${roomCode}`, async (signal) => {
+    const n = rowOrThrow(
+      await signalled(admin().from("nights").select("id").eq("room_code", roomCode), signal).maybeSingle(),
+    );
+    return typeof n?.id === "string" ? n.id : null;
+  });
 }
 
 export function lookupNightOwner(nightId: string): Promise<string | null> {
   return cached(`night-host:${nightId}`, async (signal) => {
-    const n = await signalled(admin().from("nights").select("host_id").eq("id", nightId), signal).maybeSingle();
-    return typeof n.data?.host_id === "string" ? n.data.host_id : null;
+    const n = rowOrThrow(
+      await signalled(admin().from("nights").select("host_id").eq("id", nightId), signal).maybeSingle(),
+    );
+    return typeof n?.host_id === "string" ? n.host_id : null;
   });
 }
 
+/** The player row of this device in this night (null when the device never joined it). */
 export function lookupPlayerId(nightId: string, deviceId: string): Promise<string | null> {
-  return cached(`player:${nightId}:${deviceId}`, async (signal) => {
-    const p = await signalled(
-      admin().from("players").select("id").eq("night_id", nightId).eq("device_id", deviceId),
-      signal,
-    ).maybeSingle();
-    return typeof p.data?.id === "string" ? p.data.id : null;
-  });
+  return cached(
+    `player:${nightId}:${deviceId}`,
+    async (signal) => {
+      const p = rowOrThrow(
+        await signalled(
+          admin().from("players").select("id").eq("night_id", nightId).eq("device_id", deviceId),
+          signal,
+        ).maybeSingle(),
+      );
+      return typeof p?.id === "string" ? p.id : null;
+    },
+    PLAYER_MISS_TTL_MS,
+  );
 }
 
 /** Test hook. */
 export function __clearDiagCacheForTests(): void {
   cache.clear();
+  misses.clear();
   inFlight.clear();
 }

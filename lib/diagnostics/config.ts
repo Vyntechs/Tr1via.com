@@ -16,16 +16,41 @@ export function diagnosticsEnabled(
 /** Rows older than this are removed by cleanup_diagnostic_logs(). */
 export const DIAG_RETENTION_DAYS = 45;
 
+// The daily cleanup deletes in small batches (each batch is its own database
+// transaction, so progress is kept even if a run is cut short), up to a cap
+// per run. A run that hits the cap says so and the next day's run continues.
+export const DIAG_CLEANUP_BATCH_ROWS = 5_000;
+export const DIAG_CLEANUP_MAX_BATCHES = 20;
+export const DIAG_CLEANUP_BUDGET_MS = 20_000;
+
 // Device report limits (also enforced by the intake route).
 export const DIAG_MAX_BODY_BYTES = 24_000;
 export const DIAG_MAX_EVENTS_PER_BATCH = 60;
-export const DIAG_MAX_EVENT_BYTES = 1_000;
 
 // Database write limits (lib/diagnostics/write.ts). A log write that takes
 // longer than this is given up on; more than this many at once and the extra
 // ones are dropped (and counted) instead of piling up behind a slow database.
 export const DIAG_WRITE_TIMEOUT_MS = 2_000;
 export const DIAG_MAX_WRITES_IN_FLIGHT = 50;
+
+// Row caps, kept in the database (table diag_quota, function diag_take_rows),
+// so they hold across every server instance. Rows past a cap are dropped and
+// counted, never stored. A night is capped as a whole, and each source is
+// capped inside it so one noisy source cannot use up the others' room:
+//   "p:<device id>"  one player phone (its taps, its timer-end calls, its reports)
+//   "tv"             the venue TV(s) of the night
+//   "host"           the host laptop / phone (presses and reports)
+// A normal 40-phone night is roughly 5,000 to 10,000 rows in total.
+export const DIAG_NIGHT_ROW_CAP = 30_000;
+export const DIAG_BUCKET_ROW_CAPS = { player: 2_000, tv: 4_000, host: 6_000 } as const;
+/** Rows a server instance asks the database for at a time (fewer calls on a busy night). */
+export const DIAG_QUOTA_LEASE_ROWS = 25;
+/** A source found to be full is not asked about again for this long. */
+export const DIAG_QUOTA_FULL_MEMORY_MS = 60_000;
+
+// The venue TV has no login, so the server hands the TV page a signed pass
+// when the page loads. It names one night and stops working after this long.
+export const DIAG_TV_PASS_TTL_MS = 8 * 60 * 60_000;
 
 /** Event types a device may report. Anything else is dropped. */
 export const DIAG_DEVICE_KINDS = [
@@ -47,6 +72,17 @@ export type DiagDeviceKind = (typeof DIAG_DEVICE_KINDS)[number];
 
 export const DIAG_SURFACES = ["player", "tv", "host"] as const;
 export type DiagSurface = (typeof DIAG_SURFACES)[number];
+
+/**
+ * Which kinds each screen may report. A kind a screen never produces is
+ * refused (taps only come from phones, frame rates only from the TV and the
+ * host laptop), so a crafted report cannot pose as something it is not.
+ */
+export const DIAG_SURFACE_KINDS: Record<DiagSurface, readonly DiagDeviceKind[]> = {
+  player: ["device", "net", "vis", "bcast", "snap", "res", "ribbon", "chan", "reach", "tap", "tapx", "lt"],
+  tv: ["device", "net", "vis", "bcast", "snap", "res", "ribbon", "chan", "reach", "lt", "fps"],
+  host: ["device", "net", "vis", "bcast", "snap", "res", "ribbon", "chan", "reach", "lt", "fps"],
+};
 
 /**
  * Exactly what is stored about a device, by event kind. The server rebuilds

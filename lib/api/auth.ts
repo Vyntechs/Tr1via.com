@@ -20,7 +20,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { cookies } from "next/headers";
 import { verifyDeviceCookie } from "@/lib/auth/device-cookie";
 import { isSupabaseSessionCookie } from "@/lib/auth/session-cookies";
-import { diagMark } from "@/lib/diagnostics/trace";
+import { diagMark, diagNote } from "@/lib/diagnostics/trace";
 import { presentationKey } from "@/lib/room/presentationKey";
 import type {
   CategoryRow,
@@ -75,6 +75,9 @@ export async function getAuthedHost(): Promise<HostAuthResult> {
   if (!host) {
     return { ok: false, status: 403, error: "host profile not found" };
   }
+  // Diagnostic note (no-op unless this request is being logged): which host
+  // signed in, so the log stores a press only for the host who owns the night.
+  diagNote({ hostId: host.id });
   return { ok: true, host: host as HostRow };
 }
 

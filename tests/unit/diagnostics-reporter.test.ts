@@ -1,5 +1,7 @@
-// The device reporter: batching, quiet while a question is open, sampling
-// that never drops slow/failed events, beacon on hide, silent failure.
+// The device reporter: batching, quiet while a question is open or before the
+// room has loaded (hidden page or not), sampling and queue trimming that never
+// drop slow/failed events first, beacon on hide between questions, the TV pass,
+// silent failure.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DIAG_DEVICE_KEYS, DIAG_NET_KEYS } from "@/lib/diagnostics/config";
@@ -10,14 +12,17 @@ import {
   diagEvent,
   diagQuestionOpen,
   diagRibbon,
+  diagRoomReady,
   diagSnap,
   pathTemplate,
+  setDiagTvPass,
 } from "@/lib/diagnostics/client";
 import { startDeviceReporter } from "@/lib/diagnostics/reporter";
 
 type Sent = {
   surface: string;
   room?: string;
+  tok?: string;
   sid: string;
   sent: number;
   ev: Array<{ t: number; k: string; d?: Record<string, unknown>; f: number }>;
@@ -27,9 +32,16 @@ let fetchMock: ReturnType<typeof vi.fn>;
 let beaconMock: ReturnType<typeof vi.fn>;
 let stops: Array<() => void> = [];
 
-function start(options: Parameters<typeof startDeviceReporter>[0]) {
+/**
+ * The usual state of a screen: the reporter is running, the room has loaded
+ * (and the TV page has been given its pass). Pass `loaded: false` for a screen
+ * that is still on its first room download.
+ */
+function start(options: Parameters<typeof startDeviceReporter>[0], extra: { loaded?: boolean; pass?: boolean } = {}) {
   const stop = startDeviceReporter(options);
   stops.push(stop);
+  if (options.surface === "tv" && extra.pass !== false) setDiagTvPass("v1.pass-for-the-test-tv-page");
+  if (extra.loaded !== false) diagRoomReady();
   return stop;
 }
 
@@ -226,18 +238,154 @@ describe("staying quiet while a question is open", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("a page that is hidden mid-question still hands its events to the browser (so they are not lost)", async () => {
+  it("a phone that locks its screen mid-question sends NOTHING: its events stay in memory until the question has closed", async () => {
     start({ surface: "player", room: "K9PR4M" });
     diagQuestionOpen(true);
     diagEvent("net", { ev: "offline" }, true);
     setVisibility("hidden");
-    expect(beaconMock).toHaveBeenCalledTimes(1);
+    expect(beaconMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // a page that stays hidden for a long time is still quiet (the timer is not an exception either)
+    await vi.advanceTimersByTimeAsync(2 * 60_000);
+    expect(beaconMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // the phone wakes, still inside the question: still quiet
+    setVisibility("visible");
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    // the question closes: everything held goes out, including what happened while the screen was locked
+    diagQuestionOpen(false);
+    await vi.advanceTimersByTimeAsync(9_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBatches()[0]!.ev.map((e) => e.k)).toEqual(["device", "net", "vis", "vis"]);
+    expect(sentBatches()[0]!.ev.map((e) => e.d?.ev).filter(Boolean)).toEqual(["offline", "hidden", "visible"]);
+  });
+
+  it("closing the page mid-question also sends nothing (quiet comes first)", async () => {
+    const stop = start({ surface: "player", room: "K9PR4M" });
+    diagQuestionOpen(true);
+    diagEvent("net", { ev: "offline" }, true);
+    window.dispatchEvent(new Event("pagehide"));
+    stop();
+    expect(beaconMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
+describe("staying quiet before the room has loaded", () => {
+  it("sends nothing while the first room download is still going, however long it takes", async () => {
+    // A slow first load: the phone cannot know yet whether a question is live.
+    start({ surface: "player", room: "K9PR4M" }, { loaded: false });
+    diagEvent("snap", { w: "room", ms: 9000, ok: false, n: 3, err: "TimeoutError" }, true);
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(beaconMock).not.toHaveBeenCalled();
+  });
+
+  it("not even a hidden page sends before the room has loaded", async () => {
+    const stop = start({ surface: "player", room: "K9PR4M" }, { loaded: false });
+    setVisibility("hidden");
+    window.dispatchEvent(new Event("pagehide"));
+    stop();
+    expect(beaconMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends what it held, in order, once the room has loaded (if no question is live)", async () => {
+    start({ surface: "player", room: "K9PR4M" }, { loaded: false });
+    diagEvent("snap", { w: "room", ms: 9000, ok: true, n: 2 }, true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+    diagRoomReady();
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBatches()[0]!.ev.map((e) => e.k)).toEqual(["device", "snap"]);
+  });
+
+  it("stays quiet when the room loaded into a question that is already open", async () => {
+    start({ surface: "player", room: "K9PR4M" }, { loaded: false });
+    // the room tells the reporter what is on screen first, then that it has loaded
+    diagQuestionOpen(true);
+    diagRoomReady();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("is remembered for a reporter that starts after the room has loaded", async () => {
+    diagRoomReady();
+    start({ surface: "player", room: "K9PR4M" }, { loaded: false });
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("the venue TV needs its pass", () => {
+  it("holds everything until the TV page has been given its pass, then sends it with every report", async () => {
+    start({ surface: "tv", room: "K9PR4M" }, { pass: false });
+    diagEvent("net", { ev: "offline" }, true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    setDiagTvPass("v1.pass-for-the-test-tv-page");
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sentBatches()[0]).toMatchObject({ surface: "tv", tok: "v1.pass-for-the-test-tv-page" });
+    expect(sentBatches()[0]!.ev.map((e) => e.k)).toEqual(["device", "net"]);
+  });
+
+  it("phones and the host laptop never send a pass", async () => {
+    setDiagTvPass("v1.pass-for-the-test-tv-page");
+    start({ surface: "player", room: "K9PR4M" });
+    start({ surface: "host", night: "11111111-1111-1111-1111-111111111111" });
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(sentBatches().length).toBeGreaterThanOrEqual(2);
+    for (const batch of sentBatches()) expect(batch).not.toHaveProperty("tok");
+  });
+});
+
+describe("when the queue is full or a send fails, slow and failed events are the last to go", () => {
+  it("a failed send puts its events back without pushing the slow or failed ones out", async () => {
+    let fail: (error: Error) => void = () => {};
+    fetchMock.mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
+    start({ surface: "tv", room: "K9PR4M" });
+    for (let i = 0; i < 10; i++) diagEvent("net", { i }, true); // forced
+    for (let i = 0; i < 49; i++) diagEvent("bcast", { ev: "reveal", i }); // routine: with the device event, a batch of 60
+    await vi.advanceTimersByTimeAsync(13_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1); // in flight, not yet failed
+    // while it is in flight the screen keeps producing events and the queue fills up
+    for (let i = 0; i < 150; i++) diagEvent("bcast", { ev: "reveal", i: 100 + i });
+    for (let i = 0; i < 60; i++) diagEvent("net", { i: 100 + i }, true);
+    fail(new TypeError("Load failed"));
+    await vi.advanceTimersByTimeAsync(5_000);
+    // now everything that is still held goes out over the next few reports
+    fetchMock.mockImplementation(async () => new Response(null, { status: 204 }));
+    await vi.advanceTimersByTimeAsync(120_000);
+    const sent = sentBatches().slice(1).flatMap((b) => b.ev);
+    expect(sent.length).toBeLessThanOrEqual(200);
+    // every slow or failed event survived: the device description, the 10 that were
+    // put back and the 60 produced meanwhile (routine ones were dropped to make room)
+    expect(sent.filter((e) => e.f === 1)).toHaveLength(1 + 10 + 60);
+    expect(sent.filter((e) => e.f === 1 && e.k === "net")).toHaveLength(70);
+  });
+
+  it("routine events are given up after a few tries; slow or failed ones are kept trying longer", async () => {
+    fetchMock.mockImplementation(async () => {
+      throw new TypeError("Load failed");
+    });
+    start({ surface: "tv", room: "K9PR4M" });
+    diagEvent("bcast", { ev: "reveal", lag: 5 }); // routine
+    diagEvent("net", { ev: "offline" }, true); // forced
+    await vi.advanceTimersByTimeAsync(400_000);
+    const batches = sentBatches();
+    expect(batches.length).toBe(11); // the first send and 10 retries, then it gives up
+    const withRoutine = batches.filter((b) => b.ev.some((e) => e.k === "bcast")).length;
+    expect(withRoutine).toBe(4); // the first send and 3 retries
+    expect(batches.at(-1)!.ev.map((e) => e.k)).toEqual(["device", "net"]);
+  });
+});
+
 describe("leaving the page", () => {
-  it("sends what it has with sendBeacon when the page is hidden", async () => {
+  it("sends what it has with sendBeacon when the page is hidden between questions", async () => {
     // jsdom's Blob can't be read back, so capture what is put in it.
     class CapturingBlob {
       constructor(
@@ -250,7 +398,6 @@ describe("leaving the page", () => {
     }
     vi.stubGlobal("Blob", CapturingBlob);
     start({ surface: "player", room: "K9PR4M" });
-    diagQuestionOpen(true); // even mid-question: the page is going away
     diagEvent("net", { ev: "offline" }, true);
     setVisibility("hidden");
     expect(beaconMock).toHaveBeenCalledTimes(1);
@@ -282,10 +429,13 @@ describe("failure is silent", () => {
     });
     start({ surface: "player", room: "K9PR4M" });
     diagEvent("net", { ev: "offline" }, true);
-    await vi.advanceTimersByTimeAsync(200_000);
+    await vi.advanceTimersByTimeAsync(400_000);
     const attempts = fetchMock.mock.calls.length;
     expect(attempts).toBeGreaterThanOrEqual(2);
-    expect(attempts).toBeLessThanOrEqual(4); // original + 3 retries, then dropped
+    expect(attempts).toBeLessThanOrEqual(11); // original + 10 retries (slow or failed events), then dropped
+    const before = attempts;
+    await vi.advanceTimersByTimeAsync(400_000);
+    expect(fetchMock.mock.calls.length).toBe(before); // and it stopped for good
   });
 
   it("re-sends after the server asks it to slow down (429)", async () => {

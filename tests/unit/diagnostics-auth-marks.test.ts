@@ -32,12 +32,17 @@ vi.mock("next/headers", () => ({
 vi.mock("@/lib/supabase/server", () => ({ getSupabaseServer: async () => h.client }));
 vi.mock("@/lib/supabase/admin", () => ({ getSupabaseAdmin: () => h.client }));
 
-import { requireOwnedGame, requireOwnedNight, requireOwnedQuestion } from "@/lib/api/auth";
+import { getAuthedHost, requireOwnedGame, requireOwnedNight, requireOwnedQuestion } from "@/lib/api/auth";
 import { runInTrace, startTrace } from "@/lib/diagnostics/trace";
 
-async function marksFor(run: () => Promise<{ ok: boolean }>) {
+async function tracedFor(run: () => Promise<{ ok: boolean }>) {
   const trace = startTrace();
   const result = await runInTrace(trace, run);
+  return { trace, result };
+}
+
+async function marksFor(run: () => Promise<{ ok: boolean }>) {
+  const { trace, result } = await tracedFor(run);
   expect(result.ok).toBe(true);
   return trace.marks;
 }
@@ -54,6 +59,26 @@ describe("diagnostic time marks in the host ownership checks", () => {
     expect(marks).toHaveProperty("auth_done");
     expect(marks).toHaveProperty("auth_done_last");
     expect(marks).toHaveProperty("owned_done");
+  });
+
+  // The log stores a host press only for a host the sign-in check really
+  // identified (and who owns the night, which the log then checks itself).
+  it.each([
+    ["night", () => requireOwnedNight("night-1")],
+    ["game", () => requireOwnedGame("game-1")],
+    ["question", () => requireOwnedQuestion("q-1")],
+    ["bare sign-in", () => getAuthedHost()],
+  ])("notes which host signed in, for a %s check", async (_name, run) => {
+    const { trace, result } = await tracedFor(run);
+    expect(result.ok).toBe(true);
+    expect(trace.notes.hostId).toBe("host-1");
+  });
+
+  it("notes no host when the sign-in check fails", async () => {
+    h.client.auth.getUser.mockResolvedValueOnce({ data: { user: null }, error: { message: "no session" } } as never);
+    const { trace, result } = await tracedFor(() => getAuthedHost());
+    expect(result.ok).toBe(false);
+    expect(trace.notes).not.toHaveProperty("hostId");
   });
 
   it("changes nothing for a caller outside a logged request", async () => {

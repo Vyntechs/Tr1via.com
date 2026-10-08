@@ -2,8 +2,9 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  DIAG_EVENT_FIELDS,
   cleanDeviceData,
-  cleanEventData,
+  cleanEventFields,
   cleanNetData,
   createRateLimiter,
   sanitizeBatch,
@@ -15,7 +16,7 @@ import {
   DIAG_DEVICE_KINDS,
   DIAG_NET_KEYS,
   DIAG_MAX_EVENTS_PER_BATCH,
-  DIAG_MAX_EVENT_BYTES,
+  DIAG_SURFACE_KINDS,
   diagnosticsEnabled,
 } from "@/lib/diagnostics/config";
 
@@ -45,6 +46,7 @@ describe("sanitizeBatch", () => {
       surface: "player",
       room: "K9PR4M",
       night: null,
+      pass: null,
       sid: "abc123def456",
       sentAt: NOW,
       events: [{ t: NOW - 500, k: "bcast", d: { ev: "reveal", lag: 120 }, forced: true }],
@@ -67,6 +69,22 @@ describe("sanitizeBatch", () => {
     const batch = sanitizeBatch({ surface: "host", night, sid: "abc123def456", sent: NOW, ev: [] });
     expect(batch?.night).toBe(night);
     expect(sanitizeBatch({ surface: "host", night: "not-a-uuid", sid: "abc123def456", sent: NOW, ev: [] })).toBeNull();
+    // A host that sends a room code instead of its night names nobody.
+    expect(sanitizeBatch({ surface: "host", room: "K9PR4M", sid: "abc123def456", sent: NOW, ev: [] })).toBeNull();
+  });
+
+  it("takes a TV batch only with its pass, and ignores any room code or night id a TV sends", () => {
+    const pass = "v1.11111111-1111-1111-1111-111111111111.abc.sig_sig_sig_sig_sig_sig_sig_sig_sig_sig_sig_sig";
+    const night = "22222222-2222-2222-2222-222222222222";
+    const tv = { surface: "tv", sid: "abc123def456", sent: NOW, ev: [] };
+    expect(sanitizeBatch({ ...tv, room: "K9PR4M" })).toBeNull(); // a room code is not a pass
+    expect(sanitizeBatch({ ...tv, night })).toBeNull(); // neither is a night id
+    expect(sanitizeBatch({ ...tv, tok: "short" })).toBeNull();
+    const batch = sanitizeBatch({ ...tv, tok: pass, room: "K9PR4M", night });
+    expect(batch).toMatchObject({ surface: "tv", pass, room: null, night: null });
+    // A phone cannot use a pass, and cannot name a night either.
+    expect(sanitizeBatch({ ...base, tok: pass, room: undefined, ev: [] })).toBeNull();
+    expect(sanitizeBatch({ ...base, night, ev: [] })).toMatchObject({ room: "K9PR4M", night: null });
   });
 
   it("drops unknown event types and bad times, and caps the batch size", () => {
@@ -84,59 +102,115 @@ describe("sanitizeBatch", () => {
     expect(sanitizeBatch({ ...base, ev: many })?.events).toHaveLength(DIAG_MAX_EVENTS_PER_BATCH);
   });
 
-  it("accepts every declared kind", () => {
+  it("accepts every declared kind, each only from the screens that produce it", () => {
     const ev = DIAG_DEVICE_KINDS.map((k) => ({ t: NOW, k, d: {} }));
-    expect(sanitizeBatch({ ...base, ev })?.events).toHaveLength(DIAG_DEVICE_KINDS.length);
+    const night = "11111111-1111-1111-1111-111111111111";
+    const pass = "v1.11111111-1111-1111-1111-111111111111.abc.sig_sig_sig_sig_sig_sig_sig_sig_sig_sig_sig_sig";
+    const roots = {
+      player: { ...base },
+      host: { surface: "host", night, sid: "abc123def456", sent: NOW },
+      tv: { surface: "tv", tok: pass, sid: "abc123def456", sent: NOW },
+    } as const;
+    for (const surface of ["player", "host", "tv"] as const) {
+      const kept = sanitizeBatch({ ...roots[surface], ev })?.events.map((e) => e.k);
+      expect(kept).toEqual(DIAG_SURFACE_KINDS[surface]);
+    }
+    // taps come only from phones; frame rates only from the TV and the host laptop
+    expect(DIAG_SURFACE_KINDS.tv).not.toContain("tap");
+    expect(DIAG_SURFACE_KINDS.host).not.toContain("tapx");
+    expect(DIAG_SURFACE_KINDS.player).not.toContain("fps");
   });
 });
 
-describe("cleanEventData", () => {
-  it("keeps small primitives and drops functions, odd keys and deep nesting", () => {
-    const data = cleanEventData({
-      ok: 1,
-      s: "text",
-      b: true,
-      n: null,
-      "bad key!": 1,
-      fn: () => 1,
-      deep: { a: { b: { c: 1 } } },
-      list: [1, "two", { x: 1 }],
-    });
-    expect(data.ok).toBe(1);
-    expect(data.s).toBe("text");
-    expect(data.b).toBe(true);
-    expect(data.n).toBeNull();
-    expect(data).not.toHaveProperty("bad key!");
-    expect(data).not.toHaveProperty("fn");
-    // One level of nesting is kept; deeper objects are dropped.
-    expect(data.deep).toEqual({});
-    expect(data.list).toEqual([1, "two"]);
+describe("every event kind is rebuilt from a fixed list of fields", () => {
+  it("has a list for every kind, and nothing else", () => {
+    expect(Object.keys(DIAG_EVENT_FIELDS).sort()).toEqual([...DIAG_DEVICE_KINDS].sort());
   });
 
-  it("strips query strings and cuts long strings and control characters", () => {
-    const data = cleanEventData({
-      p: "/api/games/abc/advance?token=SECRET#frag",
-      long: "x".repeat(500),
-      ctl: "a\u0000b\nc",
-    });
-    expect(data.p).toBe("/api/games/abc/advance");
-    expect((data.long as string).length).toBeLessThanOrEqual(80);
-    expect(data.ctl).toBe("abc");
+  it("throws away any field that is not on the list, for every kind", () => {
+    for (const kind of DIAG_DEVICE_KINDS) {
+      const data = cleanEventFields(kind, {
+        planted: "x",
+        cookie: "secret",
+        ua: "Mozilla/5.0",
+        nested: { a: 1 },
+        list: [1, 2],
+        "bad key!": 1,
+        fn: () => 1,
+      });
+      expect(data).toEqual({});
+    }
   });
 
-  it("replaces an oversized payload instead of storing it", () => {
+  it("keeps only listed fields of the right type, rounds and clamps numbers", () => {
+    expect(
+      cleanEventFields("bcast", { ev: "reveal", lag: 120.7, srv: 1_791_400_000_000, junk: 1 }),
+    ).toEqual({ ev: "reveal", lag: 121, srv: 1_791_400_000_000 });
+    // numbers are clamped into their range, not stored as sent
+    expect(cleanEventFields("bcast", { lag: 9e15 })).toEqual({ lag: 1_000_000_000 });
+    expect(cleanEventFields("lt", { n: -4, max: 1e12, sum: Infinity, win: NaN })).toEqual({ n: 0, max: 600_000 });
+    expect(cleanEventFields("fps", { fps: 59.94, slow: 3, worst: 80, n: 120, scene: "october" })).toEqual({
+      fps: 59.9,
+      slow: 3,
+      worst: 80,
+      n: 120,
+      scene: "october",
+    });
+    // a number where a word is wanted (and the other way round) is dropped
+    expect(cleanEventFields("bcast", { ev: 5, lag: "5" })).toEqual({});
+  });
+
+  it("takes text fields only from fixed words", () => {
+    expect(cleanEventFields("vis", { ev: "hidden" })).toEqual({ ev: "hidden" });
+    expect(cleanEventFields("vis", { ev: "<script>" })).toEqual({});
+    expect(cleanEventFields("ribbon", { from: "start", to: "offline", reach: "ok", bk: true, ol: false })).toEqual({
+      from: "start",
+      to: "offline",
+      reach: "ok",
+      bk: true,
+      ol: false,
+    });
+    expect(cleanEventFields("ribbon", { from: "a free-text story", to: "online" })).toEqual({ to: "online" });
+    expect(cleanEventFields("reach", { from: "ok", to: "somewhere else" })).toEqual({ from: "ok" });
+    expect(cleanEventFields("tapx", { q: "11111111-1111-1111-1111-111111111111", slot: 9, why: "closed" })).toEqual({
+      q: "11111111-1111-1111-1111-111111111111",
+      slot: 4,
+      why: "closed",
+    });
+    expect(cleanEventFields("tapx", { q: "not-a-uuid", why: "because" })).toEqual({});
+    // a status can be a number or the one word "network"
+    expect(cleanEventFields("tap", { st: 409 })).toEqual({ st: 409 });
+    expect(cleanEventFields("tap", { st: "network" })).toEqual({ st: "network" });
+    expect(cleanEventFields("tap", { st: "anything else" })).toEqual({});
+  });
+
+  it("holds the little free text there is to 40 characters of plain symbols", () => {
+    const data = cleanEventFields("res", { p: "/api/games/:id/advance", ms: 1234.4, st: 500 });
+    expect(data).toEqual({ p: "/api/games/:id/advance", ms: 1234, st: 500 });
+    // too long: cut at the limit
+    expect((cleanEventFields("snap", { err: "x".repeat(500) }).err as string).length).toBe(40);
+    expect((cleanEventFields("bcast", { ev: "y".repeat(500) }).ev as string).length).toBe(40);
+    // anything with a query string, quotes, markup or control characters is dropped whole
+    for (const bad of ["/api/x?token=SECRET", "a\u0000b", "name\nnext", "<b>", "it's", "x;drop table", "é"]) {
+      expect(cleanEventFields("snap", { err: bad, w: bad })).toEqual({});
+    }
+    expect(cleanEventFields("snap", { err: "" })).toEqual({});
+  });
+
+  it("never returns anything for non-objects", () => {
+    for (const kind of DIAG_DEVICE_KINDS) {
+      for (const junk of [null, undefined, "str", 5, [1, 2], true]) {
+        expect(cleanEventFields(kind, junk)).toEqual({});
+      }
+    }
+  });
+
+  it("stores nothing a payload bomb could carry: output size is bounded by the lists", () => {
     const big: Record<string, string> = {};
-    for (let i = 0; i < 20; i++) big[`k${i}`] = "y".repeat(79);
-    const data = cleanEventData(big);
-    expect(JSON.stringify(data).length).toBeLessThanOrEqual(DIAG_MAX_EVENT_BYTES);
-    expect(data).toEqual({ trunc: true });
-  });
-
-  it("never returns non-objects", () => {
-    expect(cleanEventData(null)).toEqual({});
-    expect(cleanEventData("str")).toEqual({});
-    expect(cleanEventData([1, 2])).toEqual({});
-    expect(cleanEventData({ n: Infinity })).toEqual({});
+    for (let i = 0; i < 500; i++) big[`k${i}`] = "y".repeat(5000);
+    for (const kind of DIAG_DEVICE_KINDS) {
+      expect(JSON.stringify(cleanEventFields(kind, big)).length).toBeLessThanOrEqual(2);
+    }
   });
 });
 
@@ -201,9 +275,10 @@ describe("what a device may say about itself", () => {
   });
 
   it("drops values outside the allowed vocabulary and ranges", () => {
+    // words outside the list are dropped; numbers are clamped into range
     expect(
       cleanDeviceData({ sc: "gigantic", et: "5g", ty: "carrier-pigeon", rtt: -5, dl: 1e9, theme: "not ok!", ol: "yes" }),
-    ).toEqual({});
+    ).toEqual({ rtt: 0, dl: 10_000 });
     expect(cleanDeviceData("nope")).toEqual({});
     expect(cleanDeviceData(null)).toEqual({});
     expect(cleanDeviceData([1, 2])).toEqual({});
@@ -216,7 +291,7 @@ describe("what a device may say about itself", () => {
     expect(cleanNetData({ ev: "explode" })).toEqual({});
   });
 
-  it("is applied to device and net events inside a batch, but not to other kinds", () => {
+  it("is applied to device and net events inside a batch, and the other kinds have their own lists", () => {
     const batch = sanitizeBatch({
       ...base,
       ev: [

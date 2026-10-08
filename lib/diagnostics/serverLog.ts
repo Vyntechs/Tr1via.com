@@ -13,9 +13,27 @@
 //     trace.ts), the response is returned untouched, and the row is built and
 //     written AFTER the response has gone out (lib/diagnostics/write.ts).
 //   - an exception thrown by the handler is logged, then re-thrown unchanged.
+//
+// WHO GETS A ROW. These routes can be called by anyone, so a row is stored
+// only for a caller the server has verified:
+//   - an answer tap: a signed device cookie that belongs to a player of the
+//     night the tap is about (late, duplicate and turned-down taps from real
+//     players are stored, which is the whole point);
+//   - a host press: a signed-in host who owns the night;
+//   - a timer-end call (resolve / finalize): a player of that night. The venue
+//     TV sends these without any login, so its calls are not stored (the TV's
+//     own reports show them).
+// Anything else stores NOTHING: it is only counted, and one summary line a
+// minute is printed (noteIgnored in write.ts). Rows go through recordDiagRows,
+// which keeps each night and each source inside a row cap kept in the database.
+//
+// The routes are wrapped with a one-line `export const POST = withActionLog(...)`
+// (or withAnswerLog); with DIAGNOSTIC_LOGGING off that is the original handler.
 
 import "server-only";
 
+import { verifyDeviceCookie } from "@/lib/auth/device-cookie";
+import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import {
   classifyActionResponse,
   classifyAnswerResponse,
@@ -25,12 +43,15 @@ import {
 import { diagnosticsEnabled } from "./config";
 import { elapsedMs, runInTrace, serverContext, startTrace, type DiagTrace } from "./trace";
 import {
-  insertDiagRows,
   lookupGameNight,
+  lookupNightOwner,
   lookupPlayerId,
   lookupQuestionContext,
   lookupRoomNight,
+  noteIgnored,
+  recordDiagRows,
   scheduleDiagWrite,
+  type DiagSource,
 } from "./write";
 
 // ─── helpers ──────────────────────────────────────────────────────────
@@ -125,6 +146,14 @@ function finishAnswer(
   res: Response | null,
   err: unknown,
 ): void {
+  const n = trace.notes;
+  // The route notes the device id only after it verified the signed cookie. No
+  // cookie, or a bad one: this is not a player, so nothing is stored.
+  const deviceId = uid(n.deviceId);
+  if (!deviceId) {
+    noteIgnored("answer");
+    return;
+  }
   const total = elapsedMs(trace);
   const status = res ? res.status : 500;
   // Clone now (cheap, before the body goes out); read it after the response.
@@ -137,57 +166,67 @@ function finishAnswer(
     }
   }
   const ctx = serverContext(trace);
-  const n = trace.notes;
 
   scheduleDiagWrite(async () => {
-    const hint: ResponseBodyHint | null = await readBodyHint(bodyCopy);
-    const verdict = err
-      ? { outcome: "error" as const, reason: "exception" }
-      : classifyAnswerResponse(status, hint, "insert" in trace.marks);
-
     let nightId = uid(n.nightId);
     let gameId = uid(n.gameId);
     const questionId = uid(n.questionId);
-    const deviceId = uid(n.deviceId);
-    let playerId = uid(n.playerId);
     if (questionId && (!nightId || !gameId)) {
       const found = await lookupQuestionContext(questionId);
       nightId = nightId ?? found.nightId;
       gameId = gameId ?? found.gameId;
     }
-    if (!playerId && nightId && deviceId) {
-      playerId = await lookupPlayerId(nightId, deviceId);
+    // A tap about a question, game or night that does not exist is junk.
+    if (!nightId) {
+      noteIgnored("answer");
+      return;
     }
+    // The cookie is genuine, but is this device a player of THIS night?
+    const playerId = uid(n.playerId) ?? (await lookupPlayerId(nightId, deviceId));
+    if (!playerId) {
+      noteIgnored("answer");
+      return;
+    }
+
+    const hint: ResponseBodyHint | null = await readBodyHint(bodyCopy);
+    const verdict = err
+      ? { outcome: "error" as const, reason: "exception" }
+      : classifyAnswerResponse(status, hint, "insert" in trace.marks);
 
     const playedAt = iso(n.questionPlayedAt);
     const receivedMs = trace.receivedAt.getTime();
-    await insertDiagRows("diag_answer_events", [
-      {
-        received_at: trace.receivedAt.toISOString(),
-        engine: n.engine === "legacy" || n.engine === "resilient_v1" ? n.engine : "unknown",
-        night_id: nightId,
-        game_id: gameId,
-        question_id: questionId,
-        play_id: uid(n.playId),
-        player_id: playerId,
-        device_id: deviceId,
-        slot_chosen: int(n.slotChosen),
-        chosen_index: int(n.chosenIndex),
-        client_tap_at: tap.tapAt,
-        client_sent_at: tap.sentAt,
-        client_attempt: tap.attempt,
-        question_played_at: playedAt,
-        question_finished_at: iso(n.questionFinishedAt),
-        ms_after_open: playedAt ? receivedMs - new Date(playedAt).getTime() : null,
-        deadline_s: int(n.deadlineS),
-        outcome: verdict.outcome,
-        reason: verdict.reason,
-        http_status: status,
-        total_ms: total,
-        steps: stepsOf(trace, total),
-        ...ctx,
-      },
-    ]);
+    await recordDiagRows(
+      "diag_answer_events",
+      [
+        {
+          received_at: trace.receivedAt.toISOString(),
+          engine: n.engine === "legacy" || n.engine === "resilient_v1" ? n.engine : "unknown",
+          night_id: nightId,
+          game_id: gameId,
+          question_id: questionId,
+          play_id: uid(n.playId),
+          player_id: playerId,
+          device_id: deviceId,
+          slot_chosen: int(n.slotChosen),
+          chosen_index: int(n.chosenIndex),
+          client_tap_at: tap.tapAt,
+          client_sent_at: tap.sentAt,
+          client_attempt: tap.attempt,
+          question_played_at: playedAt,
+          question_finished_at: iso(n.questionFinishedAt),
+          ms_after_open: playedAt ? receivedMs - new Date(playedAt).getTime() : null,
+          deadline_s: int(n.deadlineS),
+          outcome: verdict.outcome,
+          reason: verdict.reason,
+          http_status: status,
+          total_ms: total,
+          steps: stepsOf(trace, total),
+          ...ctx,
+        },
+      ],
+      nightId,
+      { kind: "player", deviceId },
+    );
   });
 }
 
@@ -195,8 +234,12 @@ function finishAnswer(
 export type ActionIdKind = "game" | "question" | "night" | "room";
 
 export interface ActionLogOptions {
-  /** host = a signed-in host pressed it; timer = a phone/TV asked at clock zero. */
-  actor?: "host" | "timer" | "system";
+  /**
+   * host = a signed-in host pressed it (stored only when that host owns the
+   * night); timer = a phone or the TV asked at clock zero (stored only when a
+   * player of the night asked).
+   */
+  actor?: "host" | "timer";
   /** What the route's `[id]` segment is, so the night can be filled in. */
   idKind?: ActionIdKind;
 }
@@ -237,6 +280,34 @@ async function routeParams(args: unknown[]): Promise<Record<string, string>> {
   }
 }
 
+const DEVICE_COOKIE = "tr1via_device";
+
+/**
+ * The device id from a request's signed device cookie, or null. Checked here
+ * without any network call (the cookie carries its own signature). Never throws.
+ */
+function verifiedDeviceFrom(req: unknown): string | null {
+  try {
+    const secret = process.env.SESSION_SECRET;
+    const header = (req as { headers?: Headers } | undefined)?.headers?.get("cookie");
+    if (!secret || !header) return null;
+    for (const part of header.split(";")) {
+      const eq = part.indexOf("=");
+      if (eq < 0 || part.slice(0, eq).trim() !== DEVICE_COOKIE) continue;
+      let value = part.slice(eq + 1).trim();
+      try {
+        value = decodeURIComponent(value);
+      } catch {
+        // use it as it is
+      }
+      return uid(verifyDeviceCookie(value, secret));
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function finishAction(
   action: string,
   options: ActionLogOptions,
@@ -245,6 +316,19 @@ function finishAction(
   res: Response | null,
   err: unknown,
 ): void {
+  const n = trace.notes;
+  const actor = options.actor ?? "host";
+  // Who is asking, as far as the server has verified. A host: the sign-in check
+  // noted the host (lib/api/auth.ts getAuthedHost); whether that host owns the
+  // night is checked below. A timer-end call: a valid signed device cookie. No
+  // proof of either: nothing is stored.
+  const hostId = actor === "host" ? uid(n.hostId) : null;
+  const deviceId = actor === "timer" ? verifiedDeviceFrom(args[0]) : null;
+  if (!hostId && !deviceId) {
+    noteIgnored("action");
+    return;
+  }
+
   const total = elapsedMs(trace);
   const status = res ? res.status : 500;
   let bodyCopy: Response | null = null;
@@ -256,17 +340,11 @@ function finishAction(
     }
   }
   const ctx = serverContext(trace);
-  const n = trace.notes;
   const m = trace.marks;
   // The route params are a promise the route already awaited.
   const paramsPromise = routeParams(args);
 
   scheduleDiagWrite(async () => {
-    const hint = await readBodyHint(bodyCopy);
-    const verdict = err
-      ? { outcome: "error", reason: "exception" }
-      : classifyActionResponse(status, hint);
-
     const params = await paramsPromise;
     const id = str(params.id) ?? str(params.code);
     let nightId = uid(n.nightId);
@@ -276,7 +354,10 @@ function finishAction(
       if (options.idKind === "game") gameId = gameId ?? uid(id);
       if (options.idKind === "question") questionId = questionId ?? uid(id);
       if (options.idKind === "night") nightId = nightId ?? uid(id);
-      if (options.idKind === "room") nightId = nightId ?? (await lookupRoomNight(id));
+      if (options.idKind === "room" && !nightId) {
+        const code = parseRoomCode(id);
+        if (isValidRoomCode(code)) nightId = await lookupRoomNight(code);
+      }
     }
     if (!nightId && gameId) nightId = await lookupGameNight(gameId);
     if (!nightId && questionId) {
@@ -284,31 +365,50 @@ function finishAction(
       nightId = found.nightId;
       gameId = gameId ?? found.gameId;
     }
+    // Verified against the night itself: the signed-in host must own it, or the
+    // cookie's device must be one of its players.
+    let source: DiagSource | null = null;
+    if (nightId && hostId && (await lookupNightOwner(nightId)) === hostId) source = { kind: "host" };
+    else if (nightId && deviceId && (await lookupPlayerId(nightId, deviceId))) source = { kind: "player", deviceId };
+    if (!nightId || !source) {
+      noteIgnored("action");
+      return;
+    }
+
+    const hint = await readBodyHint(bodyCopy);
+    const verdict = err
+      ? { outcome: "error", reason: "exception" }
+      : classifyActionResponse(status, hint);
 
     const auth = m.auth_done_last ?? m.auth_done ?? null;
-    await insertDiagRows("diag_server_actions", [
-      {
-        received_at: trace.receivedAt.toISOString(),
-        action,
-        actor: options.actor ?? "host",
-        night_id: nightId,
-        game_id: gameId,
-        question_id: questionId,
-        play_id: uid(n.playId) ?? uid(params.playId),
-        http_status: status,
-        outcome: verdict.outcome,
-        reason: verdict.reason,
-        total_ms: total,
-        auth_ms: auth,
-        // Everything before the broadcast is sign-in + database work.
-        db_done_ms: m.db_done ?? m.broadcast_start ?? null,
-        broadcast_start_ms: m.broadcast_start ?? null,
-        broadcast_done_ms: m.broadcast_done ?? null,
-        broadcast_ok: "broadcast_start" in m ? !n.broadcastError : null,
-        broadcast_error: str(n.broadcastError),
-        steps: stepsOf(trace, total),
-        ...ctx,
-      },
-    ]);
+    await recordDiagRows(
+      "diag_server_actions",
+      [
+        {
+          received_at: trace.receivedAt.toISOString(),
+          action,
+          actor,
+          night_id: nightId,
+          game_id: gameId,
+          question_id: questionId,
+          play_id: uid(n.playId) ?? uid(params.playId),
+          http_status: status,
+          outcome: verdict.outcome,
+          reason: verdict.reason,
+          total_ms: total,
+          auth_ms: auth,
+          // Everything before the broadcast is sign-in + database work.
+          db_done_ms: m.db_done ?? m.broadcast_start ?? null,
+          broadcast_start_ms: m.broadcast_start ?? null,
+          broadcast_done_ms: m.broadcast_done ?? null,
+          broadcast_ok: "broadcast_start" in m ? !n.broadcastError : null,
+          broadcast_error: str(n.broadcastError),
+          steps: stepsOf(trace, total),
+          ...ctx,
+        },
+      ],
+      nightId,
+      source,
+    );
   });
 }
