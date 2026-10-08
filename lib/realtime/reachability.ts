@@ -22,6 +22,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { diagEvent } from "@/lib/diagnostics/client";
 
 export type Reachability = "ok" | "unreachable";
 
@@ -31,6 +32,8 @@ let currentState: Reachability | undefined = undefined;
 
 export function setReachability(state: Reachability | undefined): void {
   if (currentState === state) return;
+  // Diagnostic log (does nothing unless logging is on).
+  diagEvent("reach", { from: currentState, to: state }, true);
   currentState = state;
   for (const listener of listeners) listener(state);
 }

@@ -16,6 +16,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastAppliedLiveRoomEvent, broadcastGameEnded, broadcastFireworks } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
 const LiveGameCommandSchema = z.object({
   runId: UuidSchema,
@@ -23,7 +24,7 @@ const LiveGameCommandSchema = z.object({
   expectedControlRevision: z.number().int().nonnegative(),
 }).strict();
 
-export async function POST(
+async function postEndGame(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -117,3 +118,5 @@ export async function POST(
 
   return ok({ state: data.state, endedAt: data.ended_at });
 }
+
+export const POST = withActionLog("end_game", postEndGame, { idKind: "game" });

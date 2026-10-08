@@ -6,6 +6,7 @@
 // bounds each attempt with its own timeout, and aborts cleanly on an external
 // signal. Pure-ish: the fetch impl + RNG are injectable for deterministic tests.
 
+import { diagSnap } from "@/lib/diagnostics/client";
 import { jitteredDelayMs } from "./recoveryBackoff";
 
 /** Per-attempt retry backoff: quick first re-tries (not the slow 2→8s recovery
@@ -50,10 +51,12 @@ export async function fetchJsonWithRetry<T>(
   } = options;
 
   let lastError: unknown;
+  const startedAt = performance.now(); // diagnostic log only
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (signal?.aborted) throw new AbortedError();
     try {
       const body = await attemptOnce<T>(url, perAttemptTimeoutMs, signal, fetchImpl);
+      diagSnap(url, performance.now() - startedAt, true, attempt + 1);
       return body;
     } catch (err) {
       lastError = err;
@@ -62,6 +65,10 @@ export async function fetchJsonWithRetry<T>(
       const delay = jitteredDelayMs(FETCH_RETRY_BASE_DELAYS_MS, attempt, rand());
       await sleep(delay, signal);
     }
+  }
+  if (!signal?.aborted) {
+    const name = lastError instanceof Error ? lastError.name : "unknown";
+    diagSnap(url, performance.now() - startedAt, false, attempts, name);
   }
   throw lastError ?? new Error("fetchJsonWithRetry: exhausted with no error");
 }

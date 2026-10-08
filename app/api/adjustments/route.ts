@@ -10,8 +10,10 @@ import { AdjustmentSchema } from "@/lib/api/schemas";
 import { badRequest, ok, forbidden, unauthorized, serverError, notFound } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
+import { diagNote } from "@/lib/diagnostics/trace";
 
-export async function POST(req: NextRequest) {
+async function postAdjust(req: NextRequest) {
   let body: unknown;
   try {
     body = await req.json();
@@ -20,6 +22,7 @@ export async function POST(req: NextRequest) {
   }
   const parsed = AdjustmentSchema.safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
+  diagNote({ gameId: parsed.data.gameId }); // diagnostic log only
 
   // Ownership: the host must own the game's parent night. requireOwnedGame
   // also confirms the game exists.
@@ -56,3 +59,5 @@ export async function POST(req: NextRequest) {
   if (error || !data) return serverError(error?.message ?? "could not adjust");
   return ok({ adjustmentId: data.id, delta: data.delta }, 201);
 }
+
+export const POST = withActionLog("adjust", postAdjust);

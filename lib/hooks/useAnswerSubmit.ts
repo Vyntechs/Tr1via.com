@@ -23,6 +23,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { diagActive, diagEvent } from "@/lib/diagnostics/client";
 
 export type AnswerSubmitStatus = "idle" | "pending" | "sent" | "failed";
 
@@ -121,6 +122,25 @@ export function useAnswerSubmit({
   const cancelledRef = useRef(false);
   const acceptingRef = useRef(accepting);
   acceptingRef.current = accepting;
+  // Diagnostic log only: when this tap happened on the phone's own clock and
+  // what the server last said. Never read by the answer logic. `resumed` marks
+  // an answer re-sent after a refresh: its real tap time is not known, so none
+  // is claimed (the server stores "unknown" rather than the resume time).
+  const tapLogRef = useRef<{ at: number; last: number | string | null; resumed?: boolean } | null>(null);
+  const reportTap = useCallback(
+    (slot: number, tries: number, ok: boolean) => {
+      const tap = tapLogRef.current;
+      if (!tap) return;
+      tapLogRef.current = null;
+      const ms = Date.now() - tap.at;
+      diagEvent(
+        "tap",
+        { q: questionId, slot, tries, ms, ok, st: tap.last, rs: tap.resumed },
+        !ok || tries > 1 || ms > 2000 || tap.resumed === true,
+      );
+    },
+    [questionId],
+  );
 
   const runAttempt = useCallback(
     async (slot: 1 | 2 | 3 | 4, attempt: number) => {
@@ -133,11 +153,27 @@ export function useAnswerSubmit({
         const res = await fetch("/api/answers", {
           method: "POST",
           credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            // The phone's own tap timing, for the diagnostic log (headers, so
+            // the body the server validates is unchanged).
+            ...(diagActive()
+              ? {
+                  // A resumed answer has no known tap time: leave it out.
+                  ...(tapLogRef.current?.resumed
+                    ? {}
+                    : { "x-tr1via-tap-at": String(tapLogRef.current?.at ?? Date.now()) }),
+                  "x-tr1via-sent-at": String(Date.now()),
+                  "x-tr1via-attempt": String(attempt),
+                }
+              : {}),
+          },
           body: JSON.stringify({ questionId, slotChosen: slot, scramble }),
         });
+        if (tapLogRef.current) tapLogRef.current.last = res.status;
         if (cancelledRef.current) return;
         if (shouldTreatAsSent(res.status)) {
+          reportTap(slot, attempt + 1, true);
           clearPendingAnswer();
           setConfirmedAt(Date.now());
           setStatus("sent");
@@ -147,6 +183,7 @@ export function useAnswerSubmit({
           // The question is closed or the request is malformed. There is no
           // useful future retry; drop the persisted entry so we don't fire
           // again on next mount.
+          reportTap(slot, attempt + 1, false);
           clearPendingAnswer();
           setStatus("failed");
           return;
@@ -154,9 +191,11 @@ export function useAnswerSubmit({
         // Transient (5xx or 429) — fall through to retry.
       } catch {
         if (cancelledRef.current) return;
+        if (tapLogRef.current) tapLogRef.current.last = "network";
         // Network error — fall through to retry.
       }
       if (!acceptingRef.current) {
+        reportTap(slot, attempt + 1, false);
         clearPendingAnswer();
         setStatus("failed");
         return;
@@ -164,6 +203,7 @@ export function useAnswerSubmit({
       if (attempt + 1 >= maxAttempts) {
         // Exhausted in-memory retries. Leave the localStorage entry alone:
         // if the player refreshes, the next mount will auto-resume.
+        reportTap(slot, attempt + 1, false);
         setStatus("failed");
         return;
       }
@@ -172,7 +212,7 @@ export function useAnswerSubmit({
         if (!cancelledRef.current) runAttempt(slot, attempt + 1);
       }, delay);
     },
-    [questionId, scramble, maxAttempts, backoffMs],
+    [questionId, scramble, maxAttempts, backoffMs, reportTap],
   );
 
   useEffect(() => {
@@ -191,6 +231,7 @@ export function useAnswerSubmit({
       if (pending.questionId === questionId) {
         if (acceptingRef.current) {
           lastSlotRef.current = pending.slotChosen;
+          tapLogRef.current = { at: Date.now(), last: null, resumed: true }; // diagnostic log only
           setStatus("pending");
           void runAttempt(pending.slotChosen, 0);
         } else {
@@ -218,8 +259,13 @@ export function useAnswerSubmit({
 
   const submit = useCallback(
     (slot: 1 | 2 | 3 | 4) => {
-      if (!acceptingRef.current) return;
+      if (!acceptingRef.current) {
+        // The phone's timer had already ended: record that the tap was ignored.
+        diagEvent("tapx", { q: questionId, slot, why: "closed" }, true);
+        return;
+      }
       if (status === "pending" || status === "sent") return;
+      tapLogRef.current = { at: Date.now(), last: null };
       lastSlotRef.current = slot;
       savePendingAnswer({ questionId, slotChosen: slot });
       setStatus("pending");
@@ -233,6 +279,7 @@ export function useAnswerSubmit({
     if (status !== "failed") return;
     const slot = lastSlotRef.current;
     if (!slot) return;
+    tapLogRef.current = { at: Date.now(), last: null };
     savePendingAnswer({ questionId, slotChosen: slot });
     setStatus("pending");
     runAttempt(slot, 0);

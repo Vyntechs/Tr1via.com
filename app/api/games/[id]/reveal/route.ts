@@ -25,8 +25,9 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastAppliedLiveRoomEvent, broadcastToRoom } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
-export async function POST(
+async function postReveal(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -184,3 +185,5 @@ export async function POST(
 
   return ok({ revealedAt });
 }
+
+export const POST = withActionLog("reveal", postReveal, { idKind: "game" });

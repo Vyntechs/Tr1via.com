@@ -46,6 +46,8 @@ import {
   recordLiveAnswerHealth,
   type LiveAnswerResultCode,
 } from "@/lib/live-answer/telemetry";
+import { withAnswerLog } from "@/lib/diagnostics/serverLog";
+import { diagMark, diagNote } from "@/lib/diagnostics/trace";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
@@ -128,13 +130,14 @@ async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
   return null;
 }
 
-export async function POST(req: NextRequest) {
+async function handleAnswer(req: NextRequest) {
   // Capture the request at the route boundary. For legacy answers this is the
   // official receipt time used by the final database deadline check; parsing
   // and lookups must not move a timely answer past the line.
   const receivedAt = new Date();
   const deviceId = await getDeviceId();
   if (!deviceId) return unauthorized("no device session");
+  diagNote({ deviceId }); // diagnostic log only; no-op unless logging is on
 
   let body: unknown;
   try {
@@ -145,6 +148,16 @@ export async function POST(req: NextRequest) {
   const resilient = ResilientAnswerSchema.safeParse(body);
   const legacy = SubmitAnswerSchema.safeParse(body);
   if (!resilient.success && !legacy.success) return badRequest(resilient.error);
+  if (resilient.success) {
+    diagNote({ engine: "resilient_v1", playId: resilient.data.playId, slotChosen: resilient.data.slotChosen });
+  } else if (legacy.success) {
+    diagNote({
+      engine: "legacy",
+      questionId: legacy.data.questionId,
+      slotChosen: legacy.data.slotChosen,
+      deadlineS: questionDurationFor(undefined),
+    });
+  }
 
   const admin = getSupabaseAdmin();
 
@@ -159,6 +172,7 @@ export async function POST(req: NextRequest) {
       .eq("id", input.playId)
       .maybeSingle();
     if (playError) return serverError();
+    if (play) diagNote({ questionId: play.question_id, gameId: play.game_id, nightId: play.night_id });
     if (!play) return notFound("play not found");
 
     const { data: night, error: nightError } = await admin
@@ -185,6 +199,7 @@ export async function POST(req: NextRequest) {
         p_visible_slot: input.slotChosen,
       },
     );
+    diagMark("claim");
     if (claimError) return serverError();
 
     const claimEnvelope = parseLiveAnswerClaimRpcEnvelope(claimData);
@@ -225,6 +240,7 @@ export async function POST(req: NextRequest) {
         p_verified_device_id: deviceId,
       },
     );
+    diagMark("apply");
     if (applyError) return serverError();
 
     const envelope = parseLiveAnswerRpcEnvelope(applyData);
@@ -302,6 +318,8 @@ export async function POST(req: NextRequest) {
     .eq("id", parsed.data.questionId)
     .maybeSingle();
   if (questionError) return serverError();
+  diagMark("question");
+  diagNote({ questionPlayedAt: q?.played_at, questionFinishedAt: q?.finished_at });
   if (!q) return notFound("question not found");
   if (!q.played_at) return conflict("question is not live");
   if (
@@ -334,6 +352,7 @@ export async function POST(req: NextRequest) {
   if (gameError) return serverError();
   if (!game) return notFound("game not found");
   const nightId = game.night_id;
+  diagNote({ gameId, nightId });
 
   const { data: night, error: nightError } = await admin
     .from("nights")
@@ -355,6 +374,8 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   if (playerError) return serverError();
   if (!player) return forbidden("not joined to this night");
+  diagNote({ playerId: player.id });
+  diagMark("player");
   if (player.removed_at) return forbidden("you have been removed");
 
   // Verify per-game participation. Players who joined the night but didn't
@@ -387,6 +408,7 @@ export async function POST(req: NextRequest) {
   // scramble[slot-1] is the canonical option index the phone showed in that
   // slot. Out-of-range is impossible because SubmitAnswerSchema clamps to 1..4.
   const chosenIndex = expected[parsed.data.slotChosen - 1] as 0 | 1 | 2 | 3;
+  diagNote({ chosenIndex });
   const msToLock = Math.max(
     0,
     receivedAt.getTime() - new Date(q.played_at).getTime(),
@@ -402,6 +424,7 @@ export async function POST(req: NextRequest) {
       ms_to_lock: msToLock,
       locked_at: receivedAt.toISOString(),
     });
+  diagMark("insert");
   if (error) {
     if (error.code === "TR025") return badRequest("answer deadline passed");
     if (error.code === "TRCL0") return badRequest("question is closed");
@@ -415,3 +438,5 @@ export async function POST(req: NextRequest) {
 
   return noContent();
 }
+
+export const POST = withAnswerLog(handleAnswer);

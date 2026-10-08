@@ -29,6 +29,8 @@ import {
   type RoomMagicReactionEvent,
 } from "@/lib/room-magic/reactions";
 import type { LiveRoomProjection } from "@/lib/live-answer/contracts";
+import { diagBroadcastHeard, diagSnap } from "@/lib/diagnostics/client";
+import { useDiagQuestionOpen } from "@/lib/diagnostics/useQuestionOpen";
 
 const SAFETY_REFETCH_MS = 4000;
 
@@ -189,6 +191,10 @@ interface RoomScopedState<T> {
 export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const [status, setStatus] = useState<TVRoomStatus>("loading");
   const [snapshot, setSnapshot] = useState<TVSnapshot | null>(null);
+  // Diagnostic log only: whether a question is live on the TV, so the device
+  // reporter stays quiet until it closes (and until the first room download is
+  // done). Nothing reads the result.
+  useDiagQuestionOpen(Boolean(snapshot?.liveQuestionId), snapshot !== null);
   const [lastBroadcast, setLastBroadcast] =
     useState<RoomScopedState<TVBroadcast> | null>(null);
   const [lastFireworksBeat, setLastFireworksBeat] =
@@ -212,6 +218,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     activeSnapshotAbortRef.current?.abort();
     const controller = new AbortController();
     activeSnapshotAbortRef.current = controller;
+    const diagStartedAt = performance.now(); // diagnostic log only
     const isCurrentRequest = () =>
       !controller.signal.aborted &&
       activeCodeRef.current === requestedCode &&
@@ -239,18 +246,27 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         return;
       }
       if (!res.ok) {
+        diagSnap(`/api/tv/${requestedCode}/snapshot`, performance.now() - diagStartedAt, false, 1, `HTTP ${res.status}`);
         setStatusCode(requestedCode);
         setStatus("error");
         return;
       }
       const data = (await res.json()) as TVSnapshot;
       if (!isCurrentRequest()) return;
+      diagSnap(`/api/tv/${requestedCode}/snapshot`, performance.now() - diagStartedAt, true, 1);
       setStatusCode(requestedCode);
       setSnapshotCode(requestedCode);
       setSnapshot(data);
       setStatus("ready");
-    } catch {
+    } catch (error) {
       if (!isCurrentRequest()) return;
+      diagSnap(
+        `/api/tv/${requestedCode}/snapshot`,
+        performance.now() - diagStartedAt,
+        false,
+        1,
+        error instanceof Error ? error.name : "unknown",
+      );
       controller.abort();
       setStatusCode(requestedCode);
       setStatus("error");
@@ -437,6 +453,8 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
           },
         });
       })
+      // Diagnostic log: when each game change was heard (no-op unless on).
+      .on("broadcast", { event: "*" }, diagBroadcastHeard)
       .subscribe();
 
     // Safety polling for missed broadcasts + slow-moving state (players

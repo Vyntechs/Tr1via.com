@@ -16,6 +16,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { diagRibbon } from "@/lib/diagnostics/client";
 import type { Reachability } from "@/lib/realtime/reachability";
 
 export type ConnectionStatus =
@@ -37,7 +38,25 @@ export interface UseConnectionStatusOptions {
 
 const HEALTHY_CHANNEL_STATES = new Set(["SUBSCRIBED", "JOINED"]);
 
-export function useConnectionStatus({
+export function useConnectionStatus(
+  options: UseConnectionStatusOptions = {},
+): ConnectionStatus {
+  const status = useConnectionStatusBase(options);
+  const { channelState, reachability, backupMode } = options;
+  // Diagnostic log: when the ribbon / "switch to a hotspot" screen changes and
+  // why. Does nothing unless logging is on; never changes the returned status.
+  useEffect(() => {
+    diagRibbon(status, {
+      channel: channelState,
+      reach: reachability,
+      backup: backupMode,
+      online: typeof navigator === "undefined" ? undefined : navigator.onLine,
+    });
+  }, [status, channelState, reachability, backupMode]);
+  return status;
+}
+
+function useConnectionStatusBase({
   channelState,
   reachability,
   backupMode,

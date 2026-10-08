@@ -17,6 +17,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { diagEvent } from "@/lib/diagnostics/client";
 
 type Listener = (state: string | undefined) => void;
 const listeners = new Set<Listener>();
@@ -24,6 +25,8 @@ let currentState: string | undefined = undefined;
 
 export function setChannelHealth(state: string | undefined): void {
   if (currentState === state) return;
+  // Diagnostic log (does nothing unless logging is on).
+  diagEvent("chan", { from: currentState, to: state }, true);
   currentState = state;
   for (const listener of listeners) listener(state);
 }

@@ -20,6 +20,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { cookies } from "next/headers";
 import { verifyDeviceCookie } from "@/lib/auth/device-cookie";
 import { isSupabaseSessionCookie } from "@/lib/auth/session-cookies";
+import { diagMark, diagNote } from "@/lib/diagnostics/trace";
 import { presentationKey } from "@/lib/room/presentationKey";
 import type {
   CategoryRow,
@@ -60,6 +61,9 @@ export async function getAuthedHost(): Promise<HostAuthResult> {
     data: { user },
     error: userError,
   } = await supa.auth.getUser();
+  // Diagnostic marks (no-ops unless this request is being logged).
+  diagMark("auth_done");
+  diagMark("auth_done_last", true);
   if (userError || !user) {
     return { ok: false, status: 401, error: "not signed in" };
   }
@@ -71,6 +75,9 @@ export async function getAuthedHost(): Promise<HostAuthResult> {
   if (!host) {
     return { ok: false, status: 403, error: "host profile not found" };
   }
+  // Diagnostic note (no-op unless this request is being logged): which host
+  // signed in, so the log stores a press only for the host who owns the night.
+  diagNote({ hostId: host.id });
   return { ok: true, host: host as HostRow };
 }
 
@@ -106,6 +113,9 @@ async function ownedNightFor(
     .select("*")
     .eq("id", nightId)
     .maybeSingle();
+  // Diagnostic mark (no-op unless this request is being logged): the night
+  // lookup behind the ownership check is done.
+  diagMark("owned_done");
   if (!night) return { ok: false, status: 404, error: "night not found" };
   if (night.host_id !== host.id) {
     return { ok: false, status: 403, error: "not your night" };

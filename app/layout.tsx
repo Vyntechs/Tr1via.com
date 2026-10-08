@@ -4,6 +4,8 @@ import "./globals.css";
 import { SeasonalThemeProvider } from "@/components/system/SeasonalThemeProvider";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { MONTH_THEME_SCRIPT } from "@/lib/theme/monthThemeScript";
+import { DiagnosticsMount } from "@/components/diagnostics/DiagnosticsMount";
+import { diagnosticsEnabled } from "@/lib/diagnostics/config";
 
 const geist = Geist({ subsets: ["latin"], variable: "--font-geist", display: "swap" });
 const geistMono = Geist_Mono({ subsets: ["latin"], variable: "--font-geist-mono", display: "swap" });
@@ -58,6 +60,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <SeasonalThemeProvider ssrThemeKey={ssrThemeKey}>
           {children}
         </SeasonalThemeProvider>
+        {/* Diagnostic logging: draws nothing, and is left out entirely unless
+            DIAGNOSTIC_LOGGING is on (it is off by default). */}
+        {diagnosticsEnabled() ? <DiagnosticsMount /> : null}
       </body>
     </html>
   );

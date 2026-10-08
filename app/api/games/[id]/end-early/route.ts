@@ -18,8 +18,9 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastAppliedLiveRoomEvent, broadcastFireworks, broadcastToRoom } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
-export async function POST(
+async function postEndEarly(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -154,3 +155,5 @@ export async function POST(
 
   return ok({ resolvedAt: new Date().toISOString() });
 }
+
+export const POST = withActionLog("end_early", postEndEarly, { idKind: "game" });
