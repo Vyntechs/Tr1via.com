@@ -143,18 +143,22 @@ at time zone 'America/Chicago'
 tables and returns how many it removed. It refuses fewer than 7 days so a typo
 cannot wipe a live night.
 
-It runs by itself once a day (09:17 UTC, about 4 am Central) from a Vercel
-cron entry in `vercel.json`, which calls `GET /api/cron/diag-cleanup`:
+It runs by itself once a day (09:17 UTC, which is 4:17 am Central in summer and
+3:17 am in winter) from a Vercel cron entry in `vercel.json`, which calls
+`GET /api/cron/diag-cleanup`. Vercel's delivery is best effort (a run can be
+missed or doubled); that is fine here, because the cleanup is the same
+"delete what is older than 45 days" every time:
 
 * **With `DIAGNOSTIC_LOGGING` off (or unset) the route answers 204 and does
   nothing**: it does not read the secret, touch the database or run the
   function. So merging this with logging off schedules a daily call that exits
   at once.
 * With logging on it needs the header `Authorization: Bearer <CRON_SECRET>`,
-  which Vercel sends by itself once a `CRON_SECRET` environment variable (any
-  long random string) is set for Production. With no secret set it refuses
+  which Vercel sends by itself once a `CRON_SECRET` environment variable (a
+  random string of at least 16 characters) is set for Production. With no secret set it refuses
   (401) and cleans nothing. It never takes a day count from the request.
-* Vercel runs cron entries only on the Production deployment.
+* Vercel calls the project's Production deployment URL, so preview copies of a
+  branch never run it.
 
 One gap to know about: **turning logging off also stops the cleanup**, so rows
 already in the tables stay until someone runs it by hand once:
