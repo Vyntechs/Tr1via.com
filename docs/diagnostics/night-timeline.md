@@ -92,6 +92,12 @@ good the connection is, which is the first thing to check when one phone lags.
 The browser rounds them, so they cannot tell phones apart. `net` reports carry
 `ev` (`online`, `offline`, `conn`), `ol`, and the four connection keys.
 
+Vercel makes `VERCEL_DEPLOYMENT_ID` (like `dpl_7Gw5ZMBpQA8h9GF832KGp7nwbuh3`) and
+`VERCEL_GIT_COMMIT_SHA` available at build time as well as at run time (Vercel's
+"System environment variables" page), but only while the project setting **Enable
+access to System Environment Variables** is on; if it is off, pages carry no `rel`
+or `sha` and the server rows carry no `deployment` either.
+
 `rel` and `sha` are public build labels (anyone who loads the site gets the same
 ones), not anything about the person. A phone left open across a deploy keeps its
 old `rel`, so the question "was this phone on an older version than the server?"
