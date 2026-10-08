@@ -36,22 +36,25 @@ export const DIAG_MAX_EVENTS_PER_BATCH = 60;
 //     queue of DIAG_WRITE_QUEUE_MAX jobs;
 //   - a job that waited DIAG_QUEUE_WAIT_MS without getting a turn is dropped
 //     (and counted), and so is any job arriving to a full queue;
-//   - one job never holds its turn longer than DIAG_JOB_DEADLINE_MS.
+//   - one job stops at DIAG_JOB_DEADLINE_MS: inside a job no database call may
+//     start after that, and none may run past it (deadline.ts), and the job
+//     keeps its turn until it has really stopped, so the database never sees
+//     more than DIAG_MAX_WRITES_IN_FLIGHT log calls at once.
 export const DIAG_WRITE_TIMEOUT_MS = 2_000;
 export const DIAG_MAX_WRITES_IN_FLIGHT = 5;
 export const DIAG_WRITE_QUEUE_MAX = 200;
 export const DIAG_QUEUE_WAIT_MS = 8_000;
 export const DIAG_JOB_DEADLINE_MS = 5_000;
 
-// Row caps, kept in the database (table diag_quota, function diag_take_rows),
-// so they hold across every server instance. Rows past a cap are dropped and
-// counted, never stored. A night is capped as a whole, and each source is
-// capped inside it so one noisy source cannot use up the others' room:
-//   "p:<device id>"  one player phone's reports
-//   "tv"             the venue TV(s) of the night, reports
-//   "host"           the host laptop / phone, reports
-//   "a:<device id>"  one player phone's taps and timer-end calls (server rows)
-//   "press"          the host's button presses (server rows)
+// Row caps. A night is capped as a whole, and each KIND of source is capped
+// inside it, so one noisy kind cannot use up the others' room. Both live in the
+// database (table diag_quota, function diag_take_rows), so they hold across every
+// server instance:
+//   "phones"  every player phone's reports together
+//   "tv"      the venue TV(s) of the night, reports
+//   "host"    the host laptop / phone, reports
+//   "taps"    every player phone's taps and timer-end calls together (server rows)
+//   "press"   the host's button presses (server rows)
 // The server's own rows (taps, timer-end calls, presses) are the evidence the
 // whole thing exists for, and device reports are chatty, so reports stop at
 // DIAG_NIGHT_ROW_CAP and the server's rows may go on up to the higher
@@ -63,14 +66,27 @@ export const DIAG_JOB_DEADLINE_MS = 5_000;
 export const DIAG_NIGHT_ROW_CAP = 40_000;
 export const DIAG_NIGHT_SERVER_ROW_CAP = 60_000;
 export const DIAG_BUCKET_ROW_CAPS = {
-  player: 2_500,
+  player: 30_000,
   tv: 8_000,
   host: 8_000,
-  tap: 1_500,
+  tap: 20_000,
   press: 2_000,
 } as const;
-/** Rows a server instance asks the database for at a time (fewer calls on a busy night). */
-export const DIAG_QUOTA_LEASE_ROWS = 25;
+/**
+ * One phone's share, kept in each server's memory (NOT in the database): a
+ * single phone cannot use up its whole kind's room. It is deliberately not a
+ * database row per phone: that would be one extra database call per phone the
+ * first time each is seen (60 at once at the first timer-end), all queuing on the
+ * night's counter. A verified phone that floods can therefore get at most this
+ * much per server, and the kind and night caps above still hold for everyone.
+ */
+export const DIAG_DEVICE_ROW_CAPS = { player: 2_500, tap: 1_500 } as const;
+/**
+ * Rows a server instance asks the database for at a time. The high-volume
+ * kinds ask in big blocks, so a timer-end burst of ~120 rows is one call per
+ * server, not one per row (or per phone).
+ */
+export const DIAG_QUOTA_LEASE_ROWS = { player: 100, tap: 100, tv: 25, host: 25, press: 25 } as const;
 /**
  * The row-cap check never waits for a lock: if another server is updating the
  * same night's counter at that instant, the database answers "busy" at once.

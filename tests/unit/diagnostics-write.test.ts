@@ -30,6 +30,7 @@ import {
 import {
   DIAG_BUCKET_ROW_CAPS,
   DIAG_CLEANUP_MAX_BATCHES,
+  DIAG_DEVICE_ROW_CAPS,
   DIAG_JOB_DEADLINE_MS,
   DIAG_MAX_WRITES_IN_FLIGHT,
   DIAG_QUEUE_WAIT_MS,
@@ -480,7 +481,9 @@ describe("how many log writes may touch the database at once", () => {
     const running = queued[0]!();
     await vi.advanceTimersByTimeAsync(10);
     expect(counters().inFlight).toBe(1);
-    await vi.advanceTimersByTimeAsync(DIAG_JOB_DEADLINE_MS + 100);
+    // (the last-resort limit for work that hangs outside any database call: the
+    // job deadline plus one call's time plus a second)
+    await vi.advanceTimersByTimeAsync(DIAG_JOB_DEADLINE_MS + DIAG_WRITE_TIMEOUT_MS + 1_100);
     await running;
     expect(counters().inFlight).toBe(0);
   });
@@ -731,8 +734,8 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
       fn: "diag_take_rows",
       args: {
         p_night_id: NIGHT,
-        p_bucket: `p:${DEVICE}`,
-        p_want: DIAG_QUOTA_LEASE_ROWS,
+        p_bucket: "phones", // one counter for every phone's reports, not one per phone
+        p_want: DIAG_QUOTA_LEASE_ROWS.player,
         p_bucket_cap: DIAG_BUCKET_ROW_CAPS.player,
         p_night_cap: DIAG_NIGHT_ROW_CAP,
       },
@@ -749,7 +752,7 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
     expect(rpcs.map((r) => [r.args.p_bucket, r.args.p_bucket_cap, r.args.p_night_cap])).toEqual([
       ["tv", DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP],
       ["host", DIAG_BUCKET_ROW_CAPS.host, DIAG_NIGHT_ROW_CAP],
-      [`a:${DEVICE}`, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP],
+      ["taps", DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP],
       ["press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP],
     ]);
     // the server's own rows have room above the cap on reports
@@ -797,11 +800,47 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
 
   it("asks for a block of rows at a time, so a busy night is not one extra call per row", async () => {
     const { rpcs, inserted } = fakeDb(1000);
-    for (let i = 0; i < DIAG_QUOTA_LEASE_ROWS; i++) await recordDiagRows("diag_answer_events", rows(1), NIGHT, player);
+    const block = DIAG_QUOTA_LEASE_ROWS.player;
+    for (let i = 0; i < block; i++) await recordDiagRows("diag_answer_events", rows(1), NIGHT, player);
     expect(rpcs).toHaveLength(1);
-    expect(inserted).toHaveLength(DIAG_QUOTA_LEASE_ROWS);
+    expect(inserted).toHaveLength(block);
     await recordDiagRows("diag_answer_events", rows(1), NIGHT, player); // the block is spent: ask again
     expect(rpcs).toHaveLength(2);
+  });
+
+  it("many different phones share one block: 60 phones' first rows are ONE call, not 60 (nothing to queue on the night's counter)", async () => {
+    const { rpcs, inserted } = fakeDb(10_000);
+    for (let phone = 0; phone < 60; phone++) {
+      await recordDiagRows("diag_answer_events", rows(1), NIGHT, { kind: "tap", deviceId: `phone-${phone}` });
+      await recordDiagRows("diag_server_actions", rows(1), NIGHT, { kind: "tap", deviceId: `phone-${phone}` }); // + its timer-end call
+    }
+    expect(inserted).toHaveLength(120);
+    expect(rpcs).toHaveLength(2); // 120 rows from blocks of 100
+    expect(new Set(rpcs.map((r) => r.args.p_bucket))).toEqual(new Set(["taps"]));
+  });
+
+  it("one phone's share is counted in this server's memory: a flooding phone is cut at its own cap with no extra database call, and other phones are untouched", async () => {
+    const { rpcs, inserted } = fakeDb(1_000_000);
+    const flood = { kind: "tap", deviceId: "flooding-phone" } as const;
+    for (let i = 0; i < DIAG_DEVICE_ROW_CAPS.tap + 500; i++) await recordDiagRows("diag_answer_events", rows(1), NIGHT, flood);
+    expect(inserted).toHaveLength(DIAG_DEVICE_ROW_CAPS.tap);
+    expect(__diagWriteCountersForTests().capped).toBe(500);
+    // blocks of 100, not one call per row, and none at all for the refused rows
+    expect(rpcs).toHaveLength(Math.ceil(DIAG_DEVICE_ROW_CAPS.tap / DIAG_QUOTA_LEASE_ROWS.tap));
+    await recordDiagRows("diag_answer_events", rows(1), NIGHT, { kind: "tap", deviceId: "honest-phone" });
+    expect(inserted).toHaveLength(DIAG_DEVICE_ROW_CAPS.tap + 1);
+    // the same phone on a different night starts afresh
+    await recordDiagRows("diag_answer_events", rows(1), "55555555-5555-5555-5555-555555555555", flood);
+    expect(inserted).toHaveLength(DIAG_DEVICE_ROW_CAPS.tap + 2);
+  });
+
+  it("a batch is cut to what is left of its phone's share", async () => {
+    const { inserted } = fakeDb(1_000_000);
+    const phone = { kind: "player", deviceId: "chatty-phone" } as const;
+    await recordDiagRows("diag_device_events", rows(DIAG_DEVICE_ROW_CAPS.player - 5), NIGHT, phone);
+    await recordDiagRows("diag_device_events", rows(60), NIGHT, phone);
+    expect(inserted.reduce((n, b) => n + b.rows.length, 0)).toBe(DIAG_DEVICE_ROW_CAPS.player);
+    expect(__diagWriteCountersForTests().capped).toBe(55);
   });
 
   it("stores only as many rows as the cap allows, drops the rest and counts them", async () => {
@@ -962,5 +1001,206 @@ describe("noteIgnored: a request with no verified player or host stores nothing 
       throw new Error("console broke");
     });
     expect(() => noteIgnored("answer")).not.toThrow();
+  });
+});
+
+// ─── the whole thing under load, with a database that behaves like a database ─
+describe("under load: logging never takes more than its small share of the database and does not lose the timer-end taps", () => {
+  const NIGHT = "44444444-4444-4444-4444-444444444444";
+
+  /** A fake database whose calls take time, can be cancelled, and are counted while they are in flight. */
+  function timedDb(options: {
+    callMs: number | ((kind: string) => number);
+    onRpc?: (args: Record<string, unknown>) => { data: number } | null;
+  }) {
+    const stats = {
+      active: 0,
+      peak: 0,
+      calls: 0,
+      rpcs: 0,
+      busy: 0,
+      inserted: 0,
+      insertedBy: {} as Record<string, number>,
+      systemRows: [] as Array<Record<string, unknown>>,
+      started: [] as number[],
+    };
+    function call<T>(kind: string, result: () => T, signal?: AbortSignal): Promise<T | { data: null; error: { code: string } }> {
+      return new Promise((resolve) => {
+        stats.calls += 1;
+        stats.active += 1;
+        stats.peak = Math.max(stats.peak, stats.active);
+        stats.started.push(Date.now());
+        let finished = false;
+        const finish = (value: T | { data: null; error: { code: string } }) => {
+          if (finished) return;
+          finished = true;
+          stats.active -= 1;
+          clearTimeout(timer);
+          resolve(value);
+        };
+        const ms = typeof options.callMs === "function" ? options.callMs(kind) : options.callMs;
+        const timer = setTimeout(() => finish(result()), ms);
+        // like supabase-js: a cancelled request ends at once
+        signal?.addEventListener("abort", () => finish({ data: null, error: { code: "ABORT" } }));
+      });
+    }
+    function thenable<T>(kind: string, result: () => T, firstSignal?: AbortSignal) {
+      let signal: AbortSignal | undefined = firstSignal;
+      const builder = {
+        abortSignal(s: AbortSignal) {
+          signal = s;
+          return builder;
+        },
+        then: (resolve: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => call(kind, result, signal).then(resolve, reject),
+      };
+      return builder;
+    }
+    const db = {
+      rpc: (_fn: string, args: Record<string, unknown>) => {
+        stats.rpcs += 1;
+        return thenable("rpc", () => {
+          const custom = options.onRpc?.(args);
+          if (custom) {
+            if (custom.data === -1) stats.busy += 1;
+            return { data: custom.data, error: null };
+          }
+          return { data: Number(args.p_want), error: null };
+        });
+      },
+      from: (table: string) => {
+        let signal: AbortSignal | undefined;
+        const chain = {
+          select: () => chain,
+          eq: () => chain,
+          insert: (batch: unknown[]) => {
+            stats.inserted += batch.length;
+            stats.insertedBy[table] = (stats.insertedBy[table] ?? 0) + batch.length;
+            for (const row of batch as Array<Record<string, unknown>>) if (row.action === "diag_drops") stats.systemRows.push(row);
+            return thenable("insert", () => ({ data: null, error: null }));
+          },
+          maybeSingle: () => thenable("lookup", () => ({ data: { id: "found-row" }, error: null }), signal),
+          abortSignal: (s: AbortSignal) => {
+            signal = s;
+            return chain;
+          },
+        };
+        return chain;
+      },
+    };
+    adminMock.getSupabaseAdmin.mockReturnValue(db);
+    return stats;
+  }
+
+  /** Same pseudo-random numbers every run, so the simulation cannot be flaky. */
+  function seededRandom(seed: number) {
+    let a = seed;
+    vi.spyOn(Math, "random").mockImplementation(() => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    });
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    __setDiagSchedulerForTests((job) => void job());
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("a slow database never sees more than 5 log calls at once, because a job keeps its turn until it has really stopped", async () => {
+    // Every call takes just under its 2 s limit. A job is 4 calls in a row (check the room, check the
+    // player, check the game, store the row): 7.6 s of work, more than the 5 s a job is allowed.
+    const stats = timedDb({ callMs: 1_900 });
+    for (let i = 0; i < 40; i++) {
+      scheduleDiagWrite(async () => {
+        await lookupRoomNight(`ROOM${i}`);
+        await lookupPlayerId(NIGHT, `device-${i}`);
+        await lookupQuestionContext(`question-${i}`);
+        await insertDiagRows("diag_answer_events", [{ i }]);
+      });
+    }
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    // what the DATABASE saw, not what the scheduler thinks it let through
+    expect(stats.peak).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT);
+    expect(stats.active).toBe(0);
+    expect(__diagWriteCountersForTests()).toMatchObject({ inFlight: 0, queued: 0 });
+  });
+
+  it("a job stops at its deadline: no call starts after it and none runs past it", async () => {
+    const stats = timedDb({ callMs: 1_900 });
+    const startedAt = Date.now();
+    let finishedAt = 0;
+    scheduleDiagWrite(async () => {
+      try {
+        for (let i = 0; i < 10; i++) await lookupPlayerId(NIGHT, `device-${i}`);
+      } finally {
+        finishedAt = Date.now();
+      }
+    });
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(finishedAt - startedAt).toBeLessThanOrEqual(DIAG_JOB_DEADLINE_MS + 50);
+    expect(stats.started.every((t) => t - startedAt < DIAG_JOB_DEADLINE_MS)).toBe(true);
+    expect(stats.calls).toBeLessThan(10);
+    expect(stats.active).toBe(0);
+  });
+
+  it("60 phones' first taps and timer-end calls at once, with other servers asking about the same night, lose no row to 'busy'", async () => {
+    seededRandom(20261007);
+    // The row-cap function is "inside" for 3 ms per call and answers 'busy' to anyone arriving meanwhile.
+    let insideUntil = 0;
+    const stats = timedDb({
+      callMs: (kind) => (kind === "rpc" ? 3 : 25),
+      onRpc: (args) => {
+        const now = Date.now();
+        if (now < insideUntil) return { data: -1 };
+        insideUntil = now + 3;
+        return { data: Number(args.p_want) };
+      },
+    });
+    // five other servers each ask for a block twice during the same half second
+    const others = adminMock.getSupabaseAdmin();
+    for (let server = 0; server < 5; server++) {
+      for (let k = 0; k < 2; k++) {
+        setTimeout(() => void others.rpc("diag_take_rows", { p_want: 100 }), Math.floor(Math.random() * 500));
+      }
+    }
+    for (let phone = 0; phone < 60; phone++) {
+      const deviceId = `phone-${phone}`;
+      // the first tap of the night from this phone, and its timer-end call
+      scheduleDiagWrite(() =>
+        recordDiagRows("diag_answer_events", [{ phone }], NIGHT, { kind: "tap", deviceId }),
+      );
+      scheduleDiagWrite(() =>
+        recordDiagRows("diag_server_actions", [{ phone }], NIGHT, { kind: "tap", deviceId }),
+      );
+    }
+    await vi.advanceTimersByTimeAsync(30_000);
+    const counters = __diagWriteCountersForTests();
+    expect(counters.dropped).toBe(0); // nothing dropped as busy, nothing dropped for waiting
+    expect(counters.failed).toBe(0);
+    // every tap and every timer-end call was stored
+    expect(stats.insertedBy["diag_answer_events"]).toBe(60);
+    expect(stats.insertedBy["diag_server_actions"]).toBe(60);
+    // ...with a handful of row-cap calls for the whole burst (not 60): the five jobs that
+    // found the block spent at the same moment shared one call
+    expect(stats.rpcs - 10).toBeLessThanOrEqual(4);
+    expect(stats.peak).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT);
+  });
+
+  it("even if the night's counter is busy for a long time, answers are never waited on: the rows are dropped and counted", async () => {
+    const stats = timedDb({ callMs: 3, onRpc: () => ({ data: -1 }) });
+    for (let phone = 0; phone < 60; phone++) {
+      scheduleDiagWrite(() =>
+        recordDiagRows("diag_answer_events", [{ phone }], NIGHT, { kind: "tap", deviceId: `phone-${phone}` }),
+      );
+    }
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(stats.insertedBy["diag_answer_events"] ?? 0).toBe(0);
+    expect(stats.peak).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT);
+    // every one of the 60 is accounted for: still counted, or already written to the "gap" row
+    const reported = stats.systemRows.reduce((n, row) => n + Number((row.steps as { dropped: number }).dropped), 0);
+    expect(__diagWriteCountersForTests().dropped + reported).toBe(60);
+    expect(__diagWriteCountersForTests()).toMatchObject({ inFlight: 0, queued: 0 });
   });
 });

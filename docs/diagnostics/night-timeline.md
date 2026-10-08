@@ -32,7 +32,7 @@ database as production). Turning it on needs Brandon's typed yes.
 | `diag_answer_events` | answer tap the server received, saved or not | outcome (`saved`, `duplicate`, `late`, `early`, `rejected`, `error`), reason, the phone's tap and send times, server arrival time, milliseconds after the question opened, step timings, cold-start flag |
 | `diag_server_actions` | host press (reveal, next, end early, undo, start, end, close, open, score adjust) and every timer-end resolve / finalize call | action, actor (`host` or `timer`), outcome, total / sign-in / database / broadcast milliseconds, broadcast result, cold-start flag |
 | `diag_device_events` | small report from a phone, the TV or the host laptop | kind, device time, server-corrected time, small `data` payload |
-| `diag_quota` | night and source inside it (`_night`, `p:<device id>`, `tv`, `host`, `a:<device id>`, `press`) | rows used so far and rows turned away at a cap (see "Who gets a row") |
+| `diag_quota` | night and kind of source inside it (`_night`, `phones`, `tv`, `host`, `taps`, `press`) | rows used so far and rows turned away at a cap (see "Who gets a row") |
 
 Device report kinds: `device` (what the device is), `net` (online / offline /
 connection type), `vis` (tab hidden / shown), `bcast` (a game change was
@@ -134,33 +134,45 @@ and host laptop; numbers are clamped, text must be one of a few fixed words, and
 the little free text left, such as an error name, only allows letters, digits
 and `_ - . : /` and is cut at 40 characters).
 
-**Row caps, kept in the database** (`diag_quota`, `diag_take_rows`), so they hold
-across every server instance. Rows past a cap are dropped and counted (in
-`diag_quota.rows_refused`, and in the `diag_drops` row below as `capped=N`).
+**Row caps** (`diag_quota`, `diag_take_rows`), so they hold across every server
+instance. Rows past a cap are dropped and counted (in `diag_quota.rows_refused`,
+and in the `diag_drops` row below as `capped=N`).
 
-| Source (`bucket`) | Cap | What it holds |
+| Counter (`bucket`) | Cap | What it holds |
 | --- | --- | --- |
-| `_night` (reports) | 40,000 | everything the devices report, all sources together |
+| `_night` (reports) | 40,000 | everything the devices report, all kinds together |
 | `_night` (server rows) | 60,000 | the same counter, with 20,000 of extra room that only the server's own rows may use |
-| `p:<device>` | 2,500 | one player phone's reports |
+| `phones` | 30,000 | every player phone's reports together |
 | `tv` | 8,000 | the venue TV(s) of the night, reports |
 | `host` | 8,000 | the host laptop and phone, reports |
-| `a:<device>` | 1,500 | one player phone's taps and timer-end calls (server rows) |
+| `taps` | 20,000 | every player phone's taps and timer-end calls together (server rows) |
 | `press` | 2,000 | the host's button presses (server rows) |
+
+On top of that, **one phone's share is counted in each server's memory** (not in
+the database): 2,500 report rows and 1,500 tap / timer-call rows per phone per
+server per night. It is in memory on purpose: a database row per phone would be
+one extra database call per phone the first time each is seen (60 at once at
+the first timer-end), all queuing on the night's counter. The cost is that a
+verified phone that floods can get that much per server, not in total; the kind
+and night caps still hold for everyone.
 
 Chatty device reports stop at 40,000 for the night; the server's own rows (taps,
 timer-end calls, presses) are the evidence this is for, so they keep room above
 that, and a night full of reports never blocks a late tap. A busy 40-phone night
 is roughly 20,000 to 35,000 rows in all; the worst case is 60,000 small rows,
-about 25 MB. To keep it cheap, a server asks for 25 rows at a time and a full
-source is not asked about again for a minute (so the caps can overshoot by up to
-one block per server). **The check never waits for a lock**: the database
-function takes a per-night try-lock and answers "busy" at once if another server
-is updating that night's counter at that instant (and gives up on any row lock
-after 50 ms); the server then backs off for a few milliseconds without holding a
-connection, asks again (twice), and drops the rows if it is still busy. The
-function touches only `diag_quota`, never a game table. Per-instance rate limits (per address, per device, per TV
-night) stay as a first filter only.
+about 25 MB. To keep it cheap, a server asks for rows in blocks (100 at a time
+for phones' reports and taps, 25 for the rest), and the jobs that find a block
+spent at the same moment share ONE call; a full kind is not asked about again
+for a minute (so the caps can overshoot by up to one block per server). **The
+check never waits for a lock**: the database function takes a per-night try-lock
+(in the two-integer advisory-lock key space, which the game's own locks never
+use, so it can never be a lock an answer is waiting on) and answers "busy" at
+once if another server is updating that night's counter at that instant (and
+gives up on any row lock after 50 ms); the server then backs off for a few
+milliseconds without holding a connection, asks again (twice), and drops the
+rows if it is still busy. The function touches only `diag_quota`, never a game
+table. Per-instance rate limits (per address, per device, per TV night) stay as a
+first filter only.
 
 ```sql
 -- how close was each night to its caps?
@@ -173,8 +185,11 @@ where rows_refused > 0 or bucket = '_night' order by rows_taken desc limit 20;
 Log writes never change a response, and they must never compete with real
 answers for the database. At most **5 log jobs per server** touch the database
 at once; the rest wait in a short queue (200 jobs). A job that waits more than 8
-seconds for its turn, or arrives to a full queue, is dropped and counted, and
-one job never holds its turn longer than 5 seconds. If a write fails, times out
+seconds for its turn, or arrives to a full queue, is dropped and counted. A job
+runs against a 5 second clock: inside it no database call may start after the
+clock runs out and none may run past it, and the job keeps its turn until it has
+really stopped, so the database itself never sees more than 5 log calls at once
+from one server, however slow it is. If a write fails, times out
 (2 seconds) or is dropped, the server prints one short line to its console, at
 most one per kind a minute:
 

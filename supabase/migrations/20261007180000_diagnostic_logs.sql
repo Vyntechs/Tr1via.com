@@ -179,10 +179,12 @@ create index if not exists diag_device_events_created_idx
   on public.diag_device_events (created_at);
 
 -- ─── row caps ──────────────────────────────────────────────────────────
--- One row per (night, source). bucket "_night" is the whole night; the others
--- are "p:<device id>" (one player phone), "tv" and "host". The server asks
+-- One row per (night, kind of source). bucket "_night" is the whole night; the
+-- others are "phones" (all player phones' reports), "tv", "host", "taps" (all
+-- phones' taps and timer-end calls) and "press" (host presses). The server asks
 -- diag_take_rows() for room BEFORE it stores rows, and stores only as many as
--- it was granted, so the caps hold across every server instance.
+-- it was granted, so the caps hold across every server instance. (One phone's
+-- share is held in each server's memory, not here.)
 create table if not exists public.diag_quota (
   night_id uuid not null,
   bucket text not null check (length(bucket) between 1 and 48),
@@ -225,7 +227,8 @@ grant select, delete on table public.diag_quota to service_role;
 --
 -- It NEVER WAITS FOR A LOCK. Logging must not hold a database connection that
 -- real answers could be using, so:
---   - it first takes a per-night TRY-lock (pg_try_advisory_xact_lock). If
+--   - it first takes a per-night TRY-lock (pg_try_advisory_xact_lock, in the
+--     two-integer key space, which the game's own advisory locks never use). If
 --     another call is updating the same night's counter right now it returns
 --     -1 ("busy") immediately; the caller backs off for a few milliseconds
 --     without holding a connection and asks again, or drops the rows;
@@ -258,7 +261,11 @@ begin
   end if;
   v_want := least(p_want, 1000);
 
-  if not pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(p_night_id::text, 7)) then
+  -- The two-integer form of advisory lock is a different key space from the
+  -- single-bigint form the game's own functions use (hashtextextended(...)), so
+  -- this lock can never be the same lock as one an answer, a reveal or a board
+  -- change is waiting on.
+  if not pg_catalog.pg_try_advisory_xact_lock(20261007, pg_catalog.hashtext(p_night_id::text)) then
     return -1;
   end if;
   perform pg_catalog.set_config('lock_timeout', '50ms', true);

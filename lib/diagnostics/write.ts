@@ -42,12 +42,13 @@ import "server-only";
 
 import { after } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
-import { DiagLookupSlow, DiagTimeout, withDeadline } from "./deadline";
+import { DiagLookupSlow, DiagTimeout, runInJobScope, withDeadline } from "./deadline";
 import {
   DIAG_BUCKET_ROW_CAPS,
   DIAG_CLEANUP_BATCH_ROWS,
   DIAG_CLEANUP_BUDGET_MS,
   DIAG_CLEANUP_MAX_BATCHES,
+  DIAG_DEVICE_ROW_CAPS,
   DIAG_JOB_DEADLINE_MS,
   DIAG_MAX_WRITES_IN_FLIGHT,
   DIAG_NIGHT_ROW_CAP,
@@ -139,6 +140,8 @@ export function __resetDiagWriteForTests(options: { now?: () => number } = {}): 
   lastIgnoredLineAt = 0;
   leases.clear();
   fullUntil.clear();
+  deviceUsed.clear();
+  asking.clear();
   lastLine.clear();
   lastCounterFlushAt = 0;
   counterFlushRunning = false;
@@ -261,7 +264,14 @@ export function scheduleDiagWrite(task: () => Promise<void>): void {
           return;
         }
         try {
-          await withDeadline(DIAG_JOB_DEADLINE_MS, () => task());
+          // The turn is held until the work has really stopped. Inside the job
+          // scope no call starts after the job's deadline and none runs past it,
+          // so that is at most DIAG_JOB_DEADLINE_MS (plus a moment). The outer
+          // limit is only a last resort for work that hangs outside any call.
+          const expiresAt = Date.now() + DIAG_JOB_DEADLINE_MS;
+          await withDeadline(DIAG_JOB_DEADLINE_MS + DIAG_WRITE_TIMEOUT_MS + 1_000, () =>
+            runInJobScope(expiresAt, () => task()),
+          );
         } catch (error) {
           // A lookup that could not be answered in time is counted, not taken for a stranger.
           if (error instanceof DiagLookupSlow) noteIgnored("slow");
@@ -382,12 +392,14 @@ export async function insertDiagRows(
 // ─── row caps ─────────────────────────────────────────────────────────
 // Every normal row is stored through recordDiagRows(), which first asks the
 // database (function diag_take_rows, table diag_quota) how many rows this
-// night and this source may still have. The answer holds across every server
-// instance. To keep it cheap, an instance asks for a block of rows at a time
-// (DIAG_QUOTA_LEASE_ROWS), spends them from memory, and a source found to be
-// full is not asked about again for a minute. A block that is never spent
-// (an instance that goes away) just counts toward the cap, which is the safe
-// direction.
+// night and this KIND of source (phone reports, TV, host, taps, presses) may
+// still have. The answer holds across every server instance. To keep it cheap
+// an instance asks for a block of rows at a time (DIAG_QUOTA_LEASE_ROWS, 100
+// for the busy kinds), spends them from memory, and a kind found to be full is
+// not asked about again for a minute. A block that is never spent (an
+// instance that goes away) just counts toward the cap, which is the safe
+// direction. One phone's share is counted in this server's memory (see
+// DIAG_DEVICE_ROW_CAPS), so a burst of 60 different phones is still one call.
 //
 // The check NEVER waits for a lock. The database function takes a per-night
 // try-lock and answers -1 ("busy") at once if another server is in the middle
@@ -404,9 +416,10 @@ export type DiagSource =
   | { kind: "tap"; deviceId: string }
   | { kind: "press" };
 
+/** The database counter a source's rows come out of: one per KIND, not per phone. */
 function bucketOf(source: DiagSource): string {
-  if (source.kind === "player") return `p:${source.deviceId}`;
-  if (source.kind === "tap") return `a:${source.deviceId}`;
+  if (source.kind === "player") return "phones";
+  if (source.kind === "tap") return "taps";
   return source.kind;
 }
 
@@ -417,9 +430,64 @@ function nightCapOf(source: DiagSource): number {
 
 const leases = new Map<string, { left: number }>();
 const fullUntil = new Map<string, number>();
+// How many rows this server has stored for one phone tonight (memory only).
+const deviceUsed = new Map<string, number>();
 const QUOTA_MEMORY_MAX = 2000;
+const DEVICE_MEMORY_MAX = 5000;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Rows added to the lease (0 = full), "busy" (see below), or null when the database could not be asked. */
+type BlockOutcome = number | "busy" | null;
+
+// One block request per night and kind at a time: five jobs that find the block
+// spent at the same moment share ONE call to the database instead of making
+// five (and reserving five blocks).
+const asking = new Map<string, Promise<BlockOutcome>>();
+
+async function askForBlock(
+  key: string,
+  nightId: string,
+  source: DiagSource,
+  lease: { left: number },
+  ask: number,
+): Promise<BlockOutcome> {
+  const bucket = bucketOf(source);
+  let granted = -1;
+  for (let attempt = 0; granted === -1; attempt += 1) {
+    try {
+      const result = await withDeadline(DIAG_WRITE_TIMEOUT_MS, async (signal) => {
+        const call = admin().rpc("diag_take_rows", {
+          p_night_id: nightId,
+          p_bucket: bucket,
+          p_want: ask,
+          p_bucket_cap: DIAG_BUCKET_ROW_CAPS[source.kind],
+          p_night_cap: nightCapOf(source),
+        });
+        return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
+      });
+      if (result && result.error) {
+        logOnce(`quota:${failureCode(result.error)}`, `row-cap check failed code=${failureCode(result.error)}`);
+        return null;
+      }
+      granted = Number(result?.data);
+      if (!Number.isFinite(granted) || granted < -1) return null;
+    } catch (error) {
+      logOnce(`quota:${failureCode(error)}`, `row-cap check failed code=${failureCode(error)}`);
+      return null;
+    }
+    if (granted === -1) {
+      if (attempt >= DIAG_QUOTA_BUSY_RETRIES) return "busy";
+      await sleep(DIAG_QUOTA_BUSY_BACKOFF_MS * (1 + Math.random()));
+    }
+  }
+  if (granted === 0) {
+    if (fullUntil.size >= QUOTA_MEMORY_MAX) fullUntil.clear();
+    fullUntil.set(key, clock() + DIAG_QUOTA_FULL_MEMORY_MS);
+  }
+  lease.left += Math.floor(granted);
+  return granted;
+}
 
 /**
  * Rows granted (0 = full), "busy" (another server held the night's counter at
@@ -428,10 +496,16 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
 async function takeRows(nightId: string, source: DiagSource, want: number): Promise<number | "busy" | null> {
   const bucket = bucketOf(source);
   const key = `${nightId}|${bucket}`;
-  const now = clock();
+  // One phone's share of its kind (memory only): no database call needed to refuse a flood.
+  let deviceKey: string | null = null;
+  if (source.kind === "player" || source.kind === "tap") {
+    deviceKey = `${nightId}|${source.kind}|${source.deviceId}`;
+    want = Math.min(want, DIAG_DEVICE_ROW_CAPS[source.kind] - (deviceUsed.get(deviceKey) ?? 0));
+    if (want <= 0) return 0;
+  }
   const blockedUntil = fullUntil.get(key);
   if (blockedUntil !== undefined) {
-    if (now < blockedUntil) return 0;
+    if (clock() < blockedUntil) return 0;
     fullUntil.delete(key);
   }
   let lease = leases.get(key);
@@ -440,44 +514,24 @@ async function takeRows(nightId: string, source: DiagSource, want: number): Prom
     lease = { left: 0 };
     leases.set(key, lease);
   }
-  if (lease.left < want) {
-    const ask = Math.max(want - lease.left, DIAG_QUOTA_LEASE_ROWS);
-    let granted = -1;
-    for (let attempt = 0; granted === -1; attempt += 1) {
-      try {
-        const result = await withDeadline(DIAG_WRITE_TIMEOUT_MS, async (signal) => {
-          const call = admin().rpc("diag_take_rows", {
-            p_night_id: nightId,
-            p_bucket: bucket,
-            p_want: ask,
-            p_bucket_cap: DIAG_BUCKET_ROW_CAPS[source.kind],
-            p_night_cap: nightCapOf(source),
-          });
-          return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
-        });
-        if (result && result.error) {
-          logOnce(`quota:${failureCode(result.error)}`, `row-cap check failed code=${failureCode(result.error)}`);
-          return null;
-        }
-        granted = Number(result?.data);
-        if (!Number.isFinite(granted) || granted < -1) return null;
-      } catch (error) {
-        logOnce(`quota:${failureCode(error)}`, `row-cap check failed code=${failureCode(error)}`);
-        return null;
-      }
-      if (granted === -1) {
-        if (attempt >= DIAG_QUOTA_BUSY_RETRIES) return "busy";
-        await sleep(DIAG_QUOTA_BUSY_BACKOFF_MS * (1 + Math.random()));
-      }
+  while (lease.left < want) {
+    let shared = asking.get(key);
+    if (!shared) {
+      shared = askForBlock(key, nightId, source, lease, Math.max(want - lease.left, DIAG_QUOTA_LEASE_ROWS[source.kind])).finally(
+        () => asking.delete(key),
+      );
+      asking.set(key, shared);
     }
-    if (granted === 0) {
-      if (fullUntil.size >= QUOTA_MEMORY_MAX) fullUntil.clear();
-      fullUntil.set(key, clock() + DIAG_QUOTA_FULL_MEMORY_MS);
-    }
-    lease.left += Math.floor(granted);
+    const outcome = await shared;
+    if (outcome === "busy" || outcome === null) return outcome;
+    if (outcome === 0) break; // full
   }
   const give = Math.min(want, lease.left);
   lease.left -= give;
+  if (deviceKey && give > 0) {
+    if (deviceUsed.size >= DEVICE_MEMORY_MAX) deviceUsed.clear();
+    deviceUsed.set(deviceKey, (deviceUsed.get(deviceKey) ?? 0) + give);
+  }
   return give;
 }
 

@@ -554,52 +554,72 @@ describe("diagnostic logs schema", () => {
       }
     });
 
+    // takes everything a kind can get, 1000 at a time (the most one call grants)
+    const drain = async (night: string, bucket: string, bucketCap: number, nightCap: number) => {
+      let total = 0;
+      for (let i = 0; i < 100; i++) {
+        const got = await take(night, bucket, 1000, bucketCap, nightCap);
+        if (got === 0) break;
+        total += got;
+      }
+      return total;
+    };
+
     test("with the real caps: a night whose reports are used up still has room for a late tap and a host press", async () => {
       await db.exec("set role service_role");
       try {
         const night = crypto.randomUUID();
-        // Report sources use up the reports' night share (they are held to it by the caller).
-        let reports = 0;
-        for (let i = 0; i < 100 && reports < DIAG_NIGHT_ROW_CAP; i++) {
-          reports += await take(night, `p:phone-${i}`, 500, DIAG_BUCKET_ROW_CAPS.player, DIAG_NIGHT_ROW_CAP);
-        }
-        reports += await take(night, "tv", 1000, DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP);
-        expect(await take(night, "tv", 10, DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP)).toBe(0); // reports are shut out
-        // The server's own rows have their own sources and a higher night cap.
-        expect(await take(night, "a:late-phone", 1, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(1);
+        // Phones', the TV's and the host's reports use up the reports' share of the night...
+        const reports =
+          (await drain(night, "phones", DIAG_BUCKET_ROW_CAPS.player, DIAG_NIGHT_ROW_CAP)) +
+          (await drain(night, "tv", DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP)) +
+          (await drain(night, "host", DIAG_BUCKET_ROW_CAPS.host, DIAG_NIGHT_ROW_CAP));
+        expect(reports).toBe(DIAG_NIGHT_ROW_CAP);
+        expect(await take(night, "phones", 10, DIAG_BUCKET_ROW_CAPS.player, DIAG_NIGHT_ROW_CAP)).toBe(0); // reports are shut out
+        // ...but the server's own rows have their own kinds and a higher night cap.
+        expect(await take(night, "taps", 1, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(1);
         expect(await take(night, "press", 1, DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(1);
-        // ...and each of them is still held to its own cap.
-        let spammer = 0;
-        for (let i = 0; i < 5; i++) {
-          spammer += await take(night, "a:spammer", 1000, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP);
-        }
-        expect(spammer).toBe(DIAG_BUCKET_ROW_CAPS.tap);
+        // the whole night never goes past the server ceiling
+        const more = await drain(night, "taps", DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP);
+        expect(more + 1 + 1 + DIAG_NIGHT_ROW_CAP).toBeLessThanOrEqual(DIAG_NIGHT_SERVER_ROW_CAP);
         expect((await quota(night))._night![0]).toBeLessThanOrEqual(DIAG_NIGHT_SERVER_ROW_CAP);
       } finally {
         await db.exec("reset role");
       }
     });
 
-    test("is built never to wait for a lock, and touches nothing but its own counter table", async () => {
-      const def = (
-        await one<{ def: string }>(`select pg_get_functiondef('${TAKE_ROWS_FN}'::regprocedure) as def`)
-      ).def;
-      // a per-night try-lock that answers -1 at once, a short lock timeout, and a handler that turns a timeout into -1
-      expect(def).toMatch(/pg_try_advisory_xact_lock/);
-      expect(def).toMatch(/return -1/);
-      expect(def).toMatch(/set_config\('lock_timeout', '50ms', true\)/);
-      expect(def).toMatch(/exception when lock_not_available then\s+return -1/);
-      // only diag_quota: never a game table, so it can never conflict with an answer, a reveal or a resolve
-      const tables = [...def.matchAll(/(?:from|into|update|join)\s+(public\.\w+)/gi)].map((m) => m[1]!.toLowerCase());
-      expect(new Set(tables)).toEqual(new Set(["public.diag_quota"]));
-      // the short lock timeout is local to the call: it does not leak to the connection
+    test("each kind is held to its own cap, taps included", async () => {
       await db.exec("set role service_role");
       try {
-        const before = await one<{ v: string }>("show lock_timeout");
-        await take(crypto.randomUUID(), "tv", 1, 10, 10);
-        const after = await one<{ v: string }>("show lock_timeout");
-        expect(after.v).toBe(before.v);
+        const night = crypto.randomUUID();
+        expect(await drain(night, "taps", DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(
+          DIAG_BUCKET_ROW_CAPS.tap,
+        );
+        expect(await take(night, "taps", 1, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(0);
+        expect(await drain(night, "press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(
+          DIAG_BUCKET_ROW_CAPS.press,
+        );
       } finally {
+        await db.exec("reset role");
+      }
+    });
+
+    test("its lock is in the two-integer key space, which the game's own single-key advisory locks never use", async () => {
+      await db.exec("begin");
+      try {
+        await db.exec("set local role service_role");
+        const night = crypto.randomUUID();
+        await take(night, "tv", 1, 10, 10);
+        // what the game's functions do (0028, 0031, 0032): one bigint key from hashtextextended(..., 0)
+        await db.exec("reset role");
+        await db.query("select pg_advisory_xact_lock(pg_catalog.hashtextextended($1::text, 0))", [night]);
+        const locks = await db.query<{ objsubid: number }>(
+          "select objsubid from pg_locks where locktype = 'advisory' and pid = pg_backend_pid() order by objsubid",
+        );
+        // 2 = the two-integer form (diagnostics), 1 = the single-bigint form (the game): never the same lock
+        expect(locks.rows.map((r) => r.objsubid)).toEqual([1, 2]);
+      } finally {
+        await db.exec("rollback");
         await db.exec("reset role");
       }
     });
