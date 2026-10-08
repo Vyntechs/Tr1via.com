@@ -100,11 +100,13 @@ export async function requireOwnedNight(
     .select("*")
     .eq("id", nightId)
     .maybeSingle();
+  // Diagnostic mark (no-op unless this request is being logged): the night
+  // lookup behind the ownership check is done.
+  diagMark("owned_done");
   if (!night) return { ok: false, status: 404, error: "night not found" };
   if (night.host_id !== auth.host.id) {
     return { ok: false, status: 403, error: "not your night" };
   }
-  diagMark("owned_done");
   return { ok: true, host: auth.host, night: night as NightRow };
 }
 
