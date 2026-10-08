@@ -38,6 +38,11 @@ const h = vi.hoisted(() => {
     handlers,
     timerOnZero: null as null | (() => void),
     timerExpired: false,
+    expiredListeners: new Set<() => void>(),
+    setExpired(value: boolean) {
+      this.timerExpired = value;
+      for (const listener of this.expiredListeners) listener();
+    },
   };
 });
 
@@ -74,15 +79,26 @@ vi.mock("@/lib/hooks/useDeviceSession", () => ({
   useDeviceSession: () => ({ isReady: true, isLoading: false }),
 }));
 
-vi.mock("@/lib/hooks/useTimer", () => ({
-  useTimer: (options: { onZero?: () => void }) => {
-    h.timerOnZero = options.onZero ?? null;
-    return {
-      displaySeconds: h.timerExpired ? 0 : 12,
-      hasExpired: h.timerExpired,
-    };
-  },
-}));
+vi.mock("@/lib/hooks/useTimer", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useTimer: (options: { onZero?: () => void }) => {
+      h.timerOnZero = options.onZero ?? null;
+      const expired = useSyncExternalStore(
+        (listener) => {
+          h.expiredListeners.add(listener);
+          return () => h.expiredListeners.delete(listener);
+        },
+        () => h.timerExpired,
+        () => h.timerExpired,
+      );
+      return {
+        displaySeconds: expired ? 0 : 12,
+        hasExpired: expired,
+      };
+    },
+  };
+});
 
 vi.mock("@/lib/hooks/useLockCount", () => ({
   useLockCount: () => 1,
@@ -206,7 +222,41 @@ describe("player answer signed snapshot refresh", () => {
     vi.unstubAllGlobals();
   });
 
-  it("waits for the canonical answer row, then immediately enters PlayerLocked", async () => {
+  const savedAnswer = (msToLock = 1000) => ({
+    questionId: "question-1",
+    chosenIndex: 0 as const,
+    scramble: [0, 1, 2, 3] as [number, number, number, number],
+    lockedAt: "2026-07-18T18:06:01.000Z",
+    msToLock,
+    isCorrect: null,
+    awardedPoints: null,
+  });
+
+  const sendState = () => screen.getByTestId("player-send-status");
+
+  it("locks the tapped answer on the same tap and says Sending until the server replies", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    // The send never gets a reply: everything below happens before the server says anything.
+    const fetchMock = vi.fn(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+
+    // Same frame: the locked screen is up, the question screen is gone, and the
+    // phone says it is sending (not locked in) without claiming a time.
+    expect(screen.getByTestId("player-locked")).toBeInTheDocument();
+    expect(screen.queryByTestId("player-question")).not.toBeInTheDocument();
+    expect(sendState()).toHaveAttribute("data-send-state", "sending");
+    expect(sendState()).toHaveTextContent("Sending…");
+    expect(sendState()).not.toHaveTextContent(/locked/i);
+    expect(screen.queryByText(/speed bonus/i)).not.toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/answers", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("says Locked in from the send reply alone, then the saved row fills in on the same screen", async () => {
     let resolveCanonical!: (value: RoomSnapshotPayload) => void;
     h.fetchSnapshot
       .mockResolvedValueOnce(payload([]))
@@ -226,24 +276,151 @@ describe("player answer signed snapshot refresh", () => {
     expect(await screen.findByTestId("player-question")).toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId("player-answer-1"));
+    const lockedScreen = screen.getByTestId("player-locked");
 
+    // The send reply says yes. The signed room fetch has NOT come back, and
+    // the screen already says Locked in.
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"));
+    expect(sendState()).toHaveTextContent("Locked in");
+    expect(sendState()).not.toHaveTextContent("Locked at");
     await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(2));
-    expect(screen.getByTestId("player-question")).toBeInTheDocument();
-    expect(screen.queryByTestId("player-locked")).not.toBeInTheDocument();
+    expect(screen.getByTestId("player-locked")).toBe(lockedScreen);
 
+    // The saved row arrives: the real lock time fills in, on the very same
+    // screen element (nothing is rebuilt, so nothing can flicker).
     await act(async () => {
-      resolveCanonical(payload([{
-        questionId: "question-1",
-        chosenIndex: 0,
-        scramble: [0, 1, 2, 3],
-        lockedAt: "2026-07-18T18:06:01.000Z",
-        msToLock: 1000,
-        isCorrect: null,
-        awardedPoints: null,
-      }]));
+      resolveCanonical(payload([savedAnswer(2300)]));
     });
+    await waitFor(() => expect(sendState()).toHaveTextContent("2.3s"));
+    expect(sendState()).toHaveTextContent("LOCKED AT");
+    expect(screen.getByTestId("player-locked")).toBe(lockedScreen);
+  });
+
+  it("keeps the choice on screen and says it is retrying when the send does not go through", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    let answers = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/answers") return new Response("{}", { status: 200 });
+      answers += 1;
+      if (answers < 3) throw new TypeError("Failed to fetch");
+      return new Response(null, { status: 204 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    const lockedScreen = screen.getByTestId("player-locked");
+
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "retrying"));
+    expect(sendState()).toHaveTextContent("Didn’t go through — retrying");
+    expect(screen.getByTestId("player-locked")).toBe(lockedScreen);
+
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"), { timeout: 5000 });
+    expect(answers).toBe(3);
+    expect(screen.getByTestId("player-locked")).toBe(lockedScreen);
+  });
+
+  it("after the server refuses the answer, the player can pick a different one and it locks in", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const bodies: Array<{ slotChosen: number }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) !== "/api/answers") return new Response("{}", { status: 200 });
+      bodies.push(JSON.parse(String(init!.body)));
+      return bodies.length === 1
+        ? new Response(JSON.stringify({ error: "answer deadline passed" }), { status: 400 })
+        : new Response(null, { status: 204 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "rejected"));
+    expect(sendState()).not.toHaveTextContent("Locked in");
+
+    fireEvent.click(screen.getByTestId("player-locked-answer-3"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"));
+    expect(bodies.map((b) => b.slotChosen)).toEqual([1, 3]);
+  });
+
+  it("a 200 reply that is an HTML page never shows 'Locked in'", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/answers") return new Response("{}", { status: 200 });
+      return new Response("<html>venue login</html>", { status: 200, headers: { "content-type": "text/html" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "retrying"));
+    expect(sendState()).not.toHaveTextContent("Locked in");
+  });
+
+  it("when the question closes with the answer never confirmed, says so plainly and stops trying", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/answers") throw new TypeError("Failed to fetch");
+      return new Response("{}", { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "retrying"));
+
+    act(() => h.setExpired(true));
+
+    expect(sendState()).toHaveAttribute("data-send-state", "unconfirmed");
+    expect(sendState()).toHaveTextContent(/time’s up/i);
+    expect(sendState()).toHaveTextContent("We couldn’t confirm your answer");
+    expect(sendState()).not.toHaveTextContent("Locked in");
+    const sends = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/answers").length;
+    const before = sends();
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(sends()).toBe(before);
+  });
+
+  it("sends one answer when the player taps twice", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(() => new Promise<Response>(() => {}));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+
+    const first = screen.getByTestId("player-answer-1");
+    const other = screen.getByTestId("player-answer-3");
+    fireEvent.click(first);
+    fireEvent.click(first); // the same (now replaced) card, again
+    fireEvent.click(other);
+    fireEvent.keyDown(document, { key: "2" });
+
+    const posts = fetchMock.mock.calls.filter(([url]) => String(url) === "/api/answers");
+    expect(posts).toHaveLength(1);
+    expect(JSON.parse(String(posts[0][1]!.body))).toMatchObject({
+      slotChosen: 1,
+    });
+  });
+
+  it("shows the saved answer straight away on a refresh, without sending again", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([savedAnswer(1800)]));
+    window.localStorage.setItem(
+      "tr1via:pending-answer",
+      JSON.stringify({ questionId: "question-1", slotChosen: 1 }),
+    );
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
 
     expect(await screen.findByTestId("player-locked")).toBeInTheDocument();
+    expect(sendState()).toHaveTextContent("LOCKED AT");
+    expect(sendState()).toHaveTextContent("1.8s");
+    expect(fetchMock).not.toHaveBeenCalledWith("/api/answers", expect.anything());
   });
 
   it("does not send touch or keyboard answers when the timer is at zero", async () => {

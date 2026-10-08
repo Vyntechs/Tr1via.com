@@ -8,7 +8,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 
-function jsonResponse(status: number, body: unknown = {}) {
+// The shapes our server really sends: 200 {code:"confirmed"}, 409 {error:"already answered"}.
+function jsonResponse(status: number, body?: unknown) {
+  if (body === undefined) {
+    body = status === 200 ? { code: "confirmed" } : status === 409 ? { error: "already answered" } : {};
+  }
   return {
     ok: status >= 200 && status < 300,
     status,

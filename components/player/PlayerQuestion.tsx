@@ -24,14 +24,48 @@ import {
 } from "@/components/system";
 import { PhoneScreen } from "@/components/shells";
 import { categoryColor } from "@/lib/theme/categories";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { useAnswerKeyboard } from "@/lib/hooks/useAnswerKeyboard";
 import { useAutoFitText } from "@/lib/hooks/useAutoFitText";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { SeptemberQuestionLampBand } from "@/components/system/SeptemberFront";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
+import type { StandingRow } from "@/lib/player/betweenGames";
+import {
+  PlayerSendStatus,
+  SEND_STATUS_MIN_HEIGHT,
+  type PlayerLockedSendState,
+} from "./PlayerSendStatus";
+import { PlayerLockedStandingsRow } from "./PlayerLocked";
 
 export type PlayerQuestionSlot = 1 | 2 | 3 | 4;
+
+/**
+ * The player has tapped an answer. The SAME screen stays up (this component is
+ * never swapped for another one): the question text and the four cards keep
+ * exactly the places they had, the chosen card highlights, the others dim, and
+ * the timer strip's status says Sending… and then Locked in. Nothing is added
+ * or removed in the space the question screen already uses, so nothing moves.
+ */
+export interface PlayerQuestionPick {
+  /** Visible slot the server holds / the player tapped. `null` = the server
+   *  has an answer but which card is not known yet: no card is marked. */
+  chosenSlot: PlayerQuestionSlot | null;
+  /** How far the answer has got. */
+  sendState: PlayerLockedSendState;
+  /** Saved lock time; `null` until the signed row arrives (no time claimed). */
+  msToLock: number | null;
+  /** "rejected" only: send the same answer again. */
+  onRetry?: () => void;
+  /** "rejected" only: pick a different card. */
+  onPick?: (slot: PlayerQuestionSlot) => void;
+  /** Where you stand (as of the last reveal). Sits below the phone's first
+   *  screen, reached by scrolling, so showing it can never push the cards. */
+  standings?: { top: StandingRow[]; you: StandingRow | null };
+}
+
+const NOOP = () => {};
 
 export interface PlayerQuestionProps {
   themeKey?: ThemeKey;
@@ -68,6 +102,10 @@ export interface PlayerQuestionProps {
    * locked state has its own component (PlayerLocked).
    */
   disabled?: boolean;
+  /** Set once the player has tapped: the same screen, now showing their pick. */
+  pick?: PlayerQuestionPick;
+  /** Room Magic is on tonight: keeps the "Answer saved." line's space. */
+  roomMagicEnabled?: boolean;
 }
 
 export function PlayerQuestion({
@@ -84,8 +122,11 @@ export function PlayerQuestion({
   imageUrl,
   onTap,
   disabled,
+  pick,
+  roomMagicEnabled = false,
 }: PlayerQuestionProps = {}) {
   const { t, themeKey } = useTheme();
+  const reducedMotion = usePrefersReducedMotion();
   const catColor = categoryColor(category, t.accent);
   const septemberQuestion = themeKey === "september";
   // October: the player's own unlit pumpkin waits in the timer strip, right
@@ -105,6 +146,31 @@ export function PlayerQuestion({
     !!imageUrl &&
     !imageFailed &&
     decorationLevel < (septemberQuestion ? 3 : 2);
+
+  // On a very small phone the question is taller than the screen, so the
+  // phone's scroller is taller than the screen too and its bottom sits under
+  // the fold. Standings at the end of it would then stay out of a finger's
+  // reach. This is how far that bottom hangs below the screen; it is added as
+  // padding under the standings only, so nothing above them moves.
+  const [belowFold, setBelowFold] = useState(0);
+  const hasStandings = !!pick?.standings && pick.standings.top.length > 0;
+  useEffect(() => {
+    const surface = screenRef.current;
+    if (!hasStandings || !surface) return;
+    const measure = () => {
+      const bottom = surface.getBoundingClientRect().bottom + window.scrollY;
+      const next = Math.max(0, Math.ceil(bottom - window.innerHeight));
+      setBelowFold((current) => (current === next ? current : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(surface);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [hasStandings]);
 
   const handleImageFailure = useCallback(() => {
     setImageFailed(true);
@@ -151,10 +217,14 @@ export function PlayerQuestion({
     return () => observer.disconnect();
   }, []);
 
+  // After the tap the digit keys only work again if the answer was refused and
+  // the player may pick another card.
+  const canRepick = pick?.sendState === "rejected" && !!pick.onPick;
   useAnswerKeyboard({
-    enabled: !!onTap && !disabled,
-    onSlot: (slot) => onTap?.(slot),
+    enabled: pick ? canRepick : !!onTap && !disabled,
+    onSlot: (slot) => (pick ? pick.onPick?.(slot) : onTap?.(slot)),
   });
+  const pickedLocked = pick?.sendState === "locked";
 
   // Auto-fit the prompt text to the available height. The frame ref attaches
   // to the row that holds the prompt + thumbnail; the text ref attaches to
@@ -172,8 +242,8 @@ export function PlayerQuestion({
 
   return (
     <PhoneScreen
-      data-testid="player-question"
-      scroll="locked"
+      data-testid={pick ? "player-locked" : "player-question"}
+      scroll={pick ? "auto" : "locked"}
       weatherPage="question"
       screenRef={screenRef}
       style={{ ["--player-question-decoration-level" as string]: decorationLevel }}
@@ -266,25 +336,52 @@ export function PlayerQuestion({
           alignItems: "center",
           gap: 10,
           padding: "10px 14px",
+          // The status text needs this much room; the strip has it from the
+          // start, so the tap never changes the strip's height.
+          boxSizing: "border-box",
+          minHeight: SEND_STATUS_MIN_HEIGHT + 20,
           borderRadius: 10,
           background: t.surface,
           marginBottom: 14,
         }}
       >
         <TimerRing accent={catColor} seconds={seconds} />
-        {yourPumpkin ? (
-          <span style={{ flex: 1, display: "flex", justifyContent: "center" }}>
-            <YourPumpkin
-              mood={seconds <= 0 ? "toppled" : "waiting"}
-              shiver={seconds > 0 && seconds <= 5}
-              size={56}
-              style={{ margin: "-18px 0 -8px" }}
+        {pick ? (
+          <>
+            <PlayerSendStatus
+              sendState={pick.sendState}
+              msToLock={pick.msToLock}
+              accent={catColor}
+              onRetry={pick.onRetry}
             />
-          </span>
+            {yourPumpkin && pick.sendState !== "rejected" ? (
+              // (Hidden once the answer is refused: it can no longer light, and
+              // its width is what the Try again button needs on a small phone.)
+              // October: your pumpkin lights the moment the server says yes.
+              <YourPumpkin
+                mood={pickedLocked ? "lit" : pick.sendState === "unconfirmed" ? "toppled" : "waiting"}
+                size={56}
+                style={{ margin: "-18px 0 -8px" }}
+              />
+            ) : null}
+          </>
         ) : (
-          <span style={{ flex: 1 }} />
+          <>
+            {yourPumpkin ? (
+              <span style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+                <YourPumpkin
+                  mood={seconds <= 0 ? "toppled" : "waiting"}
+                  shiver={seconds > 0 && seconds <= 5}
+                  size={56}
+                  style={{ margin: "-18px 0 -8px" }}
+                />
+              </span>
+            ) : (
+              <span style={{ flex: 1 }} />
+            )}
+            <Eyebrow color={t.inkMute} size={9}>+10% &lt; 5s</Eyebrow>
+          </>
         )}
-        <Eyebrow color={t.inkMute} size={9}>+10% &lt; 5s</Eyebrow>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -295,25 +392,152 @@ export function PlayerQuestion({
             n={slot}
             text={options[i] ?? ""}
             delay={i * 70}
-            onTap={onTap ? () => onTap(slot) : undefined}
-            disabled={disabled}
-            data-testid={`player-answer-${slot}`}
+            entrance="backwards"
+            // The same cards before and after the tap: only the look changes.
+            // (After a refusal the other answers wake up so the player can
+            // change their mind; the refused one stays marked.)
+            state={
+              !pick
+                ? "idle"
+                : slot === pick.chosenSlot
+                  ? "locked-self"
+                  : canRepick
+                    ? "idle"
+                    : "locked-other"
+            }
+            reserveMark
+            focusOnMount={!!pick && slot === pick.chosenSlot}
+            onTap={pick ? (canRepick ? () => pick.onPick?.(slot) : NOOP) : onTap ? () => onTap(slot) : undefined}
+            disabled={pick ? false : disabled}
+            data-testid={pick ? `player-locked-answer-${slot}` : `player-answer-${slot}`}
           />
         ))}
       </div>
 
+      {roomMagicEnabled && (
+        <div
+          aria-live="polite"
+          data-testid="player-house-lights-confirmation"
+          style={{
+            marginTop: "auto",
+            paddingTop: 10,
+            textAlign: "center",
+            minHeight: 18,
+            boxSizing: "content-box",
+            color: t.ink,
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          {pickedLocked ? "Answer saved." : "\u00A0"}
+        </div>
+      )}
+
       {showFooter && (
         <div
           style={{
-            marginTop: "auto",
+            marginTop: roomMagicEnabled ? 0 : "auto",
             paddingTop: 14,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
+            position: "relative",
           }}
         >
-          <Eyebrow color={t.inkMute} size={9}>EVERYONE&apos;S #&apos;S ARE SCRAMBLED · YOURS IS YOURS</Eyebrow>
-          <Eyebrow color={t.inkMute} size={9}>KEYBOARD: 1·2·3·4</Eyebrow>
+          {/* The small print is ALWAYS laid out (hidden after the tap), so the
+              footer is exactly as tall in both states and nothing above it
+              moves. After the tap the waiting line is laid over it. */}
+          <div
+            aria-hidden={pick ? true : undefined}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              visibility: pick ? "hidden" : "visible",
+            }}
+          >
+            <Eyebrow color={t.inkMute} size={9}>EVERYONE&apos;S #&apos;S ARE SCRAMBLED · YOURS IS YOURS</Eyebrow>
+            <Eyebrow color={t.inkMute} size={9}>KEYBOARD: 1·2·3·4</Eyebrow>
+          </div>
+          {pick && (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                top: 14,
+                bottom: 0,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 8,
+                minWidth: 0,
+              }}
+            >
+              {(pickedLocked || pick.sendState === "sending") && (
+                <span
+                  data-testid="player-waiting-pulse-dot"
+                  style={{
+                    flexShrink: 0,
+                    width: 5,
+                    height: 5,
+                    borderRadius: 99,
+                    background: catColor,
+                    animation: reducedMotion ? "none" : "tr1via-pulse 1.4s ease-in-out infinite",
+                  }}
+                />
+              )}
+              <Eyebrow
+                color={t.inkMute}
+                size={9}
+                style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+              >
+                {pickedLocked || pick.sendState === "sending"
+                  ? "Waiting for the room to lock in\u2026"
+                  : pick.sendState === "retrying"
+                    ? "Keep this screen open while we retry."
+                    : pick.sendState === "unconfirmed"
+                      ? "Waiting for the reveal\u2026"
+                      : "\u00A0"}
+              </Eyebrow>
+            </div>
+          )}
+        </div>
+      )}
+
+      {pick?.standings && pick.standings.top.length > 0 && (
+        // Below the phone's first screen: reached by scrolling, positioned
+        // outside the flow so it can never take space from the cards.
+        <div
+          data-testid="player-locked-standings"
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            right: 0,
+            paddingTop: 18,
+            paddingBottom: 26 + belowFold,
+            display: "flex",
+            flexDirection: "column",
+            gap: 6,
+          }}
+        >
+          <Eyebrow color={t.inkMute} size={10}>WHERE YOU STAND</Eyebrow>
+          {pick.standings.top.map((row) => (
+            <PlayerLockedStandingsRow
+              key={`${row.rank}-${row.name}`}
+              row={row}
+              accent={catColor}
+              surface={t.surface}
+              ink={t.ink}
+            />
+          ))}
+          {pick.standings.you && (
+            <PlayerLockedStandingsRow
+              row={pick.standings.you}
+              pinned
+              accent={catColor}
+              surface={t.surface}
+              ink={t.ink}
+            />
+          )}
         </div>
       )}
     </PhoneScreen>

@@ -11,8 +11,9 @@
 
 "use client";
 
-import type { CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { useTheme } from "./ThemeProvider";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { Numeric } from "./Numeric";
 
 export type AnswerCardState =
@@ -32,6 +33,27 @@ export interface AnswerCardProps {
   state?: AnswerCardState;
   /** Stagger entrance animation by ms (used for the initial 4-card cascade). */
   delay?: number;
+  /**
+   * Play the rise-in entrance on mount (default true). Pass false where the
+   * card appears as the continuation of something the player just did (the
+   * locked screen after a tap), so nothing fades or slides in again.
+   * "backwards": play it, but let go of the card when it ends (the default
+   * keeps the last frame's opacity, which would stop the card ever dimming).
+   */
+  entrance?: boolean | "backwards";
+  /**
+   * Move keyboard focus onto this card when it appears, but only if focus has
+   * nowhere better to be (it fell to the page body because the button that was
+   * just tapped turned into this card). Used for the player's chosen answer so
+   * focus stays on it after the tap instead of dropping to nothing.
+   */
+  focusOnMount?: boolean;
+  /**
+   * Keep room for the "this is yours" dot even when it is not showing, so the
+   * text wraps the same on every state and the card never changes height when
+   * it becomes the chosen one.
+   */
+  reserveMark?: boolean;
   onTap?: () => void;
   disabled?: boolean;
   /** Forwarded data-testid for E2E targeting. */
@@ -44,11 +66,15 @@ export function AnswerCard({
   accent,
   state = "idle",
   delay = 0,
+  entrance = true,
+  focusOnMount = false,
+  reserveMark = false,
   onTap,
   disabled,
   "data-testid": dataTestId,
 }: AnswerCardProps) {
   const { t } = useTheme();
+  const reducedMotion = usePrefersReducedMotion();
   const a = accent ?? t.accent;
   const isLockedSelf = state === "locked-self";
   const isLockedOther = state === "locked-other";
@@ -99,13 +125,27 @@ export function AnswerCard({
 
   const isTappable = state === "idle" && !!onTap && !disabled;
 
-  const Tag = isTappable ? "button" : "div";
+  // A card that was given a tap handler stays a button in every state (it just
+  // stops being pressable), so the tap changes how the card looks and nothing
+  // else: the same element stays in place, keeps keyboard focus, and never
+  // replays its entrance. Cards with no handler are plain boxes.
+  const Tag = onTap && !disabled ? "button" : "div";
+
+  const cardRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!focusOnMount) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    cardRef.current?.focus({ preventScroll: true });
+  }, [focusOnMount]);
 
   return (
     <Tag
+      ref={cardRef as never}
+      tabIndex={focusOnMount && !isTappable ? -1 : undefined}
       type={isTappable ? "button" : undefined}
       onClick={isTappable ? onTap : undefined}
-      disabled={!isTappable && Tag === "button"}
+      aria-disabled={Tag === "button" && !isTappable ? true : undefined}
       data-testid={dataTestId}
       style={{
         position: "relative",
@@ -118,8 +158,11 @@ export function AnswerCard({
         minHeight: 64,
         opacity,
         transform: `scale(${scale})`,
-        transition: "all .35s cubic-bezier(.2,.7,.3,1)",
-        animation: `tr1via-rise .5s cubic-bezier(.2,.7,.3,1) ${delay}ms both`,
+        // Reduced motion: the highlight and the dimming are simply there.
+        transition: reducedMotion ? "none" : "all .35s cubic-bezier(.2,.7,.3,1)",
+        animation: entrance
+          ? `tr1via-rise .5s cubic-bezier(.2,.7,.3,1) ${delay}ms ${entrance === "backwards" ? "backwards" : "both"}`
+          : "none",
         cursor: isTappable ? "pointer" : "default",
         textAlign: "left",
         font: "inherit",
@@ -154,14 +197,16 @@ export function AnswerCard({
         >
           {text}
         </span>
-        {isLockedSelf && (
+        {(isLockedSelf || reserveMark) && (
           <span
             style={{
               width: 9,
               height: 9,
+              flexShrink: 0,
               borderRadius: 99,
               background: a,
               boxShadow: `0 0 0 5px ${a}22`,
+              visibility: isLockedSelf ? "visible" : "hidden",
             }}
             aria-hidden="true"
           />

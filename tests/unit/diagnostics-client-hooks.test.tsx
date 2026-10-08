@@ -49,6 +49,12 @@ function reply(status: number) {
   return { ok: status >= 200 && status < 300, status, json: async () => ({}), text: async () => "{}" } as Response;
 }
 
+// What our server sends for a saved answer (a bare 200 is not a confirm).
+function confirmedReply() {
+  const body = { code: "confirmed" };
+  return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) } as Response;
+}
+
 beforeEach(() => {
   vi.restoreAllMocks();
   window.localStorage.clear();
@@ -66,14 +72,16 @@ afterEach(() => {
 });
 
 describe("useAnswerSubmit", () => {
-  it("sends exactly the same request as before when logging is off", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(200));
+  it("sends exactly the same request as before when logging is off (plus only a cancel switch)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(confirmedReply());
     const { result } = renderHook(() => useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3] }));
     act(() => result.current.submit(2));
     await waitFor(() => expect(result.current.status).toBe("sent"));
     expect(fetchSpy).toHaveBeenCalledWith("/api/answers", {
       method: "POST",
       credentials: "same-origin",
+      // The only addition: the phone can now drop a request it no longer needs.
+      signal: expect.any(AbortSignal),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ questionId: "q1", slotChosen: 2, scramble: [0, 1, 2, 3] }),
     });
@@ -103,7 +111,7 @@ describe("useAnswerSubmit", () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockRejectedValueOnce(new TypeError("Load failed"))
-      .mockResolvedValueOnce(reply(200));
+      .mockResolvedValueOnce(confirmedReply());
     const { result } = renderHook(() =>
       useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3], backoffMs: [0, 0, 0] }),
     );

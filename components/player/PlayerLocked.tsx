@@ -3,6 +3,11 @@
 // for everyone else) + the four answer cards in mixed states. Self pick is
 // scaled & glowing; siblings fade. Bottom shows quiet "waiting on the room"
 // status with a pulse dot so it doesn't feel frozen.
+//
+// This one screen is shown from the instant of the tap. `sendState` says how
+// far the answer has got: sending → locked (the server said yes) or, when the
+// network is bad, retrying → locked, or unconfirmed if the question closed
+// first. Only "locked" claims anything about the answer being counted.
 
 "use client";
 
@@ -22,6 +27,9 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import type { StandingRow } from "@/lib/player/betweenGames";
+import { PlayerSendStatus, type PlayerLockedSendState } from "./PlayerSendStatus";
+
+export type { PlayerLockedSendState };
 
 export interface PlayerLockedProps {
   themeKey?: ThemeKey;
@@ -33,8 +41,17 @@ export interface PlayerLockedProps {
   chosenSlot?: 1 | 2 | 3 | 4;
   /** Seconds remaining (still counting down for the rest of the room). */
   seconds?: number;
-  /** Time-to-lock in seconds — drives the "Locked at 2.3s" stat. */
-  msToLock?: number;
+  /** Time-to-lock in ms — drives the "Locked at 2.3s" stat. `null` = the
+   *  server has said yes but its saved time has not reached this phone yet, so
+   *  no time is claimed. Omitted → the gallery's sample value. */
+  msToLock?: number | null;
+  /** How far the answer has got (see the file header). Default "locked". */
+  sendState?: PlayerLockedSendState;
+  /** "rejected" only: lets the player send the same answer again. */
+  onRetry?: () => void;
+  /** "rejected" only: lets the player pick a different answer. Receives the
+   *  visible slot (1..4) tapped. Omitted → the other cards stay faded. */
+  onPick?: (slot: 1 | 2 | 3 | 4) => void;
   /** Static locked-in count, e.g. "21/32". Optional, and never defaulted: a
    *  made-up count on a real phone tells the room something untrue. */
   lockedSummary?: string;
@@ -55,7 +72,7 @@ export interface PlayerLockedProps {
   roomMagicEnabled?: boolean;
 }
 
-interface PlayerLockedStandingsRowProps {
+export interface PlayerLockedStandingsRowProps {
   row: StandingRow;
   pinned?: boolean;
   accent: string;
@@ -63,7 +80,7 @@ interface PlayerLockedStandingsRowProps {
   ink: string;
 }
 
-function PlayerLockedStandingsRow({
+export function PlayerLockedStandingsRow({
   row,
   pinned,
   accent,
@@ -114,6 +131,9 @@ export function PlayerLocked({
   chosenSlot = 2,
   seconds = 11,
   msToLock = 2300,
+  sendState = "locked",
+  onRetry,
+  onPick,
   lockedSummary,
   questionNumber: _questionNumber,
   lockedCount,
@@ -129,8 +149,7 @@ export function PlayerLocked({
   const catColor = categoryColor(category, t.accent);
   const septemberQuestion = themeKey === "september";
   const bannerBottomGap = septemberQuestion ? 0 : 18;
-  const secondsToLock = (msToLock / 1000).toFixed(1);
-  const speedBonus = msToLock < 5000;
+  const isLocked = sendState === "locked";
   const hasStandings = !!standings && standings.top.length > 0;
 
   // Live "X of Y locked in" — the one thing on this screen that actually moves
@@ -178,18 +197,16 @@ export function PlayerLocked({
         }}
       >
         <TimerRing accent={catColor} seconds={seconds} />
-        <div style={{ flex: 1 }} role="status" aria-live="polite">
-          <Eyebrow color={t.inkMid} size={9}>LOCKED AT</Eyebrow>
-          <div style={{ marginTop: 2, fontSize: 14, color: t.ink, fontWeight: 600 }}>
-            <Numeric size={15} color={catColor}>{secondsToLock}s</Numeric>
-            <span style={{ color: t.inkMid, fontWeight: 400, marginLeft: 6, fontSize: 12 }}>
-              {speedBonus ? "· speed bonus locked in" : "· locked in"}
-            </span>
-          </div>
-        </div>
-        {hasPhoneLayer(themeKey) ? (
-          // October: your pumpkin lit the instant you locked in.
-          <YourPumpkin mood="lit" size={56} style={{ margin: "-18px 0 -8px" }} />
+        <PlayerSendStatus sendState={sendState} msToLock={msToLock} accent={catColor} onRetry={onRetry} />
+        {hasPhoneLayer(themeKey) && sendState !== "rejected" ? (
+          // (Hidden once the answer is refused: it can no longer light, and
+          // its width is what the Try again button needs on a small phone.)
+          // October: your pumpkin lights the moment the server says yes.
+          <YourPumpkin
+            mood={isLocked ? "lit" : sendState === "unconfirmed" ? "toppled" : "waiting"}
+            size={56}
+            style={{ margin: "-18px 0 -8px" }}
+          />
         ) : null}
         {!hasLiveCount && lockedSummary && <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>}
       </div>
@@ -233,7 +250,21 @@ export function PlayerLocked({
             accent={catColor}
             n={slot}
             text={options[i] ?? ""}
-            state={slot === chosenSlot ? "locked-self" : "locked-other"}
+            // After a refusal the other answers wake up again so the player
+            // can change their mind; the refused one stays marked.
+            state={
+              slot === chosenSlot
+                ? "locked-self"
+                : sendState === "rejected" && onPick
+                  ? "idle"
+                  : "locked-other"
+            }
+            onTap={sendState === "rejected" && onPick && slot !== chosenSlot ? () => onPick(slot) : undefined}
+            focusOnMount={slot === chosenSlot}
+            data-testid={`player-locked-answer-${slot}`}
+            // Continuation of the tap: the cards are already there, so they
+            // never fade or slide in again.
+            entrance={false}
           />
         ))}
       </div>
@@ -269,26 +300,35 @@ export function PlayerLocked({
             data-testid="player-house-lights-confirmation"
             style={{
               marginBottom: 8,
+              minHeight: 18,
               color: t.ink,
               fontSize: 13,
               fontWeight: 700,
             }}
           >
-            Answer saved.
+            {isLocked ? "Answer saved." : "\u00A0"}
           </div>
         )}
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <span
-            data-testid="player-waiting-pulse-dot"
-            style={{
-              width: 5,
-              height: 5,
-              borderRadius: 99,
-              background: catColor,
-              animation: pulseAnimation,
-            }}
-          />
-          Waiting for the room to lock in&hellip;
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 18 }}>
+          {(isLocked || sendState === "sending") && (
+            <span
+              data-testid="player-waiting-pulse-dot"
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 99,
+                background: catColor,
+                animation: pulseAnimation,
+              }}
+            />
+          )}
+          {isLocked || sendState === "sending"
+            ? "Waiting for the room to lock in\u2026"
+            : sendState === "retrying"
+              ? "Keep this screen open while we retry."
+              : sendState === "unconfirmed"
+                ? "Waiting for the reveal\u2026"
+                : ""}
         </span>
       </div>
     </PhoneScreen>
