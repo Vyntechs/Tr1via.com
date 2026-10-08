@@ -1,5 +1,5 @@
 import { act, renderHook } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Host laptop lag fixes (2026-10-07):
 //  A. The newest-reveal read is scoped by game_id instead of joining games on
@@ -16,6 +16,8 @@ const h = vi.hoisted(() => {
   const calls: Array<{ table: string; ops: Op[] }> = [];
   const executed: Record<string, number> = {};
   const gates = new Map<string, Promise<void>>();
+  // Milliseconds each read of a table takes (fake timers), to model a slow link.
+  const delays = new Map<string, number>();
   const failing = new Set<string>();
   const broadcastHandlers = new Map<string, (message: { payload: unknown }) => void>();
   const changeHandlers = new Map<string, (payload: unknown) => void>();
@@ -30,6 +32,7 @@ const h = vi.hoisted(() => {
     for (const key of Object.keys(executed)) delete executed[key];
     calls.length = 0;
     gates.clear();
+    delays.clear();
     failing.clear();
     broadcastHandlers.clear();
     changeHandlers.clear();
@@ -97,6 +100,8 @@ const h = vi.hoisted(() => {
       for (const key of keys) executed[key] = (executed[key] ?? 0) + 1;
       const gate = keys.map((key) => gates.get(key)).find(Boolean);
       if (gate) await gate;
+      const delay = keys.map((key) => delays.get(key)).find((ms) => ms !== undefined);
+      if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
       if (keys.some((key) => failing.has(key))) return { data: null, error: { message: "boom" } };
       let rows = [...(db[table] ?? [])];
       for (const [name, ...args] of ops) {
@@ -176,6 +181,7 @@ const h = vi.hoisted(() => {
     calls,
     executed,
     gates,
+    delays,
     failing,
     client,
     broadcastHandlers,
@@ -211,6 +217,8 @@ vi.mock("@/lib/hooks/useUnreachableRetry", () => ({ useUnreachableRetry: () => u
 vi.mock("@/lib/hooks/useRoomRoutePoll", () => ({ useRoomRoutePoll: () => undefined }));
 
 import { useRoom } from "@/lib/hooks/useRoom";
+import { __resetReachabilityForTests, getReachability } from "@/lib/realtime/reachability";
+import { __resetRoomFallbackForTests, getRoomFallback } from "@/lib/room/roomFallbackStore";
 
 function deferred() {
   let release!: () => void;
@@ -292,6 +300,151 @@ describe("host laptop: newest-reveal read is scoped to this night's games", () =
   });
 });
 
+// On a slow link the fix must behave like main: a read that finishes inside the
+// 5 s budget never flips the host screen to "backup mode", and the reveal read
+// must not add a round trip once this night's game ids are known.
+describe("host laptop: slow connections behave as they did before the reveal-read change", () => {
+  const TABLES = ["nights", "games", "categories", "players", "questions", "reveals"];
+  const slowReads = (ms: number) => {
+    for (const table of TABLES) h.delays.set(table, ms);
+  };
+  let random: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    h.seed();
+    __resetRoomFallbackForTests();
+    __resetReachabilityForTests();
+    random = vi.spyOn(Math, "random").mockReturnValue(0);
+    vi.useFakeTimers();
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ nightId: h.NIGHT, hostDefaultThemeKey: "may" }),
+    })));
+  });
+
+  afterEach(() => {
+    random.mockRestore();
+    vi.useRealTimers();
+  });
+
+  const advance = async (ms: number) => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+    await flush();
+  };
+  // Direct reads gave up. The screen then shows "backup" (the server route
+  // served it) or "unreachable" (the route failed too, as this bare stub does).
+  const backupBanner = () => getRoomFallback().backupMode || getReachability() === "unreachable";
+
+  it("first load with every read taking 2.8 s loads normally, no backup banner", async () => {
+    slowReads(2_800);
+    const { result } = renderHook(() => useRoom({ roomCode: "ABCDEF", audience: "host" }));
+    await advance(6_000);
+
+    expect(backupBanner()).toBe(false);
+    expect(getReachability()).toBe("ok");
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.currentReveal?.id).toBe("r1");
+  });
+
+  it("a rebuild sends the reveal read together with the games read and loads in one round trip", async () => {
+    const { result } = await mountHost();
+    slowReads(2_800);
+    h.db.players.push({
+      id: "player-2",
+      night_id: h.NIGHT,
+      device_id: "device-2",
+      display_name: "Bo",
+      joined_at: "2026-10-07T00:11:30.000Z",
+      removed_at: null,
+    });
+    const before = h.executed.reveals;
+
+    // The 15 s heartbeat tears the connection down and re-reads everything.
+    await advance(15_000);
+    expect(h.executed.games).toBe(2);
+    expect(h.executed.reveals).toBe(before + 1);
+
+    await advance(3_000);
+    expect(backupBanner()).toBe(false);
+    expect(result.current.players.map((player) => player.id)).toEqual(["player-1", "player-2"]);
+  });
+
+  it("a catch-up with every read taking 2.8 s still lands", async () => {
+    const { result } = await mountHost();
+    slowReads(2_800);
+    h.db.players.push({
+      id: "player-2",
+      night_id: h.NIGHT,
+      device_id: "device-2",
+      display_name: "Bo",
+      joined_at: "2026-10-07T00:11:30.000Z",
+      removed_at: null,
+    });
+    const before = h.executed.reveals;
+
+    act(() => {
+      void result.current.requestLiveCatchUp?.();
+    });
+    await flush();
+    // Both lookups go out at once; the reveal read does not wait for the games read.
+    expect(h.executed.reveals).toBe(before + 1);
+
+    await advance(3_000);
+    expect(result.current.players.map((player) => player.id)).toEqual(["player-1", "player-2"]);
+  });
+
+  it("still finds the newest reveal when a game was added since the last read", async () => {
+    const { result } = await mountHost();
+    h.db.games.push({
+      id: "game-b",
+      night_id: h.NIGHT,
+      game_no: 2,
+      state: "live",
+      started_at: "2026-10-07T00:12:00.000Z",
+      ended_at: null,
+      category_count: 1,
+      question_count: 3,
+    });
+    h.db.reveals.push({
+      id: "r-b",
+      game_id: "game-b",
+      question_id: "q9",
+      event: "reveal",
+      occurred_at: "2026-10-07T00:13:00.000000+00:00",
+      metadata: null,
+    });
+    const before = revealCalls().length;
+
+    await act(async () => {
+      await result.current.requestLiveCatchUp?.();
+    });
+
+    expect(result.current.games.map((game) => game.id)).toEqual(["game-a", "game-b"]);
+    expect(result.current.currentReveal?.id).toBe("r-b");
+    // The first guess used the old ids; one corrected read followed.
+    expect(revealCalls().length).toBe(before + 2);
+    expect(revealCalls().at(-1)?.ops).toContainEqual(["in", "game_id", ["game-a", "game-b"]]);
+  });
+
+  it("still goes to backup mode when reads take longer than the 5 s limit", async () => {
+    slowReads(5_500);
+    renderHook(() => useRoom({ roomCode: "ABCDEF", audience: "host" }));
+    await advance(5_100);
+
+    expect(backupBanner()).toBe(true);
+  });
+
+  it("still goes to backup mode when the reveal read never answers", async () => {
+    h.gates.set("reveals", new Promise<void>(() => {}));
+    renderHook(() => useRoom({ roomCode: "ABCDEF", audience: "host" }));
+    await advance(5_100);
+
+    expect(backupBanner()).toBe(true);
+  });
+});
+
 describe("host laptop: re-reads the room in place when it may have missed something", () => {
   beforeEach(() => {
     h.seed();
@@ -353,6 +506,25 @@ describe("host laptop: re-reads the room in place when it may have missed someth
     expect(result.current.lastResolvedQuestion?.id).toBe("q1");
     // The answer is merged back from the resolve reveal, as in the bootstrap.
     expect(result.current.lastResolvedQuestion?.correct_index).toBe(2);
+  });
+
+  it("waits for both live channels: one joining alone does not trigger a re-read", async () => {
+    await mountHost();
+    expect(h.joinCallbacks).toHaveLength(2);
+    expect(h.executed.players).toBe(1);
+
+    act(() => h.joinCallbacks[0]("SUBSCRIBED"));
+    await flush();
+    expect(h.executed.players).toBe(1);
+
+    act(() => h.joinCallbacks[1]("SUBSCRIBED"));
+    await flush();
+    expect(h.executed.players).toBe(2);
+
+    // A later status callback from either one changes nothing.
+    act(() => h.joinCallbacks[0]("SUBSCRIBED"));
+    await flush();
+    expect(h.executed.players).toBe(2);
   });
 
   it("re-reads only when the channels become live, not on repeat status callbacks", async () => {

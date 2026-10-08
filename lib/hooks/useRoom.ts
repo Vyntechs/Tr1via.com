@@ -220,6 +220,9 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     await hostRefreshRef.current?.();
   }, []);
   const hostCatchUpRef = useRef<(() => Promise<void>) | null>(null);
+  // This night's game ids from the latest games read, so the newest-reveal read
+  // can be sent together with the next games read instead of after it.
+  const hostGameIdsRef = useRef<{ nightId: string; ids: string[] } | null>(null);
   const requestHostCatchUp = useCallback(async () => {
     await hostCatchUpRef.current?.();
   }, []);
@@ -945,7 +948,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         Awaited<ReturnType<typeof readPlayers>>,
         Awaited<ReturnType<typeof readLiveQuestion>>,
         Awaited<ReturnType<typeof readLastResolved>>,
-        Awaited<ReturnType<typeof readReveals>>,
+        Awaited<ReturnType<typeof readRevealsFor>>,
       ];
       function readNight() {
         return supa.from("nights").select("*").eq("id", nightId).single();
@@ -1000,20 +1003,51 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // join on games.night_id: the permission check on `reveals` runs per row
       // and, with the join, ran over every night's rows (~1s live). Same rows,
       // same refusals — the permission policy is unchanged.
-      async function readReveals(gamesRead: PromiseLike<{ data: GameRow[] | null }>) {
-        const gameIds = ((await gamesRead).data ?? []).map((g) => g.id);
-        if (gameIds.length === 0) return { data: [] as RevealRow[], error: null };
-        return supa
-          .from("reveals")
-          .select("*")
-          .in("game_id", gameIds)
-          .order("occurred_at", { ascending: false })
-          .limit(1);
+      function readRevealsFor(gameIds: string[]) {
+        if (gameIds.length === 0) return Promise.resolve({ data: [] as RevealRow[], error: null });
+        return withTimeout(
+          Promise.resolve(
+            supa
+              .from("reveals")
+              .select("*")
+              .in("game_id", gameIds)
+              .order("occurred_at", { ascending: false })
+              .limit(1),
+          ),
+          BOOTSTRAP_TIMEOUT_MS,
+          "reveals-read",
+        );
+      }
+      const gameIdsOf = (res: { data: GameRow[] | null }) => (res.data ?? []).map((g) => g.id);
+      // Starts the games read and the newest-reveal read (for catch-up too).
+      // When this night's game ids are known from an earlier read, the reveal
+      // read goes out together with the games read, exactly like the old joined
+      // query, so a slow link pays no extra round trip. Only a first-ever read
+      // has to wait for the games. Either way the reveal read has its own
+      // BOOTSTRAP_TIMEOUT_MS from the moment it is sent, so waiting on the games
+      // read never eats into it; callers keep it out of their shared limit.
+      function startGamesAndReveals() {
+        const known = hostGameIdsRef.current?.nightId === nightId ? hostGameIdsRef.current.ids : null;
+        const gamesRead = Promise.resolve(readGames()).then((res) => {
+          if (!res.error && res.data) hostGameIdsRef.current = { nightId, ids: gameIdsOf(res) };
+          return res;
+        });
+        const revealsRead = (async () => {
+          if (!known) return readRevealsFor(gameIdsOf(await gamesRead));
+          const guess = readRevealsFor(known);
+          guess.catch(() => undefined);
+          const fresh = gameIdsOf(await gamesRead);
+          // A game was added or removed since the last read: ask again, rarely.
+          return fresh.join() === known.join() ? guess : readRevealsFor(fresh);
+        })();
+        // Awaited by the caller after its other reads; don't let an early failure
+        // count as unhandled if those reads time out first.
+        revealsRead.catch(() => undefined);
+        return { gamesRead, revealsRead };
       }
       try {
-        // Promise.resolve so the games request is sent once and shared.
-        const gamesRead = Promise.resolve(readGames());
-        reads = await withTimeout(
+        const { gamesRead, revealsRead } = startGamesAndReveals();
+        const others = await withTimeout(
           Promise.all([
             readNight(),
             gamesRead,
@@ -1021,11 +1055,11 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             readPlayers(),
             readLiveQuestion(),
             readLastResolved(),
-            readReveals(gamesRead),
           ]),
           BOOTSTRAP_TIMEOUT_MS,
           "bootstrap-reads",
         );
+        reads = [...others, await revealsRead];
       } catch {
         // DIRECT reads degraded/blocked → keep the game working via the server
         // route instead of going black. Only if the route ALSO fails do we
@@ -1166,18 +1200,13 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // alone if its read failed. Resilient nights keep their server projection.
       async function catchUpHostRoomOnce(): Promise<void> {
         try {
-          const gamesRead = Promise.resolve(readGames());
-          const [gamesRes, playersRes, liveRes, lastRes, revealsRes] = await withTimeout(
-            Promise.all([
-              gamesRead,
-              readPlayers(),
-              readLiveQuestion(),
-              readLastResolved(),
-              readReveals(gamesRead),
-            ]),
+          const { gamesRead, revealsRead } = startGamesAndReveals();
+          const [gamesRes, playersRes, liveRes, lastRes] = await withTimeout(
+            Promise.all([gamesRead, readPlayers(), readLiveQuestion(), readLastResolved()]),
             BOOTSTRAP_TIMEOUT_MS,
             "host-catch-up",
           );
+          const revealsRes = await revealsRead;
           if (cancelled) return;
           const nextGames = gamesRes.error ? null : ((gamesRes.data ?? []) as GameRow[]);
           const nextPlayers = playersRes.error ? null : ((playersRes.data ?? []) as PlayerRow[]);
@@ -1280,16 +1309,19 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         if (broadcastChannelState === "SUBSCRIBED" && dbChannelState === "SUBSCRIBED") return "SUBSCRIBED";
         return broadcastChannelState ?? dbChannelState;
       }
-      let wasSubscribed = false;
+      let wasBothLive = false;
       function publishChannelHealth(): void {
         if (cancelled) return;
         const worst = deriveWorstStatus();
         setChannelHealth(worst);
         // Both channels just became live (first join of this bootstrap, or a
         // rejoin after a dropped socket): re-read what the deaf gap may have
-        // missed. Edge-triggered, so repeat status callbacks cost nothing.
-        if (worst === "SUBSCRIBED" && !wasSubscribed) void hostCatchUpRef.current?.();
-        wasSubscribed = worst === "SUBSCRIBED";
+        // missed. Edge-triggered, so repeat status callbacks cost nothing. Tested
+        // directly because `worst` already reads SUBSCRIBED when only one channel
+        // has joined and the other has not reported yet.
+        const bothLive = broadcastChannelState === "SUBSCRIBED" && dbChannelState === "SUBSCRIBED";
+        if (bothLive && !wasBothLive) void hostCatchUpRef.current?.();
+        wasBothLive = bothLive;
         if (worst === "CHANNEL_ERROR" || worst === "TIMED_OUT" || worst === "CLOSED") {
           // Throttle: a dead WebSocket can fire CHANNEL_ERROR several times in
           // quick succession as the client tries internal reconnects. We only
