@@ -333,17 +333,18 @@ export interface HeadstoneSpot {
 }
 
 /** Every spot a stone can stand in. Positions come from the Figma prototype
- *  (page "05 · Headstones prototype"), except the two corner stones: the
+ *  (page "05 · Headstones prototype"), except the two corner stones. The
  *  prototype only drew odd counts (29, 41), where the back row of pumpkins is
  *  one shorter. On even counts 30–38 the back row's end pumpkin reaches ~12 px
- *  further out, so the corner stones are 0.4x (not 0.45x) and tucked into the
- *  corners to keep a clear gap of at least 8 px for every count 25–44. */
+ *  further out, and at the reveal a toppled pumpkin falls to the left, so the
+ *  corner stones are 0.38x (not 0.45x), tucked into the corners and standing
+ *  above where a toppled end pumpkin lies. */
 export const HEADSTONE_SPOTS: readonly HeadstoneSpot[] = [
   { id: "left", style: "slab", x: 36, top: 692, scale: 1 },
   { id: "right", style: "mossy", x: 1416, top: 692, scale: 1 },
   { id: "extra", style: "cross", x: 175.2, top: 719.2, scale: 0.8 },
-  { id: "corner-left", style: "slab", x: 0, top: 686, scale: 0.4 },
-  { id: "corner-right", style: "cross", x: 1536, top: 686, scale: 0.4 },
+  { id: "corner-left", style: "slab", x: 0, top: 672, scale: 0.38 },
+  { id: "corner-right", style: "cross", x: 1536, top: 672, scale: 0.38 },
 ];
 
 const TIER_SPOTS: Record<HeadstoneTier, readonly HeadstoneSpot["id"][]> = {

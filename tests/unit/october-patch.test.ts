@@ -238,8 +238,8 @@ describe("headstones · which stones show", () => {
     ]);
     expect(headstoneSpots("pair").map((s) => s.style)).toEqual(["slab", "mossy"]);
     expect(headstoneSpots("corners").map((s) => [s.id, s.style, s.scale])).toEqual([
-      ["corner-left", "slab", 0.4],
-      ["corner-right", "cross", 0.4],
+      ["corner-left", "slab", 0.38],
+      ["corner-right", "cross", 0.38],
     ]);
     expect(headstoneSpots("none")).toEqual([]);
   });
@@ -250,8 +250,8 @@ describe("headstones · which stones show", () => {
     expect([spot("right").x, spot("right").top, spot("right").scale]).toEqual([1416, 692, 1]);
     expect([spot("extra").x, spot("extra").top, spot("extra").scale]).toEqual([175.2, 719.2, 0.8]);
     // The corner stones differ from the prototype (0.4x, tucked in): see the note in patch.ts.
-    expect([spot("corner-left").x, spot("corner-left").top, spot("corner-left").scale]).toEqual([0, 686, 0.4]);
-    expect([spot("corner-right").x, spot("corner-right").top, spot("corner-right").scale]).toEqual([1536, 686, 0.4]);
+    expect([spot("corner-left").x, spot("corner-left").top, spot("corner-left").scale]).toEqual([0, 672, 0.38]);
+    expect([spot("corner-right").x, spot("corner-right").top, spot("corner-right").scale]).toEqual([1536, 672, 0.38]);
   });
 
   it("is the same answer for the same input, and never reads a clock", () => {
@@ -329,10 +329,23 @@ const VISIBLE: Record<HeadstoneStyle, { x0: number; x1: number; y0: number; y1: 
   mossy: { x0: 10, x1: 148, y0: 46, y1: 195 },
 };
 
-/** Gap in stage px between a stone and the nearest pumpkin body or name stake
- *  (negative = overlap). A pumpkin's body spans 44% either side of centre and
- *  starts 28% down its art box (measured from the art). */
-function nearestGap(tier: HeadstoneTier, count: number): number {
+/** The widest outline a pumpkin takes in any mood, as boxes in stage px:
+ *  lit (body ±44% of the width from 28% down), blazing (±50% from 15% down,
+ *  the flame is narrower), toppled (at the reveal it falls to the LEFT, so it
+ *  reaches 60% of the width left of centre, over the lower 40%), and the
+ *  name stake under it. Measured from the art and the canvas drawing. */
+function pumpkinOutlines(p: ReturnType<typeof patchLayout>[number]) {
+  return [
+    { x0: p.cx - 0.44 * p.w, x1: p.cx + 0.44 * p.w, y0: p.top + 0.28 * p.h, y1: p.top + p.h, clear: 8 },
+    { x0: p.cx - 0.5 * p.w, x1: p.cx + 0.5 * p.w, y0: p.top + 0.15 * p.h, y1: p.top + p.h, clear: 4 },
+    { x0: p.cx - 0.6 * p.w, x1: p.cx, y0: p.top + 0.6 * p.h, y1: p.top + p.h, clear: 4 },
+    { x0: p.cx - p.stakeMaxW / 2, x1: p.cx + p.stakeMaxW / 2, y0: p.stakeTop, y1: p.stakeTop + p.stakeH, clear: 8 },
+  ];
+}
+
+/** How far short of its required clear gap the closest pumpkin outline is
+ *  (stage px; zero or more = every stone clears every outline). */
+function worstShortfall(tier: HeadstoneTier, count: number): number {
   let worst = Number.POSITIVE_INFINITY;
   for (const spot of headstoneSpots(tier)) {
     const v = VISIBLE[spot.style];
@@ -343,14 +356,10 @@ function nearestGap(tier: HeadstoneTier, count: number): number {
       y1: spot.top + v.y1 * spot.scale,
     };
     for (const p of patchLayout(count)) {
-      const parts = [
-        { x0: p.cx - 0.44 * p.w, x1: p.cx + 0.44 * p.w, y0: p.top + 0.28 * p.h, y1: p.top + p.h },
-        { x0: p.cx - p.stakeMaxW / 2, x1: p.cx + p.stakeMaxW / 2, y0: p.stakeTop, y1: p.stakeTop + p.stakeH },
-      ];
-      for (const r of parts) {
+      for (const r of pumpkinOutlines(p)) {
         const dx = Math.max(r.x0 - stone.x1, stone.x0 - r.x1);
         const dy = Math.max(r.y0 - stone.y1, stone.y0 - r.y1);
-        worst = Math.min(worst, Math.max(dx, dy));
+        worst = Math.min(worst, Math.max(dx, dy) - r.clear);
       }
     }
   }
@@ -367,21 +376,21 @@ describe("headstones · stay clear of the patch", () => {
     }
   });
 
-  it("for every size of room 0 to 150, whatever tier the rule can be holding there clears every pumpkin and name stake", () => {
+  it("for every size of room 0 to 150, whatever tier the rule can be holding there clears every pumpkin (lit, blazing or toppled) and name stake", () => {
     // Any tier can be showing when the count changes, so try every
     // previous tier at every count and keep what the rule lands on.
     for (let count = 0; count <= 150; count++) {
       const held = new Set(TIER_NAMES.map((prev) => nextHeadstoneTier(prev, count)));
       held.add(nextHeadstoneTier(null, count));
       for (const tier of held) {
-        expect(nearestGap(tier, count), `${tier} at ${count} players`).toBeGreaterThanOrEqual(8);
+        expect(worstShortfall(tier, count), `${tier} at ${count} players`).toBeGreaterThanOrEqual(0);
       }
     }
   });
 
   it("the two corner stones stay small and above the end pumpkins at the 41-player record", () => {
     expect(nextHeadstoneTier(null, 41)).toBe("corners");
-    expect(nearestGap("corners", 41)).toBeGreaterThanOrEqual(8);
+    expect(worstShortfall("corners", 41)).toBeGreaterThanOrEqual(0);
   });
 
   it("the full-size spots do not depend on the count (people joining never push them around)", () => {
