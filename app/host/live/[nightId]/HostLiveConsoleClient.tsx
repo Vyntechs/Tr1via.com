@@ -47,6 +47,7 @@ import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
 import { isAlreadyResolved } from "@/lib/host/endEarlyOutcome";
 import { WELCOME_OVERLAY_DURATION_MS, PyrotechnicsBeatConductor } from "@/components/system";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { playWelcomeChime } from "@/lib/audio/welcomeChime";
 import type { TVLobbyWelcomeEvent } from "@/components/tv";
 import { deriveAllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
@@ -55,6 +56,11 @@ import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
 
 const UNDO_WINDOW_MS = 2_000;
+
+// A question that runs out its timer is resolved by the players' phones, not by
+// this laptop. If the server's message about it is missed, re-read the room this
+// long after the timer ends (one read per question; a no-op if already shown).
+const TIMER_END_RECHECK_MS = 3_000;
 
 // The host's two auxiliary reads — the live question's `answers` and the game's
 // `game_scores` — used to load once and then rely entirely on a
@@ -417,7 +423,26 @@ function DesktopHostLiveConsoleClient({
   // stay in sync.
   const welcomeEvent = useHostWelcomeEvent(room.lastBroadcast, room.players);
 
+  const requestLiveCatchUp = room.requestLiveCatchUp;
+  const liveQuestionId = room.currentQuestion?.id ?? null;
+  const liveQuestionPlayedAt = room.currentQuestion?.played_at ?? null;
+  useEffect(() => {
+    if (!liveQuestionId || !liveQuestionPlayedAt) return;
+    const endsAt =
+      new Date(liveQuestionPlayedAt).getTime() +
+      questionDurationFor(themeKey as ThemeKey) * 1000 +
+      TIMER_END_RECHECK_MS;
+    const handle = setTimeout(() => void requestLiveCatchUp?.(), Math.max(0, endsAt - Date.now()));
+    return () => clearTimeout(handle);
+  }, [liveQuestionId, liveQuestionPlayedAt, requestLiveCatchUp, themeKey]);
+
   // ── action handlers ──────────────────────────────────────────────────
+  // After a button press the server replies as soon as the change is saved. Re-read
+  // the room right then instead of waiting for the broadcast, which this laptop can
+  // miss while its live connection is being rebuilt (it waited up to 15s).
+  function reReadRoom() {
+    void room.requestLiveCatchUp?.();
+  }
   async function handleReveal(questionId: string) {
     if (!currentGame) return;
     setError(null);
@@ -444,6 +469,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "reveal failed");
       }
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reveal failed.");
     }
@@ -457,6 +483,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "undo failed");
       }
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Undo failed.");
     }
@@ -474,6 +501,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "could not show standings");
       }
+      reReadRoom();
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not show standings.");
@@ -507,10 +535,12 @@ function DesktopHostLiveConsoleClient({
         // is on screen either way — that is the outcome she asked for, not a
         // failure, and a red banner mid-show reads as "something broke".
         if (res.status === 409 && isAlreadyResolved(body.error)) {
+          reReadRoom();
           return true;
         }
         throw new Error(body.error ?? "end-early failed");
       }
+      reReadRoom();
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-early failed.");
@@ -526,6 +556,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "start failed");
       }
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Start failed.");
     }
@@ -539,6 +570,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "end-game failed");
       }
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-game failed.");
     }

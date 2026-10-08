@@ -99,6 +99,10 @@ const h = vi.hoisted(() => {
         if (!column.includes(".")) rows = rows.filter((row) => row[column] === value);
         return builder;
       }),
+      in: vi.fn((column: string, values: unknown[]) => {
+        rows = rows.filter((row) => values.includes(row[column]));
+        return builder;
+      }),
       is: vi.fn((column: string, value: unknown) => {
         rows = rows.filter((row) => (row[column] ?? null) === value);
         return builder;

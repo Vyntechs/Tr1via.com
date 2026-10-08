@@ -16,6 +16,7 @@ const supaMock = vi.hoisted(() => {
     const builder = {
       select: vi.fn(() => builder),
       eq: vi.fn(() => builder),
+      in: vi.fn(() => builder),
       is: vi.fn(() => builder),
       not: vi.fn(() => builder),
       order: vi.fn(() => builder),
