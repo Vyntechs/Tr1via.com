@@ -32,7 +32,7 @@ database as production). Turning it on needs Brandon's typed yes.
 | `diag_answer_events` | answer tap the server received, saved or not | outcome (`saved`, `duplicate`, `late`, `early`, `rejected`, `error`), reason, the phone's tap and send times, server arrival time, milliseconds after the question opened, step timings, cold-start flag |
 | `diag_server_actions` | host press (reveal, next, end early, undo, start, end, close, open, score adjust) and every timer-end resolve / finalize call | action, actor (`host` or `timer`), outcome, total / sign-in / database / broadcast milliseconds, broadcast result, cold-start flag |
 | `diag_device_events` | small report from a phone, the TV or the host laptop | kind, device time, server-corrected time, small `data` payload |
-| `diag_quota` | night and source inside it (`_night`, `p:<device id>`, `tv`, `host`) | rows used so far and rows turned away at a cap (see "Who gets a row") |
+| `diag_quota` | night and source inside it (`_night`, `p:<device id>`, `tv`, `host`, `a:<device id>`, `press`) | rows used so far and rows turned away at a cap (see "Who gets a row") |
 
 Device report kinds: `device` (what the device is), `net` (online / offline /
 connection type), `vis` (tab hidden / shown), `bcast` (a game change was
@@ -131,14 +131,27 @@ the little free text left, such as an error name, only allows letters, digits
 and `_ - . : /` and is cut at 40 characters).
 
 **Row caps, kept in the database** (`diag_quota`, `diag_take_rows`), so they hold
-across every server instance: 30,000 rows per night, and inside it 2,000 per
-player phone (taps, timer-end calls and reports together), 4,000 for the TV and
-6,000 for the host laptop/phone. Rows past a cap are dropped and counted (in
+across every server instance. Rows past a cap are dropped and counted (in
 `diag_quota.rows_refused`, and in the `diag_drops` row below as `capped=N`).
-A normal 40-phone night is roughly 5,000 to 10,000 rows. To keep it cheap, a
-server asks for 25 rows at a time and a full source is not asked about again for
-a minute. Per-instance rate limits (per address, per device, per TV night) stay
-as a first filter only.
+
+| Source (`bucket`) | Cap | What it holds |
+| --- | --- | --- |
+| `_night` (reports) | 40,000 | everything the devices report, all sources together |
+| `_night` (server rows) | 60,000 | the same counter, with 20,000 of extra room that only the server's own rows may use |
+| `p:<device>` | 2,500 | one player phone's reports |
+| `tv` | 8,000 | the venue TV(s) of the night, reports |
+| `host` | 8,000 | the host laptop and phone, reports |
+| `a:<device>` | 1,500 | one player phone's taps and timer-end calls (server rows) |
+| `press` | 2,000 | the host's button presses (server rows) |
+
+Chatty device reports stop at 40,000 for the night; the server's own rows (taps,
+timer-end calls, presses) are the evidence this is for, so they keep room above
+that, and a night full of reports never blocks a late tap. A busy 40-phone night
+is roughly 20,000 to 35,000 rows in all; the worst case is 60,000 small rows,
+about 25 MB. To keep it cheap, a server asks for 25 rows at a time and a full
+source is not asked about again for a minute (so the caps can overshoot by up to
+one block per server). Per-instance rate limits (per address, per device, per TV
+night) stay as a first filter only.
 
 ```sql
 -- how close was each night to its caps?

@@ -15,6 +15,8 @@ import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
+import { DIAG_BUCKET_ROW_CAPS, DIAG_NIGHT_ROW_CAP, DIAG_NIGHT_SERVER_ROW_CAP } from "@/lib/diagnostics/config";
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MIGRATIONS = path.join(ROOT, "supabase/migrations");
 const DOCS = path.join(ROOT, "docs/diagnostics/night-timeline.md");
@@ -552,6 +554,32 @@ describe("diagnostic logs schema", () => {
       }
     });
 
+    test("with the real caps: a night whose reports are used up still has room for a late tap and a host press", async () => {
+      await db.exec("set role service_role");
+      try {
+        const night = crypto.randomUUID();
+        // Report sources use up the reports' night share (they are held to it by the caller).
+        let reports = 0;
+        for (let i = 0; i < 100 && reports < DIAG_NIGHT_ROW_CAP; i++) {
+          reports += await take(night, `p:phone-${i}`, 500, DIAG_BUCKET_ROW_CAPS.player, DIAG_NIGHT_ROW_CAP);
+        }
+        reports += await take(night, "tv", 1000, DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP);
+        expect(await take(night, "tv", 10, DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP)).toBe(0); // reports are shut out
+        // The server's own rows have their own sources and a higher night cap.
+        expect(await take(night, "a:late-phone", 1, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(1);
+        expect(await take(night, "press", 1, DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP)).toBe(1);
+        // ...and each of them is still held to its own cap.
+        let spammer = 0;
+        for (let i = 0; i < 5; i++) {
+          spammer += await take(night, "a:spammer", 1000, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP);
+        }
+        expect(spammer).toBe(DIAG_BUCKET_ROW_CAPS.tap);
+        expect((await quota(night))._night![0]).toBeLessThanOrEqual(DIAG_NIGHT_SERVER_ROW_CAP);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
     test("another night is untouched", async () => {
       await db.exec("set role service_role");
       try {
@@ -583,7 +611,10 @@ describe("diagnostic logs schema", () => {
       }
     });
 
-    test("never goes over the cap when many asks arrive at once", async () => {
+    // (pglite has one connection, so these asks run one after another; the
+    // function locks the night's row first and the source's row second, which is
+    // what keeps it exact when real requests overlap.)
+    test("never goes over the cap across many asks in a row", async () => {
       await db.exec("set role service_role");
       try {
         const night = crypto.randomUUID();

@@ -45,6 +45,7 @@ import {
   DIAG_CLEANUP_MAX_BATCHES,
   DIAG_MAX_WRITES_IN_FLIGHT,
   DIAG_NIGHT_ROW_CAP,
+  DIAG_NIGHT_SERVER_ROW_CAP,
   DIAG_QUOTA_FULL_MEMORY_MS,
   DIAG_QUOTA_LEASE_ROWS,
   DIAG_RETENTION_DAYS,
@@ -355,10 +356,24 @@ export async function insertDiagRows(
 // full is not asked about again for a minute. A block that is never spent
 // (an instance that goes away) just counts toward the cap, which is the safe
 // direction.
-export type DiagSource = { kind: "player"; deviceId: string } | { kind: "tv" } | { kind: "host" };
+export type DiagSource =
+  // device reports
+  | { kind: "player"; deviceId: string }
+  | { kind: "tv" }
+  | { kind: "host" }
+  // the server's own rows: a phone's taps and timer-end calls, the host's presses
+  | { kind: "tap"; deviceId: string }
+  | { kind: "press" };
 
 function bucketOf(source: DiagSource): string {
-  return source.kind === "player" ? `p:${source.deviceId}` : source.kind;
+  if (source.kind === "player") return `p:${source.deviceId}`;
+  if (source.kind === "tap") return `a:${source.deviceId}`;
+  return source.kind;
+}
+
+/** Reports stop at the night cap; the server's own rows have room above it. */
+function nightCapOf(source: DiagSource): number {
+  return source.kind === "tap" || source.kind === "press" ? DIAG_NIGHT_SERVER_ROW_CAP : DIAG_NIGHT_ROW_CAP;
 }
 
 const leases = new Map<string, { left: number }>();
@@ -391,7 +406,7 @@ async function takeRows(nightId: string, source: DiagSource, want: number): Prom
           p_bucket: bucket,
           p_want: ask,
           p_bucket_cap: DIAG_BUCKET_ROW_CAPS[source.kind],
-          p_night_cap: DIAG_NIGHT_ROW_CAP,
+          p_night_cap: nightCapOf(source),
         });
         return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
       });

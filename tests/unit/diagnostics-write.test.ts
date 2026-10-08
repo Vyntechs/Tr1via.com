@@ -31,6 +31,7 @@ import {
   DIAG_CLEANUP_MAX_BATCHES,
   DIAG_MAX_WRITES_IN_FLIGHT,
   DIAG_NIGHT_ROW_CAP,
+  DIAG_NIGHT_SERVER_ROW_CAP,
   DIAG_QUOTA_FULL_MEMORY_MS,
   DIAG_QUOTA_LEASE_ROWS,
   DIAG_WRITE_TIMEOUT_MS,
@@ -632,14 +633,59 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
     expect(inserted).toEqual([{ table: "diag_device_events", rows: rows(3) }]);
   });
 
-  it("uses the TV and host caps and their own buckets", async () => {
+  it("uses the TV and host caps and their own buckets, and gives the server's own rows theirs", async () => {
     const { rpcs } = fakeDb(1000);
     await recordDiagRows("diag_device_events", rows(1), NIGHT, { kind: "tv" });
     await recordDiagRows("diag_device_events", rows(1), NIGHT, { kind: "host" });
-    expect(rpcs.map((r) => [r.args.p_bucket, r.args.p_bucket_cap])).toEqual([
-      ["tv", DIAG_BUCKET_ROW_CAPS.tv],
-      ["host", DIAG_BUCKET_ROW_CAPS.host],
+    await recordDiagRows("diag_answer_events", rows(1), NIGHT, { kind: "tap", deviceId: DEVICE });
+    await recordDiagRows("diag_server_actions", rows(1), NIGHT, { kind: "press" });
+    expect(rpcs.map((r) => [r.args.p_bucket, r.args.p_bucket_cap, r.args.p_night_cap])).toEqual([
+      ["tv", DIAG_BUCKET_ROW_CAPS.tv, DIAG_NIGHT_ROW_CAP],
+      ["host", DIAG_BUCKET_ROW_CAPS.host, DIAG_NIGHT_ROW_CAP],
+      [`a:${DEVICE}`, DIAG_BUCKET_ROW_CAPS.tap, DIAG_NIGHT_SERVER_ROW_CAP],
+      ["press", DIAG_BUCKET_ROW_CAPS.press, DIAG_NIGHT_SERVER_ROW_CAP],
     ]);
+    // the server's own rows have room above the cap on reports
+    expect(DIAG_NIGHT_SERVER_ROW_CAP).toBeGreaterThan(DIAG_NIGHT_ROW_CAP);
+  });
+
+  it("a night whose reports have used up their share still stores a late tap and a host press", async () => {
+    // A fake database that applies the same two caps as diag_take_rows.
+    const taken = new Map<string, number>();
+    const inserted: string[] = [];
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      rpc: async (_fn: string, a: Record<string, unknown>) => {
+        const night = taken.get("_night") ?? 0;
+        const bucket = taken.get(String(a.p_bucket)) ?? 0;
+        const grant = Math.max(0, Math.min(Number(a.p_want), Number(a.p_night_cap) - night, Number(a.p_bucket_cap) - bucket));
+        taken.set("_night", night + grant);
+        taken.set(String(a.p_bucket), bucket + grant);
+        return { data: grant, error: null };
+      },
+      from: (table: string) => ({
+        insert: async (batch: unknown[]) => {
+          for (let i = 0; i < batch.length; i++) inserted.push(table);
+          return { error: null };
+        },
+      }),
+    });
+    // Many phones, the TV and the host screens fill the night with reports...
+    for (let phone = 0; phone < 40; phone++) {
+      const source = { kind: "player", deviceId: `phone-${phone}` } as const;
+      for (let i = 0; i < 200; i++) await recordDiagRows("diag_device_events", rows(10), NIGHT, source);
+    }
+    for (let i = 0; i < 4_000; i++) {
+      await recordDiagRows("diag_device_events", rows(10), NIGHT, { kind: "tv" });
+      await recordDiagRows("diag_device_events", rows(10), NIGHT, { kind: "host" });
+    }
+    expect(taken.get("_night")).toBe(DIAG_NIGHT_ROW_CAP);
+    const reportsBefore = inserted.length;
+    await recordDiagRows("diag_device_events", rows(1), NIGHT, { kind: "tv" }); // ...so more reports are refused...
+    expect(inserted.length).toBe(reportsBefore);
+    // ...but a real player's late tap and the host's press still get through.
+    await recordDiagRows("diag_answer_events", rows(1), NIGHT, { kind: "tap", deviceId: DEVICE });
+    await recordDiagRows("diag_server_actions", rows(1), NIGHT, { kind: "press" });
+    expect(inserted.slice(reportsBefore)).toEqual(["diag_answer_events", "diag_server_actions"]);
   });
 
   it("asks for a block of rows at a time, so a busy night is not one extra call per row", async () => {

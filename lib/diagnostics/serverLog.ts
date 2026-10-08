@@ -26,6 +26,8 @@
 // Anything else stores NOTHING: it is only counted, and one summary line a
 // minute is printed (noteIgnored in write.ts). Rows go through recordDiagRows,
 // which keeps each night and each source inside a row cap kept in the database.
+// These server rows have their own sources ("tap", "press") with room above the
+// cap on device reports, so chatty reports can never crowd them out.
 //
 // The routes are wrapped with a one-line `export const POST = withActionLog(...)`
 // (or withAnswerLog); with DIAGNOSTIC_LOGGING off that is the original handler.
@@ -225,7 +227,7 @@ function finishAnswer(
         },
       ],
       nightId,
-      { kind: "player", deviceId },
+      { kind: "tap", deviceId },
     );
   });
 }
@@ -368,8 +370,8 @@ function finishAction(
     // Verified against the night itself: the signed-in host must own it, or the
     // cookie's device must be one of its players.
     let source: DiagSource | null = null;
-    if (nightId && hostId && (await lookupNightOwner(nightId)) === hostId) source = { kind: "host" };
-    else if (nightId && deviceId && (await lookupPlayerId(nightId, deviceId))) source = { kind: "player", deviceId };
+    if (nightId && hostId && (await lookupNightOwner(nightId)) === hostId) source = { kind: "press" };
+    else if (nightId && deviceId && (await lookupPlayerId(nightId, deviceId))) source = { kind: "tap", deviceId };
     if (!nightId || !source) {
       noteIgnored("action");
       return;

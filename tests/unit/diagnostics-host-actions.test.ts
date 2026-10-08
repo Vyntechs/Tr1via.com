@@ -154,7 +154,7 @@ describe("host control diagnostic log", () => {
       expect(table).toBe("diag_server_actions");
       expect(night).toBe(NIGHT_ID);
       // a host press is the host's; a timer-end call is the player's who sent it
-      expect(source).toEqual(c.actor === "host" ? { kind: "host" } : { kind: "player", deviceId: DEVICE_ID });
+      expect(source).toEqual(c.actor === "host" ? { kind: "press" } : { kind: "tap", deviceId: DEVICE_ID });
       expect(writeMock.noteIgnored).not.toHaveBeenCalled();
       expect(rows[0]).toMatchObject({
         action: c.action,

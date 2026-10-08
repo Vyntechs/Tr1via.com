@@ -313,7 +313,7 @@ describe("POST /api/answers diagnostic log", () => {
       ];
       expect(table).toBe("diag_answer_events");
       expect(night).toBe(NIGHT_ID);
-      expect(source).toEqual({ kind: "player", deviceId: DEVICE_ID });
+      expect(source).toEqual({ kind: "tap", deviceId: DEVICE_ID });
       expect(rows).toHaveLength(1);
       expect(writeMock.noteIgnored).not.toHaveBeenCalled();
       expect(rows[0]).toMatchObject({

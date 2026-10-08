@@ -37,12 +37,28 @@ export const DIAG_MAX_WRITES_IN_FLIGHT = 50;
 // so they hold across every server instance. Rows past a cap are dropped and
 // counted, never stored. A night is capped as a whole, and each source is
 // capped inside it so one noisy source cannot use up the others' room:
-//   "p:<device id>"  one player phone (its taps, its timer-end calls, its reports)
-//   "tv"             the venue TV(s) of the night
-//   "host"           the host laptop / phone (presses and reports)
-// A normal 40-phone night is roughly 5,000 to 10,000 rows in total.
-export const DIAG_NIGHT_ROW_CAP = 30_000;
-export const DIAG_BUCKET_ROW_CAPS = { player: 2_000, tv: 4_000, host: 6_000 } as const;
+//   "p:<device id>"  one player phone's reports
+//   "tv"             the venue TV(s) of the night, reports
+//   "host"           the host laptop / phone, reports
+//   "a:<device id>"  one player phone's taps and timer-end calls (server rows)
+//   "press"          the host's button presses (server rows)
+// The server's own rows (taps, timer-end calls, presses) are the evidence the
+// whole thing exists for, and device reports are chatty, so reports stop at
+// DIAG_NIGHT_ROW_CAP and the server's rows may go on up to the higher
+// DIAG_NIGHT_SERVER_ROW_CAP: a night full of reports never blocks a late tap.
+// Rough size of a busy 40-phone night: phones 10,000 to 20,000 report rows
+// (half the phones record routine events), TV(s) 2,500 each, host screens
+// about 1,500 each, taps and timer calls about 5,000, presses a few hundred.
+// Worst case a night stores 60,000 small rows, about 25 MB.
+export const DIAG_NIGHT_ROW_CAP = 40_000;
+export const DIAG_NIGHT_SERVER_ROW_CAP = 60_000;
+export const DIAG_BUCKET_ROW_CAPS = {
+  player: 2_500,
+  tv: 8_000,
+  host: 8_000,
+  tap: 1_500,
+  press: 2_000,
+} as const;
 /** Rows a server instance asks the database for at a time (fewer calls on a busy night). */
 export const DIAG_QUOTA_LEASE_ROWS = 25;
 /** A source found to be full is not asked about again for this long. */
