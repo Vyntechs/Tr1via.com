@@ -942,8 +942,8 @@ describe("October crash fuzz", () => {
       if (Object.keys(scene.moods).length > players.length) bad.push(`scene has more moods than players`);
       // The headstones take any count, any tier they were showing, and never throw.
       const stoneCount = rng.chance(0.15) ? (rng.pick(WEIRD_NUMBERS) as number) : count;
-      const tier = nextHeadstoneTier(rng.pick([null, "three", "pair", "corners", "none"] as const), stoneCount);
-      if (!["three", "pair", "corners", "none"].includes(tier)) bad.push(`stones(${stoneCount}) gave tier ${String(tier)}`);
+      const tier = nextHeadstoneTier(rng.pick([null, "three", "pair", "none"] as const), stoneCount);
+      if (!["three", "pair", "none"].includes(tier)) bad.push(`stones(${stoneCount}) gave tier ${String(tier)}`);
       for (const st of headstoneSpots(tier)) {
         if (![st.x, st.top, st.scale].every(Number.isFinite)) bad.push(`stone ${st.id} has a bad spot`);
       }

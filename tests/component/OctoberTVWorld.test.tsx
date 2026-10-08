@@ -342,8 +342,8 @@ describe("October world on the venue TV", () => {
     for (const [players, tier, ids] of [
       [8, "three", ["left", "right", "extra"]],
       [21, "pair", ["left", "right"]],
-      [29, "corners", ["corner-left", "corner-right"]],
-      [41, "corners", ["corner-left", "corner-right"]],
+      [29, "none", []],
+      [41, "none", []],
     ] as const) {
       const { unmount } = renderStones(players);
       await waitFor(() => expect(screen.getByTestId("october-world")).toHaveAttribute("data-world-pumpkins", String(players)));
@@ -385,11 +385,11 @@ describe("October world on the venue TV", () => {
     await waitFor(() => expect(world()).toHaveAttribute("data-world-pumpkins", "24"));
     expect(world()).toHaveAttribute("data-world-stones", "pair");
     await settle(25);
-    expect(world()).toHaveAttribute("data-world-stones", "corners");
+    expect(world()).toHaveAttribute("data-world-stones", "none");
     await settle(24); // one player drops: the stones do not flicker back
-    expect(world()).toHaveAttribute("data-world-stones", "corners");
+    expect(world()).toHaveAttribute("data-world-stones", "none");
     await settle(23);
-    expect(world()).toHaveAttribute("data-world-stones", "corners");
+    expect(world()).toHaveAttribute("data-world-stones", "none");
     await settle(22); // two below the line: the big stones return
     expect(world()).toHaveAttribute("data-world-stones", "pair");
     expect(standing()).toEqual(["left", "right"]);
