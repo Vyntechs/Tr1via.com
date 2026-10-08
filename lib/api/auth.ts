@@ -20,6 +20,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { cookies } from "next/headers";
 import { verifyDeviceCookie } from "@/lib/auth/device-cookie";
 import { isSupabaseSessionCookie } from "@/lib/auth/session-cookies";
+import { diagMark } from "@/lib/diagnostics/trace";
 import { presentationKey } from "@/lib/room/presentationKey";
 import type {
   CategoryRow,
@@ -60,6 +61,9 @@ export async function getAuthedHost(): Promise<HostAuthResult> {
     data: { user },
     error: userError,
   } = await supa.auth.getUser();
+  // Diagnostic marks (no-ops unless this request is being logged).
+  diagMark("auth_done");
+  diagMark("auth_done_last", true);
   if (userError || !user) {
     return { ok: false, status: 401, error: "not signed in" };
   }
@@ -100,6 +104,7 @@ export async function requireOwnedNight(
   if (night.host_id !== auth.host.id) {
     return { ok: false, status: 403, error: "not your night" };
   }
+  diagMark("owned_done");
   return { ok: true, host: auth.host, night: night as NightRow };
 }
 

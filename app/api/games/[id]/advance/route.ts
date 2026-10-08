@@ -19,10 +19,11 @@ import {
   unauthorized,
 } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
 const AdvanceSchema = z.object({ questionId: UuidSchema }).strict();
 
-export async function POST(
+async function postAdvance(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -100,3 +101,7 @@ export async function POST(
 
   return ok({ state: "standings-board", occurredAt, repeated: false });
 }
+
+// Wrapped so the press is timed in the diagnostic log AFTER the response is
+// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
+export const POST = withActionLog("advance", postAdvance, { idKind: "game" });

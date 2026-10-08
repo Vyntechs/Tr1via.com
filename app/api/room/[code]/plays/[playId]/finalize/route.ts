@@ -19,6 +19,7 @@ import {
   recordLiveAnswerHealth,
 } from "@/lib/live-answer/telemetry";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
 const FinalizeBodySchema = z.object({ runId: UuidSchema }).strict();
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
@@ -79,7 +80,7 @@ async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
   return null;
 }
 
-export async function POST(
+async function postFinalize(
   req: Request,
   ctx: { params: Promise<{ code: string; playId: string }> },
 ) {
@@ -192,3 +193,7 @@ export async function POST(
   if (!responseLive) return serverError();
   return ok({ result, live: responseLive });
 }
+
+// Wrapped so the press is timed in the diagnostic log AFTER the response is
+// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
+export const POST = withActionLog("finalize", postFinalize, { actor: "timer", idKind: "room" });

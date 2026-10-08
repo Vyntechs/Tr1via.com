@@ -26,6 +26,9 @@ import "server-only";
 
 import { randomUUID } from "node:crypto";
 
+import { broadcastErrorKind } from "@/lib/diagnostics/classify";
+import { diagMark, diagNote } from "@/lib/diagnostics/trace";
+
 import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
 import type { LiveRoomBroadcastAttempt } from "@/lib/live-answer/contracts";
 import type {
@@ -128,6 +131,8 @@ async function postBroadcasts(messages: BroadcastMessage[]): Promise<void> {
     () => controller.abort(),
     LIVE_BROADCAST_TIMEOUT_MS,
   );
+  // Diagnostic marks (no-ops unless this request is being logged).
+  diagMark("broadcast_start");
   try {
     const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
       method: "POST",
@@ -143,8 +148,13 @@ async function postBroadcasts(messages: BroadcastMessage[]): Promise<void> {
       const body = await res.text().catch(() => "");
       throw new Error(`broadcast HTTP ${res.status}: ${body}`);
     }
+  } catch (error) {
+    diagNote({ broadcastError: broadcastErrorKind(error) });
+    throw error;
   } finally {
     clearTimeout(timeout);
+    diagMark("broadcast_done", true);
+    diagMark(`sent_${messages[0]?.event ?? "unknown"}`, true);
   }
 }
 

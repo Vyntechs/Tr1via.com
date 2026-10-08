@@ -8,8 +8,9 @@
 import { ok, forbidden, unauthorized, serverError, notFound } from "@/lib/api/responses";
 import { requireOwnedNight } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
-export async function POST(
+async function postCloseNight(
   _req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -48,3 +49,7 @@ export async function POST(
 
   return ok({ closedAt });
 }
+
+// Wrapped so the press is timed in the diagnostic log AFTER the response is
+// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
+export const POST = withActionLog("close_night", postCloseNight, { idKind: "night" });

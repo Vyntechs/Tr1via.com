@@ -29,6 +29,7 @@ import {
   type RoomMagicReactionEvent,
 } from "@/lib/room-magic/reactions";
 import type { LiveRoomProjection } from "@/lib/live-answer/contracts";
+import { diagBroadcastHeard, diagSnap } from "@/lib/diagnostics/client";
 
 const SAFETY_REFETCH_MS = 4000;
 
@@ -212,6 +213,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     activeSnapshotAbortRef.current?.abort();
     const controller = new AbortController();
     activeSnapshotAbortRef.current = controller;
+    const diagStartedAt = performance.now(); // diagnostic log only
     const isCurrentRequest = () =>
       !controller.signal.aborted &&
       activeCodeRef.current === requestedCode &&
@@ -239,18 +241,27 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         return;
       }
       if (!res.ok) {
+        diagSnap(`/api/tv/${requestedCode}/snapshot`, performance.now() - diagStartedAt, false, 1, `HTTP ${res.status}`);
         setStatusCode(requestedCode);
         setStatus("error");
         return;
       }
       const data = (await res.json()) as TVSnapshot;
       if (!isCurrentRequest()) return;
+      diagSnap(`/api/tv/${requestedCode}/snapshot`, performance.now() - diagStartedAt, true, 1);
       setStatusCode(requestedCode);
       setSnapshotCode(requestedCode);
       setSnapshot(data);
       setStatus("ready");
-    } catch {
+    } catch (error) {
       if (!isCurrentRequest()) return;
+      diagSnap(
+        `/api/tv/${requestedCode}/snapshot`,
+        performance.now() - diagStartedAt,
+        false,
+        1,
+        error instanceof Error ? error.name : "unknown",
+      );
       controller.abort();
       setStatusCode(requestedCode);
       setStatus("error");
@@ -437,6 +448,8 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
           },
         });
       })
+      // Diagnostic log: when each game change was heard (no-op unless on).
+      .on("broadcast", { event: "*" }, diagBroadcastHeard)
       .subscribe();
 
     // Safety polling for missed broadcasts + slow-moving state (players

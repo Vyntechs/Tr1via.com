@@ -25,6 +25,7 @@ import { useUnreachableRetry } from "@/lib/hooks/useUnreachableRetry";
 import { useRoomRoutePoll } from "@/lib/hooks/useRoomRoutePoll";
 import { pickCurrentGame } from "@/lib/room/pickCurrentGame";
 import { fetchRoomSnapshotPayload } from "@/lib/room/fetchRoomSnapshot";
+import { diagBroadcastHeard } from "@/lib/diagnostics/client";
 import {
   payloadToRoomSnapshot,
   toRoomFallbackPayload,
@@ -547,6 +548,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             },
           }));
         })
+        // Diagnostic log: when each game change was heard (no-op unless on).
+        .on("broadcast", { event: "*" }, diagBroadcastHeard)
         .subscribe((status) => {
           if (cancelled) return;
           setChannelHealth(status);
@@ -1366,6 +1369,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             },
           }));
         })
+        // Diagnostic log: when each game change was heard (no-op unless on).
+        .on("broadcast", { event: "*" }, diagBroadcastHeard)
         .subscribe((status) => {
           broadcastChannelState = status;
           publishChannelHealth();

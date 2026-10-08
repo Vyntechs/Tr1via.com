@@ -15,8 +15,9 @@ import {
   freshLiveEventFromRpc,
   parseLiveCommandRpcEnvelope,
 } from "@/lib/live-answer/rpcResult";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
-export async function POST(
+async function postOpenNight(
   _req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -116,3 +117,7 @@ function isExactRecord(
     keys.every((key) => Object.prototype.hasOwnProperty.call(value, key))
   );
 }
+
+// Wrapped so the press is timed in the diagnostic log AFTER the response is
+// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
+export const POST = withActionLog("open_night", postOpenNight, { idKind: "night" });

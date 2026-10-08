@@ -37,6 +37,7 @@ import {
   liveAnswerServerLogSink,
   recordLiveAnswerHealth,
 } from "@/lib/live-answer/telemetry";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
@@ -139,7 +140,7 @@ async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
   return null;
 }
 
-export async function POST(
+async function postResolve(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -336,3 +337,7 @@ export async function POST(
     awardCount: answerRows?.length ?? 0,
   });
 }
+
+// Wrapped so the press is timed in the diagnostic log AFTER the response is
+// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
+export const POST = withActionLog("resolve", postResolve, { actor: "timer", idKind: "question" });

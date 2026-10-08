@@ -20,10 +20,11 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastAppliedLiveRoomEvent, broadcastToRoom } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
+import { withActionLog } from "@/lib/diagnostics/serverLog";
 
 const UNDO_WINDOW_MS = 2_000;
 
-export async function POST(
+async function postUndo(
   req: Request,
   ctx: { params: Promise<{ id: string }> },
 ) {
@@ -135,3 +136,7 @@ export async function POST(
 
   return ok({ undoneQuestionId: latest.question_id });
 }
+
+// Wrapped so the press is timed in the diagnostic log AFTER the response is
+// sent. With DIAGNOSTIC_LOGGING off this is the handler above.
+export const POST = withActionLog("undo", postUndo, { idKind: "game" });
