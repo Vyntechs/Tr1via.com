@@ -321,6 +321,44 @@ describe("player answer signed snapshot refresh", () => {
     expect(screen.getByTestId("player-locked")).toBe(lockedScreen);
   });
 
+  it("after the server refuses the answer, the player can pick a different one and it locks in", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const bodies: Array<{ slotChosen: number }> = [];
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) !== "/api/answers") return new Response("{}", { status: 200 });
+      bodies.push(JSON.parse(String(init!.body)));
+      return bodies.length === 1
+        ? new Response(JSON.stringify({ error: "answer deadline passed" }), { status: 400 })
+        : new Response(null, { status: 204 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "rejected"));
+    expect(sendState()).not.toHaveTextContent("Locked in");
+
+    fireEvent.click(screen.getByTestId("player-locked-answer-3"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"));
+    expect(bodies.map((b) => b.slotChosen)).toEqual([1, 3]);
+  });
+
+  it("a 200 reply that is an HTML page never shows 'Locked in'", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) !== "/api/answers") return new Response("{}", { status: 200 });
+      return new Response("<html>venue login</html>", { status: 200, headers: { "content-type": "text/html" } });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "retrying"));
+    expect(sendState()).not.toHaveTextContent("Locked in");
+  });
+
   it("when the question closes with the answer never confirmed, says so plainly and stops trying", async () => {
     h.fetchSnapshot.mockResolvedValue(payload([]));
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {

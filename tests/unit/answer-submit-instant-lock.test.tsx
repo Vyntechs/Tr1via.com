@@ -129,6 +129,74 @@ describe("useAnswerSubmit — instant lock, sending, retrying", () => {
     expect(result.current.status).toBe("sent");
   });
 
+  it("a 200 reply with an HTML page body is NOT a lock-in: stays unconfirmed and retries", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    act(() => result.current.submit(2));
+
+    const html = {
+      ok: true,
+      status: 200,
+      text: async () => "<html><body>Sign in to the venue Wi-Fi</body></html>",
+    } as Response;
+    await act(async () => calls[0].resolve(html));
+
+    expect(result.current.status).toBe("retrying");
+    expect(result.current.confirmedAt).toBeNull();
+    expect(result.current.chosenSlot).toBe(2);
+    await advance(200);
+    expect(calls).toHaveLength(2); // it tries again
+
+    // The answer may well have been saved: the next try says "already answered".
+    await act(async () => calls[1].resolve(reply(409, { error: "already answered" })));
+    expect(result.current.status).toBe("sent");
+  });
+
+  it("a 200 reply with an empty {} body (or no body, or no code) is NOT a lock-in", async () => {
+    for (const body of [{}, undefined, { ok: true }, []] as unknown[]) {
+      const { calls } = openFetch();
+      const { result, unmount } = renderHook(() => useAnswerSubmit(OPTS));
+      act(() => result.current.submit(1));
+      await act(async () => calls[0].resolve(reply(200, body)));
+      expect(result.current.status).toBe("retrying");
+      expect(result.current.confirmedAt).toBeNull();
+      unmount();
+      vi.restoreAllMocks();
+      window.localStorage.clear();
+    }
+  });
+
+  it("a bare 409 (no body, unreadable body, or no reason) is NOT a lock-in", async () => {
+    for (const make of [
+      () => reply(409),
+      () => reply(409, {}),
+      () => reply(409, { error: "" }),
+      () => ({ ok: false, status: 409, text: async () => "<html>conflict</html>" }) as Response,
+    ]) {
+      const { calls } = openFetch();
+      const { result, unmount } = renderHook(() => useAnswerSubmit(OPTS));
+      act(() => result.current.submit(3));
+      await act(async () => calls[0].resolve(make()));
+      expect(result.current.status).toBe("retrying");
+      expect(result.current.confirmedAt).toBeNull();
+      unmount();
+      vi.restoreAllMocks();
+      window.localStorage.clear();
+    }
+  });
+
+  it("a lost reply, then 409 'already answered' on the retry, locks in (one answer saved)", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    act(() => result.current.submit(2));
+    await act(async () => calls[0].reject(new TypeError("Failed to fetch")));
+    expect(result.current.status).toBe("retrying");
+    await advance(200);
+    await act(async () => calls[1].resolve(reply(409, { error: "already answered" })));
+    expect(result.current.status).toBe("sent");
+    expect(result.current.confirmedAt).not.toBeNull();
+  });
+
   it("a failed send says retrying, keeps the choice, then locks in when a retry lands", async () => {
     const { calls } = openFetch();
     const { result } = renderHook(() => useAnswerSubmit(OPTS));
@@ -279,6 +347,27 @@ describe("useAnswerSubmit — instant lock, sending, retrying", () => {
     expect(result.current.status).toBe("pending");
     await act(async () => calls[1].resolve(reply(204)));
     expect(result.current.status).toBe("sent");
+  });
+
+  it("after the server refuses an answer, a different answer can be picked and sent", async () => {
+    const { calls } = openFetch();
+    const { result } = renderHook(() => useAnswerSubmit(OPTS));
+    act(() => result.current.submit(2));
+    await act(async () => calls[0].resolve(reply(400, { error: "answer deadline passed" })));
+    expect(result.current.status).toBe("failed");
+    expect(result.current.failure).toBe("rejected");
+
+    act(() => result.current.submit(4));
+    expect(result.current.status).toBe("pending");
+    expect(result.current.chosenSlot).toBe(4);
+    expect(result.current.failure).toBeNull();
+    expect(calls).toHaveLength(2);
+    expect(JSON.parse(String((vi.mocked(fetch).mock.calls[1][1] as RequestInit).body))).toMatchObject({ slotChosen: 4 });
+    expect(loadPendingAnswer()).toEqual({ questionId: "q1", slotChosen: 4 });
+
+    await act(async () => calls[1].resolve(reply(204)));
+    expect(result.current.status).toBe("sent");
+    expect(result.current.chosenSlot).toBe(4);
   });
 
   it("an old question's late reply cannot mark the next question locked in", async () => {

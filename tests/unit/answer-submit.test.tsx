@@ -15,7 +15,13 @@ import {
   clearPendingAnswer,
 } from "@/lib/hooks/useAnswerSubmit";
 
-function jsonResponse(status: number, body: unknown = {}) {
+// The shapes our server really sends: 200 {code:"confirmed"} (or 204) for a
+// saved answer, 409 {error:"already answered"} for a duplicate. A bare 200 or
+// 409 is NOT a confirm any more (see answer-submit-instant-lock.test.tsx).
+function jsonResponse(status: number, body?: unknown) {
+  if (body === undefined) {
+    body = status === 200 ? { code: "confirmed" } : status === 409 ? { error: "already answered" } : {};
+  }
   return {
     ok: status >= 200 && status < 300,
     status,

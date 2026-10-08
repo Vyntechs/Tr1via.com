@@ -131,6 +131,66 @@ describe("PlayerLocked send status", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
+  it("'Try again' is a real 44 px-tall target that sits beside the text inside the reserved strip height", () => {
+    wrap("house", <PlayerLocked chosenSlot={2} msToLock={null} sendState="rejected" onRetry={() => {}} />);
+    const button = screen.getByRole("button", { name: "Try again" });
+    expect(button.style.minHeight).toBe("44px");
+    expect(button.style.marginTop).toBe("");
+    // The strip keeps the same reserved height as every other state, and the
+    // button is inside it (beside the text, not stacked under it).
+    expect(status().style.minHeight).toBe("49px");
+    expect(status().contains(button)).toBe(true);
+    expect(status().style.display).toBe("flex");
+  });
+
+  it("October: the pumpkin steps aside once the answer is refused (its width is the button's room)", () => {
+    const { rerender } = wrap("october", <PlayerLocked chosenSlot={2} msToLock={null} sendState="retrying" />);
+    expect(screen.getByTestId("your-pumpkin")).toBeInTheDocument();
+    rerender(
+      <ThemeProvider themeKey="october">
+        <PlayerLocked chosenSlot={2} msToLock={null} sendState="rejected" onRetry={() => {}} />
+      </ThemeProvider>,
+    );
+    expect(screen.queryByTestId("your-pumpkin")).toBeNull();
+  });
+
+  it("'rejected' wakes the other three answers so a different one can be picked", () => {
+    const onPick = vi.fn();
+    wrap("house", <PlayerLocked chosenSlot={2} msToLock={null} sendState="rejected" onPick={onPick} />);
+    expect(screen.getByTestId("player-locked-answer-2").tagName).toBe("DIV"); // refused one stays marked
+    for (const n of [1, 3, 4] as const) {
+      const card = screen.getByTestId(`player-locked-answer-${n}`);
+      expect(card.tagName).toBe("BUTTON");
+      fireEvent.click(card);
+      expect(onPick).toHaveBeenLastCalledWith(n);
+    }
+    expect(onPick).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(["sending", "retrying", "locked", "unconfirmed"] as const)(
+    "%s: the other answers are NOT tappable",
+    (state) => {
+      wrap("house", <PlayerLocked chosenSlot={2} msToLock={null} sendState={state} onPick={() => {}} />);
+      for (const n of [1, 2, 3, 4]) {
+        expect(screen.getByTestId(`player-locked-answer-${n}`).tagName).toBe("DIV");
+      }
+    },
+  );
+
+  it("keeps keyboard focus on the chosen answer when the locked screen appears", () => {
+    wrap("house", <PlayerLocked chosenSlot={3} msToLock={null} sendState="sending" />);
+    expect(document.activeElement).toBe(screen.getByTestId("player-locked-answer-3"));
+  });
+
+  it("does not steal focus from something the player already focused", () => {
+    const input = document.createElement("input");
+    document.body.appendChild(input);
+    input.focus();
+    wrap("house", <PlayerLocked chosenSlot={3} msToLock={null} sendState="sending" />);
+    expect(document.activeElement).toBe(input);
+    input.remove();
+  });
+
   it("the gallery/demo default is unchanged: locked, with its sample time", () => {
     wrap("house", <PlayerLocked />);
     expect(status()).toHaveAttribute("data-send-state", "locked");

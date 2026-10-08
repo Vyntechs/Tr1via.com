@@ -71,7 +71,7 @@ const status = (page: Page) => page.getByTestId(TID.playerLocked.status);
 async function layoutOf(page: Page) {
   return page.evaluate(() => {
     const root = document.querySelector('[data-testid="player-locked"]')!;
-    const cards = Array.from(root.querySelectorAll<HTMLElement>("div")).filter(
+    const cards = Array.from(root.querySelectorAll<HTMLElement>("div, button")).filter(
       (el) => el.style.minHeight === "64px",
     );
     const strip = document.querySelector('[data-testid="player-send-status"]')!.parentElement!;
@@ -220,6 +220,81 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
     await page.screenshot({ path: path.join(SHOTS, "house-320-retrying.png") });
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
     expect(overflow).toBe(false);
+    await context.close();
+  });
+
+  for (const [themeKey, width, height] of [
+    ["house", 320, 568],
+    ["october", 320, 568],
+    ["house", 390, 844],
+  ] as const) {
+    test(`${themeKey} ${width}px: a refused answer shows a 44 px Try again, nothing moves, another answer can be picked`, async ({ browser }) => {
+      const { page, context } = await phoneOnQuestion(browser, themeKey, { viewport: { width, height } });
+      let release!: () => void;
+      const held = new Promise<void>((resolve) => (release = resolve));
+      let calls = 0;
+      const bodies: string[] = [];
+      await page.route("**/api/answers", async (route) => {
+        calls += 1;
+        bodies.push(route.request().postData() ?? "");
+        if (calls === 1) {
+          await held;
+          return route.fulfill({
+            status: 400,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "answer deadline passed" }),
+          });
+        }
+        return route.continue();
+      });
+      await page.getByTestId(TID.playerQuestion.answer(1)).tap();
+      await expect(status(page)).toHaveAttribute("data-send-state", "sending");
+      await page.waitForTimeout(700);
+      const whileSending = await layoutOf(page);
+
+      release();
+      await expect(status(page)).toHaveAttribute("data-send-state", "rejected", { timeout: 5000 });
+      await expect(status(page)).not.toContainText("Locked in");
+      await page.waitForTimeout(700);
+      await page.screenshot({ path: path.join(SHOTS, `${themeKey}-${width}-rejected.png`) });
+      const afterRejected = await layoutOf(page);
+      expect(afterRejected.strip.height).toBeCloseTo(whileSending.strip.height, 0);
+      expect(afterRejected.cards).toEqual(whileSending.cards);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
+      expect(overflow).toBe(false);
+
+      const tryAgain = page.getByRole("button", { name: "Try again" });
+      const box = await tryAgain.boundingBox();
+      expect(box!.height).toBeGreaterThanOrEqual(44);
+
+      // Change of mind: pick a different answer; it is sent and locks in.
+      await page.getByTestId("player-locked-answer-3").tap();
+      await expect(status(page)).toHaveAttribute("data-send-state", "locked", { timeout: 10_000 });
+      expect(bodies).toHaveLength(2);
+      expect(JSON.parse(bodies[1]!)).toMatchObject({ slotChosen: 3 });
+      await context.close();
+    });
+  }
+
+  test("house: a 200 reply that is not a real confirm never says Locked in", async ({ browser }) => {
+    const { page, context } = await phoneOnQuestion(browser, "house");
+    await page.route("**/api/answers", (route) =>
+      route.fulfill({ status: 200, contentType: "text/html", body: "<html>venue login</html>" }),
+    );
+    await page.getByTestId(TID.playerQuestion.answer(2)).tap();
+    await expect(status(page)).toHaveAttribute("data-send-state", "retrying", { timeout: 8000 });
+    await expect(status(page)).not.toContainText("Locked in");
+    await context.close();
+  });
+
+  test("house: the chosen answer keeps keyboard focus after the tap", async ({ browser }) => {
+    const { page, context } = await phoneOnQuestion(browser, "house");
+    await page.getByTestId(TID.playerQuestion.answer(2)).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByTestId(TID.playerLocked.root)).toBeVisible({ timeout: 2000 });
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.getAttribute("data-testid")))
+      .toBe("player-locked-answer-2");
     await context.close();
   });
 

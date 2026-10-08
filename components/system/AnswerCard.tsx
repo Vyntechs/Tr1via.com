@@ -11,7 +11,7 @@
 
 "use client";
 
-import type { CSSProperties } from "react";
+import { useEffect, useRef, type CSSProperties } from "react";
 import { useTheme } from "./ThemeProvider";
 import { Numeric } from "./Numeric";
 
@@ -38,6 +38,13 @@ export interface AnswerCardProps {
    * locked screen after a tap), so nothing fades or slides in again.
    */
   entrance?: boolean;
+  /**
+   * Move keyboard focus onto this card when it appears, but only if focus has
+   * nowhere better to be (it fell to the page body because the button that was
+   * just tapped turned into this card). Used for the player's chosen answer so
+   * focus stays on it after the tap instead of dropping to nothing.
+   */
+  focusOnMount?: boolean;
   onTap?: () => void;
   disabled?: boolean;
   /** Forwarded data-testid for E2E targeting. */
@@ -51,6 +58,7 @@ export function AnswerCard({
   state = "idle",
   delay = 0,
   entrance = true,
+  focusOnMount = false,
   onTap,
   disabled,
   "data-testid": dataTestId,
@@ -108,8 +116,18 @@ export function AnswerCard({
 
   const Tag = isTappable ? "button" : "div";
 
+  const cardRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!focusOnMount) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    cardRef.current?.focus({ preventScroll: true });
+  }, [focusOnMount]);
+
   return (
     <Tag
+      ref={cardRef as never}
+      tabIndex={focusOnMount && !isTappable ? -1 : undefined}
       type={isTappable ? "button" : undefined}
       onClick={isTappable ? onTap : undefined}
       disabled={!isTappable && Tag === "button"}

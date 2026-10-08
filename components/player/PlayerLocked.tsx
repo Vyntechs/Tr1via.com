@@ -54,6 +54,9 @@ export interface PlayerLockedProps {
   sendState?: PlayerLockedSendState;
   /** "rejected" only: lets the player send the same answer again. */
   onRetry?: () => void;
+  /** "rejected" only: lets the player pick a different answer. Receives the
+   *  visible slot (1..4) tapped. Omitted → the other cards stay faded. */
+  onPick?: (slot: 1 | 2 | 3 | 4) => void;
   /** Static locked-in count, e.g. "21/32". Optional, and never defaulted: a
    *  made-up count on a real phone tells the room something untrue. */
   lockedSummary?: string;
@@ -135,6 +138,7 @@ export function PlayerLocked({
   msToLock = 2300,
   sendState = "locked",
   onRetry,
+  onPick,
   lockedSummary,
   questionNumber: _questionNumber,
   lockedCount,
@@ -155,6 +159,7 @@ export function PlayerLocked({
   const secondsToLock = msToLock === null ? "" : (msToLock / 1000).toFixed(1);
   const speedBonus = msToLock !== null && msToLock < 5000;
   const inFlight = sendState === "sending" || sendState === "retrying";
+  const offersRetry = sendState === "rejected" && !!onRetry;
   const hasStandings = !!standings && standings.top.length > 0;
 
   // Live "X of Y locked in" — the one thing on this screen that actually moves
@@ -205,7 +210,15 @@ export function PlayerLocked({
         <div
           // Same height in every state (the saved-time line is the tallest), so
           // Sending → Locked in → Locked at 2.3s never moves the cards below.
-          style={{ flex: 1, minWidth: 0, minHeight: 49 }}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 49,
+            // With a Try again button the text and the button sit side by
+            // side (the button is a real 44 px target inside the reserved
+            // height), so this state never grows the strip.
+            ...(offersRetry ? { display: "flex", alignItems: "center", gap: 6 } : null),
+          }}
           role="status"
           aria-live="polite"
           data-testid="player-send-status"
@@ -222,13 +235,18 @@ export function PlayerLocked({
               </div>
             </>
           ) : (
-            <>
-              <Eyebrow color={t.inkMid} size={9}>
-                {sendState === "unconfirmed" ? "TIME\u2019S UP" : "YOUR ANSWER"}
-              </Eyebrow>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              {/* No label above the refusal: the line says it all, and the
+                  space is what lets it wrap to two lines beside the button
+                  on a 320 px phone without growing the strip. */}
+              {!offersRetry && (
+                <Eyebrow color={t.inkMid} size={9}>
+                  {sendState === "unconfirmed" ? "TIME\u2019S UP" : "YOUR ANSWER"}
+                </Eyebrow>
+              )}
               <div
                 style={{
-                  marginTop: 2,
+                  marginTop: offersRetry ? 0 : 2,
                   display: "flex",
                   alignItems: "center",
                   gap: 8,
@@ -258,31 +276,35 @@ export function PlayerLocked({
                   {isLocked && "Locked in"}
                   {sendState === "unconfirmed" && "We couldn\u2019t confirm your answer"}
                   {sendState === "rejected" && "Couldn\u2019t send your answer"}
-                  {sendState === "rejected" && onRetry && (
-                    <button
-                      type="button"
-                      onClick={onRetry}
-                      style={{
-                        marginLeft: 10,
-                        padding: "6px 2px",
-                        background: "none",
-                        border: "none",
-                        color: t.ink,
-                        font: "inherit",
-                        fontWeight: 700,
-                        textDecoration: "underline",
-                        cursor: "pointer",
-                      }}
-                    >
-                      Try again
-                    </button>
-                  )}
                 </span>
               </div>
-            </>
+            </div>
+          )}
+          {offersRetry && !showLockedAt && (
+            <button
+              type="button"
+              onClick={onRetry}
+              style={{
+                flexShrink: 0,
+                minHeight: 44,
+                padding: "0 8px",
+                background: "none",
+                border: "none",
+                color: t.ink,
+                font: "inherit",
+                fontSize: 14,
+                fontWeight: 700,
+                textDecoration: "underline",
+                cursor: "pointer",
+              }}
+            >
+              Try again
+            </button>
           )}
         </div>
-        {hasPhoneLayer(themeKey) ? (
+        {hasPhoneLayer(themeKey) && sendState !== "rejected" ? (
+          // (Hidden once the answer is refused: it can no longer light, and
+          // its width is what the Try again button needs on a small phone.)
           // October: your pumpkin lights the moment the server says yes.
           <YourPumpkin
             mood={isLocked ? "lit" : sendState === "unconfirmed" ? "toppled" : "waiting"}
@@ -332,7 +354,18 @@ export function PlayerLocked({
             accent={catColor}
             n={slot}
             text={options[i] ?? ""}
-            state={slot === chosenSlot ? "locked-self" : "locked-other"}
+            // After a refusal the other answers wake up again so the player
+            // can change their mind; the refused one stays marked.
+            state={
+              slot === chosenSlot
+                ? "locked-self"
+                : sendState === "rejected" && onPick
+                  ? "idle"
+                  : "locked-other"
+            }
+            onTap={sendState === "rejected" && onPick ? () => onPick(slot) : undefined}
+            focusOnMount={slot === chosenSlot}
+            data-testid={`player-locked-answer-${slot}`}
             // Continuation of the tap: the cards are already there, so they
             // never fade or slide in again.
             entrance={false}

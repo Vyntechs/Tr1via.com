@@ -3,12 +3,13 @@
 //
 // State machine:
 //   idle     → submit(slot)          → pending     (the choice is held at once)
-//   pending  → 2xx or 409            → sent        (terminal for this question)
+//   pending  → 204, 200 "confirmed", 409 "already answered" → sent (terminal for this question)
 //   pending  → 5xx / network / slow  → retrying    (keeps going; backoff, no cap)
-//   retrying → 2xx or 409            → sent
+//   retrying → the same                → sent
 //   *        → other 4xx             → failed      (reason "rejected": usually a bug)
 //   *        → the answer window ends→ failed      (reason "closed": never confirmed)
 //   failed   → retry()               → pending     (manual re-attempt from the UI)
+//   failed   → submit(otherSlot)     → pending     (change of mind after a refusal)
 //
 // "Slow" = no reply within attemptTimeoutMs (default 6 s). A slow request is
 // NOT cancelled: on a bad venue connection it may still land, and cancelling it
@@ -18,8 +19,11 @@
 // What the server accepts, and when it stops accepting, is decided server-side:
 // the phone only stops sending once its own timer has ended.
 //
-// "sent" is decided by the send response itself (204/200/409), not by a second
-// room fetch, so the phone can say "Locked in" as soon as the server says so.
+// "sent" is decided by the send response itself, not by a second room fetch,
+// so the phone can say "Locked in" as soon as the server says so. Only a 204, a
+// 200 with code "confirmed", or a 409 "already answered" counts; any other
+// reply that cannot be read as a confirm (HTML page, empty body, bare 409) is
+// treated as unconfirmed and retried.
 //
 // Refresh-survives-the-answer: on submit we persist {questionId, slotChosen}
 // to localStorage. If the page unmounts mid-retry (player refreshes or closes
@@ -132,35 +136,40 @@ function isTerminalClientError(status: number): boolean {
 
 type Verdict = "sent" | "retry" | "rejected";
 
-/** The newer answer engine replies 200 with a result code in the body. Only
- *  "confirmed" (or no code at all) means the answer counted. */
+/** Reads a reply body as JSON, or null when it is empty or not JSON. */
 async function readBody(res: Response): Promise<{ code?: unknown; error?: unknown } | null> {
   try {
-    return JSON.parse(await res.text()) as { code?: unknown; error?: unknown } | null;
+    const parsed = JSON.parse(await res.text()) as unknown;
+    return parsed && typeof parsed === "object" ? (parsed as { code?: unknown; error?: unknown }) : null;
   } catch {
     return null;
   }
 }
 
-async function readResultCode(res: Response): Promise<string | null> {
-  const body = await readBody(res);
-  return typeof body?.code === "string" ? body.code : null;
-}
-
+/**
+ * What a send reply means. Only two shapes count as "the server has it":
+ * a 204, or a 200 whose JSON body says code "confirmed" (what our server
+ * sends). Anything that cannot be read as one of those (a 200 with an HTML
+ * page or an empty `{}`, a 409 with no reason) did not come from our server's
+ * confirm path, so it is "retry": the phone keeps saying Sending and tries
+ * again. If the answer was in fact saved, the next try gets 409 "already
+ * answered" (or the saved row arrives) and locks in truthfully.
+ */
 async function judgeResponse(res: Response): Promise<Verdict> {
   if (res.status === 204) return "sent";
   if (res.status === 409) {
     // 409 is "already answered" (the server has it: success) but the same
     // status also means "question is not live" and the like. Only the first
-    // may say "Locked in"; a bare 409 with no reason is the duplicate case.
+    // may say "Locked in". A 409 with no readable reason is unconfirmed.
     const reason = (await readBody(res))?.error;
-    if (reason === undefined || reason === null || reason === "") return "sent";
-    return typeof reason === "string" && /already answered/i.test(reason) ? "sent" : "rejected";
+    if (typeof reason !== "string" || reason === "") return "retry";
+    return /already answered/i.test(reason) ? "sent" : "rejected";
   }
   if (res.status >= 200 && res.status < 300) {
-    const code = await readResultCode(res);
-    if (code === null || code === "confirmed") return "sent";
-    return code === "retry_later" ? "retry" : "rejected";
+    const code = (await readBody(res))?.code;
+    if (code === "confirmed") return "sent";
+    if (typeof code === "string" && code !== "retry_later") return "rejected";
+    return "retry";
   }
   return isTerminalClientError(res.status) ? "rejected" : "retry";
 }

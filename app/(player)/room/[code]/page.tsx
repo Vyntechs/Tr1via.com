@@ -1077,6 +1077,7 @@ function LiveQuestionView({
       msToLock={myAnswer ? myAnswer.ms_to_lock : null}
       sendState={sendState}
       onRetry={retry}
+      onPick={handleTap}
       questionNumber={questionNumber}
       totalPlayers={totalPlayers}
       standings={standings}
