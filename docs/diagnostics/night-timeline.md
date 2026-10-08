@@ -290,15 +290,16 @@ that the job keeps its turn (one of the 5 per copy) a little longer.
 
 A "busy" answer is cheap for the database but not free: it is still a request through
 the same gateway and the same few connections the game's own reads use. The first
-version of this follow-up let every job retry 5 times and never paused, and under a
-sustained flood that made about 1.5 to 3 times the calls of #210 and slowed a plain
-game read through the API 3 to 10 times (see "Measured" below). So retries are
-rationed across the whole server copy: one shared budget of 40 retries that refills at
-5 a second (row-cap checks and inserts draw on the same budget). A timer-end burst
-fits inside it; a sustained flood runs it dry, and from then on this copy is
-"braked" for 1.5 seconds: it makes at most ONE insert try every quarter second
-(a little random either way) and every other job gives its rows up at once, without
-calling the database (counted as `slots`). A try that finds a free slot stores its
+version of this follow-up let every job retry 5 times and never paused. Under a
+flood that kept almost every one of the copy's 5 log turns waiting on a request at
+the gateway at all times (measured: on average about 160 requests in flight from 40
+copies, against 14 to 90 on #210), and a plain game read through the API queued
+behind them. So retries are rationed across the whole server copy: one shared budget
+of 40 retries that refills at 5 a second (row-cap checks and inserts draw on the same
+budget). A timer-end burst fits inside it; a sustained flood runs it dry, and from
+then on this copy is "braked" for 1.5 seconds: it makes at most ONE insert try every
+quarter second (a little random either way) and every other job gives its rows up at
+once, without calling the database (counted as `slots`). A try that finds a free slot stores its
 rows and ends the brake; a try that finds the slots still taken keeps the brake on.
 The host's button presses, which are rare, ignore both the budget and the brake. The
 brake is a limit on calls, not a pause: it is not a failure. The stalled writes that
@@ -306,19 +307,32 @@ really hold slots in a stall answer with `57014` / `55P03` to the copies that ma
 them, and those copies pause as below. When the game's database is under real
 pressure the choice is deliberate: **game speed wins over keeping every log row**.
 
-*Measured* (local Supabase on one Mac, one in-process "copy" per server copy, a plain
-game-table read through the API from a separate process, #210 and this branch
-interleaved, medians over several runs; the machine was shared with other jobs, so
-the database was healthy in some runs and saturated in others): on a healthy
-database, 12 copies x 25 jobs/s for 15 s stores 4,500 of 4,500 rows on both versions
-and the game read is about 0.8 ms on both. (A reviewer, on a database that was already
-struggling, got only 1,572 to 2,515 of 4,500 on the first version of this branch;
-the earlier "4,500 of 4,500" holds only when the database is healthy, and no number
-here should be read as what hosted Supabase would do.) On a saturated database the
-first version of this branch stored about as many rows as #210 but made 1.5 to 3
-times its calls and the game read went from about 3 ms to 13 to 36 ms; with the
-retry budget the calls are about the same as #210's and the game read stays at
-#210's level. See the pull request for the table.
+*Measured* (local Supabase on one Mac, shared with other jobs, one in-process "copy"
+per server copy, a plain game-table read through the API from a separate process,
+#210 / the first version of this follow-up / this version interleaved, medians over
+5 or 6 runs each; hosted Supabase and Vercel were not measured):
+
+| Scenario | Rows stored (of offered) | Game read, median of the runs' p50 |
+| --- | --- | --- |
+| Healthy burst, 12 copies x 5 jobs (60 rows) | #210 172 of 180 / first version 180 / now 180 | 0.9 ms on all three |
+| Healthy burst, 20 copies x 3 jobs (60 rows) | #210 174 / first version 180 / now 180 | 0.9 ms on all three |
+| Healthy flood, 12 copies x 25 jobs/s, 15 s | 4,499 / 4,500 / 4,500 of 4,500 | 0.8 ms on all three |
+| Healthy flood, 20 copies x 30 jobs/s, 15 s | 8,971 / 9,000 / 8,982 of 9,000 | 0.8 ms on all three |
+| 12 x 25 jobs/s with the machine's CPU saturated (14 busy loops) | 1,319 / 2,740 / 1,535 of 4,500 | 2.0 / 2.1 / 2.0 ms (p90 2.8 / 3.5 / 2.95); database calls 2,597 / 11,188 / 3,600 |
+| Overload, 40 copies x 40 jobs/s, 12 s (8 interleaved runs) | 2,320 / 3,274 / 2,448 of 19,200 | 2.7 / 70 / 2.4 ms (first version slower in all 8 runs; now in line with #210 in 7 of 8) |
+
+Read it honestly: when the database is healthy none of this matters and all three
+versions store essentially everything (the earlier "4,500 of 4,500 stored" holds only
+in that case; on a stack that was already struggling a reviewer got 1,572 to 2,515 of
+4,500 for the first version). When it is overloaded, the first version stored more
+rows than #210 but its permanent queue of retries made game reads about 25 times
+slower (70 ms against 2.7 ms), and this version stores about what #210 stored (less
+than the first version) and keeps game reads at #210's speed. In one of the eight
+overload runs this version's game read was slow (67 ms; the first version's was 15 ms
+in the same pair, and both stored only about 300 rows, while #210 ran just before at
+3.7 ms): the whole local stack stalled and I did not find why. The CPU-saturated row
+shows the same call counts (first version 4 times #210's) but no clear difference in
+game-read speed, so the slowdown needs a deep queue, not just extra calls. Game speed wins over keeping every row.
 
 **Logging pauses itself when the database is in trouble with log writes.** Even 3
 stalled log statements at a time would keep connections busy for as long as taps

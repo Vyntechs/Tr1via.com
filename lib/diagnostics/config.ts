@@ -140,9 +140,10 @@ export const DIAG_QUOTA_LEASE_ROWS = { player: 100, tap: 100, tv: 25, host: 25, 
  *
  * A "busy" answer is cheap for the database but NOT free: every call, busy or
  * not, is a request through the same gateway and the same few connections the
- * game's own reads use (measured: five retries per job turned a saturated
- * burst into about four times the calls and slowed a plain game read through
- * the API 5-10x; see docs/diagnostics/night-timeline.md). So retries are rationed
+ * game's own reads use. Measured: with five retries per job and no limit, a
+ * flood kept about 160 requests in flight from 40 copies (14 to 90 before) and a
+ * plain game read through the API went from about 3 ms to about 70 ms; see
+ * docs/diagnostics/night-timeline.md. So retries are rationed
  * ACROSS all the jobs of one server copy: a shared budget of DIAG_RETRY_BUDGET
  * retries that refills at DIAG_RETRY_REFILL_PER_SEC a second. A healthy burst
  * (a timer-end) fits inside the budget; a sustained flood runs it dry, and then
