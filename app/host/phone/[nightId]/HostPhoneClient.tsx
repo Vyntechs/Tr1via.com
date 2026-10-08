@@ -370,6 +370,11 @@ export function HostPhoneClient({
   });
 
   // Action handlers.
+  // After a press succeeds, re-read the room right away instead of waiting on a
+  // broadcast this screen may have missed (same as the laptop console).
+  function reReadRoom() {
+    void room.requestLiveCatchUp?.();
+  }
   async function reveal(questionId: string) {
     if (
       !controlGame ||
@@ -420,6 +425,7 @@ export function HostPhoneClient({
             : entry,
         ),
       );
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reveal failed.");
       if (isResilient) room.requestRefresh?.();
@@ -476,6 +482,7 @@ export function HostPhoneClient({
       } else {
         await requireOk(res, "end-early failed");
       }
+      reReadRoom();
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-early failed.");
@@ -521,6 +528,7 @@ export function HostPhoneClient({
         await requireOk(res, "undo failed");
       }
       setNavigation(null);
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Undo failed.");
       if (isResilient) room.requestRefresh?.();
@@ -558,6 +566,7 @@ export function HostPhoneClient({
         await requireOk(res, "game control failed");
       }
       setConfirmingEnd(false);
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Game control failed.");
       if (isResilient) room.requestRefresh?.();
@@ -610,6 +619,7 @@ export function HostPhoneClient({
     try {
       await startGame(gameId);
       setConfirmingEnd(false);
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Game control failed.");
       if (isResilient) room.requestRefresh?.();
