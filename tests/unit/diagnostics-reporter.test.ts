@@ -273,11 +273,11 @@ describe("staying quiet while a question is open", () => {
 });
 
 describe("staying quiet before the room has loaded", () => {
-  it("sends nothing while the first room download is still going, however long it takes", async () => {
+  it("sends nothing while the first room download is still going, for the first 45 seconds", async () => {
     // A slow first load: the phone cannot know yet whether a question is live.
     start({ surface: "player", room: "K9PR4M" }, { loaded: false });
     diagEvent("snap", { w: "room", ms: 9000, ok: false, n: 3, err: "TimeoutError" }, true);
-    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    await vi.advanceTimersByTimeAsync(44_000);
     expect(fetchMock).not.toHaveBeenCalled();
     expect(beaconMock).not.toHaveBeenCalled();
   });
@@ -316,6 +316,58 @@ describe("staying quiet before the room has loaded", () => {
     start({ surface: "player", room: "K9PR4M" }, { loaded: false });
     await vi.advanceTimersByTimeAsync(13_000);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  describe("a room that never loads: a small, bounded 'could not load' report", () => {
+    it("after 45 seconds on its loading screen a phone may report what went wrong, at most 3 times", async () => {
+      start({ surface: "player", room: "K9PR4M" }, { loaded: false });
+      diagEvent("snap", { w: "room", ms: 9000, ok: false, n: 3, err: "TimeoutError" }, true);
+      diagEvent("ribbon", { from: "online", to: "unreachable", chan: "CLOSED", reach: "unreachable" }, true);
+      await vi.advanceTimersByTimeAsync(44_000);
+      expect(fetchMock).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(sentBatches()[0]!.ev.map((e) => e.k)).toEqual(["device", "snap", "ribbon"]);
+      // more trouble keeps being reported, but only twice more, however long it stays stuck
+      for (let i = 0; i < 12; i++) {
+        diagEvent("snap", { w: "room", ms: 9000, ok: false, n: 3, err: "TimeoutError" }, true);
+        await vi.advanceTimersByTimeAsync(15_000);
+      }
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      for (const batch of sentBatches()) expect(batch.ev.length).toBeLessThanOrEqual(60);
+      // events piled up after the third report are kept (bounded), not sent
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+
+    it("never while a question is open, and the TV still needs its pass", async () => {
+      start({ surface: "player", room: "K9PR4M" }, { loaded: false });
+      diagQuestionOpen(true);
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(fetchMock).not.toHaveBeenCalled();
+      diagQuestionOpen(false);
+      stops.splice(0).forEach((stop) => stop());
+      __resetDiagClientForTests();
+
+      start({ surface: "tv", room: "K9PR4M" }, { loaded: false, pass: false });
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("once the room does load, the normal rules take over and the 3-report allowance does not matter", async () => {
+      start({ surface: "player", room: "K9PR4M" }, { loaded: false });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const before = fetchMock.mock.calls.length;
+      expect(before).toBe(1);
+      diagRoomReady();
+      diagEvent("net", { ev: "offline" }, true);
+      await vi.advanceTimersByTimeAsync(13_000);
+      expect(fetchMock.mock.calls.length).toBe(before + 1);
+      diagQuestionOpen(true);
+      diagEvent("net", { ev: "online" }, true);
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      expect(fetchMock.mock.calls.length).toBe(before + 1); // quiet again mid-question
+    });
   });
 });
 

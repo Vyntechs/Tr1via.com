@@ -11,6 +11,7 @@ vi.mock("next/server", async (importOriginal) => ({
 }));
 vi.mock("@/lib/supabase/admin", () => adminMock);
 
+import { DiagLookupSlow } from "@/lib/diagnostics/deadline";
 import {
   __clearDiagCacheForTests,
   __diagWriteCountersForTests,
@@ -29,7 +30,12 @@ import {
 import {
   DIAG_BUCKET_ROW_CAPS,
   DIAG_CLEANUP_MAX_BATCHES,
+  DIAG_JOB_DEADLINE_MS,
   DIAG_MAX_WRITES_IN_FLIGHT,
+  DIAG_QUEUE_WAIT_MS,
+  DIAG_QUOTA_BUSY_BACKOFF_MS,
+  DIAG_QUOTA_BUSY_RETRIES,
+  DIAG_WRITE_QUEUE_MAX,
   DIAG_NIGHT_ROW_CAP,
   DIAG_NIGHT_SERVER_ROW_CAP,
   DIAG_QUOTA_FULL_MEMORY_MS,
@@ -222,17 +228,23 @@ describe("cached lookups", () => {
         return chain;
       },
     });
-    expect(await lookupPlayerId("n1", "d1")).toBeNull();
+    // a failing database is "could not check" (it throws), never "no such player"
+    await expect(lookupPlayerId("n1", "d1")).rejects.toBeInstanceOf(DiagLookupSlow);
     failing = false;
     expect(await lookupPlayerId("n1", "d1")).toBe("p1"); // asked again straight away
     expect(calls).toEqual(["players", "players"]);
   });
 
-  it("returns null instead of throwing when the database is down", async () => {
+  it("says 'could not check' (not 'none') when the database is down, and never leaks the reason", async () => {
     adminMock.getSupabaseAdmin.mockImplementation(() => {
-      throw new Error("down");
+      throw new Error("down: secret row contents");
     });
-    expect(await lookupPlayerId("n1", "d1")).toBeNull();
+    const failure = await lookupPlayerId("n1", "d1").catch((e) => e);
+    expect(failure).toBeInstanceOf(DiagLookupSlow);
+    expect(String(failure.message)).not.toContain("secret");
+    await expect(lookupRoomNight("K9PR4M")).rejects.toBeInstanceOf(DiagLookupSlow);
+    await expect(lookupNightOwner("n1")).rejects.toBeInstanceOf(DiagLookupSlow);
+    await expect(lookupQuestionContext("q1")).rejects.toBeInstanceOf(DiagLookupSlow);
   });
 });
 
@@ -329,7 +341,7 @@ describe("a failing insert", () => {
   });
 });
 
-describe("how many log writes may run at once", () => {
+describe("how many log writes may touch the database at once", () => {
   function manualScheduler() {
     const queued: Array<() => Promise<void>> = [];
     __setDiagSchedulerForTests((task) => {
@@ -337,12 +349,19 @@ describe("how many log writes may run at once", () => {
     });
     return queued;
   }
+  const lines = () => warn.mock.calls.map((c) => String(c[0]));
+  const counters = () => __diagWriteCountersForTests();
 
-  it("lets a normal burst through and drops the extra ones, counting them, instead of piling up", async () => {
+  it("is a small number: 5 at a time", () => {
+    expect(DIAG_MAX_WRITES_IN_FLIGHT).toBe(5);
+  });
+
+  it("runs 5 at a time, lets the rest wait their turn in a short queue, and drops what does not fit", async () => {
     const queued = manualScheduler();
     const release: Array<() => void> = [];
     const started = vi.fn();
-    for (let i = 0; i < DIAG_MAX_WRITES_IN_FLIGHT + 7; i++) {
+    const total = DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX + 7;
+    for (let i = 0; i < total; i++) {
       scheduleDiagWrite(
         () =>
           new Promise<void>((resolve) => {
@@ -351,50 +370,134 @@ describe("how many log writes may run at once", () => {
           }),
       );
     }
-    expect(queued).toHaveLength(DIAG_MAX_WRITES_IN_FLIGHT); // the 7 extra were never queued
-    expect(__diagWriteCountersForTests()).toEqual({
-      dropped: 7,
-      failed: 0,
-      capped: 0,
-      ignored: 0,
-      inFlight: DIAG_MAX_WRITES_IN_FLIGHT,
-    });
-    expect(lines()).toEqual(["[diag] dropping log writes: too many in flight"]);
+    // 5 running + 200 waiting are accepted; the 7 beyond that are dropped and counted
+    expect(queued).toHaveLength(DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX);
+    expect(counters()).toMatchObject({ dropped: 7, failed: 0, capped: 0, ignored: 0 });
+    expect(lines()).toEqual(["[diag] dropping log writes: too many waiting"]);
 
-    const running = queued.map((task) => task());
-    await Promise.resolve();
-    expect(started).toHaveBeenCalledTimes(DIAG_MAX_WRITES_IN_FLIGHT);
+    const running = queued.map((job) => job());
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(DIAG_MAX_WRITES_IN_FLIGHT));
+    // never more than 5 at the database, however many are waiting
+    expect(counters()).toMatchObject({ inFlight: DIAG_MAX_WRITES_IN_FLIGHT, queued: DIAG_WRITE_QUEUE_MAX });
+    // each finished job hands its turn to the next one in line
+    release[0]!();
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(DIAG_MAX_WRITES_IN_FLIGHT + 1));
+    expect(counters().inFlight).toBe(DIAG_MAX_WRITES_IN_FLIGHT);
+    // drain everything
+    for (let guard = 0; guard < total * 2 && started.mock.calls.length < DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX; guard++) {
+      release.forEach((r) => r());
+      await Promise.resolve();
+    }
+    release.forEach((r) => r());
+    await vi.waitFor(() => expect(started).toHaveBeenCalledTimes(DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX));
     release.forEach((r) => r());
     await Promise.all(running);
-    expect(__diagWriteCountersForTests().inFlight).toBe(0);
+    expect(counters()).toMatchObject({ inFlight: 0, queued: 0 });
   });
 
-  const lines = () => warn.mock.calls.map((c) => String(c[0]));
+  it("never has more than 5 jobs at the database at the same moment, over a whole burst", async () => {
+    vi.useFakeTimers();
+    const queued = manualScheduler();
+    let now = 0;
+    let peak = 0;
+    for (let i = 0; i < 120; i++) {
+      scheduleDiagWrite(async () => {
+        now += 1;
+        peak = Math.max(peak, counters().inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 40)); // a 40 ms database call
+        now -= 1;
+      });
+    }
+    const running = queued.map((job) => job());
+    await vi.advanceTimersByTimeAsync(40 * 30);
+    await Promise.all(running);
+    expect(peak).toBe(DIAG_MAX_WRITES_IN_FLIGHT);
+    expect(now).toBe(0);
+    expect(counters().dropped).toBe(0); // all 120 got their turn within the wait limit
+  });
 
-  it("frees the slot when a task fails, and when the scheduler itself breaks", async () => {
+  it("drops a job that waited too long for its turn (the database is busy; the evidence is stale) and counts it", async () => {
+    vi.useFakeTimers();
+    const queued = manualScheduler();
+    // two rounds of slow jobs (4.9 s each, just under the job deadline) keep the turns busy for ~9.8 s
+    const slow = () => new Promise<void>((resolve) => setTimeout(resolve, DIAG_JOB_DEADLINE_MS - 100));
+    for (let i = 0; i < DIAG_MAX_WRITES_IN_FLIGHT * 2; i++) scheduleDiagWrite(slow);
+    const late = vi.fn(async () => {});
+    scheduleDiagWrite(late);
+    const running = queued.map((job) => job());
+    await vi.advanceTimersByTimeAsync(DIAG_QUEUE_WAIT_MS + 100);
+    expect(late).not.toHaveBeenCalled();
+    expect(counters()).toMatchObject({ dropped: 1 });
+    expect(lines()).toContain("[diag] dropping log writes: waited too long for a turn");
+    await vi.advanceTimersByTimeAsync(DIAG_JOB_DEADLINE_MS * 2);
+    await Promise.all(running);
+    expect(late).not.toHaveBeenCalled(); // it never runs late
+    expect(counters()).toMatchObject({ inFlight: 0, queued: 0 });
+  });
+
+  it("a job that is waiting and then gets its turn runs normally", async () => {
+    const queued = manualScheduler();
+    const order: string[] = [];
+    const holders: Array<() => void> = [];
+    for (let i = 0; i < DIAG_MAX_WRITES_IN_FLIGHT; i++) {
+      scheduleDiagWrite(() => new Promise<void>((resolve) => holders.push(resolve)));
+    }
+    scheduleDiagWrite(async () => {
+      order.push("waiting job ran");
+    });
+    const running = queued.map((job) => job());
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    holders[0]!();
+    await vi.waitFor(() => expect(order).toEqual(["waiting job ran"]));
+    holders.forEach((h) => h());
+    await Promise.all(running);
+  });
+
+  it("frees the turn when a task fails, and when the scheduler itself breaks", async () => {
     const queued = manualScheduler();
     scheduleDiagWrite(async () => {
       throw new Error("boom");
     });
     await queued[0]!();
-    expect(__diagWriteCountersForTests().inFlight).toBe(0);
+    expect(counters().inFlight).toBe(0);
 
     __setDiagSchedulerForTests(() => {
       throw new Error("scheduler exploded");
     });
     scheduleDiagWrite(async () => {});
-    expect(__diagWriteCountersForTests().inFlight).toBe(0);
+    expect(counters().inFlight).toBe(0);
+    // ...and nothing is left counted as outstanding, so later jobs are still accepted
+    const later = manualScheduler();
+    for (let i = 0; i < DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX; i++) scheduleDiagWrite(async () => {});
+    expect(later).toHaveLength(DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX);
   });
 
-  it("gives up on a task that never finishes, so one hung write cannot hold a slot for ever", async () => {
+  it("gives up on a task that never finishes, so one hung write cannot hold a turn for ever", async () => {
     vi.useFakeTimers();
     const queued = manualScheduler();
     scheduleDiagWrite(() => new Promise<void>(() => {}));
     const running = queued[0]!();
-    expect(__diagWriteCountersForTests().inFlight).toBe(1);
-    await vi.advanceTimersByTimeAsync(DIAG_WRITE_TIMEOUT_MS * 5 + 100);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(counters().inFlight).toBe(1);
+    await vi.advanceTimersByTimeAsync(DIAG_JOB_DEADLINE_MS + 100);
     await running;
-    expect(__diagWriteCountersForTests().inFlight).toBe(0);
+    expect(counters().inFlight).toBe(0);
+  });
+
+  it("counts a task that could not check someone in time as 'slow' in the minute summary, not as a stranger", async () => {
+    const queued = manualScheduler();
+    scheduleDiagWrite(async () => {
+      throw new DiagLookupSlow();
+    });
+    scheduleDiagWrite(async () => {
+      throw new Error("something else");
+    });
+    await queued[0]!();
+    await queued[1]!();
+    expect(info.mock.calls.map((c) => String(c[0]))).toEqual([
+      "[diag] stored nothing for requests with no verified player or host (slow = could not be checked in time): slow=1",
+    ]);
   });
 
   it("records how many writes were dropped or failed as one system row, once the database takes writes again", async () => {
@@ -402,10 +505,10 @@ describe("how many log writes may run at once", () => {
     __resetDiagWriteForTests({ now: () => now });
     const queued = manualScheduler();
     const hold: Array<() => void> = [];
-    for (let i = 0; i < DIAG_MAX_WRITES_IN_FLIGHT + 3; i++) {
+    for (let i = 0; i < DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX + 3; i++) {
       scheduleDiagWrite(() => new Promise<void>((resolve) => hold.push(resolve)));
     }
-    const running = queued.map((task) => task());
+    const running = queued.map((job) => job());
     const inserts: Array<{ table: string; rows: Record<string, unknown>[] }> = [];
     adminMock.getSupabaseAdmin.mockReturnValue({
       from: (table: string) => ({
@@ -415,7 +518,11 @@ describe("how many log writes may run at once", () => {
         },
       }),
     });
-    hold.forEach((r) => r());
+    for (let guard = 0; guard < 2_000 && (hold.length < DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX || hold.some(Boolean)); guard++) {
+      hold.splice(0).forEach((r) => r());
+      await Promise.resolve();
+      if (counters().inFlight === 0 && counters().queued === 0) break;
+    }
     await Promise.all(running);
     await vi.waitFor(() => expect(inserts).toHaveLength(1));
     expect(inserts[0]!.table).toBe("diag_server_actions");
@@ -427,7 +534,7 @@ describe("how many log writes may run at once", () => {
       reason: "dropped=3 failed=0 capped=0",
       steps: { dropped: 3, failed: 0, capped: 0 },
     });
-    await vi.waitFor(() => expect(__diagWriteCountersForTests()).toMatchObject({ dropped: 0, failed: 0 }));
+    await vi.waitFor(() => expect(counters()).toMatchObject({ dropped: 0, failed: 0 }));
     now += 1;
   });
 
@@ -463,7 +570,7 @@ describe("how many log writes may run at once", () => {
 describe("lookups give up quickly too", () => {
   beforeEach(() => __clearDiagCacheForTests());
 
-  it("returns null when the database does not answer in time", async () => {
+  it("says 'could not check' (it throws) when the database does not answer in time", async () => {
     vi.useFakeTimers();
     adminMock.getSupabaseAdmin.mockReturnValue({
       from: () => {
@@ -476,9 +583,9 @@ describe("lookups give up quickly too", () => {
         return chain;
       },
     });
-    const answer = lookupPlayerId("n1", "d1");
+    const answer = lookupPlayerId("n1", "d1").catch((e) => e);
     await vi.advanceTimersByTimeAsync(DIAG_WRITE_TIMEOUT_MS + 10);
-    await expect(answer).resolves.toBeNull();
+    expect(await answer).toBeInstanceOf(DiagLookupSlow);
   });
 
   it("remembers that a room code does not exist for a short while, so made-up codes cannot hammer the database", async () => {
@@ -750,6 +857,76 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
     expect(lines()).toEqual(["[diag] row-cap check failed code=timeout"]);
   });
 
+  describe("never waits for a database lock: a busy answer means back off briefly, ask again, then drop", () => {
+    function busyDb(answers: Array<number | "error">) {
+      const calls: number[] = [];
+      const inserted: unknown[][] = [];
+      adminMock.getSupabaseAdmin.mockReturnValue({
+        rpc: async () => {
+          const next = answers[Math.min(calls.length, answers.length - 1)]!;
+          calls.push(Date.now());
+          return next === "error" ? { data: null, error: { code: "55P03" } } : { data: next, error: null };
+        },
+        from: () => ({
+          insert: async (batch: unknown[]) => {
+            inserted.push(batch);
+            return { error: null };
+          },
+        }),
+      });
+      return { calls, inserted };
+    }
+
+    it("on 'busy' it waits a few milliseconds (holding no connection), asks again, and then stores the rows", async () => {
+      vi.useFakeTimers();
+      const { calls, inserted } = busyDb([-1, -1, 25]);
+      const done = recordDiagRows("diag_device_events", rows(3), NIGHT, player);
+      await vi.advanceTimersByTimeAsync(500);
+      await done;
+      expect(calls).toHaveLength(3); // two busy answers, then the grant
+      // the backoff is a few tens of milliseconds, not a wait on the database
+      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(DIAG_QUOTA_BUSY_BACKOFF_MS);
+      expect(calls[1]! - calls[0]!).toBeLessThan(DIAG_QUOTA_BUSY_BACKOFF_MS * 3);
+      expect(inserted).toEqual([rows(3)]);
+      expect(__diagWriteCountersForTests()).toMatchObject({ dropped: 0, failed: 0, capped: 0 });
+    });
+
+    it("if it is still busy after the retries it DROPS the rows and counts them, instead of waiting on", async () => {
+      vi.useFakeTimers();
+      const { calls, inserted } = busyDb([-1]);
+      const done = recordDiagRows("diag_device_events", rows(3), NIGHT, player);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await done;
+      expect(calls).toHaveLength(DIAG_QUOTA_BUSY_RETRIES + 1);
+      expect(inserted).toHaveLength(0);
+      expect(__diagWriteCountersForTests()).toMatchObject({ dropped: 1, failed: 0 });
+      expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+        "[diag] row-cap check busy: dropping log rows instead of waiting",
+      ]);
+    });
+
+    it("a busy answer does not mark the source as full: the next rows try again", async () => {
+      vi.useFakeTimers();
+      const { calls, inserted } = busyDb([-1, -1, -1, 25]);
+      const first = recordDiagRows("diag_device_events", rows(1), NIGHT, player);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await first;
+      expect(inserted).toHaveLength(0);
+      const second = recordDiagRows("diag_device_events", rows(1), NIGHT, player);
+      await vi.advanceTimersByTimeAsync(2_000);
+      await second;
+      expect(calls).toHaveLength(4);
+      expect(inserted).toEqual([rows(1)]);
+    });
+
+    it("a lock timeout reported by the database is not a stuck connection either: it is an error answer, counted, nothing stored", async () => {
+      const { inserted } = busyDb(["error"]);
+      await recordDiagRows("diag_device_events", rows(1), NIGHT, player);
+      expect(inserted).toHaveLength(0);
+      expect(__diagWriteCountersForTests().failed).toBe(1);
+    });
+  });
+
   it("does nothing at all for an empty list", async () => {
     adminMock.getSupabaseAdmin.mockClear();
     await recordDiagRows("diag_device_events", [], NIGHT, player);
@@ -768,12 +945,14 @@ describe("noteIgnored: a request with no verified player or host stores nothing 
     noteIgnored("answer");
     expect(adminMock.getSupabaseAdmin).not.toHaveBeenCalled();
     // The very first one speaks at once; the rest are held for the minute.
-    expect(lines()).toEqual(["[diag] stored nothing for requests with no verified player or host: report=1"]);
+    expect(lines()).toEqual([
+      "[diag] stored nothing for requests with no verified player or host (slow = could not be checked in time): report=1",
+    ]);
     now += 61_000;
     noteIgnored("action");
     expect(lines()).toHaveLength(2);
     expect(lines()[1]).toBe(
-      "[diag] stored nothing for requests with no verified player or host: report=4 answer=1 action=1",
+      "[diag] stored nothing for requests with no verified player or host (slow = could not be checked in time): report=4 answer=1 action=1",
     );
     expect(__diagWriteCountersForTests().ignored).toBe(0);
   });

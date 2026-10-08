@@ -6,12 +6,16 @@
 import { issueTvPassForRoom } from "@/lib/diagnostics/tvPass";
 import { DiagTvPassSetter } from "./DiagTvPassSetter";
 
-export async function DiagTvPass({ params }: { params: Promise<{ code: string }> }) {
+async function passFor(params: Promise<{ code: string }>): Promise<string | null> {
   try {
     const { code } = await params;
-    const pass = await issueTvPassForRoom(decodeURIComponent(code));
-    return pass ? <DiagTvPassSetter pass={pass} /> : null;
+    return await issueTvPassForRoom(decodeURIComponent(code));
   } catch {
     return null;
   }
+}
+
+export async function DiagTvPass({ params }: { params: Promise<{ code: string }> }) {
+  const pass = await passFor(params);
+  return pass ? <DiagTvPassSetter pass={pass} /> : null;
 }

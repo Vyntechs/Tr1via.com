@@ -222,6 +222,17 @@ grant select, delete on table public.diag_quota to service_role;
 -- counts the rest as refused. Both caps are checked in one step: the night as a
 -- whole (p_night_cap) and the source inside it (p_bucket_cap). The caps come
 -- from the caller, which is trusted server code (service role only).
+--
+-- It NEVER WAITS FOR A LOCK. Logging must not hold a database connection that
+-- real answers could be using, so:
+--   - it first takes a per-night TRY-lock (pg_try_advisory_xact_lock). If
+--     another call is updating the same night's counter right now it returns
+--     -1 ("busy") immediately; the caller backs off for a few milliseconds
+--     without holding a connection and asks again, or drops the rows;
+--   - any row lock it still needs gives up after 50 ms (lock_timeout) and also
+--     returns -1;
+--   - it touches only diag_quota, never a game table, so it cannot conflict
+--     with an answer, a reveal or a resolve.
 create or replace function public.diag_take_rows(
   p_night_id uuid,
   p_bucket text,
@@ -247,24 +258,33 @@ begin
   end if;
   v_want := least(p_want, 1000);
 
-  -- Always lock the night's row first, then the source's row.
-  insert into public.diag_quota (night_id, bucket) values (p_night_id, '_night')
-    on conflict do nothing;
-  select q.rows_taken into v_night from public.diag_quota q
-    where q.night_id = p_night_id and q.bucket = '_night' for update;
-  insert into public.diag_quota (night_id, bucket) values (p_night_id, p_bucket)
-    on conflict do nothing;
-  select q.rows_taken into v_bucket from public.diag_quota q
-    where q.night_id = p_night_id and q.bucket = p_bucket for update;
+  if not pg_catalog.pg_try_advisory_xact_lock(pg_catalog.hashtextextended(p_night_id::text, 7)) then
+    return -1;
+  end if;
+  perform pg_catalog.set_config('lock_timeout', '50ms', true);
 
-  v_grant := greatest(0, least(v_want, p_night_cap - v_night, p_bucket_cap - v_bucket));
+  begin
+    -- Always lock the night's row first, then the source's row.
+    insert into public.diag_quota (night_id, bucket) values (p_night_id, '_night')
+      on conflict do nothing;
+    select q.rows_taken into v_night from public.diag_quota q
+      where q.night_id = p_night_id and q.bucket = '_night' for update;
+    insert into public.diag_quota (night_id, bucket) values (p_night_id, p_bucket)
+      on conflict do nothing;
+    select q.rows_taken into v_bucket from public.diag_quota q
+      where q.night_id = p_night_id and q.bucket = p_bucket for update;
 
-  update public.diag_quota
-     set rows_taken = rows_taken + v_grant,
-         rows_refused = rows_refused + (v_want - v_grant),
-         updated_at = pg_catalog.now()
-   where night_id = p_night_id and bucket in ('_night', p_bucket);
-  return v_grant;
+    v_grant := greatest(0, least(v_want, p_night_cap - v_night, p_bucket_cap - v_bucket));
+
+    update public.diag_quota
+       set rows_taken = rows_taken + v_grant,
+           rows_refused = rows_refused + (v_want - v_grant),
+           updated_at = pg_catalog.now()
+     where night_id = p_night_id and bucket in ('_night', p_bucket);
+    return v_grant;
+  exception when lock_not_available then
+    return -1;
+  end;
 end;
 $$;
 
@@ -464,6 +484,9 @@ as $$
 
     union all
 
+    -- (Legacy engine only. Nights on the resilient engine keep their saved
+    -- answers in question_play_answers; they show here as 'answer' lines with
+    -- outcome saved. See docs/diagnostics/night-timeline.md.)
     select
       g.night_id::uuid,
       ans.locked_at::timestamptz,

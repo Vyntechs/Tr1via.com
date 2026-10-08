@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 import { signDeviceCookie } from "@/lib/auth/device-cookie";
 import { diagNote } from "@/lib/diagnostics/trace";
+import { DiagLookupSlow } from "@/lib/diagnostics/deadline";
 
 const authMock = vi.hoisted(() => ({
   requireOwnedGame: vi.fn(),
@@ -125,7 +126,8 @@ describe("host control diagnostic log", () => {
       req("/api/test", c.body ?? {}, headers),
       ctx,
     );
-    for (const task of pending) await task();
+    // (the way scheduleDiagWrite runs it: a failing job never reaches the host)
+    for (const task of pending) await task().catch(() => {});
     return response;
   }
 
@@ -195,6 +197,20 @@ describe("host control diagnostic log", () => {
       await call(reveal);
       expect(writeMock.lookupNightOwner).toHaveBeenCalledWith(NIGHT_ID);
       nothingStored();
+    });
+
+    it("an owner check that is too slow to answer is not taken for 'not the owner': nothing stored, nothing counted as a stranger", async () => {
+      writeMock.lookupNightOwner.mockRejectedValue(new DiagLookupSlow());
+      await expect(call(reveal)).resolves.toBeDefined(); // the host still gets her answer
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+      expect(writeMock.noteIgnored).not.toHaveBeenCalled();
+    });
+
+    it("a player check that is too slow to answer on a timer-end call is 'slow', not 'not a player'", async () => {
+      writeMock.lookupPlayerId.mockRejectedValue(new DiagLookupSlow());
+      await expect(call(finalize)).resolves.toBeDefined();
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+      expect(writeMock.noteIgnored).not.toHaveBeenCalled();
     });
 
     it("a host press about a game that does not exist", async () => {

@@ -59,6 +59,10 @@ question has closed. A page that is hidden or closed BETWEEN questions hands
 what it holds to the browser's send-on-exit so it is not lost; a tab closed in
 the middle of a question loses what it held, on purpose. The venue TV also
 needs the signed pass its page was given (below) and sends nothing without it.
+One bounded exception: a screen whose room STILL has not loaded after 45
+seconds is stuck on its loading screen (no question can be on it), and what
+went wrong is the evidence worth having, so it may send up to 3 small reports
+(60 events at most each) while it stays unloaded.
 
 ### The device summary (exactly what is stored about a device)
 
@@ -118,8 +122,8 @@ or host: answer=3 report=12`).
 | Host press (reveal, next, ...) | the request is from a signed-in host who owns the night |
 | Timer-end call (resolve / finalize) | the signed device cookie is a player of that night. The venue TV sends these without any login, so its calls are not stored (the TV's own `res` reports show them). |
 | Phone report | valid device cookie + a player row in the night its room code names |
-| Host laptop / phone report | a signed-in host who owns the night. This is checked after the 204 reply, so the host screen never waits on the sign-in service, and a session that passed in the last 5 minutes is remembered (by a hash of its cookies, in memory), so reports do not add a sign-in call each. |
-| TV report | the signed pass the server gave the TV page when it loaded. The pass names one night and lasts 8 hours; the night is read from the pass, never from the report. No pass, a forged or expired pass: nothing stored. |
+| Host laptop / phone report | a signed-in host who owns the night. This is checked after the 204 reply, so the host screen never waits on the sign-in service, and **strictly read-only**: the check reads the access token from the sign-in cookie as it is and asks the sign-in service who owns that exact token; it never renews a session and never writes a cookie (a renewal from here could use up the host's refresh token while the new one cannot reach her browser, and her browser's own renewal could then be refused, signing her out mid-show). A token that has already run out is dropped without any network call; the report is just counted. A session that passed in the last 5 minutes is remembered (by a hash of its cookies, in memory), so reports do not add a sign-in call each. |
+| TV report | the signed pass the server gave the TV page when it loaded. The pass names one night and lasts 8 hours; the night is read from the pass, never from the report. No pass, a forged or expired pass: nothing stored. The pass is signed with a key of its own (derived from `SESSION_SECRET` under a fixed label), so its signature is never valid as a device cookie, and a device-cookie signature is never valid as a pass. |
 
 The TV page is public by design (anyone with the room code can open it), so the
 pass is not a login. It means a report cannot be invented for a night without
@@ -150,7 +154,12 @@ that, and a night full of reports never blocks a late tap. A busy 40-phone night
 is roughly 20,000 to 35,000 rows in all; the worst case is 60,000 small rows,
 about 25 MB. To keep it cheap, a server asks for 25 rows at a time and a full
 source is not asked about again for a minute (so the caps can overshoot by up to
-one block per server). Per-instance rate limits (per address, per device, per TV
+one block per server). **The check never waits for a lock**: the database
+function takes a per-night try-lock and answers "busy" at once if another server
+is updating that night's counter at that instant (and gives up on any row lock
+after 50 ms); the server then backs off for a few milliseconds without holding a
+connection, asks again (twice), and drops the rows if it is still busy. The
+function touches only `diag_quota`, never a game table. Per-instance rate limits (per address, per device, per TV
 night) stay as a first filter only.
 
 ```sql
@@ -161,14 +170,25 @@ where rows_refused > 0 or bucket = '_night' order by rows_taken desc limit 20;
 
 ### When logging itself has trouble
 
-Log writes never change a response. If one fails, times out (2 seconds) or is
-dropped (more than 50 writes at once on one server), the server prints one
-short line to its console, at most one per kind a minute:
+Log writes never change a response, and they must never compete with real
+answers for the database. At most **5 log jobs per server** touch the database
+at once; the rest wait in a short queue (200 jobs). A job that waits more than 8
+seconds for its turn, or arrives to a full queue, is dropped and counted, and
+one job never holds its turn longer than 5 seconds. If a write fails, times out
+(2 seconds) or is dropped, the server prints one short line to its console, at
+most one per kind a minute:
 
 ```
 [diag] insert failed table=diag_answer_events code=42P01
-[diag] dropping log writes: too many in flight
+[diag] dropping log writes: too many waiting
+[diag] dropping log writes: waited too long for a turn
+[diag] row-cap check busy: dropping log rows instead of waiting
+[diag] stored nothing for requests with no verified player or host (slow = could not be checked in time): answer=3 report=12 slow=2
 ```
+
+The last line is the once-a-minute summary of callers that got no row. `slow`
+means a check (is this device a player of the night? does this host own it?)
+could not be answered in time; those callers are NOT counted as strangers.
 
 (`code` is the database's error code, or `timeout`; never the message, which
 could contain row contents.) The count of dropped, failed and capped writes is saved as
@@ -246,7 +266,7 @@ optional.
 | --- | --- |
 | `night_id` | the night |
 | `at` | when it happened, on the server clock |
-| `source` | `answer`, `action`, `device:player`, `device:tv`, `device:host`, `db_reveal`, `db_answer` |
+| `source` | `answer`, `action`, `device:player`, `device:tv`, `device:host`, `db_reveal`, `db_answer` (see the note below) |
 | `who` | player display name, or `host` / `timer` / `database` / `tv a1b2c3` |
 | `what` | short label, for example `late: deadline_passed` or `advance: ok` |
 | `detail` | JSON with the numbers (milliseconds, ids, step timings) |
@@ -257,6 +277,22 @@ select * from public.diag_night_timeline('<night id>', '2026-10-08 00:05:30+00',
 ```
 
 It is read-only and service-role only (the browser roles cannot run it).
+
+**Known gap: `db_answer` lines cover the older ("legacy") answer engine only.**
+Nights on the newer engine (`answer_engine = 'resilient_v1'`) keep their saved
+answers in `question_play_answers`, which the timeline does not read (adding it
+would make this migration depend on the newer engine's tables). Those answers
+are still on the timeline as `answer` lines with `outcome = saved` (written by
+the server as each tap arrives). To see the database's own rows for one question:
+
+```sql
+select a.locked_at at time zone 'America/Chicago' as locked_at, p.display_name, a.visible_slot, a.ms_to_lock
+from question_play_answers a
+join question_plays qp on qp.id = a.play_id
+join players p on p.id = a.player_id
+where qp.night_id = '<night id>' and qp.question_id = '<question id>'
+order by a.locked_at;
+```
 
 > **Do not run timeline queries (or any of the queries below) during a show.**
 > They read the live game tables as well as the diagnostic ones. Run them

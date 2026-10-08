@@ -7,8 +7,10 @@
 //
 //   - names ONE night (the night is read from the pass, never from the report)
 //   - stops working after DIAG_TV_PASS_TTL_MS (8 hours)
-//   - is signed with SESSION_SECRET (the same server secret that signs device
-//     cookies), under its own label, so it cannot be mistaken for a cookie
+//   - is signed with a key of its own, derived from SESSION_SECRET (the same
+//     server secret that signs device cookies) under a fixed label. The pass
+//     signature is therefore NOT a valid device-cookie signature for any id,
+//     and a device-cookie signature is not a valid pass signature
 //   - is only issued while logging is on, for a room code that exists
 //
 // It is not a login: the TV page itself is public by design, so anyone who
@@ -26,12 +28,19 @@ import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { DIAG_TV_PASS_TTL_MS, diagnosticsEnabled } from "./config";
 import { lookupRoomNight } from "./write";
 
-const LABEL = "tr1via-diag-tv:v1:";
+// The signing key is derived from the server secret with this label, so the
+// key that signs passes is a different key from the one that signs device
+// cookies (domain separation). Anything signed with one never verifies as the other.
+const KEY_LABEL = "tr1via/diag-tv-pass/signing-key/v1";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const EXPIRY_RE = /^[0-9a-z]{1,10}$/;
 
+function signingKey(secret: string): Buffer {
+  return createHmac("sha256", secret).update(KEY_LABEL).digest();
+}
+
 function sign(secret: string, nightId: string, expirySeconds: number): string {
-  return createHmac("sha256", secret).update(`${LABEL}${nightId.toLowerCase()}:${expirySeconds}`).digest("base64url");
+  return createHmac("sha256", signingKey(secret)).update(`${nightId.toLowerCase()}:${expirySeconds}`).digest("base64url");
 }
 
 /** A pass for this night, or null (no secret set, or not a night id). */

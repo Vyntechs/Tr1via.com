@@ -4,8 +4,12 @@
 //                             (Next's after(), which Vercel keeps the
 //                             function alive for). Every failure is
 //                             swallowed: logging can never break or slow a
-//                             request. At most DIAG_MAX_WRITES_IN_FLIGHT tasks
-//                             run at once; extra ones are dropped and counted.
+//                             request. At most DIAG_MAX_WRITES_IN_FLIGHT (5)
+//                             tasks touch the database at once; the rest wait
+//                             in a short queue, and a job that waits too long
+//                             or arrives to a full queue is dropped and
+//                             counted. So a burst of taps can never take the
+//                             database connections real answers need.
 //   recordDiagRows(...)       the way every normal row is stored. It first
 //                             asks the database for room under the night's
 //                             row caps (see "row caps" below), then inserts
@@ -38,17 +42,23 @@ import "server-only";
 
 import { after } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { DiagLookupSlow, DiagTimeout, withDeadline } from "./deadline";
 import {
   DIAG_BUCKET_ROW_CAPS,
   DIAG_CLEANUP_BATCH_ROWS,
   DIAG_CLEANUP_BUDGET_MS,
   DIAG_CLEANUP_MAX_BATCHES,
+  DIAG_JOB_DEADLINE_MS,
   DIAG_MAX_WRITES_IN_FLIGHT,
   DIAG_NIGHT_ROW_CAP,
   DIAG_NIGHT_SERVER_ROW_CAP,
+  DIAG_QUEUE_WAIT_MS,
+  DIAG_QUOTA_BUSY_BACKOFF_MS,
+  DIAG_QUOTA_BUSY_RETRIES,
   DIAG_QUOTA_FULL_MEMORY_MS,
   DIAG_QUOTA_LEASE_ROWS,
   DIAG_RETENTION_DAYS,
+  DIAG_WRITE_QUEUE_MAX,
   DIAG_WRITE_TIMEOUT_MS,
 } from "./config";
 
@@ -80,34 +90,6 @@ let scheduler: Scheduler = defaultScheduler;
 /** Test hook: replace how after-the-response work is scheduled. */
 export function __setDiagSchedulerForTests(next: Scheduler | null): void {
   scheduler = next ?? defaultScheduler;
-}
-
-// ─── a deadline for anything that waits on the database ──────────────
-class DiagTimeout extends Error {
-  constructor() {
-    super("timeout");
-    this.name = "DiagTimeout";
-  }
-}
-
-/**
- * Run `work`, but stop waiting after `ms`. The signal is aborted at the
- * deadline so the request itself is cancelled where the client supports it;
- * the race guarantees we stop waiting even where it does not.
- */
-function withDeadline<T>(ms: number, work: (signal: AbortSignal) => PromiseLike<T> | T): Promise<T> {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      controller.abort();
-      reject(new DiagTimeout());
-    }, ms);
-  });
-  const run = (async () => work(controller.signal))();
-  // If the deadline wins, a later failure of `run` must not surface as unhandled.
-  run.catch(() => {});
-  return Promise.race([run, timeout]).finally(() => clearTimeout(timer));
 }
 
 // ─── counters, and one short console line per kind of failure ────────
@@ -160,7 +142,9 @@ export function __resetDiagWriteForTests(options: { now?: () => number } = {}): 
   lastLine.clear();
   lastCounterFlushAt = 0;
   counterFlushRunning = false;
-  writesInFlight = 0;
+  running = 0;
+  outstanding = 0;
+  for (const waiter of waiters.splice(0)) clearTimeout(waiter.timer);
   clock = options.now ?? (() => Date.now());
 }
 
@@ -170,6 +154,7 @@ export function __diagWriteCountersForTests(): {
   failed: number;
   capped: number;
   inFlight: number;
+  queued: number;
   ignored: number;
 } {
   let ignoredTotal = 0;
@@ -178,7 +163,8 @@ export function __diagWriteCountersForTests(): {
     dropped: pending.dropped,
     failed: pending.failed,
     capped: pending.capped,
-    inFlight: writesInFlight,
+    inFlight: running,
+    queued: waiters.length,
     ignored: ignoredTotal,
   };
 }
@@ -190,7 +176,9 @@ export function __diagWriteCountersForTests(): {
 const ignored = new Map<string, number>();
 let lastIgnoredLineAt = 0;
 
-export type IgnoredKind = "answer" | "action" | "report";
+// "slow" is a caller we could not verify IN TIME (a lookup timed out or failed),
+// which is different from one we looked up and found not to be a player or host.
+export type IgnoredKind = "answer" | "action" | "report" | "slow";
 
 /** Never throws, never touches the database. */
 export function noteIgnored(kind: IgnoredKind): void {
@@ -201,51 +189,95 @@ export function noteIgnored(kind: IgnoredKind): void {
     lastIgnoredLineAt = now;
     const parts = [...ignored].map(([name, count]) => `${name}=${count}`).join(" ");
     ignored.clear();
-    console.info(`[diag] stored nothing for requests with no verified player or host: ${parts}`);
+    console.info(
+      `[diag] stored nothing for requests with no verified player or host (slow = could not be checked in time): ${parts}`,
+    );
   } catch {
     // counting is best-effort
   }
 }
 
-// ─── scheduling, with a cap on how many run at once ──────────────────
-let writesInFlight = 0;
-// A task that never reports back must not hold its slot forever.
-const SLOT_SAFETY_MS = DIAG_WRITE_TIMEOUT_MS * 5;
+// ─── scheduling: a small number at a time, a short queue, then drop ───
+// `running` jobs hold a turn (they are the only ones touching the database);
+// `waiters` are jobs queued for a turn; `outstanding` is everything handed to
+// the scheduler and not finished yet, which is what the queue limit bounds.
+let running = 0;
+let outstanding = 0;
+const waiters: Array<{ grant: (got: boolean) => void; timer: ReturnType<typeof setTimeout> }> = [];
+
+/** Resolves true when this job has a turn, false if it waited too long for one. */
+function acquireTurn(): Promise<boolean> {
+  if (running < DIAG_MAX_WRITES_IN_FLIGHT) {
+    running += 1;
+    return Promise.resolve(true);
+  }
+  return new Promise<boolean>((resolve) => {
+    const waiter = {
+      grant: resolve,
+      timer: setTimeout(() => {
+        const at = waiters.indexOf(waiter);
+        if (at >= 0) waiters.splice(at, 1);
+        resolve(false);
+      }, DIAG_QUEUE_WAIT_MS),
+    };
+    (waiter.timer as { unref?: () => void }).unref?.();
+    waiters.push(waiter);
+  });
+}
+
+function releaseTurn(): void {
+  const next = waiters.shift();
+  if (next) {
+    // The turn passes straight to the next job in line.
+    clearTimeout(next.timer);
+    next.grant(true);
+  } else {
+    running = Math.max(0, running - 1);
+  }
+}
 
 /** Never throws. */
 export function scheduleDiagWrite(task: () => Promise<void>): void {
   try {
-    if (writesInFlight >= DIAG_MAX_WRITES_IN_FLIGHT) {
+    if (outstanding >= DIAG_MAX_WRITES_IN_FLIGHT + DIAG_WRITE_QUEUE_MAX) {
       pending.dropped += 1;
-      logOnce("drop", "dropping log writes: too many in flight");
+      logOnce("drop", "dropping log writes: too many waiting");
       return;
     }
-    writesInFlight += 1;
-    let released = false;
-    let safety: ReturnType<typeof setTimeout> | undefined;
-    const release = () => {
-      if (released) return;
-      released = true;
-      writesInFlight -= 1;
-      if (safety) clearTimeout(safety);
+    outstanding += 1;
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      outstanding = Math.max(0, outstanding - 1);
     };
-    safety = setTimeout(release, SLOT_SAFETY_MS);
-    (safety as { unref?: () => void }).unref?.();
 
-    const guarded = async () => {
+    const job = async () => {
       try {
-        await withDeadline(SLOT_SAFETY_MS - 1_000, () => task());
-      } catch {
-        // timed out or failed: the failure was already counted where it happened
+        if (!(await acquireTurn())) {
+          // Waited too long: the evidence is stale and the database is busy. Give way.
+          pending.dropped += 1;
+          logOnce("drop", "dropping log writes: waited too long for a turn");
+          return;
+        }
+        try {
+          await withDeadline(DIAG_JOB_DEADLINE_MS, () => task());
+        } catch (error) {
+          // A lookup that could not be answered in time is counted, not taken for a stranger.
+          if (error instanceof DiagLookupSlow) noteIgnored("slow");
+          // Anything else was already counted where it happened.
+        } finally {
+          releaseTurn();
+        }
       } finally {
-        release();
+        finish();
       }
       void flushCounters();
     };
     try {
-      scheduler(guarded);
+      scheduler(job);
     } catch {
-      release();
+      finish();
     }
   } catch {
     // A broken scheduler must not reach the caller.
@@ -280,7 +312,7 @@ async function flushCounters(): Promise<void> {
         pending.dropped = Math.max(0, pending.dropped - dropped);
         pending.failed = Math.max(0, pending.failed - failed);
         pending.capped = Math.max(0, pending.capped - capped);
-        if (dropped > 0) logOnce("dropped", `dropped ${dropped} log writes (too many at once)`);
+        if (dropped > 0) logOnce("dropped", `dropped ${dropped} log writes (too many waiting at once)`);
       }
     } finally {
       counterFlushRunning = false;
@@ -356,6 +388,13 @@ export async function insertDiagRows(
 // full is not asked about again for a minute. A block that is never spent
 // (an instance that goes away) just counts toward the cap, which is the safe
 // direction.
+//
+// The check NEVER waits for a lock. The database function takes a per-night
+// try-lock and answers -1 ("busy") at once if another server is in the middle
+// of the same night's counter (and it gives up on any row lock after 50 ms), so
+// a log job can never sit holding a database connection behind other logging.
+// On "busy" this side backs off for a few milliseconds (no connection held)
+// and asks again, a couple of times, then drops the rows and counts them.
 export type DiagSource =
   // device reports
   | { kind: "player"; deviceId: string }
@@ -380,8 +419,13 @@ const leases = new Map<string, { left: number }>();
 const fullUntil = new Map<string, number>();
 const QUOTA_MEMORY_MAX = 2000;
 
-/** Rows granted (0 = full), or null when the database could not be asked. */
-async function takeRows(nightId: string, source: DiagSource, want: number): Promise<number | null> {
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Rows granted (0 = full), "busy" (another server held the night's counter at
+ * that instant, even after retries), or null when the database could not be asked.
+ */
+async function takeRows(nightId: string, source: DiagSource, want: number): Promise<number | "busy" | null> {
   const bucket = bucketOf(source);
   const key = `${nightId}|${bucket}`;
   const now = clock();
@@ -398,27 +442,33 @@ async function takeRows(nightId: string, source: DiagSource, want: number): Prom
   }
   if (lease.left < want) {
     const ask = Math.max(want - lease.left, DIAG_QUOTA_LEASE_ROWS);
-    let granted: number;
-    try {
-      const result = await withDeadline(DIAG_WRITE_TIMEOUT_MS, async (signal) => {
-        const call = admin().rpc("diag_take_rows", {
-          p_night_id: nightId,
-          p_bucket: bucket,
-          p_want: ask,
-          p_bucket_cap: DIAG_BUCKET_ROW_CAPS[source.kind],
-          p_night_cap: nightCapOf(source),
+    let granted = -1;
+    for (let attempt = 0; granted === -1; attempt += 1) {
+      try {
+        const result = await withDeadline(DIAG_WRITE_TIMEOUT_MS, async (signal) => {
+          const call = admin().rpc("diag_take_rows", {
+            p_night_id: nightId,
+            p_bucket: bucket,
+            p_want: ask,
+            p_bucket_cap: DIAG_BUCKET_ROW_CAPS[source.kind],
+            p_night_cap: nightCapOf(source),
+          });
+          return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
         });
-        return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
-      });
-      if (result && result.error) {
-        logOnce(`quota:${failureCode(result.error)}`, `row-cap check failed code=${failureCode(result.error)}`);
+        if (result && result.error) {
+          logOnce(`quota:${failureCode(result.error)}`, `row-cap check failed code=${failureCode(result.error)}`);
+          return null;
+        }
+        granted = Number(result?.data);
+        if (!Number.isFinite(granted) || granted < -1) return null;
+      } catch (error) {
+        logOnce(`quota:${failureCode(error)}`, `row-cap check failed code=${failureCode(error)}`);
         return null;
       }
-      granted = Number(result?.data);
-      if (!Number.isFinite(granted) || granted < 0) return null;
-    } catch (error) {
-      logOnce(`quota:${failureCode(error)}`, `row-cap check failed code=${failureCode(error)}`);
-      return null;
+      if (granted === -1) {
+        if (attempt >= DIAG_QUOTA_BUSY_RETRIES) return "busy";
+        await sleep(DIAG_QUOTA_BUSY_BACKOFF_MS * (1 + Math.random()));
+      }
     }
     if (granted === 0) {
       if (fullUntil.size >= QUOTA_MEMORY_MAX) fullUntil.clear();
@@ -446,6 +496,11 @@ export async function recordDiagRows(
     const granted = await takeRows(nightId, source, rows.length);
     if (granted === null) {
       pending.failed += 1;
+      return;
+    }
+    if (granted === "busy") {
+      pending.dropped += 1;
+      logOnce("busy", "row-cap check busy: dropping log rows instead of waiting");
       return;
     }
     if (granted < rows.length) {
@@ -516,7 +571,9 @@ export async function runDiagCleanup(): Promise<DiagCleanupResult> {
 // "No such row" is remembered too, but only briefly (a player can join a
 // moment after something was asked about them) and in a SEPARATE small list, so
 // a flood of made-up ids costs one read each and cannot push the good entries
-// out of the main list. A failed or timed-out lookup is never remembered.
+// out of the main list. A failed or timed-out lookup is never remembered, and
+// it throws DiagLookupSlow instead of answering "none" (the job it belongs to
+// is counted as "slow" in the minute summary, not as a stranger).
 const CACHE_MAX = 500;
 const CACHE_TTL_MS = 10 * 60_000;
 const MISS_TTL_MS = 30_000;
@@ -555,7 +612,9 @@ async function cached(
     try {
       value = await withDeadline(DIAG_WRITE_TIMEOUT_MS, load);
     } catch {
-      return null;
+      // Too slow, or the database said no. That is NOT "no such row": say so
+      // (and do not remember it), so the caller does not take a real player for a stranger.
+      throw new DiagLookupSlow();
     }
     if (value !== null) {
       if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);

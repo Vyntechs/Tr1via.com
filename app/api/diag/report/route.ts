@@ -24,9 +24,14 @@
 //              or an expired one: nothing stored.
 //       host   a signed-in host who owns the night it names. This is checked
 //              AFTER the response (the host laptop never waits on the sign-in
-//              service), and a session that passed in the last few minutes is
-//              remembered by a fingerprint of its cookies, so a host screen does
-//              not add a sign-in call to every report.
+//              service), STRICTLY READ-ONLY (lib/diagnostics/hostSession.ts):
+//              it never renews a session and never touches a cookie, because
+//              a renewal from here could use up the host's refresh token and
+//              leave the browser unable to renew its own. An access token that
+//              is already expired is dropped without any network call. A
+//              session that passed in the last few minutes is remembered by a
+//              fingerprint of its cookies, so a host screen does not add a
+//              sign-in call to every report.
 //   - Limits, in this order of cheapness: in this instance's memory (per
 //     network address, per device cookie / page load, per TV night), only as a
 //     first filter. The real ceilings are in the database and hold across all
@@ -36,11 +41,11 @@
 
 import { createHash } from "node:crypto";
 import { type NextRequest } from "next/server";
-import { getAuthedHost, getDeviceId } from "@/lib/api/auth";
+import { getDeviceId } from "@/lib/api/auth";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
-import { isSupabaseSessionCookie } from "@/lib/auth/session-cookies";
 import { DIAG_MAX_BODY_BYTES, diagnosticsEnabled } from "@/lib/diagnostics/config";
 import { createRateLimiter, sanitizeBatch, summarizeDevice, type CleanBatch } from "@/lib/diagnostics/ingest";
+import { sessionCookiesOf, verifyHostSessionReadOnly, type SessionCookie } from "@/lib/diagnostics/hostSession";
 import { verifyTvPass } from "@/lib/diagnostics/tvPass";
 import {
   lookupNightOwner,
@@ -82,25 +87,22 @@ const HOST_SESSION_MEMORY_MS = 5 * 60_000;
 const HOST_SESSION_MAX = 200;
 const hostSessions = new Map<string, { hostId: string; at: number }>();
 
-function sessionFingerprint(req: NextRequest): string | null {
-  const parts = req.cookies
-    .getAll()
-    .filter((c) => isSupabaseSessionCookie(c.name))
-    .map((c) => `${c.name}=${c.value}`)
-    .sort();
-  if (parts.length === 0) return null;
+function sessionFingerprint(cookies: SessionCookie[]): string | null {
+  if (cookies.length === 0) return null;
+  const parts = cookies.map((c) => `${c.name}=${c.value}`).sort();
   return createHash("sha256").update(parts.join(";")).digest("hex");
 }
 
-async function verifiedHostId(fingerprint: string): Promise<string | null> {
+/** Read-only (see hostSession.ts): the cookies are copied out before the reply, nothing is written back. */
+async function verifiedHostId(fingerprint: string, cookies: SessionCookie[]): Promise<string | null> {
   const seen = hostSessions.get(fingerprint);
   if (seen && Date.now() - seen.at < HOST_SESSION_MEMORY_MS) return seen.hostId;
   hostSessions.delete(fingerprint);
-  const auth = await getAuthedHost();
-  if (!auth.ok) return null;
+  const hostId = await verifyHostSessionReadOnly(cookies);
+  if (!hostId) return null;
   if (hostSessions.size >= HOST_SESSION_MAX) hostSessions.delete(hostSessions.keys().next().value as string);
-  hostSessions.set(fingerprint, { hostId: auth.host.id, at: Date.now() });
-  return auth.host.id;
+  hostSessions.set(fingerprint, { hostId, at: Date.now() });
+  return hostId;
 }
 
 export async function POST(req: NextRequest) {
@@ -137,7 +139,8 @@ export async function POST(req: NextRequest) {
 
     if (batch.surface === "host") {
       // No session cookie at all can be turned away without asking anyone.
-      const fingerprint = sessionFingerprint(req);
+      const sessionCookies = sessionCookiesOf(req.cookies.getAll());
+      const fingerprint = sessionFingerprint(sessionCookies);
       if (!fingerprint || !batch.night) {
         noteIgnored("report");
         return empty(401);
@@ -145,7 +148,7 @@ export async function POST(req: NextRequest) {
       const nightId = batch.night;
       // Answer now; the sign-in and ownership checks run after the response.
       scheduleDiagWrite(async () => {
-        const hostId = await verifiedHostId(fingerprint);
+        const hostId = await verifiedHostId(fingerprint, sessionCookies);
         if (!hostId || (await lookupNightOwner(nightId)) !== hostId) {
           noteIgnored("report");
           return;

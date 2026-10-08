@@ -27,11 +27,21 @@ export const DIAG_CLEANUP_BUDGET_MS = 20_000;
 export const DIAG_MAX_BODY_BYTES = 24_000;
 export const DIAG_MAX_EVENTS_PER_BATCH = 60;
 
-// Database write limits (lib/diagnostics/write.ts). A log write that takes
-// longer than this is given up on; more than this many at once and the extra
-// ones are dropped (and counted) instead of piling up behind a slow database.
+// Database write limits (lib/diagnostics/write.ts). Logging must never compete
+// with real answers for the database, so:
+//   - a log write that takes longer than DIAG_WRITE_TIMEOUT_MS is given up on;
+//   - at most DIAG_MAX_WRITES_IN_FLIGHT log jobs touch the database at once on
+//     one server (a small budget, so a burst of taps at timer-end cannot take
+//     the connections real answers need); the rest wait their turn in a short
+//     queue of DIAG_WRITE_QUEUE_MAX jobs;
+//   - a job that waited DIAG_QUEUE_WAIT_MS without getting a turn is dropped
+//     (and counted), and so is any job arriving to a full queue;
+//   - one job never holds its turn longer than DIAG_JOB_DEADLINE_MS.
 export const DIAG_WRITE_TIMEOUT_MS = 2_000;
-export const DIAG_MAX_WRITES_IN_FLIGHT = 50;
+export const DIAG_MAX_WRITES_IN_FLIGHT = 5;
+export const DIAG_WRITE_QUEUE_MAX = 200;
+export const DIAG_QUEUE_WAIT_MS = 8_000;
+export const DIAG_JOB_DEADLINE_MS = 5_000;
 
 // Row caps, kept in the database (table diag_quota, function diag_take_rows),
 // so they hold across every server instance. Rows past a cap are dropped and
@@ -61,6 +71,14 @@ export const DIAG_BUCKET_ROW_CAPS = {
 } as const;
 /** Rows a server instance asks the database for at a time (fewer calls on a busy night). */
 export const DIAG_QUOTA_LEASE_ROWS = 25;
+/**
+ * The row-cap check never waits for a lock: if another server is updating the
+ * same night's counter at that instant, the database answers "busy" at once.
+ * The caller backs off for a moment (with no database connection held) and asks
+ * again, up to this many times, then drops the rows and counts them.
+ */
+export const DIAG_QUOTA_BUSY_RETRIES = 2;
+export const DIAG_QUOTA_BUSY_BACKOFF_MS = 25;
 /** A source found to be full is not asked about again for this long. */
 export const DIAG_QUOTA_FULL_MEMORY_MS = 60_000;
 

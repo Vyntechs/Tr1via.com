@@ -4,12 +4,30 @@
 // VERIFIED source is stored (phone with a cookie that is a player of the night,
 // host who owns the night, TV with the signed pass its page was given) and
 // everything else stores nothing; every event is rebuilt from a fixed list; the
-// host never waits on the sign-in service.
+// host never waits on the sign-in service, and checking a host can never renew
+// her session or write a cookie.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const authMock = vi.hoisted(() => ({ getDeviceId: vi.fn(), getAuthedHost: vi.fn() }));
+// What the host check may touch: the sign-in service's "who is this token?" call
+// and the host lookup. Everything that could renew or change a session is here
+// only so the tests can prove it is never called.
+const signIn = vi.hoisted(() => ({
+  getUser: vi.fn(),
+  refreshSession: vi.fn(),
+  setSession: vi.fn(),
+  getSession: vi.fn(),
+  signOut: vi.fn(),
+  createClient: vi.fn(),
+  createServerClient: vi.fn(),
+  cookieSet: vi.fn(),
+  cookieDelete: vi.fn(),
+  cookiesFn: vi.fn(),
+  hostRow: vi.fn(),
+}));
+const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
 const writeMock = vi.hoisted(() => ({
   scheduleDiagWrite: vi.fn(),
   recordDiagRows: vi.fn(),
@@ -21,6 +39,10 @@ const writeMock = vi.hoisted(() => ({
 
 vi.mock("@/lib/api/auth", () => authMock);
 vi.mock("@/lib/diagnostics/write", () => writeMock);
+vi.mock("@supabase/supabase-js", () => ({ createClient: signIn.createClient }));
+vi.mock("@supabase/ssr", () => ({ createServerClient: signIn.createServerClient }));
+vi.mock("next/headers", () => ({ cookies: signIn.cookiesFn }));
+vi.mock("@/lib/supabase/admin", () => adminMock);
 
 import { signTvPass } from "@/lib/diagnostics/tvPass";
 
@@ -30,7 +52,21 @@ const OTHER_NIGHT_ID = "44444444-4444-4444-4444-444444444444";
 const DEVICE_ID = "66666666-6666-6666-6666-666666666666";
 const HOST_ID = "99999999-9999-4999-8999-999999999999";
 const UA = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 Version/17.5 Mobile/15E148 Safari/604.1";
-const HOST_COOKIE = { cookie: "sb-localproj-auth-token=session-value-one" };
+const USER_ID = "11111111-aaaa-4aaa-8aaa-111111111111";
+const ACCESS_TOKEN = "eyJhbGciOiJIUzI1NiJ9.host-laptop-token.signature";
+
+/** The sign-in cookie a browser really holds, with an access token good for an hour (or as given). */
+function hostCookie(token = ACCESS_TOKEN, expiresInSeconds = 3600, project = "localproj") {
+  const session = {
+    access_token: token,
+    refresh_token: "the-browsers-own-refresh-token",
+    token_type: "bearer",
+    expires_at: Math.floor(Date.now() / 1000) + expiresInSeconds,
+    user: { id: USER_ID },
+  };
+  return { cookie: `sb-${project}-auth-token=base64-${Buffer.from(JSON.stringify(session)).toString("base64url")}` };
+}
+const HOST_COOKIE = hostCookie();
 
 function report(body: unknown, headers: Record<string, string> = {}) {
   const text = typeof body === "string" ? body : JSON.stringify(body);
@@ -85,6 +121,31 @@ describe("POST /api/diag/report", () => {
     vi.stubEnv("SESSION_SECRET", SECRET);
     authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
     authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "http://127.0.0.1:54321");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "anon-key");
+    signIn.createClient.mockImplementation(() => ({
+      auth: {
+        getUser: signIn.getUser,
+        refreshSession: signIn.refreshSession,
+        setSession: signIn.setSession,
+        getSession: signIn.getSession,
+        signOut: signIn.signOut,
+      },
+    }));
+    signIn.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
+    signIn.hostRow.mockResolvedValue({ data: { id: HOST_ID }, error: null });
+    signIn.cookiesFn.mockImplementation(async () => ({
+      get: () => undefined,
+      getAll: () => [],
+      set: signIn.cookieSet,
+      delete: signIn.cookieDelete,
+    }));
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      from: () => {
+        const chain = { select: () => chain, eq: () => chain, maybeSingle: () => signIn.hostRow() };
+        return chain;
+      },
+    });
     writeMock.lookupRoomNight.mockResolvedValue(NIGHT_ID);
     writeMock.lookupNightOwner.mockResolvedValue(HOST_ID);
     writeMock.lookupPlayerId.mockResolvedValue("player-1");
@@ -297,6 +358,15 @@ describe("POST /api/diag/report", () => {
       expect(writeMock.noteIgnored).toHaveBeenCalledWith("report");
     });
 
+    it("a room or player check that is too slow to answer is 'could not check' (counted as slow by the scheduler), not a stranger", async () => {
+      const { POST } = await loadRoute();
+      writeMock.lookupPlayerId.mockRejectedValue(Object.assign(new Error("slow"), { name: "DiagLookupSlow" }));
+      expect((await POST(report(batch()))).status).toBe(204); // the reply is the same
+      await flushScheduled().catch(() => {});
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+      expect(writeMock.noteIgnored).not.toHaveBeenCalled();
+    });
+
     it("cannot send the kinds only the TV and host laptop produce, or any field off the list", async () => {
       const { POST } = await loadRoute();
       const now = Date.now();
@@ -434,11 +504,13 @@ describe("POST /api/diag/report", () => {
       const { POST } = await loadRoute();
       const res = await POST(report(hostBatch(), HOST_COOKIE));
       expect(res.status).toBe(204);
-      expect(authMock.getAuthedHost).not.toHaveBeenCalled();
+      expect(signIn.getUser).not.toHaveBeenCalled();
+      expect(adminMock.getSupabaseAdmin).not.toHaveBeenCalled();
       expect(writeMock.lookupNightOwner).not.toHaveBeenCalled();
       expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
       await flushScheduled();
-      expect(authMock.getAuthedHost).toHaveBeenCalledTimes(1);
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
+      expect(signIn.getUser).toHaveBeenCalledWith(ACCESS_TOKEN); // the browser's own token, as it is
       expect(writeMock.lookupNightOwner).toHaveBeenCalledWith(NIGHT_ID);
       expect(stored()[0]).toMatchObject({ night: NIGHT_ID, source: { kind: "host" } });
       expect(stored()[0]!.rows[0]).toMatchObject({ night_id: NIGHT_ID, surface: "host", device_id: null });
@@ -448,26 +520,103 @@ describe("POST /api/diag/report", () => {
       const { POST } = await loadRoute();
       expect((await POST(report(hostBatch()))).status).toBe(401);
       expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
-      expect(authMock.getAuthedHost).not.toHaveBeenCalled();
+      expect(signIn.getUser).not.toHaveBeenCalled();
       expect(writeMock.noteIgnored).toHaveBeenCalledWith("report");
       // a device cookie is not a sign-in cookie
       expect((await POST(report(hostBatch({ sid: "host-laptop-2" }), { cookie: "tr1via_device=x.y" }))).status).toBe(401);
     });
 
-    it("stores nothing when the sign-in check fails or the host does not own the night", async () => {
+    it("stores nothing when the sign-in service does not accept the token or the host does not own the night", async () => {
       const { POST } = await loadRoute();
-      authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "not signed in" });
+      signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 401, name: "AuthApiError" } });
       expect((await POST(report(hostBatch(), HOST_COOKIE))).status).toBe(204); // the reply is the same
       await flushScheduled();
       expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
 
       writeMock.scheduleDiagWrite.mockClear();
-      authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
+      signIn.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
       writeMock.lookupNightOwner.mockResolvedValue("someone-else");
-      await POST(report(hostBatch({ sid: "host-laptop-2" }), { cookie: "sb-localproj-auth-token=another-session" }));
+      await POST(report(hostBatch({ sid: "host-laptop-2" }), hostCookie("another-token")));
       await flushScheduled();
       expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
       expect(writeMock.noteIgnored).toHaveBeenCalledWith("report");
+    });
+
+    it("a signed-in user who is not a host stores nothing", async () => {
+      const { POST } = await loadRoute();
+      signIn.hostRow.mockResolvedValue({ data: null, error: null });
+      await POST(report(hostBatch(), HOST_COOKIE));
+      await flushScheduled();
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+      expect(writeMock.noteIgnored).toHaveBeenCalledWith("report");
+    });
+
+    it("an access token that has already run out is dropped and counted, with no call to the sign-in service", async () => {
+      const { POST } = await loadRoute();
+      const fetchSpy = vi.fn();
+      vi.stubGlobal("fetch", fetchSpy);
+      try {
+        expect((await POST(report(hostBatch(), hostCookie(ACCESS_TOKEN, -30)))).status).toBe(204); // same quick reply
+        await flushScheduled();
+        expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+        expect(writeMock.noteIgnored).toHaveBeenCalledWith("report");
+        expect(signIn.createClient).not.toHaveBeenCalled();
+        expect(signIn.getUser).not.toHaveBeenCalled();
+        expect(adminMock.getSupabaseAdmin).not.toHaveBeenCalled();
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it("trouble reaching the sign-in service is counted as 'could not check', not as a stranger, and the reply is unchanged", async () => {
+      const { POST } = await loadRoute();
+      signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 503, name: "AuthApiError" } });
+      expect((await POST(report(hostBatch(), HOST_COOKIE))).status).toBe(204);
+      const task = writeMock.scheduleDiagWrite.mock.calls[0]![0] as () => Promise<void>;
+      // (the route module is freshly loaded for every test, so compare by name)
+      await expect(task()).rejects.toMatchObject({ name: "DiagLookupSlow" }); // scheduleDiagWrite counts this as "slow"
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+    });
+
+    it("NEVER renews a session or writes an auth cookie, whatever the cookie holds", async () => {
+      const { POST } = await loadRoute();
+      const cases: Array<[string, Record<string, string>]> = [
+        ["a good session", hostCookie()],
+        ["a session about to run out", hostCookie(ACCESS_TOKEN, 5)],
+        ["a session that has run out", hostCookie(ACCESS_TOKEN, -3600)],
+        ["a garbage cookie", { cookie: "sb-localproj-auth-token=base64-%%%" }],
+        ["a chunked cookie", { cookie: "sb-localproj-auth-token.0=base64-AAAA; sb-localproj-auth-token.1=BBBB" }],
+      ];
+      let n = 0;
+      for (const [, headers] of cases) {
+        await POST(report(hostBatch({ sid: `host-session-${n++}-abc` }), headers));
+        await flushScheduled().catch(() => {});
+        writeMock.scheduleDiagWrite.mockClear();
+      }
+      // sign-in service failing, and not accepting the token, too
+      signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 401, name: "AuthApiError" } });
+      await POST(report(hostBatch({ sid: "host-session-x-abc" }), hostCookie("a-different-token")));
+      await flushScheduled().catch(() => {});
+
+      for (const spy of [
+        signIn.refreshSession,
+        signIn.setSession,
+        signIn.getSession,
+        signIn.signOut,
+        signIn.cookieSet, // no cookie is ever written...
+        signIn.cookieDelete, // ...or cleared
+        signIn.createServerClient, // the cookie-writing client is never even built
+        authMock.getAuthedHost, // and neither is the normal check, which can renew
+      ]) {
+        expect(spy).not.toHaveBeenCalled();
+      }
+      // The only thing ever asked of the sign-in service: who owns this exact token.
+      for (const call of signIn.getUser.mock.calls) expect(call).toHaveLength(1);
+      // The throwaway client cannot renew or remember a session.
+      for (const call of signIn.createClient.mock.calls) {
+        expect(call[2]).toEqual({ auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false } });
+      }
     });
 
     it("a session that passed a moment ago is remembered, so reports do not add a sign-in call each", async () => {
@@ -479,36 +628,34 @@ describe("POST /api/diag/report", () => {
         writeMock.scheduleDiagWrite.mockClear();
         vi.advanceTimersByTime(10_000);
       }
-      expect(authMock.getAuthedHost).toHaveBeenCalledTimes(1);
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
       expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(6);
 
       // another session is checked on its own
       await POST(
-        report(hostBatch({ sent: Date.now(), ev: events(), sid: "host-phone-01" }), {
-          cookie: "sb-localproj-auth-token=phone-session",
-        }),
+        report(hostBatch({ sent: Date.now(), ev: events(), sid: "host-phone-01" }), hostCookie("phone-token")),
       );
       await flushScheduled();
-      expect(authMock.getAuthedHost).toHaveBeenCalledTimes(2);
+      expect(signIn.getUser).toHaveBeenCalledTimes(2);
       writeMock.scheduleDiagWrite.mockClear();
 
       // and the memory runs out after a few minutes
       vi.advanceTimersByTime(6 * 60_000);
-      await POST(report(hostBatch({ sent: Date.now(), ev: events() }), HOST_COOKIE));
+      await POST(report(hostBatch({ sent: Date.now(), ev: events() }), hostCookie()));
       await flushScheduled();
-      expect(authMock.getAuthedHost).toHaveBeenCalledTimes(3);
+      expect(signIn.getUser).toHaveBeenCalledTimes(3);
     });
 
     it("a failed sign-in check is never remembered", async () => {
       const { POST } = await loadRoute();
-      authMock.getAuthedHost.mockResolvedValue({ ok: false, status: 401, error: "not signed in" });
+      signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 401, name: "AuthApiError" } });
       await POST(report(hostBatch(), HOST_COOKIE));
       await flushScheduled();
       writeMock.scheduleDiagWrite.mockClear();
-      authMock.getAuthedHost.mockResolvedValue({ ok: true, host: { id: HOST_ID } });
+      signIn.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
       await POST(report(hostBatch({ sid: "host-laptop-2" }), HOST_COOKIE));
       await flushScheduled();
-      expect(authMock.getAuthedHost).toHaveBeenCalledTimes(2);
+      expect(signIn.getUser).toHaveBeenCalledTimes(2);
       expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(1);
     });
 

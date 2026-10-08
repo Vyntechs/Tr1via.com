@@ -29,6 +29,8 @@ vi.mock("@/lib/live-answer/projectEvent", () => projectionMock);
 vi.mock("@/lib/api/broadcast", () => broadcastMock);
 vi.mock("@/lib/diagnostics/write", () => writeMock);
 
+import { DiagLookupSlow } from "@/lib/diagnostics/deadline";
+
 const QUESTION_ID = "11111111-1111-1111-1111-111111111111";
 const CATEGORY_ID = "22222222-2222-2222-2222-222222222222";
 const GAME_ID = "33333333-3333-3333-3333-333333333333";
@@ -375,6 +377,17 @@ describe("POST /api/answers diagnostic log", () => {
       expect(writeMock.lookupPlayerId).toHaveBeenCalledWith(NIGHT_ID, DEVICE_ID);
       expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
       expect(writeMock.noteIgnored).toHaveBeenCalledWith("answer");
+    });
+
+    it("a lookup that is too slow to answer is NOT taken for 'not a player': nothing is stored, and it is not counted as a stranger", async () => {
+      writeMock.lookupPlayerId.mockRejectedValue(new DiagLookupSlow());
+      const late = SCENARIOS[1]!;
+      await run(late, "on"); // (run swallows the failure the way scheduleDiagWrite does)
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+      expect(writeMock.noteIgnored).not.toHaveBeenCalled(); // scheduleDiagWrite counts it as "slow"
+      // the phone still got its normal answer
+      const baseline = await run(late, "off");
+      expect(baseline.status).toBe(400);
     });
 
     it("a tap about a question that does not exist", async () => {

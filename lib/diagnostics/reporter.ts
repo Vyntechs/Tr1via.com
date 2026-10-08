@@ -10,7 +10,11 @@
 //   - change anything the person sees, or add any button
 //   - send anything while a question is live on this screen, or before the
 //     room has finished its first download (until then nobody knows whether a
-//     question is live). Everything is held in memory (capped at MAX_QUEUE
+//     question is live). One bounded exception: a screen whose room STILL has
+//     not loaded after 45 seconds is stuck on its loading screen (no question
+//     can be on it), and what went wrong with it is exactly the evidence worth
+//     having, so it may send up to 3 small reports (at most 60 events each)
+//     while it stays unloaded. Once the room loads, the normal rules apply. Everything is held in memory (capped at MAX_QUEUE
 //     events; when full the oldest ROUTINE event goes first, and slow or failed
 //     ones are kept longest, also when a failed send is put back) and goes out
 //     after the question closes, after a random 2-8 s wait so a whole room
@@ -66,6 +70,9 @@ const MAX_QUEUE = 200;
 const MAX_RETRIES = 3;
 // Slow or failed events are the evidence; they get more tries.
 const MAX_RETRIES_FORCED = 10;
+// A room that has not loaded after this long is "could not load" (see the header).
+const LOAD_FAILED_AFTER_MS = 45_000;
+const MAX_UNLOADED_REPORTS = 3;
 const SAMPLE_RATE_PLAYER = 0.5;
 const FRAME_CHECK_EVERY_MS = 10_000;
 const FRAME_WINDOW_MS = 2_000;
@@ -119,6 +126,8 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
   let queue: QueuedEvent[] = [];
   let questionIsOpen = false;
   let roomReady = false;
+  const startedAt = Date.now();
+  let unloadedReports = 0;
   let flushTimer: ReturnType<typeof setTimeout> | null = null;
   let soonTimer: ReturnType<typeof setTimeout> | null = null;
   let frameTimer: ReturnType<typeof setInterval> | null = null;
@@ -144,13 +153,16 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
 
   /**
    * May anything be sent right now? Not while a question is live, not before
-   * the room has finished its first download, and (TV) not without the pass.
-   * This is the one rule every send goes through, hidden page or not.
+   * the room has finished its first download (except the bounded "could not
+   * load" reports below), and (TV) not without the pass. This is the one rule
+   * every send goes through, hidden page or not.
    */
   function canSend(): boolean {
-    if (questionIsOpen || !roomReady) return false;
+    if (questionIsOpen) return false;
     if (surface === "tv" && !getDiagTvPass()) return false;
-    return true;
+    if (roomReady) return true;
+    // The room never loaded: a few small "could not load" reports, after a wait.
+    return Date.now() - startedAt >= LOAD_FAILED_AFTER_MS && unloadedReports < MAX_UNLOADED_REPORTS;
   }
 
   function takeWindowStats(): void {
@@ -180,6 +192,7 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
     if (queue.length === 0) return;
     const batch = queue.slice(0, DIAG_MAX_EVENTS_PER_BATCH);
     queue = queue.slice(batch.length);
+    if (!roomReady) unloadedReports += 1;
     const body = JSON.stringify({
       surface,
       room: options.room,

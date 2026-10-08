@@ -2,6 +2,7 @@
 // good, who is given one, and how the TV page hands it to the reporter.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHmac } from "node:crypto";
 import { render } from "@testing-library/react";
 import { Suspense, isValidElement, type ReactElement, type ReactNode } from "react";
 
@@ -13,6 +14,7 @@ import { DIAG_TV_PASS_TTL_MS } from "@/lib/diagnostics/config";
 import { DiagTvPassSetter } from "@/components/diagnostics/DiagTvPassSetter";
 import { DiagTvPass } from "@/components/diagnostics/DiagTvPass";
 import { __resetDiagClientForTests, getDiagTvPass } from "@/lib/diagnostics/client";
+import { signDeviceCookie, verifyDeviceCookie } from "@/lib/auth/device-cookie";
 import TVLayout from "@/app/tv/[code]/layout";
 
 const SECRET = "test-session-secret-0123456789";
@@ -57,9 +59,29 @@ describe("signTvPass / verifyTvPass", () => {
     expect(verifyTvPass(theirs, NOW, ENV)).toBeNull();
   });
 
-  it("is not a device cookie and a device cookie is not a pass", () => {
-    // the cookie is `${deviceId}.${signature}`; a pass has a label and an expiry inside its signature
+  it("is not a device cookie and a device cookie is not a pass (the pass is signed with a key of its own)", () => {
     expect(verifyTvPass(`${NIGHT}.${"A".repeat(43)}`, NOW, ENV)).toBeNull();
+    const [v, night, exp, sig] = signTvPass(NIGHT, NOW, ENV)!.split(".") as [string, string, string, string];
+    // A device cookie is `${id}.${signature}`. Try every id a pass holder could build from what a pass
+    // contains: none of them verifies, because the signing keys differ.
+    const tries = [
+      `${night}:${parseInt(exp, 36)}`,
+      `${v}.${night}.${exp}`,
+      `tr1via-diag-tv:v1:${night}:${parseInt(exp, 36)}`,
+      `tr1via/diag-tv-pass/signing-key/v1`,
+      night,
+      `${night}:${exp}`,
+    ];
+    for (const id of tries) {
+      expect(verifyDeviceCookie(`${id}.${sig}`, SECRET), id).toBeNull();
+    }
+    // and the other way round: a real device cookie's signature is no pass signature
+    const cookie = signDeviceCookie(OTHER, SECRET); // `${OTHER}.${sig}`
+    const cookieSig = cookie.slice(cookie.lastIndexOf(".") + 1);
+    expect(verifyTvPass([v, OTHER, exp, cookieSig].join("."), NOW, ENV)).toBeNull();
+    expect(verifyTvPass([v, NIGHT, exp, cookieSig].join("."), NOW, ENV)).toBeNull();
+    // a pass signature really is not HMAC(secret, anything a pass holder can write down)
+    expect(createHmac("sha256", SECRET).update(`${NIGHT}:${parseInt(exp, 36)}`).digest("base64url")).not.toBe(sig);
   });
 
   it("refuses junk without throwing", () => {

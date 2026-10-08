@@ -580,6 +580,30 @@ describe("diagnostic logs schema", () => {
       }
     });
 
+    test("is built never to wait for a lock, and touches nothing but its own counter table", async () => {
+      const def = (
+        await one<{ def: string }>(`select pg_get_functiondef('${TAKE_ROWS_FN}'::regprocedure) as def`)
+      ).def;
+      // a per-night try-lock that answers -1 at once, a short lock timeout, and a handler that turns a timeout into -1
+      expect(def).toMatch(/pg_try_advisory_xact_lock/);
+      expect(def).toMatch(/return -1/);
+      expect(def).toMatch(/set_config\('lock_timeout', '50ms', true\)/);
+      expect(def).toMatch(/exception when lock_not_available then\s+return -1/);
+      // only diag_quota: never a game table, so it can never conflict with an answer, a reveal or a resolve
+      const tables = [...def.matchAll(/(?:from|into|update|join)\s+(public\.\w+)/gi)].map((m) => m[1]!.toLowerCase());
+      expect(new Set(tables)).toEqual(new Set(["public.diag_quota"]));
+      // the short lock timeout is local to the call: it does not leak to the connection
+      await db.exec("set role service_role");
+      try {
+        const before = await one<{ v: string }>("show lock_timeout");
+        await take(crypto.randomUUID(), "tv", 1, 10, 10);
+        const after = await one<{ v: string }>("show lock_timeout");
+        expect(after.v).toBe(before.v);
+      } finally {
+        await db.exec("reset role");
+      }
+    });
+
     test("another night is untouched", async () => {
       await db.exec("set role service_role");
       try {
