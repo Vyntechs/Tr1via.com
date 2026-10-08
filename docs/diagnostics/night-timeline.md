@@ -29,7 +29,7 @@ database as production). Turning it on needs Brandon's typed yes.
 
 | Table | One row per | Main columns |
 | --- | --- | --- |
-| `diag_answer_events` | answer tap the server received, saved or not | outcome (`saved`, `duplicate`, `late`, `early`, `rejected`, `error`), reason, the phone's tap and send times, server arrival time, milliseconds after the question opened, step timings, cold-start flag |
+| `diag_answer_events` | answer tap the server received, saved or not | outcome (`saved`, `duplicate`, `late`, `early`, `rejected`, `error`), reason, the phone's tap and send times, server arrival time (for the older answer engine, the exact instant the 25-second rule used; see "Reading times"), milliseconds after the question opened, step timings, cold-start flag |
 | `diag_server_actions` | host press (reveal, next, end early, undo, start, end, close, open, score adjust) and every timer-end resolve / finalize call | action, actor (`host` or `timer`), outcome, total / sign-in / database / broadcast milliseconds, broadcast result, cold-start flag |
 | `diag_device_events` | small report from a phone, the TV or the host laptop | kind, device time, server-corrected time, small `data` payload |
 | `diag_quota` | night and kind of source inside it (`_night`, `phones`, `tv`, `host`, `taps`, `press`) | rows used so far and rows turned away at a cap (see "Who gets a row") |
@@ -40,7 +40,9 @@ heard), `snap` (a room re-download), `res` (a slow or failed API call),
 `ribbon` (the connection ribbon / "switch to a hotspot" screen turned on or
 off), `chan` (realtime channel status), `reach` (server reachable or not),
 `tap` / `tapx` (an answer tap as the phone saw it / one it ignored),
-`lt` (main-thread stalls), `fps` (October scene frame rate).
+`lt` (main-thread stalls), `tz` / `paint` (the host laptop or the TV has
+**painted** the timer reading 0 / the answer reveal, see "Did the screen really
+draw it?" below), `fps` (October scene frame rate).
 
 Slow or failed events are always kept. Routine ones are kept for about half of
 the player phones (decided once per page load) and for the TV and host laptop
@@ -79,6 +81,8 @@ a device sends is kept:
 | `ol` | the browser says it is online | the device |
 | `rm` | "reduce motion" is on (the October scene draws less, so frame rates are not comparable) | the device |
 | `theme` | the night's theme key (which scene was drawing) | the device |
+| `rel` | which deployment this page was built by: Vercel's deployment id, the **same value the server writes in the `deployment` column of its own rows** (blank on a local build) | the build |
+| `sha` | the first 12 characters of the git commit of that build (blank on a local build) | the build |
 | `et` | connection type as the browser rounds it: `slow-2g`, `2g`, `3g`, `4g` | the device |
 | `ty` | connection medium when the browser says so (`wifi`, `cellular`, ...) | the device |
 | `rtt`, `dl` | the browser's own rounded round-trip (ms) and download (Mbit/s) estimates | the device |
@@ -87,6 +91,27 @@ a device sends is kept:
 good the connection is, which is the first thing to check when one phone lags.
 The browser rounds them, so they cannot tell phones apart. `net` reports carry
 `ev` (`online`, `offline`, `conn`), `ol`, and the four connection keys.
+
+`rel` and `sha` are public build labels (anyone who loads the site gets the same
+ones), not anything about the person. A phone left open across a deploy keeps its
+old `rel`, so the question "was this phone on an older version than the server?"
+is one comparison:
+
+```sql
+-- Q6: devices of a night whose page was built by a different deployment than the one that served the taps.
+select d.surface, left(d.session_id, 6) as page, d.data ->> 'rel' as page_built_by,
+       d.data ->> 'sha' as page_commit, d.at_est
+from diag_device_events d
+where d.night_id = ':night_id' and d.kind = 'device'
+  and d.data ->> 'rel' is distinct from
+      (select a.deployment from diag_answer_events a
+        where a.night_id = d.night_id and a.deployment is not null
+        order by a.received_at desc limit 1)
+order by d.at_est;
+```
+
+A device with no `rel` was a local build, or an older page from before this
+label existed (a reason to look at that device first).
 
 **Not stored:** the raw browser text (user-agent), the phone model, the OS
 version, the exact screen size or pixel density, memory, CPU-core count, or
@@ -122,7 +147,7 @@ or host: answer=3 report=12`).
 | Host press (reveal, next, ...) | the request is from a signed-in host who owns the night |
 | Timer-end call (resolve / finalize) | the signed device cookie is a player of that night. The venue TV sends these without any login, so its calls are not stored (the TV's own `res` reports show them). |
 | Phone report | valid device cookie + a player row in the night its room code names |
-| Host laptop / phone report | a signed-in host who owns the night. This is checked after the 204 reply, so the host screen never waits on the sign-in service, and **strictly read-only**: the check reads the access token from the sign-in cookie as it is and asks the sign-in service who owns that exact token; it never renews a session and never writes a cookie (a renewal from here could use up the host's refresh token while the new one cannot reach her browser, and her browser's own renewal could then be refused, signing her out mid-show). A token that has already run out is dropped without any network call; the report is just counted. A session that passed in the last 5 minutes is remembered (by a hash of its cookies, in memory), so reports do not add a sign-in call each. |
+| Host laptop / phone report | a signed-in host who owns the night. This is checked after the 204 reply, so the host screen never waits on the sign-in service, and **strictly read-only**: the check reads the access token from the sign-in cookie as it is and asks the sign-in service who owns that exact token; it never renews a session and never writes a cookie (a renewal from here could use up the host's refresh token while the new one cannot reach her browser, and her browser's own renewal could then be refused, signing her out mid-show). A token that has already run out is dropped without any network call; the report is just counted. A session that passed in the last 5 minutes is remembered (by a hash of its cookies, in memory), so reports do not add a sign-in call each. A session the sign-in service turned down is remembered for 30 seconds too (only a definite "no"; "could not check" never is), and how many NEW sessions may start a check is limited per network address (6, then one every 10 seconds) and per server copy, all before anything is queued: a flood of forged cookies, a different one each time, costs no log turn and, past the first few, no sign-in call (those reports get a 429 and a real host screen simply tries again later). |
 | TV report | the signed pass the server gave the TV page when it loaded. The pass names one night and lasts 8 hours; the night is read from the pass, never from the report. No pass, a forged or expired pass: nothing stored. The pass is signed with a key of its own (derived from `SESSION_SECRET` under a fixed label), so its signature is never valid as a device cookie, and a device-cookie signature is never valid as a pass. |
 
 The pass is made while the TV page renders, which is outside every log job, so it
@@ -184,9 +209,9 @@ check never waits for a lock**: the database function takes a per-night try-lock
 (in the two-integer advisory-lock key space, which the game's own locks never
 use, so it can never be a lock an answer is waiting on) and answers "busy" at
 once if another server is updating that night's counter at that instant (and
-gives up on any row lock after 50 ms); the server then backs off for a few
-milliseconds without holding a connection, asks again (twice), and drops the
-rows if it is still busy. The function touches only `diag_quota`, never a game
+gives up on any row lock after 50 ms); the server then backs off without
+holding a connection, asks again (up to 5 more times, see "Busy is not trouble"
+below), and drops the rows if it is still busy. The function touches only `diag_quota`, never a game
 table. Per-instance rate limits (per address, per device, per TV night) stay as a
 first filter only.
 
@@ -210,8 +235,9 @@ answers for the database. Three limits stack, each one a different failure:
    `diag_insert_rows` first tries, without ever waiting, to take one of 3 "write
    slots" (transaction-scoped advisory locks in a key class nothing else uses). If
    all 3 are taken it answers `-1` ("busy") at once, having written nothing and
-   holding no connection; the app waits a few milliseconds and asks again (twice),
-   then drops the rows and counts them (`slots`). So when the log tables stall,
+   holding no connection; the app waits a moment and asks again (up to 5 more
+   times, see "Busy is not trouble" below), then drops the rows and counts them
+   (`slots`). So when the log tables stall,
    at most 3 statements can be waiting at the database, whatever the number of
    copies, and everything else is turned away in about a millisecond instead of
    queuing for a connection a tap or a question-close call needs. A healthy
@@ -240,6 +266,26 @@ job's 5 second clock, and one job makes one call at a time (reading the drop
 counts back out to the database is a call too, and happens inside the turn). So
 the app never counts a statement as finished when it is still running.
 
+**Busy is not trouble.** When many server copies log in the same instant (the
+timer-end burst: 25 to 60 phones asking to close the question at clock zero), the 3
+write slots and the night's row-cap counter are each taken for a few milliseconds at
+a time, on a perfectly healthy database. A "busy" answer therefore never counts toward
+the pause, however often it repeats. Instead a job that hears "busy" waits and asks
+again: the wait starts at 20 ms, doubles each time up to 160 ms, and each wait is a
+random 50 to 100% of that so the copies do not collide again together, at most 5
+more tries and about 0.45 seconds in all, holding no connection while it waits. This
+all happens after the response has gone out; the only cost is that the job keeps its
+turn (one of the 5 per copy) a little longer. A job that is still told "busy" after
+the last try gives its rows up (`slots` or `busy`) and, for the slots only, this
+server copy then makes just one try per job, with no retries, for 1.5 seconds (a brake
+on calls, not a pause: it is not a failure, a try that finds a free slot still stores
+its rows and ends the brake, and the host's button presses, which are rare, ignore it),
+so a database whose slots are really stuck is not also hit by every job's retries. The stalled writes that really hold slots in a stall answer with
+`57014` / `55P03` to the copies that made them, and those copies pause as below.
+Measured on a local test database in this branch (see the pull request): the same
+bursts that used to lose rows and trip the 10-second pause now keep nearly all rows,
+and the pause only follows a database that really cancels writes.
+
 **Logging pauses itself when the database is in trouble with log writes.** Even 3
 stalled log statements at a time would keep connections busy for as long as taps
 keep coming, and those are the connections the question-close calls at timer end
@@ -254,9 +300,9 @@ up on a lock (`55P03`); no answer in 12 seconds; a full connection pool
 (`PGRST003`); a gateway error; "fetch failed"; a missing table or function; a
 refused connection; and an id lookup that takes more than 2 seconds. *What does
 not:* the table refusing one particular row (a data or constraint error); a job
-that ran out of its 5 seconds before it could send its write; and a "busy"
-answer (the night's counter or the write slots were taken), which is ordinary
-contention. Only a stored INSERT clears the streak of failures: a fast row-cap
+that ran out of its 5 seconds before it could send its write; and any number of
+"busy" answers (the night's counter or the write slots were taken), which is
+ordinary contention. Only a stored INSERT clears the streak of failures: a fast row-cap
 answer ("yes, room for 100 more") does not.
 
 The id lookups ("is this device a player of the night?") are reads of the game's
@@ -298,8 +344,8 @@ retried every ten seconds.)
 | Count (in `steps`) | The true reason |
 | --- | --- |
 | `dropped` | jobs that never got a turn: `queue_full` (too many waiting) plus `waited_too_long` (8 seconds without a turn), both in `steps` |
-| `busy` | the row-cap counter of the night was held by another server at that instant, even after retries |
-| `slots` | all 3 of the database's log write slots stayed taken, even after retries |
+| `busy` | the row-cap counter of the night was held by another server at that instant, even after all the retries |
+| `slots` | all 3 of the database's log write slots stayed taken, even after all the retries (including the single try a braked copy makes, see "Busy is not trouble") |
 | `timed_out` | the database cancelled the write (`57014`, `55P03`) or nothing answered in 12 seconds |
 | `paused` | dropped on purpose while logging was paused because the database was in trouble with log writes |
 | `failed` | the database answered with some other error (a missing table, for example) |
@@ -344,9 +390,47 @@ drop function if exists public.diag_night_timeline(uuid, timestamptz, timestampt
 Then remove the `CRON_SECRET` setting (or the cleanup route answers 500 every day
 because its function is gone).
 
+## Did the screen really draw it? (`tz` and `paint`)
+
+The host laptop and the venue TV draw the same question screen. When that screen
+commits the frame that shows the timer at **0**, and again when it commits the
+answer **reveal**, it waits two animation frames (the second one runs after the
+browser has painted) and records `tz` (timer-zero drawn) or `paint` (reveal
+drawn), once per kind and question, with the question id. A tab that is hidden
+draws no frames, so nothing is claimed for a screen nobody could see; the missing
+row is itself the answer. The event is held in memory like every other and sent
+after the question closes, so it adds nothing during a question, and it costs
+nothing at all while logging is off (no animation frame is even requested).
+
+```sql
+-- Q7: for each question, when the question opened (server), when its timer-zero and reveal were drawn on each host/TV screen.
+select q.id as question_id,
+       (q.played_at at time zone 'America/Chicago')::time(3) as opened,
+       d.surface, left(d.session_id, 6) as screen, d.kind,
+       (d.at_est at time zone 'America/Chicago')::time(3) as drawn,
+       round(extract(epoch from (d.at_est - (q.played_at + interval '25 seconds'))) * 1000) as ms_after_the_25s_mark
+from diag_device_events d
+join questions q on q.id = (d.data ->> 'q')::uuid
+where d.night_id = ':night_id' and d.kind in ('tz', 'paint')
+order by q.played_at, d.at_est;
+```
+
+`at_est` is the device's clock moved onto the server's (good to about the upload
+delay, so roughly a second on a bad connection; see below): use it to see a screen
+that drew zero seconds late or never, not to argue about a few hundred
+milliseconds.
+
 ## Reading times
 
-Server times are exact. A device stamps events with its own clock, which can be
+Server times are exact. For an answer tap, `received_at` is the instant the
+25-second rule compared against the line: the answer route notes its own
+timestamp (taken the moment the route starts) and the row uses that, so a tap the
+rule turned away at 25.000 s can never be logged as 24.999 s (the logging
+wrapper stamps a hair earlier, and used to be what the row showed). This holds
+for the older ("legacy") answer engine, where the route decides. On the newer
+engine (`resilient_v1`) the database's own clock decides the deadline, so
+`received_at` there is the wrapper's stamp and the closing time is in the
+database's `question_plays` row. A device stamps events with its own clock, which can be
 wrong. Every batch carries the device's send time, so the server stores
 `at_est` = the event moved onto the server clock (good to about the upload
 delay, so roughly a second on a bad connection). The timeline sorts on that
@@ -380,8 +464,9 @@ same "delete what is older than 45 days".
   migration has not been applied it answers 500 every day (harmless).
 * It needs the header `Authorization: Bearer <CRON_SECRET>`, which Vercel sends
   by itself once a `CRON_SECRET` environment variable (a random string of at
-  least 16 characters) is set for Production. With no secret set it refuses
-  (401) and cleans nothing. It never takes a day count from the request.
+  least 16 characters) is set for Production. With no secret set, or one shorter
+  than 16 characters (treated as not set, even if the caller sends exactly that
+  string), it refuses (401) and cleans nothing. It never takes a day count from the request.
 * Vercel calls the project's Production deployment URL, so preview copies of a
   branch never run it.
 * If the migration has not been applied it answers 500 with the database's
@@ -571,7 +656,7 @@ where a.night_id = ':night_id' and a.question_id = ':question_id'
 order by a.received_at;
 ```
 
-`ms_after_open` above 25000 is a tap that reached the server after the
-25-second line (`late`). `phone_held_tap_ms` is how long the phone sat on the
+`ms_after_open` of 25000 or more is a tap that reached the server at or after
+the 25-second line (`late`). `phone_held_tap_ms` is how long the phone sat on the
 tap before sending (retries); it uses only the phone's own clock, so it is
 trustworthy even when the phone's clock is wrong.

@@ -75,6 +75,9 @@ import {
 import {
   DIAG_ABORT_HOLD_MS,
   DIAG_BUCKET_ROW_CAPS,
+  DIAG_BUSY_BACKOFF_MAX_MS,
+  DIAG_BUSY_BACKOFF_MS,
+  DIAG_BUSY_RETRIES,
   DIAG_CALL_CEILING_MS,
   DIAG_CLEANUP_BATCH_ROWS,
   DIAG_CLEANUP_BUDGET_MS,
@@ -88,11 +91,10 @@ import {
   DIAG_PAUSE_AFTER_TIMEOUTS,
   DIAG_PAUSE_MS,
   DIAG_QUEUE_WAIT_MS,
-  DIAG_QUOTA_BUSY_BACKOFF_MS,
-  DIAG_QUOTA_BUSY_RETRIES,
   DIAG_QUOTA_FULL_MEMORY_MS,
   DIAG_QUOTA_LEASE_ROWS,
   DIAG_RETENTION_DAYS,
+  DIAG_SLOT_BRAKE_MS,
   DIAG_WRITE_QUEUE_MAX,
   DIAG_WRITE_TIMEOUT_MS,
 } from "./config";
@@ -187,6 +189,7 @@ export function __resetDiagWriteForTests(options: { now?: () => number } = {}): 
   slowStreak = 0;
   pausedUntil = 0;
   probing = false;
+  slotBrakeUntil = 0;
   ignored.clear();
   lastIgnoredLineAt = 0;
   leases.clear();
@@ -295,10 +298,14 @@ const waiters: Array<{ grant: (got: boolean) => void; timer: ReturnType<typeof s
 // connection pool (PGRST003), a gateway error, "fetch failed", a missing table or
 // function, a refused connection. What does not: a row the table refused (data
 // and constraint errors, class 22 and 23), which says nothing about the
-// database; a call the job never had time to send; and a single "busy" answer
-// (the night's counter or the write slots were taken), which is ordinary
-// contention. (A write that still finds every slot taken after all its
-// back-offs does count: the slots are then held by stalled writes.)
+// database; a call the job never had time to send; and any number of "busy"
+// answers (the night's counter or the write slots were taken), which is ordinary
+// contention, even when it repeats (a timer-end burst from many server copies
+// finds the 3 slots taken for a few milliseconds at a time, on a perfectly healthy
+// database). The stalled writes that really hold the slots in a stall answer with
+// 57014 / 55P03 to the copies that made them, and THOSE copies pause. A copy that
+// only ever hears "busy" keeps trying, but gently: a few jittered retries, then a
+// short brake that cuts each job to one try (see insertCore), never a pause.
 // Only a stored INSERT resets the streak of failures: a fast row-cap answer
 // ("yes, room for 100 more") must not hide that every insert after it was
 // cancelled. A good row-cap answer to the one job testing the database after a pause
@@ -616,15 +623,38 @@ function isTimeout(error: unknown): boolean {
 }
 
 /**
+ * Set when one insert found every write slot taken on every one of its tries:
+ * until then (DIAG_SLOT_BRAKE_MS) this server copy's inserts make one try each
+ * and no retries, so a saturated database does not also get every job's retries. Not a failure and
+ * not the pause (which is for a database cancelling writes).
+ */
+let slotBrakeUntil = 0;
+
+/**
  * One insert, through diag_insert_rows. That function has its own statement
  * timeout and lock timeout, so a stalled insert is cancelled BY THE DATABASE and
  * answers; we wait for that answer (see the notes at the top of this file), and
  * only cancel the request ourselves at DIAG_CALL_CEILING_MS. The function also
  * hands out only a few write slots across ALL servers and answers -1 ("busy") at
- * once when they are taken: we back off a few milliseconds and ask again, then
- * give the rows up (counted), as for the night's counter.
+ * once when they are taken. That is ordinary contention, never trouble: we back
+ * off (no connection held, jittered, see busyWaitMs) and ask again up to
+ * DIAG_BUSY_RETRIES times, then give the rows up (counted as "slots") and put a
+ * short brake on this copy: for DIAG_SLOT_BRAKE_MS its jobs make one try each and
+ * no retries. `press` rows (the host's buttons, rare) ignore the brake.
  */
-async function insertCore(table: DiagTable, rows: Record<string, unknown>[]): Promise<CallOutcome> {
+async function insertCore(
+  table: DiagTable,
+  rows: Record<string, unknown>[],
+  options: { press?: boolean } = {},
+): Promise<CallOutcome> {
+  // While braked (and not a press) a job makes ONE try and no retries: rows still
+  // flow as fast as the slots free up, but a saturated database is not also hit by
+  // every job's whole set of retries. Any success ends the brake.
+  let retries = DIAG_BUSY_RETRIES;
+  if (!options.press && slotBrakeUntil !== 0) {
+    if (clock() < slotBrakeUntil) retries = 0;
+    else slotBrakeUntil = 0;
+  }
   for (let attempt = 0; ; attempt += 1) {
     try {
       const result = await trackedCall(
@@ -642,17 +672,15 @@ async function insertCore(table: DiagTable, rows: Record<string, unknown>[]): Pr
         return { ok: false, timedOut: isTimeout(result.error), code };
       }
       if (Number(result?.data) === -1) {
-        // One "busy" is ordinary contention (slots are held for milliseconds): neither a success nor trouble.
-        if (attempt >= DIAG_QUOTA_BUSY_RETRIES) {
-          // But a write that finds every slot still taken after all its back-offs means the
-          // slots are held by stalled writes: that counts toward the pause, so a copy whose own
-          // writes were not the stalled ones stops asking too, instead of making three quick calls per job.
-          noteWriteOutcome("insert", "trouble");
+        // "Busy": every slot was taken for a moment. Neither a success nor trouble, however often it repeats.
+        if (attempt >= retries) {
+          slotBrakeUntil = clock() + DIAG_SLOT_BRAKE_MS;
           return { ok: false, timedOut: false, slotsFull: true };
         }
-        await sleep(DIAG_QUOTA_BUSY_BACKOFF_MS * (1 + Math.random()));
+        await sleep(busyWaitMs(attempt));
         continue;
       }
+      slotBrakeUntil = 0;
       noteWriteOutcome("insert", "answered");
       return { ok: true };
     } catch (error) {
@@ -668,10 +696,11 @@ async function insertCore(table: DiagTable, rows: Record<string, unknown>[]): Pr
 export async function insertDiagRows(
   table: DiagTable,
   rows: Record<string, unknown>[],
+  options: { press?: boolean } = {},
 ): Promise<void> {
   if (rows.length === 0) return;
   try {
-    const outcome = await insertCore(table, rows);
+    const outcome = await insertCore(table, rows, options);
     if (!outcome.ok) {
       if (outcome.slotsFull) {
         pending.slots += 1;
@@ -700,8 +729,9 @@ export async function insertDiagRows(
 // try-lock and answers -1 ("busy") at once if another server is in the middle
 // of the same night's counter (and it gives up on any row lock after 50 ms), so
 // a log job can never sit holding a database connection behind other logging.
-// On "busy" this side backs off for a few milliseconds (no connection held)
-// and asks again, a couple of times, then drops the rows and counts them.
+// On "busy" this side backs off (no connection held, a jittered doubling wait,
+// see busyWaitMs) and asks again, up to DIAG_BUSY_RETRIES times, then drops the
+// rows and counts them. A "busy" answer is ordinary contention, never trouble.
 export type DiagSource =
   // device reports
   | { kind: "player"; deviceId: string }
@@ -736,6 +766,12 @@ const QUOTA_MEMORY_MAX = 2000;
 const DEVICE_MEMORY_MAX = 5000;
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** How long to wait before asking again after the Nth "busy" answer (0-based): doubling, capped, 50-100% of it so copies spread out. */
+function busyWaitMs(attempt: number): number {
+  const top = Math.min(DIAG_BUSY_BACKOFF_MAX_MS, DIAG_BUSY_BACKOFF_MS * 2 ** attempt);
+  return top * (0.5 + Math.random() * 0.5);
+}
 
 /**
  * Rows added to the lease (0 = full), "busy" (see below), "timeout" (the
@@ -790,8 +826,8 @@ async function askForBlock(
       return isTimeout(error) ? "timeout" : "failed";
     }
     if (granted === -1) {
-      if (attempt >= DIAG_QUOTA_BUSY_RETRIES) return "busy";
-      await sleep(DIAG_QUOTA_BUSY_BACKOFF_MS * (1 + Math.random()));
+      if (attempt >= DIAG_BUSY_RETRIES) return "busy";
+      await sleep(busyWaitMs(attempt));
     }
   }
   if (granted === 0) {
@@ -878,7 +914,7 @@ export async function recordDiagRows(
       pending.capped += rows.length - granted;
       logOnce("capped", "row cap reached: not storing more log rows for a night or source");
     }
-    if (granted > 0) await insertDiagRows(table, rows.slice(0, granted));
+    if (granted > 0) await insertDiagRows(table, rows.slice(0, granted), { press: source.kind === "press" });
   } catch {
     // ignore
   }

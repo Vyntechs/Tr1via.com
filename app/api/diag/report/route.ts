@@ -31,7 +31,11 @@
 //              is already expired is dropped without any network call. A
 //              session that passed in the last few minutes is remembered by a
 //              fingerprint of its cookies, so a host screen does not add a
-//              sign-in call to every report.
+//              sign-in call to every report. A session the sign-in service
+//              turned down is remembered for 30 s as well, and the number of
+//              NEW sessions that may start a check is limited per address and
+//              per server copy, all before anything is scheduled: forged
+//              cookies cost no log turn and (past a handful) no sign-in call.
 //   - Limits, in this order of cheapness: in this instance's memory (per
 //     network address, per device cookie / page load, per TV night), only as a
 //     first filter. The real ceilings are in the database and hold across all
@@ -45,7 +49,12 @@ import { getDeviceId } from "@/lib/api/auth";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { DIAG_MAX_BODY_BYTES, diagnosticsEnabled } from "@/lib/diagnostics/config";
 import { createRateLimiter, sanitizeBatch, summarizeDevice, type CleanBatch } from "@/lib/diagnostics/ingest";
-import { sessionCookiesOf, verifyHostSessionReadOnly, type SessionCookie } from "@/lib/diagnostics/hostSession";
+import {
+  accessTokenFromCookies,
+  sessionCookiesOf,
+  verifyHostSessionReadOnly,
+  type SessionCookie,
+} from "@/lib/diagnostics/hostSession";
 import { verifyTvPass } from "@/lib/diagnostics/tvPass";
 import {
   lookupNightOwner,
@@ -87,22 +96,104 @@ const HOST_SESSION_MEMORY_MS = 5 * 60_000;
 const HOST_SESSION_MAX = 200;
 const hostSessions = new Map<string, { hostId: string; at: number }>();
 
+// A session the sign-in service turned down (forged, signed out, not a host) is
+// remembered for a short while too, so the same cookie sent again and again costs
+// nothing. Only a definite "no" is remembered: "could not check" (the sign-in
+// service is slow or down) never is, or a slow service would lock the real host out.
+const HOST_FAILURE_MEMORY_MS = 30_000;
+const HOST_FAILURE_MAX = 500;
+const hostFailures = new Map<string, number>();
+
+// Checks that are already running, so reports from one session that arrive
+// together share ONE sign-in call.
+const hostChecks = new Map<string, Promise<string | null>>();
+// A new session that has been let through to a check is "claimed" until its job
+// has had time to run, so the reports that follow it while it waits for a log
+// turn (up to 8 s) do not each spend the allowance below.
+const HOST_CLAIM_MS = 10_000;
+const hostClaims = new Map<string, number>();
+
+// A forger can send a different fake token every time, so remembering failures
+// is not enough on its own: the number of sign-in checks a session NOT already
+// in memory may start is limited too, per network address and per server copy.
+// A genuine host screen needs one check per cookie change (at most a few an
+// hour: the first report of a page load, then after each sign-in token renewal),
+// so a venue with three host screens fits easily; a flood from one address is
+// held to 6, then one every 10 s, and never reaches the sign-in service or takes
+// a log turn. Turned-away reports get a 429 (a real host screen tries again later).
+const checksPerAddress = createRateLimiter({ capacity: 6, refillMs: 10_000 });
+const checksPerCopy = createRateLimiter({ capacity: 30, refillMs: 1_000 });
+
 function sessionFingerprint(cookies: SessionCookie[]): string | null {
   if (cookies.length === 0) return null;
   const parts = cookies.map((c) => `${c.name}=${c.value}`).sort();
   return createHash("sha256").update(parts.join(";")).digest("hex");
 }
 
-/** Read-only (see hostSession.ts): the cookies are copied out before the reply, nothing is written back. */
-async function verifiedHostId(fingerprint: string, cookies: SessionCookie[]): Promise<string | null> {
+function rememberedHost(fingerprint: string): string | null {
   const seen = hostSessions.get(fingerprint);
   if (seen && Date.now() - seen.at < HOST_SESSION_MEMORY_MS) return seen.hostId;
   hostSessions.delete(fingerprint);
-  const hostId = await verifyHostSessionReadOnly(cookies);
-  if (!hostId) return null;
-  if (hostSessions.size >= HOST_SESSION_MAX) hostSessions.delete(hostSessions.keys().next().value as string);
-  hostSessions.set(fingerprint, { hostId, at: Date.now() });
-  return hostId;
+  return null;
+}
+
+function recentlyFailed(fingerprint: string): boolean {
+  const until = hostFailures.get(fingerprint);
+  if (until === undefined) return false;
+  if (Date.now() < until) return true;
+  hostFailures.delete(fingerprint);
+  return false;
+}
+
+/**
+ * What to do with a host report, decided in the request, BEFORE anything is
+ * scheduled (a forged report must not take a log turn):
+ *   ok      a remembered good session, a check already running, or a new
+ *           session that may start a check
+ *   bad     remembered as turned down, or no usable token (none, unreadable,
+ *           already run out): nothing to ask anyone
+ *   limited the address or this copy has used up its allowance of new checks
+ */
+function hostCheckDecision(fingerprint: string, cookies: SessionCookie[], address: string): "ok" | "bad" | "limited" {
+  if (rememberedHost(fingerprint)) return "ok";
+  if (recentlyFailed(fingerprint)) return "bad";
+  if (hostChecks.has(fingerprint)) return "ok";
+  const claimedUntil = hostClaims.get(fingerprint);
+  if (claimedUntil !== undefined && Date.now() < claimedUntil) return "ok";
+  // No network call is needed to see that there is no usable token.
+  if (!accessTokenFromCookies(cookies)) return "bad";
+  if (!checksPerAddress.allow(`host-check:${address}`) || !checksPerCopy.allow("host-check")) return "limited";
+  if (hostClaims.size >= HOST_FAILURE_MAX) hostClaims.delete(hostClaims.keys().next().value as string);
+  hostClaims.set(fingerprint, Date.now() + HOST_CLAIM_MS);
+  return "ok";
+}
+
+function rememberFailure(fingerprint: string): void {
+  if (hostFailures.size >= HOST_FAILURE_MAX) hostFailures.delete(hostFailures.keys().next().value as string);
+  hostFailures.set(fingerprint, Date.now() + HOST_FAILURE_MEMORY_MS);
+}
+
+/** Read-only (see hostSession.ts): the cookies are copied out before the reply, nothing is written back. */
+async function verifiedHostId(fingerprint: string, cookies: SessionCookie[]): Promise<string | null> {
+  const known = rememberedHost(fingerprint);
+  if (known) return known;
+  if (recentlyFailed(fingerprint)) return null;
+  let running = hostChecks.get(fingerprint);
+  if (!running) {
+    running = (async () => {
+      // Throws when the sign-in service could not answer in time: not remembered.
+      const hostId = await verifyHostSessionReadOnly(cookies);
+      if (!hostId) {
+        rememberFailure(fingerprint);
+        return null;
+      }
+      if (hostSessions.size >= HOST_SESSION_MAX) hostSessions.delete(hostSessions.keys().next().value as string);
+      hostSessions.set(fingerprint, { hostId, at: Date.now() });
+      return hostId;
+    })().finally(() => hostChecks.delete(fingerprint));
+    hostChecks.set(fingerprint, running);
+  }
+  return running;
 }
 
 export async function POST(req: NextRequest) {
@@ -146,6 +237,14 @@ export async function POST(req: NextRequest) {
         return empty(401);
       }
       const nightId = batch.night;
+      // A forged, remembered-bad or unusable session, or a flood of new ones from
+      // one address, is dealt with here: no log turn, no sign-in call.
+      const decision = hostCheckDecision(fingerprint, sessionCookies, forwarded ?? "unknown");
+      if (decision === "limited") return empty(429);
+      if (decision === "bad") {
+        noteIgnored("report");
+        return empty(204);
+      }
       // Answer now; the sign-in and ownership checks run after the response.
       scheduleDiagWrite(async () => {
         const hostId = await verifiedHostId(fingerprint, sessionCookies);

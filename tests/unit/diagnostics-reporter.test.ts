@@ -551,6 +551,28 @@ describe("what it listens to", () => {
     delete (navigator as unknown as { deviceMemory?: unknown }).deviceMemory;
   });
 
+  it("says which build the page is (deployment id and commit), only when the build has them", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TR1VIA_RELEASE", "dpl_8fJd2kQ1xYz");
+    vi.stubEnv("NEXT_PUBLIC_TR1VIA_SHA", "c696ef223708");
+    start({ surface: "host", night: "11111111-1111-1111-1111-111111111111" });
+    await vi.advanceTimersByTimeAsync(13_000);
+    const device = sentBatches().flatMap((b) => b.ev).find((e) => e.k === "device")!.d!;
+    expect(device).toMatchObject({ rel: "dpl_8fJd2kQ1xYz", sha: "c696ef223708" });
+    expect(Object.keys(device).every((key) => (DIAG_DEVICE_KEYS as readonly string[]).includes(key))).toBe(true);
+    vi.unstubAllEnvs();
+  });
+
+  it("leaves the build labels out of a local build (nothing set)", async () => {
+    vi.stubEnv("NEXT_PUBLIC_TR1VIA_RELEASE", "");
+    vi.stubEnv("NEXT_PUBLIC_TR1VIA_SHA", "");
+    start({ surface: "player", room: "K9PR4M" });
+    await vi.advanceTimersByTimeAsync(13_000);
+    const device = sentBatches().flatMap((b) => b.ev).find((e) => e.k === "device")!.d!;
+    expect(JSON.stringify(device)).not.toContain("rel");
+    expect(JSON.stringify(device)).not.toContain("sha");
+    vi.unstubAllEnvs();
+  });
+
   it("turns the ribbon, channel and broadcast helpers into events", async () => {
     start({ surface: "player", room: "K9PR4M" });
     diagRibbon("online", {}); // baseline, not an event

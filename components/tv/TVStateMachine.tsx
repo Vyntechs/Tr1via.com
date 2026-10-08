@@ -51,6 +51,7 @@ import type { MarqueeChip } from "@/components/tv/TVScoreboardMarquee";
 import { formatRoomCode } from "@/lib/game/room-code";
 import { rankScores } from "@/lib/game/rankScores";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
+import { diagDrawn } from "@/lib/diagnostics/client";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
@@ -561,6 +562,14 @@ function TVQuestionView({
     },
   });
 
+  // Diagnostic log only: say so (once) when the frame showing the timer at 0 has
+  // really been painted. Does nothing unless the device reporter is running.
+  const timerShowsZero = displaySeconds <= 0;
+  useEffect(() => {
+    if (!timerShowsZero) return;
+    return diagDrawn("tz", question.id);
+  }, [timerShowsZero, question.id]);
+
   const tiles: TVQuestionTile[] = useMemo(() => {
     // The TV shows tiles in the order they arrive — newest at the end so
     // LockInPileUp's "fresh landers" animation hits the last three each
@@ -736,6 +745,8 @@ function TVRevealView({
     if (themeKey === "june") fireJuneBeat("reveal");
   }, [themeKey]);
   usePublishTVMoment(momentOf("reveal", question.id));
+  // Diagnostic log only: say so (once) when the reveal frame has really been painted.
+  useEffect(() => diagDrawn("paint", question.id), [question.id]);
 
   const cat = snapshot.categories.find((c) => c.id === question.categoryId);
   const category = cat?.name ?? "Trivia";

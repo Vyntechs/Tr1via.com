@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import {
   __resetDiagClientForTests,
+  diagDrawn,
   diagQuestionOpen,
   setDiagSink,
   type DiagData,
@@ -165,6 +166,87 @@ describe("useAnswerSubmit", () => {
     expect(headers).not.toHaveProperty("x-tr1via-tap-at"); // unknown, not "now"
     expect(Number(headers["x-tr1via-sent-at"])).toBeGreaterThan(0);
     expect(seen.find((e) => e.kind === "tap")).toMatchObject({ forced: true, data: { q: "q1", slot: 3, ok: true, rs: true } });
+  });
+});
+
+describe("diagDrawn (the screen really drew timer-zero / the reveal)", () => {
+  const Q = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  let frames: Array<FrameRequestCallback | null>;
+  let rafSpy: { mock: { calls: unknown[] } };
+  const runFrame = () => {
+    const batch = frames.splice(0);
+    for (const cb of batch) cb?.(performance.now());
+  };
+  const setVisibility = (state: "visible" | "hidden") =>
+    Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
+
+  beforeEach(() => {
+    frames = [];
+    rafSpy = vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => frames.push(cb));
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+      frames[id - 1] = null;
+    });
+    setVisibility("visible");
+  });
+  afterEach(() => setVisibility("visible"));
+
+  it("schedules nothing at all while no reporter is running (logging off)", () => {
+    diagDrawn("tz", Q);
+    diagDrawn("paint", Q);
+    expect(rafSpy).not.toHaveBeenCalled();
+    expect(seen).toEqual([]);
+  });
+
+  it("reports only after TWO animation frames (the second is after the paint), as a kept event with the question id", () => {
+    attachSink();
+    diagDrawn("tz", Q);
+    expect(seen).toEqual([]);
+    runFrame(); // first frame: the browser is about to paint
+    expect(seen).toEqual([]);
+    runFrame(); // second frame: it has painted
+    expect(seen).toEqual([{ kind: "tz", data: { q: Q }, forced: true }]);
+  });
+
+  it("says each thing once per question, however often the screen redraws or remounts", () => {
+    attachSink();
+    for (let i = 0; i < 3; i++) {
+      diagDrawn("tz", Q);
+      runFrame();
+      runFrame();
+    }
+    diagDrawn("paint", Q);
+    runFrame();
+    runFrame();
+    diagDrawn("paint", Q);
+    expect(frames).toHaveLength(0); // already said: not even a frame asked for
+    expect(seen.map((e) => e.kind)).toEqual(["tz", "paint"]);
+  });
+
+  it("claims nothing for a page nobody could see (hidden before, or by the time the frame was painted)", () => {
+    attachSink();
+    setVisibility("hidden");
+    diagDrawn("tz", Q);
+    expect(rafSpy).not.toHaveBeenCalled();
+    setVisibility("visible");
+    diagDrawn("tz", Q);
+    runFrame();
+    setVisibility("hidden");
+    runFrame();
+    expect(seen).toEqual([]);
+  });
+
+  it("a draw that has not happened yet is cancelled when the effect is cleaned up", () => {
+    attachSink();
+    const cancel = diagDrawn("paint", Q);
+    runFrame();
+    cancel();
+    runFrame();
+    expect(seen).toEqual([]);
+    // ...and a later remount can still say it
+    diagDrawn("paint", Q);
+    runFrame();
+    runFrame();
+    expect(seen.map((e) => e.kind)).toEqual(["paint"]);
   });
 });
 

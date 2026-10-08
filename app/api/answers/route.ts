@@ -156,6 +156,9 @@ async function handleAnswer(req: NextRequest) {
       questionId: legacy.data.questionId,
       slotChosen: legacy.data.slotChosen,
       deadlineS: questionDurationFor(undefined),
+      // The exact instant the 25-second rule below uses (the log's own stamp is
+      // taken a hair earlier, in the wrapper). Diagnostic log only.
+      deadlineReceivedAtMs: receivedAt.getTime(),
     });
   }
 

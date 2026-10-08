@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { __resetDiagClientForTests, setDiagSink } from "@/lib/diagnostics/client";
 import { TVStateMachine } from "@/components/tv/TVStateMachine";
 import { ThemeProvider } from "@/components/system";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
@@ -254,5 +255,87 @@ describe("TVStateMachine lifecycle boundaries", () => {
     );
     expect(screen.getByTestId("tv-finale-winner")).toBeVisible();
     expect(screen.getByText("Morgan.")).toBeVisible();
+  });
+});
+
+describe("TVStateMachine diagnostic receipts (timer zero drawn, reveal drawn)", () => {
+  const events: Array<{ kind: string; data: unknown }> = [];
+  let frames: FrameRequestCallback[] = [];
+
+  function listen() {
+    events.length = 0;
+    frames = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => frames.push(cb));
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    setDiagSink({
+      event: (kind, data) => events.push({ kind, data }),
+      questionOpen: () => {},
+      roomReady: () => {},
+    });
+  }
+  const paint = () => {
+    for (let round = 0; round < 2; round++) for (const cb of frames.splice(0)) cb(performance.now());
+  };
+  afterEach(() => {
+    __resetDiagClientForTests();
+    vi.restoreAllMocks();
+  });
+
+  function liveAfter25Seconds(): TVSnapshot {
+    const base = lifecycleSnapshot();
+    return lifecycleSnapshot({
+      games: [{ ...base.games[1]!, id: "g2", state: "live" }],
+      currentGameId: "g2",
+      categories: [base.categories[1]!],
+      questions: [{ ...base.questions[1]!, playedAt: new Date(Date.now() - 40_000).toISOString() }],
+      liveQuestionId: "q2",
+      targetQuestionId: "q2",
+      reveals: [],
+    });
+  }
+
+  it("says the timer at zero was drawn, once, for the live question", () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(null, { status: 204 })));
+    listen();
+    render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine snapshot={liveAfter25Seconds()} themeKey="april" />
+      </ThemeProvider>,
+    );
+    paint();
+    expect(events).toEqual([{ kind: "tz", data: { q: "q2" } }]);
+    vi.unstubAllGlobals();
+  });
+
+  it("says the reveal was drawn when the answer frame shows", () => {
+    listen();
+    render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine
+          snapshot={lifecycleSnapshot({
+            games: [{ id: "g1", gameNo: 1, state: "live", startedAt: "2026-07-20T00:00:00Z", endedAt: null, categoryCount: 1, questionCount: 1 }],
+            currentGameId: "g1",
+            targetQuestionId: "q1",
+            categories: [{ id: "c1", gameId: "g1", name: "History", topic: "History", position: 0, color: null, state: "ready" }],
+            questions: [lifecycleSnapshot().questions[0]!],
+            reveals: [],
+          })}
+          themeKey="april"
+        />
+      </ThemeProvider>,
+    );
+    expect(screen.getByTestId("tv-reveal")).toBeVisible();
+    paint();
+    expect(events.map((e) => e.kind)).toEqual(["paint"]);
+  });
+
+  it("does nothing (no animation frame asked for) while the reporter is not running", () => {
+    const raf = vi.spyOn(window, "requestAnimationFrame");
+    render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine snapshot={lifecycleSnapshot()} themeKey="april" />
+      </ThemeProvider>,
+    );
+    expect(raf).not.toHaveBeenCalled();
   });
 });

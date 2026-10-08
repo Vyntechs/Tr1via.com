@@ -3,8 +3,9 @@
 // Called once a day by the Vercel cron entry in vercel.json (Production only).
 //
 //   - It needs "Authorization: Bearer <CRON_SECRET>" (Vercel sends it when a
-//     CRON_SECRET environment variable is set). No secret set, or the wrong
-//     one: 401 and nothing is cleaned. That is the ONLY gate: it runs whether
+//     CRON_SECRET environment variable is set). No secret set, a secret shorter
+//     than 16 characters (too easy to guess, so it is treated as not set), or
+//     the wrong one: 401 and nothing is cleaned. That is the ONLY gate: it runs whether
 //     logging is on or off, so turning logging off never leaves old rows
 //     behind. On empty tables (the usual state while logging has never been
 //     on) it removes nothing.
@@ -28,6 +29,9 @@ export const maxDuration = 30;
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
+/** A shorter secret is refused outright: it is treated as if none were set. */
+const MIN_SECRET_LENGTH = 16;
+
 function secretMatches(header: string | null, secret: string): boolean {
   if (!header) return false;
   const given = Buffer.from(header);
@@ -37,7 +41,7 @@ function secretMatches(header: string | null, secret: string): boolean {
 
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret || !secretMatches(req.headers.get("authorization"), secret)) {
+  if (!secret || secret.length < MIN_SECRET_LENGTH || !secretMatches(req.headers.get("authorization"), secret)) {
     return new Response(null, { status: 401, headers: NO_STORE });
   }
 

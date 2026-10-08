@@ -37,7 +37,7 @@
 // without one it holds everything and sends nothing.
 //
 // What it records, by kind (see config.ts): device, net, vis, bcast, snap,
-// res, ribbon, chan, reach, tap, tapx, lt, fps. Slow or failed events are
+// res, ribbon, chan, reach, tap, tapx, lt, tz, paint, fps. Slow or failed events are
 // always kept ("forced"); routine ones are kept for about half of player
 // phones (decided once per page load) and always on the TV and host laptop.
 
@@ -287,6 +287,9 @@ export function startDeviceReporter(options: ReporterOptions): () => void {
         ol: navigator.onLine,
         rm: media("(prefers-reduced-motion: reduce)"),
         theme: document.documentElement.getAttribute("data-theme") ?? undefined,
+        // Which build this page is (inlined at build time; absent on a local build).
+        rel: process.env.NEXT_PUBLIC_TR1VIA_RELEASE || undefined,
+        sha: process.env.NEXT_PUBLIC_TR1VIA_SHA || undefined,
         ...connectionInfo(),
       },
       true,

@@ -91,6 +91,10 @@ export const DIAG_EVENT_FIELDS: Record<DiagDeviceKind, Record<string, FieldSpec>
     ol: { t: "bool" },
     rm: { t: "bool" },
     theme: { t: "word", max: 24 },
+    // which build this device is running (see next.config.ts): the deployment id
+    // (what the server stamps on its own rows) and the first 12 characters of the commit
+    rel: { t: "word", max: 40 },
+    sha: { t: "word", max: 12 },
     ...connection,
   },
   net: { ev: { t: "enum", values: NET_EVENTS }, ol: { t: "bool" }, ...connection },
@@ -149,6 +153,9 @@ export const DIAG_EVENT_FIELDS: Record<DiagDeviceKind, Record<string, FieldSpec>
     sum: { t: "num", min: 0, max: 60_000_000 },
     win: { t: "num", min: 0, max: 3_600_000 },
   },
+  // the screen has painted the timer reading 0 / the answer reveal, for this question
+  tz: { q: { t: "uuid" } },
+  paint: { q: { t: "uuid" } },
   // TV scene frame rate
   fps: {
     scene: { t: "word", max: 24 },

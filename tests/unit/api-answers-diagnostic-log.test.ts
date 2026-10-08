@@ -348,6 +348,69 @@ describe("POST /api/answers diagnostic log", () => {
     expect(writeMock.lookupPlayerId).toHaveBeenCalledWith(NIGHT_ID, DEVICE_ID);
   });
 
+  describe("the receipt time on the row is the one the 25-second rule used", () => {
+    const PLAYED_AT = "2026-07-19T01:00:00.000Z";
+
+    /** A request whose headers are read AFTER the logging wrapper stamped its time and BEFORE the route stamps its own. */
+    function slowStartRequest(body: unknown, wrapperAt: number, routeAt: number) {
+      const req = post(body);
+      const realGet = req.headers.get.bind(req.headers);
+      let first = true;
+      vi.spyOn(req.headers, "get").mockImplementation((name: string) => {
+        if (first) {
+          first = false;
+          vi.setSystemTime(routeAt); // time passes between the wrapper's stamp and the route's
+        }
+        return realGet(name);
+      });
+      vi.setSystemTime(wrapperAt);
+      return req;
+    }
+
+    async function tapAt(wrapperOffsetMs: number, routeOffsetMs: number) {
+      vi.stubEnv("DIAGNOSTIC_LOGGING", "on");
+      const base = new Date(PLAYED_AT).getTime();
+      adminMock.getSupabaseAdmin.mockReturnValue(legacyAdmin({ playedAt: PLAYED_AT }));
+      const pending: Array<() => Promise<void>> = [];
+      writeMock.scheduleDiagWrite.mockImplementation((task: () => Promise<void>) => void pending.push(task));
+      const { POST } = await import("@/app/api/answers/route");
+      const response = await POST(slowStartRequest(await legacyBody(), base + wrapperOffsetMs, base + routeOffsetMs));
+      for (const task of pending) await task();
+      const row = (writeMock.recordDiagRows.mock.calls[0]![1] as Record<string, unknown>[])[0]!;
+      return { status: response.status, row, base };
+    }
+
+    it("a tap the rule turned away at exactly 25.000 s is NOT logged as 24.999", async () => {
+      const { status, row, base } = await tapAt(24_999, 25_000);
+      expect(status).toBe(400); // the route compared 25.000 s against the 25 s line
+      expect(row).toMatchObject({ outcome: "late", reason: "deadline_passed", ms_after_open: 25_000 });
+      expect(row.received_at).toBe(new Date(base + 25_000).toISOString());
+    });
+
+    it("a tap the rule accepted at 24.999 s is logged as 24.999", async () => {
+      const { status, row, base } = await tapAt(24_998, 24_999);
+      expect(status).toBe(204);
+      expect(row).toMatchObject({ outcome: "saved", ms_after_open: 24_999 });
+      expect(row.received_at).toBe(new Date(base + 24_999).toISOString());
+    });
+
+    it("falls back to the wrapper's own stamp when the route noted nothing believable", async () => {
+      const { routeReceiptMs } = await import("@/lib/diagnostics/serverLog");
+      expect(routeReceiptMs(undefined, 1_000)).toBe(1_000);
+      expect(routeReceiptMs("5000", 1_000)).toBe(1_000);
+      expect(routeReceiptMs(Number.NaN, 1_000)).toBe(1_000);
+      expect(routeReceiptMs(999, 1_000)).toBe(1_000); // never earlier than the wrapper's
+      expect(routeReceiptMs(1_000 + 61_000, 1_000)).toBe(1_000); // not minutes later
+      expect(routeReceiptMs(1_250.4, 1_000)).toBe(1_250);
+    });
+
+    it("the resilient engine decides on the database clock, so its row keeps the wrapper's stamp", async () => {
+      await run(SCENARIOS[5]!, "on");
+      const row = (writeMock.recordDiagRows.mock.calls[0]![1] as Record<string, unknown>[])[0]!;
+      expect(row.received_at).toBe(new Date(SCENARIOS[5]!.now).toISOString());
+    });
+  });
+
   it("records step timings and ignores a nonsense tap header", async () => {
     const scn = SCENARIOS[0]!;
     await run(scn, "on", { "x-tr1via-tap-at": "not-a-number", "x-tr1via-attempt": "999" });
@@ -399,6 +462,22 @@ describe("POST /api/answers diagnostic log", () => {
       await run(SCENARIOS[2]!, "on");
       expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
       expect(writeMock.lookupPlayerId).not.toHaveBeenCalled();
+      expect(writeMock.noteIgnored).toHaveBeenCalledWith("answer");
+    });
+
+    it("a tap the route answered 404 (no such question) costs no game-table read for the log", async () => {
+      vi.stubEnv("DIAGNOSTIC_LOGGING", "on");
+      vi.setSystemTime("2026-07-19T01:00:10.000Z");
+      adminMock.getSupabaseAdmin.mockReturnValue({ rpc: vi.fn(), from: vi.fn(() => query({ data: null, error: null })) });
+      const pending: Array<() => Promise<void>> = [];
+      writeMock.scheduleDiagWrite.mockImplementation((task: () => Promise<void>) => void pending.push(task));
+      const { POST } = await import("@/app/api/answers/route");
+      const response = await POST(post(await legacyBody()));
+      expect(response.status).toBe(404);
+      for (const task of pending) await task();
+      expect(writeMock.lookupQuestionContext).not.toHaveBeenCalled();
+      expect(writeMock.lookupPlayerId).not.toHaveBeenCalled();
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
       expect(writeMock.noteIgnored).toHaveBeenCalledWith("answer");
     });
 

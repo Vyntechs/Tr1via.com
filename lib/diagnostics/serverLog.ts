@@ -99,6 +99,16 @@ export function parseTapHeaders(headers: Headers): {
   };
 }
 
+/**
+ * The route's own receipt time if it is a believable ms-epoch (it is taken after
+ * the wrapper's stamp, never more than a few seconds later), else the wrapper's.
+ */
+export function routeReceiptMs(noted: unknown, wrapperMs: number): number {
+  if (typeof noted !== "number" || !Number.isFinite(noted)) return wrapperMs;
+  const ms = Math.round(noted);
+  return ms >= wrapperMs && ms - wrapperMs <= 60_000 ? ms : wrapperMs;
+}
+
 function stepsOf(trace: DiagTrace, total: number): Record<string, number> {
   return { ...trace.marks, total };
 }
@@ -173,7 +183,10 @@ function finishAnswer(
     let nightId = uid(n.nightId);
     let gameId = uid(n.gameId);
     const questionId = uid(n.questionId);
-    if (questionId && (!nightId || !gameId)) {
+    // A 404 means the route did not find the question (or its game): a made-up
+    // id, which the junk check below turns away. Looking it up again would only
+    // add a game-table read for it (a free device cookie could make 100 of them).
+    if (questionId && (!nightId || !gameId) && status !== 404) {
       const found = await lookupQuestionContext(questionId);
       nightId = nightId ?? found.nightId;
       gameId = gameId ?? found.gameId;
@@ -196,12 +209,16 @@ function finishAnswer(
       : classifyAnswerResponse(status, hint, "insert" in trace.marks);
 
     const playedAt = iso(n.questionPlayedAt);
-    const receivedMs = trace.receivedAt.getTime();
+    // The legacy route notes the exact instant its 25-second rule used (the
+    // wrapper's own stamp is taken a hair earlier). Prefer it, so the row shows
+    // the number the rule really compared; fall back to the wrapper's stamp. The
+    // resilient engine's deadline is decided by the database clock, not this.
+    const receivedMs = routeReceiptMs(n.deadlineReceivedAtMs, trace.receivedAt.getTime());
     await recordDiagRows(
       "diag_answer_events",
       [
         {
-          received_at: trace.receivedAt.toISOString(),
+          received_at: new Date(receivedMs).toISOString(),
           engine: n.engine === "legacy" || n.engine === "resilient_v1" ? n.engine : "unknown",
           night_id: nightId,
           game_id: gameId,
