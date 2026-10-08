@@ -14,7 +14,7 @@
 import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import path from "node:path";
 import fs from "node:fs";
-import { loginAsHost, seedNight, startGame, revealViaApi, resetTestData } from "./helpers/host-laptop";
+import { loginAsHost, seedNight, startGame, revealViaApi, resetTestData, fastForwardTimer } from "./helpers/host-laptop";
 import { joinPhone } from "./helpers/player-phone";
 import { TID } from "./helpers/selectors";
 import { THEME_KEYS } from "../../lib/theme/tokens";
@@ -489,4 +489,104 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
     await expect(status(page)).toHaveAttribute("data-send-state", "locked", { timeout: 10_000 });
     await context.close();
   });
+});
+
+/**
+ * Three phones, one question played, the next one live: the phone under test
+ * (first) has standings ("Where you stand") to show after its tap.
+ */
+async function phoneWithStandings(
+  browser: import("@playwright/test").Browser,
+  themeKey: string,
+  viewport: { width: number; height: number },
+) {
+  const seed = await seedNight(hostPage, hostId, { themeKey });
+  const mk = (vp: { width: number; height: number }) =>
+    browser.newContext({ viewport: vp, deviceScaleFactor: 2, hasTouch: true, isMobile: true });
+  const contexts = [await mk(viewport), await mk({ width: 390, height: 844 }), await mk({ width: 390, height: 844 })];
+  const pages: Page[] = [];
+  for (const [i, ctx] of contexts.entries()) {
+    const p = await ctx.newPage();
+    await joinPhone(p, seed.roomCode, `Stand ${themeKey} ${i}`.slice(0, 20));
+    pages.push(p);
+  }
+  await startGame(hostPage, seed.game1.id);
+  const [q1, q2] = seed.categories[0]!.question_ids as [string, string];
+  await revealViaApi(hostPage, seed.game1.id, q1);
+  for (const [i, p] of pages.entries()) {
+    await expect(p.getByTestId(TID.playerQuestion.root)).toBeVisible({ timeout: 15_000 });
+    await p.getByTestId(TID.playerQuestion.answer(((i % 4) + 1) as 1 | 2 | 3 | 4)).click();
+    await expect(p.getByTestId(TID.playerLocked.status)).toHaveAttribute("data-send-state", "locked", { timeout: 10_000 });
+  }
+  await fastForwardTimer(hostPage, q1);
+  await revealViaApi(hostPage, seed.game1.id, q2);
+  const page = pages[0]!;
+  await expect(page.getByTestId(TID.playerQuestion.root)).toBeVisible({ timeout: 20_000 });
+  const close = async () => {
+    for (const c of contexts) await c.close().catch(() => {});
+  };
+  return { page, close };
+}
+
+/** A real finger swipe (touch events through the browser's own gesture code), not scrollTo. */
+async function swipeToEnd(page: Page) {
+  const cdp = await page.context().newCDPSession(page);
+  const vp = page.viewportSize()!;
+  for (let i = 0; i < 4; i++) {
+    await cdp.send("Input.synthesizeScrollGesture", {
+      x: Math.round(vp.width / 2),
+      y: Math.round(vp.height * 0.75),
+      yDistance: -Math.round(vp.height * 0.6),
+      speed: 900,
+      gestureSourceType: "touch",
+    });
+    await page.waitForTimeout(350);
+  }
+  await cdp.detach();
+}
+
+test.describe("phone answer: the standings can be reached by a real swipe", () => {
+  test.setTimeout(150_000);
+  for (const viewport of [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+  ]) {
+    test(`${viewport.width}x${viewport.height}: after the tap, a finger swipe to the end shows the first three standings rows in full`, async ({ browser }) => {
+      const { page, close } = await phoneWithStandings(browser, "house", viewport);
+      await settleEntrance(page);
+      await page.getByTestId(TID.playerQuestion.answer(2)).tap();
+      await expect(status(page)).toHaveAttribute("data-send-state", "locked", { timeout: 10_000 });
+      const standings = page.getByTestId("player-locked-standings");
+      await expect(standings).toBeAttached();
+      await page.waitForTimeout(900);
+      await swipeToEnd(page);
+      const rows = await page.evaluate(() => {
+        const rowEls = Array.from(document.querySelectorAll('[data-testid="standings-row"], [data-testid="standings-you"]'));
+        const h = document.querySelector('[data-testid="player-locked-standings"]')!;
+        return {
+          innerHeight: window.innerHeight,
+          heading: h.firstElementChild!.getBoundingClientRect().top,
+          rows: rowEls.map((r) => {
+            const b = r.getBoundingClientRect();
+            return { top: b.top, bottom: b.bottom };
+          }),
+        };
+      });
+      await page.screenshot({ path: path.join(SHOTS, `standings-swipe-${viewport.width}.png`) });
+      if (process.env.PHONELOCK_DEBUG) {
+        console.log(JSON.stringify(await page.evaluate(() => {
+          const s = document.querySelector('[data-testid="player-locked"]') as HTMLElement;
+          const w = s.firstElementChild as HTMLElement;
+          const st = document.querySelector('[data-testid="player-locked-standings"]')!.getBoundingClientRect();
+          return { top: s.scrollTop, sh: s.scrollHeight, ch: s.clientHeight, sRect: s.getBoundingClientRect().toJSON(), wRect: w.getBoundingClientRect().toJSON(), st: st.toJSON(), docSH: document.documentElement.scrollHeight, n: 0 };
+        })));
+      }
+      expect(rows.rows.length).toBeGreaterThanOrEqual(3);
+      for (const r of rows.rows.slice(0, 3)) {
+        expect(r.top).toBeGreaterThanOrEqual(0);
+        expect(r.bottom).toBeLessThanOrEqual(rows.innerHeight);
+      }
+      await close();
+    });
+  }
 });

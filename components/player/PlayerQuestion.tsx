@@ -147,6 +147,31 @@ export function PlayerQuestion({
     !imageFailed &&
     decorationLevel < (septemberQuestion ? 3 : 2);
 
+  // On a very small phone the question is taller than the screen, so the
+  // phone's scroller is taller than the screen too and its bottom sits under
+  // the fold. Standings at the end of it would then stay out of a finger's
+  // reach. This is how far that bottom hangs below the screen; it is added as
+  // padding under the standings only, so nothing above them moves.
+  const [belowFold, setBelowFold] = useState(0);
+  const hasStandings = !!pick?.standings && pick.standings.top.length > 0;
+  useEffect(() => {
+    const surface = screenRef.current;
+    if (!hasStandings || !surface) return;
+    const measure = () => {
+      const bottom = surface.getBoundingClientRect().bottom + window.scrollY;
+      const next = Math.max(0, Math.ceil(bottom - window.innerHeight));
+      setBelowFold((current) => (current === next ? current : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(surface);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  }, [hasStandings]);
+
   const handleImageFailure = useCallback(() => {
     setImageFailed(true);
     setDecorationLevel(0);
@@ -488,7 +513,7 @@ export function PlayerQuestion({
             left: 0,
             right: 0,
             paddingTop: 18,
-            paddingBottom: 26,
+            paddingBottom: 26 + belowFold,
             display: "flex",
             flexDirection: "column",
             gap: 6,
