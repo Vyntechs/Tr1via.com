@@ -1244,14 +1244,18 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           return hostCatchUpInFlight;
         }
         const run = async () => {
-          do {
-            hostCatchUpQueued = false;
-            await catchUpHostRoomOnce();
-          } while (hostCatchUpQueued && !cancelled);
+          try {
+            do {
+              hostCatchUpQueued = false;
+              await catchUpHostRoomOnce();
+            } while (hostCatchUpQueued && !cancelled);
+          } finally {
+            // Cleared in the same turn the loop ends, so a request can't slip
+            // in between the last check and the reset and be dropped.
+            hostCatchUpInFlight = null;
+          }
         };
-        hostCatchUpInFlight = run().finally(() => {
-          hostCatchUpInFlight = null;
-        });
+        hostCatchUpInFlight = run();
         return hostCatchUpInFlight;
       }
       if (cleanNight?.answer_engine !== "resilient_v1") {
