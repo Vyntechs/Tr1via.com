@@ -117,6 +117,10 @@ export interface RoomSnapshot {
   scoreGameId?: string | null;
   /** Ask the signed audience route for a fresh canonical snapshot. */
   requestRefresh?: () => Promise<void>;
+  /** Host only: re-read the live room (games, live question, last answer,
+   *  newest reveal, roster) right now, in place. Coalesced: calls made while
+   *  a read is running share it plus at most one trailing read. */
+  requestLiveCatchUp?: () => Promise<void>;
   /** True while the initial snapshot fetch is in flight. */
   isLoading: boolean;
 }
@@ -214,6 +218,10 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
   }, []);
   const requestHostRefresh = useCallback(async () => {
     await hostRefreshRef.current?.();
+  }, []);
+  const hostCatchUpRef = useRef<(() => Promise<void>) | null>(null);
+  const requestHostCatchUp = useCallback(async () => {
+    await hostCatchUpRef.current?.();
   }, []);
   const waitingForSession = audience === "player" && !sessionReady;
   useEffect(() => {
@@ -570,6 +578,11 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       };
     }
 
+    // Host live catch-up (see catchUpHostRoom in bootstrap): one read at a time,
+    // plus one trailing read if another request or a broadcast arrives mid-read.
+    let hostCatchUpInFlight: Promise<void> | null = null;
+    let hostCatchUpQueued = false;
+
     /**
      * Re-fetch the players list and merge it into the snapshot. Called as a
      * fallback from the `roster-changed` broadcast handler so the host's
@@ -726,6 +739,10 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       correctIndexHint?: number,
     ): Promise<void> {
       if (cancelled) return;
+      // A catch-up read already in flight may have started before this event
+      // landed; make it read once more when it finishes so it can't leave older
+      // rows behind.
+      if (hostCatchUpInFlight) hostCatchUpQueued = true;
       type GamesQueryResult = { data: GameRow[] | null; error: unknown };
       type QuestionQueryResult = { data: QuestionRow | null; error: unknown };
       let gamesRes: GamesQueryResult;
@@ -979,24 +996,32 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           .limit(1)
           .maybeSingle();
       }
-      function readReveals() {
+      // Newest reveal for this night. Scoped by game_id (indexed) instead of a
+      // join on games.night_id: the permission check on `reveals` runs per row
+      // and, with the join, ran over every night's rows (~1s live). Same rows,
+      // same refusals — the permission policy is unchanged.
+      async function readReveals(gamesRead: PromiseLike<{ data: GameRow[] | null }>) {
+        const gameIds = ((await gamesRead).data ?? []).map((g) => g.id);
+        if (gameIds.length === 0) return { data: [] as RevealRow[], error: null };
         return supa
           .from("reveals")
-          .select("*, games!inner(night_id)")
-          .eq("games.night_id", nightId)
+          .select("*")
+          .in("game_id", gameIds)
           .order("occurred_at", { ascending: false })
           .limit(1);
       }
       try {
+        // Promise.resolve so the games request is sent once and shared.
+        const gamesRead = Promise.resolve(readGames());
         reads = await withTimeout(
           Promise.all([
             readNight(),
-            readGames(),
+            gamesRead,
             readCategories(),
             readPlayers(),
             readLiveQuestion(),
             readLastResolved(),
-            readReveals(),
+            readReveals(gamesRead),
           ]),
           BOOTSTRAP_TIMEOUT_MS,
           "bootstrap-reads",
@@ -1052,12 +1077,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           lastResolvedQuestion = { ...lastResolvedQuestion, correct_index: ci as 0 | 1 | 2 | 3 };
         }
       }
-      const reveals = (recentReveals.data ?? []) as Array<
-        RevealRow & { games?: unknown }
-      >;
-      const currentReveal = reveals[0]
-        ? (stripJoin(reveals[0], "games") as RevealRow)
-        : null;
+      const currentReveal = ((recentReveals.data ?? [])[0] ?? null) as RevealRow | null;
       // No more hosts join — the night row is now a plain NightRow and the
       // host's default theme rides in from the /api/nights/by-code lookup
       // above. That keeps the player's anon fetch on a single RLS surface
@@ -1132,6 +1152,112 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       );
       hostRefreshRef.current = refreshHostProjection;
 
+      // ── Host catch-up (legacy nights) ──
+      // Re-reads the volatile parts of the room IN PLACE — no channel teardown,
+      // and the lastBroadcast / fireworks / reaction tags are kept. It runs
+      //   - once each time both live channels (re)subscribe: every heartbeat
+      //     rebuild is deaf from teardown until the new channels join, so a
+      //     host press or broadcast in that window was missed for up to 15s;
+      //   - right after the host console's own successful button press, so the
+      //     screen moves on the press's HTTP reply instead of waiting on a
+      //     broadcast that may have been missed.
+      // Applies only what changed (a no-op returns prev: no re-render), never
+      // moves the last answer or last reveal backwards, and leaves a piece
+      // alone if its read failed. Resilient nights keep their server projection.
+      async function catchUpHostRoomOnce(): Promise<void> {
+        try {
+          const gamesRead = Promise.resolve(readGames());
+          const [gamesRes, playersRes, liveRes, lastRes, revealsRes] = await withTimeout(
+            Promise.all([
+              gamesRead,
+              readPlayers(),
+              readLiveQuestion(),
+              readLastResolved(),
+              readReveals(gamesRead),
+            ]),
+            BOOTSTRAP_TIMEOUT_MS,
+            "host-catch-up",
+          );
+          if (cancelled) return;
+          const nextGames = gamesRes.error ? null : ((gamesRes.data ?? []) as GameRow[]);
+          const nextPlayers = playersRes.error ? null : ((playersRes.data ?? []) as PlayerRow[]);
+          const liveOk = !liveRes.error;
+          const nextLive = sanitizeQuestionRow(
+            liveRes.data as (QuestionRow & { categories?: unknown }) | null,
+          );
+          let nextLast = lastRes.error
+            ? null
+            : sanitizeQuestionRow(lastRes.data as (QuestionRow & { categories?: unknown }) | null);
+          if (nextLast && typeof nextLast.correct_index !== "number") {
+            const ci = await withTimeout(
+              readResolvedAnswer(nextLast.id),
+              BOOTSTRAP_TIMEOUT_MS,
+              "host-catch-up-answer",
+            );
+            if (cancelled) return;
+            if (typeof ci === "number") {
+              nextLast = { ...nextLast, correct_index: ci as 0 | 1 | 2 | 3 };
+            }
+          }
+          const newest = revealsRes.error ? undefined : (revealsRes.data ?? [])[0];
+          const nextReveal = (newest ?? null) as RevealRow | null;
+          setSnapshot((prev) => {
+            if (prev.night?.id !== nightId) return prev;
+            let next = prev;
+            if (nextGames && !sameRows(prev.games, nextGames)) {
+              next = { ...next, games: nextGames, currentGame: pickCurrentGame(nextGames) };
+            }
+            if (nextPlayers && !sameRows(prev.players, nextPlayers)) {
+              next = { ...next, players: nextPlayers };
+            }
+            if (liveOk && !sameRows(prev.currentQuestion, nextLive)) {
+              next = { ...next, currentQuestion: nextLive };
+            }
+            if (!lastRes.error) {
+              const held = prev.lastResolvedQuestion;
+              let last = nextLast ? pickNewerResolvedQuestion(held, nextLast) : null;
+              // Don't blank a reveal's answer if the answer lookup came back empty.
+              if (last === nextLast && last && held?.id === last.id && typeof last.correct_index !== "number") {
+                last = held;
+              }
+              if (!sameRows(held, last)) {
+                next = { ...next, lastResolvedQuestion: last };
+              }
+            }
+            if (
+              nextReveal &&
+              (!prev.currentReveal || nextReveal.occurred_at >= prev.currentReveal.occurred_at) &&
+              !sameRows(prev.currentReveal, nextReveal)
+            ) {
+              next = { ...next, currentReveal: nextReveal };
+            }
+            return next;
+          });
+        } catch {
+          // Timed out or dropped. Nothing is changed here; the next broadcast,
+          // press, resubscribe or 15s heartbeat re-reads.
+        }
+      }
+      function catchUpHostRoom(): Promise<void> {
+        if (hostCatchUpInFlight) {
+          hostCatchUpQueued = true;
+          return hostCatchUpInFlight;
+        }
+        const run = async () => {
+          do {
+            hostCatchUpQueued = false;
+            await catchUpHostRoomOnce();
+          } while (hostCatchUpQueued && !cancelled);
+        };
+        hostCatchUpInFlight = run().finally(() => {
+          hostCatchUpInFlight = null;
+        });
+        return hostCatchUpInFlight;
+      }
+      if (cleanNight?.answer_engine !== "resilient_v1") {
+        hostCatchUpRef.current = catchUpHostRoom;
+      }
+
       // Subscribe to broadcast + 6 tables of postgres changes.
       const filterBy = `night_id=eq.${nightId}`;
 
@@ -1150,10 +1276,16 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         if (broadcastChannelState === "SUBSCRIBED" && dbChannelState === "SUBSCRIBED") return "SUBSCRIBED";
         return broadcastChannelState ?? dbChannelState;
       }
+      let wasSubscribed = false;
       function publishChannelHealth(): void {
         if (cancelled) return;
         const worst = deriveWorstStatus();
         setChannelHealth(worst);
+        // Both channels just became live (first join of this bootstrap, or a
+        // rejoin after a dropped socket): re-read what the deaf gap may have
+        // missed. Edge-triggered, so repeat status callbacks cost nothing.
+        if (worst === "SUBSCRIBED" && !wasSubscribed) void hostCatchUpRef.current?.();
+        wasSubscribed = worst === "SUBSCRIBED";
         if (worst === "CHANNEL_ERROR" || worst === "TIMED_OUT" || worst === "CLOSED") {
           // Throttle: a dead WebSocket can fire CHANNEL_ERROR several times in
           // quick succession as the client tries internal reconnects. We only
@@ -1539,6 +1671,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // between retries. It's reset only when there's no room (effect top).
       setChannelHealth(undefined);
       hostRefreshRef.current = null;
+      hostCatchUpRef.current = null;
     };
   }, [roomCode, audience, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick]);
 
@@ -1546,8 +1679,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     () =>
       audience === "player"
         ? { ...snapshot, requestRefresh: requestPlayerRefresh }
-        : { ...snapshot, requestRefresh: requestHostRefresh },
-    [audience, requestHostRefresh, requestPlayerRefresh, snapshot],
+        : {
+            ...snapshot,
+            requestRefresh: requestHostRefresh,
+            requestLiveCatchUp: requestHostCatchUp,
+          },
+    [audience, requestHostCatchUp, requestHostRefresh, requestPlayerRefresh, snapshot],
   );
 }
 
@@ -1574,6 +1711,11 @@ interface ChangePayload<T> {
   eventType: "INSERT" | "UPDATE" | "DELETE";
   new: T | Record<string, never>;
   old: T | Record<string, never>;
+}
+
+/** True when two rows (or row lists) from the database hold the same values. */
+function sameRows(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 /** Strip an embedded join field from a row (e.g. `categories.games`). */

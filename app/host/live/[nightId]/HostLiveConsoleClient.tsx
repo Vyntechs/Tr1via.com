@@ -418,6 +418,12 @@ function DesktopHostLiveConsoleClient({
   const welcomeEvent = useHostWelcomeEvent(room.lastBroadcast, room.players);
 
   // ── action handlers ──────────────────────────────────────────────────
+  // After a button press the server replies as soon as the change is saved. Re-read
+  // the room right then instead of waiting for the broadcast, which this laptop can
+  // miss while its live connection is being rebuilt (it waited up to 15s).
+  function reReadRoom() {
+    void room.requestLiveCatchUp?.();
+  }
   async function handleReveal(questionId: string) {
     if (!currentGame) return;
     setError(null);
@@ -444,6 +450,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "reveal failed");
       }
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Reveal failed.");
     }
@@ -457,6 +464,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "undo failed");
       }
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Undo failed.");
     }
@@ -474,6 +482,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await response.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "could not show standings");
       }
+      reReadRoom();
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not show standings.");
@@ -507,10 +516,12 @@ function DesktopHostLiveConsoleClient({
         // is on screen either way — that is the outcome she asked for, not a
         // failure, and a red banner mid-show reads as "something broke".
         if (res.status === 409 && isAlreadyResolved(body.error)) {
+          reReadRoom();
           return true;
         }
         throw new Error(body.error ?? "end-early failed");
       }
+      reReadRoom();
       return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-early failed.");
@@ -526,6 +537,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "start failed");
       }
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Start failed.");
     }
@@ -539,6 +551,7 @@ function DesktopHostLiveConsoleClient({
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "end-game failed");
       }
+      reReadRoom();
     } catch (err) {
       setError(err instanceof Error ? err.message : "End-game failed.");
     }
