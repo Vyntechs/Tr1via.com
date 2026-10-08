@@ -230,6 +230,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
   useEffect(() => {
     hostLiveRef.current = snapshot.live ?? null;
   }, [snapshot.live]);
+  // The roster as last shown, so a player row update can be told apart from a
+  // phone heartbeat (see mergePlayerChange).
+  const hostPlayersRef = useRef<PlayerRow[]>([]);
+  useEffect(() => {
+    hostPlayersRef.current = snapshot.players;
+  }, [snapshot.players]);
 
   // Bumps when the tab returns from background OR the network comes back.
   // Wired into the main effect's deps below to force a full re-bootstrap
@@ -1646,10 +1652,26 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         setSnapshot((prev) => ({ ...prev, lastBroadcast: tag }));
       }
 
+      // Every phone writes its player row about every 10 s (last_seen_at, and
+      // app-switch seconds): that only touches fields no catch-up result depends
+      // on, so it must not throw an in-flight read away (60 phones would keep a
+      // read from ever applying). Joins, leaves, name and can_answer changes do
+      // count. A row we don't know yet counts too.
+      function isRosterChange(payload: ChangePayload<PlayerRow>): boolean {
+        if (payload.eventType !== "UPDATE") return true;
+        const row = payload.new as PlayerRow;
+        const known = hostPlayersRef.current.find((p) => p.id === row.id);
+        return (
+          !known ||
+          !!row.removed_at ||
+          row.display_name !== known.display_name ||
+          (row.can_answer ?? true) !== (known.can_answer ?? true)
+        );
+      }
       function mergePlayerChange(payload: ChangePayload<PlayerRow>) {
         if (cancelled) return;
         markFresh();
-        noteHostUpdate();
+        if (isRosterChange(payload)) noteHostUpdate();
         setSnapshot((prev) => ({
           ...prev,
           players: applyRow(prev.players, payload, (a, b) =>
@@ -1798,7 +1820,17 @@ interface ChangePayload<T> {
 
 /** True when two rows (or row lists) from the database hold the same values. */
 function sameRows(a: unknown, b: unknown): boolean {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return stableJson(a) === stableJson(b);
+}
+
+/** JSON with object keys sorted, so rows that list the same columns in a
+ *  different order (live rows vs. normal reads) still compare equal. */
+function stableJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v) =>
+    v && typeof v === "object" && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0)))
+      : v,
+  );
 }
 
 /** Strip an embedded join field from a row (e.g. `categories.games`). */

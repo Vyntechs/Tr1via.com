@@ -741,6 +741,89 @@ describe("host laptop: re-reads the room in place when it may have missed someth
       expect(ids(result)).toEqual(["player-1"]);
     });
 
+    it("phone heartbeats do not throw a read away: 60 phones updating during one read = one read, applied", async () => {
+      for (let n = 3; n <= 60; n += 1) {
+        h.db.players.push({ ...player2, id: `player-${n}`, device_id: `device-${n}`, display_name: `P${n}` });
+      }
+      h.db.players.push({ ...player2, id: "player-2" });
+      const { result } = await mountHost();
+      expect(result.current.players).toHaveLength(60);
+      // Sixty-one by the time the read goes out.
+      h.db.players.push({ ...player2, id: "player-61", device_id: "device-61", display_name: "P61" });
+      const hold = await holdCatchUp(result);
+      const before = h.executed.players;
+
+      // Every phone the host knows sends its heartbeat once while the read is in
+      // flight; some also report seconds spent outside the app.
+      for (const player of h.db.players.slice(0, 60)) {
+        act(() => {
+          h.changeHandlers.get("players")?.({
+            eventType: "UPDATE",
+            new: {
+              ...player,
+              last_seen_at: "2026-10-07T00:12:00.000Z",
+              app_switch_total_seconds: String(player.id).endsWith("7") ? 12 : 0,
+            },
+            old: {},
+          });
+        });
+      }
+      hold.release();
+      await flush();
+
+      // The read was applied (player 61 is on screen) and nothing re-ran.
+      expect(h.executed.players).toBe(before);
+      expect(result.current.players).toHaveLength(61);
+    });
+
+    it("a rename during the read does throw it away, and the follow-up read shows the new name", async () => {
+      const { result } = await mountHost();
+      const hold = await holdCatchUp(result);
+      const before = h.executed.players;
+
+      const renamed = { ...h.db.players[0], display_name: "Alicia" };
+      h.db.players[0] = renamed;
+      act(() => {
+        h.changeHandlers.get("players")?.({ eventType: "UPDATE", new: renamed, old: {} });
+      });
+      const done = await finishWhileFollowUpWaits(hold);
+      expect(result.current.players[0].display_name).toBe("Alicia");
+      await done();
+      expect(h.executed.players).toBe(before + 1);
+      expect(result.current.players[0].display_name).toBe("Alicia");
+    });
+
+    it("a can_answer change during the read throws it away too", async () => {
+      const { result } = await mountHost();
+      const hold = await holdCatchUp(result);
+      const before = h.executed.players;
+
+      const scoreOnly = { ...h.db.players[0], can_answer: false };
+      h.db.players[0] = scoreOnly;
+      act(() => {
+        h.changeHandlers.get("players")?.({ eventType: "UPDATE", new: scoreOnly, old: {} });
+      });
+      const done = await finishWhileFollowUpWaits(hold);
+      expect(result.current.players[0].can_answer).toBe(false);
+      await done();
+      expect(h.executed.players).toBe(before + 1);
+    });
+
+    it("a live row that lists its columns in another order does not cause a redraw on the next read", async () => {
+      const { result } = await mountHost();
+      const reordered = Object.fromEntries(Object.entries(h.db.players[0]).reverse());
+      act(() => {
+        h.changeHandlers.get("players")?.({ eventType: "UPDATE", new: reordered, old: {} });
+      });
+      const shown = result.current.players;
+
+      await act(async () => {
+        await result.current.requestLiveCatchUp?.();
+      });
+
+      expect(result.current.players).toBe(shown);
+    });
+
     it("drops the older result for a question change in this night's categories", async () => {
       const { result } = await mountHost();
       h.db.players.push(player2);
