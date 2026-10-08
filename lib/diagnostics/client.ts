@@ -188,6 +188,58 @@ export function diagBroadcastHeard(message: { event?: unknown; payload?: unknown
   }
 }
 
+// ─── "this screen really drew it" (timer at zero, the reveal) ─────────
+// The host laptop and the venue TV draw the same state machine. When it commits
+// the frame that shows the timer at 0, or the answer reveal, the screen says so
+// once the browser has actually PAINTED it: two animation frames after the
+// commit (the first runs before the paint, the second after it). A hidden tab
+// never runs animation frames, so nothing is claimed for a frame nobody could
+// see. The event is held in memory like every other and sent after the question
+// closes, with the device's own clock (the server moves it onto its own).
+const drawnSeen = new Set<string>();
+const DRAWN_SEEN_MAX = 200;
+
+/**
+ * `tz` = the timer reading 0 was drawn for question `questionId`; `paint` = the
+ * answer reveal was drawn for it. At most once per kind and question (a remount
+ * during the reveal hold does not repeat it). Returns a function that cancels a
+ * draw that has not happened yet (the effect is cleaned up). Does nothing, and
+ * schedules nothing, while the reporter is not running.
+ */
+export function diagDrawn(kind: "tz" | "paint", questionId: string): () => void {
+  if (!sink || typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") return () => {};
+  const key = `${kind}:${questionId}`;
+  if (drawnSeen.has(key)) return () => {};
+  try {
+    if (document.visibilityState === "hidden") return () => {};
+    let first = 0;
+    let second = 0;
+    first = window.requestAnimationFrame(() => {
+      second = window.requestAnimationFrame(() => {
+        try {
+          // Hidden in the meantime, or already reported by another instance: say nothing.
+          if (document.visibilityState === "hidden" || drawnSeen.has(key)) return;
+          if (drawnSeen.size >= DRAWN_SEEN_MAX) drawnSeen.clear();
+          drawnSeen.add(key);
+          diagEvent(kind, { q: questionId }, true);
+        } catch {
+          // never reaches the caller
+        }
+      });
+    });
+    return () => {
+      try {
+        window.cancelAnimationFrame(first);
+        window.cancelAnimationFrame(second);
+      } catch {
+        // ignore
+      }
+    };
+  } catch {
+    return () => {};
+  }
+}
+
 let lastRibbon: string | undefined;
 
 /** The connection ribbon / hotspot screen changed state. First call is the baseline. */
@@ -223,4 +275,5 @@ export function __resetDiagClientForTests(): void {
   tvPass = null;
   snapCounter = 0;
   lastRibbon = undefined;
+  drawnSeen.clear();
 }

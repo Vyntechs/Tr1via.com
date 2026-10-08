@@ -119,6 +119,12 @@ describe("sanitizeBatch", () => {
     expect(DIAG_SURFACE_KINDS.tv).not.toContain("tap");
     expect(DIAG_SURFACE_KINDS.host).not.toContain("tapx");
     expect(DIAG_SURFACE_KINDS.player).not.toContain("fps");
+    // the "screen really drew it" receipts come only from the screens that draw the question screen
+    expect(DIAG_SURFACE_KINDS.player).not.toContain("tz");
+    expect(DIAG_SURFACE_KINDS.player).not.toContain("paint");
+    for (const surface of ["host", "tv"] as const) {
+      expect(DIAG_SURFACE_KINDS[surface]).toEqual(expect.arrayContaining(["tz", "paint"]));
+    }
   });
 });
 
@@ -267,6 +273,24 @@ describe("what a device may say about itself", () => {
     expect(Object.keys(data).sort()).toEqual(["dl", "et", "ol", "rm", "rtt", "sc", "theme", "ty"]);
     expect(Object.keys(data).every((key) => (DIAG_DEVICE_KEYS as readonly string[]).includes(key))).toBe(true);
     expect(data).toEqual({ sc: "m", ol: true, rm: false, theme: "october", et: "4g", ty: "wifi", rtt: 75, dl: 9.5 });
+  });
+
+  it("keeps the build labels (deployment id and commit) in the device event, cleaned, and nothing else of the kind", () => {
+    expect(cleanDeviceData({ rel: "dpl_8fJd2kQ1xYz", sha: "c696ef223708" })).toEqual({ rel: "dpl_8fJd2kQ1xYz", sha: "c696ef223708" });
+    // cut to length, and anything that is not a plain label is dropped
+    expect(cleanDeviceData({ rel: "d".repeat(100), sha: "a".repeat(40) })).toEqual({ rel: "d".repeat(40), sha: "a".repeat(12) });
+    expect(cleanDeviceData({ rel: "<script>alert(1)</script>", sha: { x: 1 } })).toEqual({});
+    expect(cleanDeviceData({ rel: "", sha: "" })).toEqual({});
+    // a net event never carries them
+    expect(cleanEventFields("net", { ev: "online", rel: "dpl_x", sha: "abc" })).toEqual({ ev: "online" });
+  });
+
+  it("rebuilds the draw receipts from the question id alone", () => {
+    const q = "AAAAAAAA-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    for (const kind of ["tz", "paint"] as const) {
+      expect(cleanEventFields(kind, { q, vis: true, ms: 5, note: "hello" })).toEqual({ q: q.toLowerCase() });
+      expect(cleanEventFields(kind, { q: "not-a-uuid" })).toEqual({});
+    }
   });
 
   it("never takes the browser, OS or device class from the device (the server adds those)", () => {

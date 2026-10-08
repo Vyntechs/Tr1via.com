@@ -20,6 +20,7 @@ import {
   __setDiagCountersForTests,
   __setDiagSchedulerForTests,
   insertDiagRows,
+  isLoggingPaused,
   lookupNightOwner,
   lookupPlayerId,
   lookupQuestionContext,
@@ -37,15 +38,18 @@ import {
   DIAG_DB_STATEMENT_TIMEOUT_MS,
   DIAG_DEVICE_ROW_CAPS,
   DIAG_JOB_DEADLINE_MS,
+  DIAG_SLOT_BRAKE_MS,
   DIAG_MAX_WRITES_IN_FLIGHT,
   DIAG_QUEUE_WAIT_MS,
-  DIAG_QUOTA_BUSY_BACKOFF_MS,
-  DIAG_QUOTA_BUSY_RETRIES,
+  DIAG_BUSY_BACKOFF_MS,
+  DIAG_BRAKE_PROBE_MS,
+  DIAG_BUSY_RETRIES,
+  DIAG_RETRY_BUDGET,
+  DIAG_RETRY_REFILL_PER_SEC,
   DIAG_WRITE_QUEUE_MAX,
   DIAG_NIGHT_PRESS_ROW_CAP,
   DIAG_NIGHT_ROW_CAP,
   DIAG_NIGHT_SERVER_ROW_CAP,
-  DIAG_PAUSE_AFTER_TIMEOUTS,
   DIAG_PAUSE_MS,
   DIAG_QUOTA_FULL_MEMORY_MS,
   DIAG_QUOTA_LEASE_ROWS,
@@ -1069,9 +1073,11 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
       await vi.advanceTimersByTimeAsync(500);
       await done;
       expect(calls).toHaveLength(3); // two busy answers, then the grant
-      // the backoff is a few tens of milliseconds, not a wait on the database
-      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(DIAG_QUOTA_BUSY_BACKOFF_MS);
-      expect(calls[1]! - calls[0]!).toBeLessThan(DIAG_QUOTA_BUSY_BACKOFF_MS * 3);
+      // the backoff is a few tens of milliseconds (50-100% of 20 ms, then of 40 ms), not a wait on the database
+      expect(calls[1]! - calls[0]!).toBeGreaterThanOrEqual(DIAG_BUSY_BACKOFF_MS * 0.5);
+      expect(calls[1]! - calls[0]!).toBeLessThanOrEqual(DIAG_BUSY_BACKOFF_MS);
+      expect(calls[2]! - calls[1]!).toBeGreaterThanOrEqual(DIAG_BUSY_BACKOFF_MS);
+      expect(calls[2]! - calls[1]!).toBeLessThanOrEqual(DIAG_BUSY_BACKOFF_MS * 2);
       expect(inserted).toEqual([rows(3)]);
       expect(__diagWriteCountersForTests()).toMatchObject({ dropped: 0, busy: 0, failed: 0, capped: 0 });
     });
@@ -1082,7 +1088,7 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
       const done = recordDiagRows("diag_device_events", rows(3), NIGHT, player);
       await vi.advanceTimersByTimeAsync(2_000);
       await done;
-      expect(calls).toHaveLength(DIAG_QUOTA_BUSY_RETRIES + 1);
+      expect(calls).toHaveLength(DIAG_BUSY_RETRIES + 1);
       expect(inserted).toHaveLength(0);
       // it was the busy counter, not a full queue: counted as busy, and not as a job that got no turn
       expect(__diagWriteCountersForTests()).toMatchObject({ busy: 1, dropped: 0, queueFull: 0, waitedTooLong: 0, failed: 0 });
@@ -1093,7 +1099,7 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
 
     it("a busy answer does not mark the source as full: the next rows try again", async () => {
       vi.useFakeTimers();
-      const { calls, inserted } = busyDb([-1, -1, -1, 25]);
+      const { calls, inserted } = busyDb([...Array(DIAG_BUSY_RETRIES + 1).fill(-1), 25]);
       const first = recordDiagRows("diag_device_events", rows(1), NIGHT, player);
       await vi.advanceTimersByTimeAsync(2_000);
       await first;
@@ -1101,7 +1107,7 @@ describe("recordDiagRows: the night and each source have a row cap", () => {
       const second = recordDiagRows("diag_device_events", rows(1), NIGHT, player);
       await vi.advanceTimersByTimeAsync(2_000);
       await second;
-      expect(calls).toHaveLength(4);
+      expect(calls).toHaveLength(DIAG_BUSY_RETRIES + 2);
       expect(inserted).toEqual([rows(1)]);
     });
 
@@ -1197,7 +1203,7 @@ describe("review round: write slots across all servers, what counts as trouble, 
       const done = insertDiagRows("diag_answer_events", [{ a: 1 }]);
       await vi.advanceTimersByTimeAsync(2_000);
       await done;
-      expect(calls).toBe(DIAG_QUOTA_BUSY_RETRIES + 1);
+      expect(calls).toBe(DIAG_BUSY_RETRIES + 1);
       expect(__diagWriteCountersForTests()).toMatchObject({ slots: 1, failed: 0, timedOut: 0, busy: 0 });
       expect(lines()).toEqual(["[diag] log write slots all taken: dropping log rows instead of waiting"]);
     });
@@ -1217,17 +1223,157 @@ describe("review round: write slots across all servers, what counts as trouble, 
       expect(__diagWriteCountersForTests()).toMatchObject({ paused: 0, slots: 0, inFlight: 0 });
     });
 
-    it("but writes that find every slot STILL taken after all their back-offs mean stalled writes are holding them: after a few, the copy pauses instead of making three quick calls per job", async () => {
-      const insert = vi.fn(async () => ({ data: -1, error: null }));
+    it("one job whose slots stay taken uses up its own retries and gives its rows up, with NO brake: the next job still has its retries", async () => {
+      let calls = 0;
+      adminMock.getSupabaseAdmin.mockReturnValue(
+        rpcFake(async (batch) => {
+          if ((batch[0] as { action?: string }).action !== "diag_drops") calls += 1; // (not the "gap" summary row)
+          return { data: -1, error: null };
+        }, takeAll),
+      );
+      scheduleDiagWrite(job(1, 1));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls).toBe(DIAG_BUSY_RETRIES + 1);
+      const before = calls;
+      scheduleDiagWrite(job(2, 2));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls - before).toBe(DIAG_BUSY_RETRIES + 1);
+      expect(__diagWriteCountersForTests()).toMatchObject({ slots: 2, paused: 0, failed: 0 });
+    });
+
+    it("a flood of 'busy' is NOT trouble (no pause) but is rationed: the copy's shared retry budget runs dry, then the calls stop", async () => {
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const insert = vi.fn(async (_batch: unknown[]) => ({ data: -1, error: null }));
       adminMock.getSupabaseAdmin.mockReturnValue(rpcFake(insert, takeAll));
+      const logCalls = () => insert.mock.calls.filter((c) => (c[0]![0] as { action?: string }).action !== "diag_drops").length; // (not the "gap" summary row)
       for (let phone = 0; phone < 40; phone++) scheduleDiagWrite(job(phone));
       await vi.advanceTimersByTimeAsync(10_000);
       const counters = __diagWriteCountersForTests();
-      expect(counters.slots).toBeGreaterThanOrEqual(DIAG_PAUSE_AFTER_TIMEOUTS);
-      expect(counters.slots).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT + 2);
-      expect(counters.paused).toBe(40 - counters.slots);
-      // 3 calls per job for the jobs that tried, nothing for the paused ones
-      expect(insert.mock.calls.length).toBe(counters.slots * (DIAG_QUOTA_BUSY_RETRIES + 1));
+      expect(counters.paused).toBe(0); // no pause: the database is not in trouble
+      expect(counters.slots).toBe(40); // every job's rows were given up, and counted as slots (not failures)
+      expect(counters).toMatchObject({ failed: 0, timedOut: 0, busy: 0 });
+      // One try per job that ran before the brake went on, plus at most the whole budget of retries
+      // (and a few "gap" summary rows). Without the budget this would be 40 x 6 = 240 calls.
+      expect(logCalls()).toBeLessThanOrEqual(DIAG_MAX_WRITES_IN_FLIGHT + DIAG_RETRY_BUDGET + 2);
+      expect(logCalls()).toBeGreaterThan(DIAG_RETRY_BUDGET);
+      expect(isLoggingPaused()).toBe(false);
+    });
+
+    describe("once the budget has run dry the copy is braked", () => {
+      /** Drains the budget with a few jobs that all hear "busy", and returns once the copy is braked. */
+      async function brakeTheCopy(insert: ReturnType<typeof vi.fn>) {
+        for (let phone = 0; phone < 20; phone++) scheduleDiagWrite(job(phone, 1));
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(insert.mock.calls.length).toBeGreaterThanOrEqual(DIAG_RETRY_BUDGET);
+      }
+
+      it("a braked job makes no call at all except one test every DIAG_BRAKE_PROBE_MS, and a test that finds a free slot stores its rows and ends the brake", async () => {
+        let free = false;
+        const stored: unknown[][] = [];
+        const insert = vi.fn(async (batch: unknown[]) => {
+          if (!free) return { data: -1, error: null };
+          stored.push(batch);
+          return answered(batch);
+        });
+        adminMock.getSupabaseAdmin.mockReturnValue(rpcFake(insert, takeAll));
+        await brakeTheCopy(insert);
+        let calls = insert.mock.calls.length;
+        // many jobs at the same instant: at most the one test goes out, the rest give up without a call
+        for (let phone = 100; phone < 130; phone++) scheduleDiagWrite(job(phone, 1));
+        await vi.advanceTimersByTimeAsync(50);
+        expect(insert.mock.calls.length - calls).toBeLessThanOrEqual(1);
+        calls = insert.mock.calls.length;
+        // slots still taken: tests go out about every 250 ms, never more
+        for (let i = 0; i < 4; i++) {
+          scheduleDiagWrite(job(200 + i, 1));
+          await vi.advanceTimersByTimeAsync(DIAG_BRAKE_PROBE_MS * 1.3);
+        }
+        expect(insert.mock.calls.length - calls).toBeLessThanOrEqual(4);
+        // a slot frees up: the next test stores its rows and the brake is over
+        free = true;
+        await vi.advanceTimersByTimeAsync(DIAG_BRAKE_PROBE_MS * 1.3);
+        scheduleDiagWrite(job(300, 3));
+        await vi.advanceTimersByTimeAsync(50);
+        expect(stored).toContainEqual(rows(3));
+        const after = stored.length;
+        for (let phone = 400; phone < 410; phone++) scheduleDiagWrite(job(phone, 1));
+        await vi.advanceTimersByTimeAsync(50);
+        expect(stored.length - after).toBe(10); // not rationed any more
+        expect(__diagWriteCountersForTests().paused).toBe(0);
+      });
+
+      it("the brake ends by itself after its time even if nothing succeeded in between", async () => {
+        const insert = vi.fn(async () => ({ data: -1, error: null }));
+        adminMock.getSupabaseAdmin.mockReturnValue(rpcFake(insert, takeAll));
+        await brakeTheCopy(insert);
+        await vi.advanceTimersByTimeAsync(DIAG_SLOT_BRAKE_MS + 100);
+        const before = insert.mock.calls.length;
+        scheduleDiagWrite(job(500, 1));
+        await vi.advanceTimersByTimeAsync(1_000);
+        // not braked: the job makes its first try again (it may retry while the refilled budget lasts)
+        expect(insert.mock.calls.length - before).toBeGreaterThan(1);
+      });
+
+      it("a host press is never braked and never draws on the budget: it always has its full retries", async () => {
+        let freeAfter = Infinity;
+        let calls = 0;
+        const stored: unknown[][] = [];
+        const insert = vi.fn(async (batch: unknown[]) => {
+          calls += 1;
+          if (calls < freeAfter) return { data: -1, error: null };
+          stored.push(batch);
+          return answered(batch);
+        });
+        adminMock.getSupabaseAdmin.mockReturnValue(rpcFake(insert, takeAll));
+        await brakeTheCopy(insert);
+        const before = calls;
+        freeAfter = before + 5; // a slot frees up on the press's 5th try
+        scheduleDiagWrite(() => recordDiagRows("diag_server_actions", [{ press: true }], NIGHT, { kind: "press" }));
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(stored).toEqual([[{ press: true }]]);
+        expect(calls - before).toBe(5);
+      });
+    });
+
+    it("the retry budget refills with time: a copy that was rationed asks again after a few seconds of quiet", async () => {
+      let calls = 0;
+      adminMock.getSupabaseAdmin.mockReturnValue(
+        rpcFake(async (batch) => {
+          if ((batch[0] as { action?: string }).action !== "diag_drops") calls += 1; // (not the "gap" summary row)
+          return { data: -1, error: null };
+        }, takeAll),
+      );
+      for (let phone = 0; phone < 60; phone++) scheduleDiagWrite(job(phone, 1));
+      await vi.advanceTimersByTimeAsync(2_000);
+      await vi.advanceTimersByTimeAsync(DIAG_SLOT_BRAKE_MS + (DIAG_RETRY_BUDGET / DIAG_RETRY_REFILL_PER_SEC) * 1_000);
+      const before = calls;
+      scheduleDiagWrite(job(600, 1));
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(calls - before).toBe(DIAG_BUSY_RETRIES + 1);
+    });
+
+    it("a healthy burst loses nothing and never pauses: 60 jobs at once against 3 slots that each stay taken for 5 ms", async () => {
+      let held = 0;
+      let storedRows = 0;
+      let busyAnswers = 0;
+      adminMock.getSupabaseAdmin.mockReturnValue(
+        rpcFake(async (batch) => {
+          if (held >= 3) {
+            busyAnswers += 1;
+            return { data: -1, error: null };
+          }
+          held += 1;
+          await new Promise((r) => setTimeout(r, 5));
+          held -= 1;
+          storedRows += batch.length;
+          return answered(batch);
+        }, takeAll),
+      );
+      for (let phone = 0; phone < 60; phone++) scheduleDiagWrite(job(phone, 1));
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(busyAnswers).toBeGreaterThan(0); // there really was contention
+      expect(storedRows).toBe(60);
+      expect(__diagWriteCountersForTests()).toMatchObject({ paused: 0, slots: 0, failed: 0, timedOut: 0, inFlight: 0 });
     });
 
     it("a 'busy' answer does not clear a streak of cancelled writes either", async () => {

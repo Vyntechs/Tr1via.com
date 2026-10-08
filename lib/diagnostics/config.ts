@@ -39,8 +39,9 @@ export const DIAG_MAX_EVENTS_PER_BATCH = 60;
 //     only DIAG_FLEET_WRITE_SLOTS write slots (try-locks, never waited for). The
 //     per-server limit below is per copy; ten copies are fifty, and PostgREST has
 //     about ten connections for everything. When every slot is taken the
-//     function answers "busy" at once and the write is dropped after a short
-//     back-off instead of queuing for a connection the game needs;
+//     function answers "busy" at once; the caller backs off a few times (never
+//     holding a connection) and then drops the write, instead of queuing for a
+//     connection the game needs. "Busy" is ordinary contention, never trouble;
 //   - at most DIAG_MAX_WRITES_IN_FLIGHT log jobs touch the database at once on
 //     one server (a small budget, so a burst of taps at timer-end cannot take
 //     the connections real answers need); the rest wait their turn in a short
@@ -125,13 +126,48 @@ export const DIAG_DEVICE_ROW_CAPS = { player: 2_500, tap: 1_500 } as const;
  */
 export const DIAG_QUOTA_LEASE_ROWS = { player: 100, tap: 100, tv: 25, host: 25, press: 25 } as const;
 /**
- * The row-cap check never waits for a lock: if another server is updating the
- * same night's counter at that instant, the database answers "busy" at once.
- * The caller backs off for a moment (with no database connection held) and asks
- * again, up to this many times, then drops the rows and counts them.
+ * "Busy" answers. The row-cap check never waits for a lock, and the insert never
+ * waits for a write slot: if another server holds the night's counter (or all
+ * DIAG_FLEET_WRITE_SLOTS slots) at that instant, the database says "busy" at
+ * once, having written nothing and holding no connection. That is ordinary
+ * contention (a healthy insert holds a slot for a few milliseconds), most of all
+ * at timer-end, when many server copies log in the same instant. So the caller
+ * backs off (holding no connection) and asks again, up to DIAG_BUSY_RETRIES more
+ * times: the wait starts at DIAG_BUSY_BACKOFF_MS, doubles each time up to
+ * DIAG_BUSY_BACKOFF_MAX_MS, and each wait is a random 50-100% of that so the
+ * copies do not collide again together. Then the rows are dropped and counted. A
+ * "busy" answer is never counted as trouble (it does not start a pause).
+ *
+ * A "busy" answer is cheap for the database but NOT free: every call, busy or
+ * not, is a request through the same gateway and the same few connections the
+ * game's own reads use. Measured: with five retries per job and no limit, a
+ * flood kept about 160 requests in flight from 40 copies (14 to 90 before) and a
+ * plain game read through the API went from about 3 ms to about 70 ms; see
+ * docs/diagnostics/night-timeline.md. So retries are rationed
+ * ACROSS all the jobs of one server copy: a shared budget of DIAG_RETRY_BUDGET
+ * retries that refills at DIAG_RETRY_REFILL_PER_SEC a second. A healthy burst
+ * (a timer-end) fits inside the budget; a sustained flood runs it dry, and then
+ * a job that hears "busy" gives its rows up at once instead of asking again.
+ * (Host presses, which are rare, do not draw on the budget.)
  */
-export const DIAG_QUOTA_BUSY_RETRIES = 2;
-export const DIAG_QUOTA_BUSY_BACKOFF_MS = 25;
+export const DIAG_BUSY_RETRIES = 5;
+export const DIAG_BUSY_BACKOFF_MS = 20;
+export const DIAG_BUSY_BACKOFF_MAX_MS = 160;
+export const DIAG_RETRY_BUDGET = 40;
+export const DIAG_RETRY_REFILL_PER_SEC = 5;
+/**
+ * If one insert heard "busy" with no retry left, the slots are saturated (a
+ * stall, or a real flood). For DIAG_SLOT_BRAKE_MS the server copy's inserts are
+ * rationed hard: at most ONE try every DIAG_BRAKE_PROBE_MS (a little random
+ * either way), no retries, and every other job gives its rows up at once, WITHOUT
+ * calling the database (counted as "slots"). A try that finds a free slot still
+ * stores its rows and ends the brake. So a saturated database is asked at most
+ * a few times a second by each copy, and the game's reads never queue behind
+ * logging. Host presses, which are rare, ignore the brake. This is a brake on
+ * calls, NOT the pause for trouble: it never counts as a failure.
+ */
+export const DIAG_SLOT_BRAKE_MS = 1_500;
+export const DIAG_BRAKE_PROBE_MS = 250;
 /** A source found to be full is not asked about again for this long. */
 export const DIAG_QUOTA_FULL_MEMORY_MS = 60_000;
 
@@ -153,6 +189,8 @@ export const DIAG_DEVICE_KINDS = [
   "tap", // an answer tap, as the phone saw it
   "tapx", // a tap the phone ignored (question already closed)
   "lt", // main-thread stalls in the last window
+  "tz", // the screen has painted the timer reading 0 (host laptop, TV)
+  "paint", // the screen has painted the answer reveal (host laptop, TV)
   "fps", // TV scene frame rate
 ] as const;
 export type DiagDeviceKind = (typeof DIAG_DEVICE_KINDS)[number];
@@ -167,8 +205,8 @@ export type DiagSurface = (typeof DIAG_SURFACES)[number];
  */
 export const DIAG_SURFACE_KINDS: Record<DiagSurface, readonly DiagDeviceKind[]> = {
   player: ["device", "net", "vis", "bcast", "snap", "res", "ribbon", "chan", "reach", "tap", "tapx", "lt"],
-  tv: ["device", "net", "vis", "bcast", "snap", "res", "ribbon", "chan", "reach", "lt", "fps"],
-  host: ["device", "net", "vis", "bcast", "snap", "res", "ribbon", "chan", "reach", "lt", "fps"],
+  tv: ["device", "net", "vis", "bcast", "snap", "res", "ribbon", "chan", "reach", "lt", "tz", "paint", "fps"],
+  host: ["device", "net", "vis", "bcast", "snap", "res", "ribbon", "chan", "reach", "lt", "tz", "paint", "fps"],
 };
 
 /**
@@ -185,6 +223,10 @@ export const DIAG_SURFACE_KINDS: Record<DiagSurface, readonly DiagDeviceKind[]> 
  *   rm   "reduce motion" is on (the October scene draws less, so frame
  *        rates are not comparable with a phone that has it off)
  *   theme the night's theme key (which scene was drawing)
+ *   rel  which deployment this page was built by (Vercel's deployment id, the
+ *        same value the server stamps on its own rows), so a device left open
+ *        across a deploy shows up by comparison
+ *   sha  the first 12 characters of the git commit of that build
  *   et   connection type as the browser rounds it: slow-2g, 2g, 3g, 4g
  *   ty   connection medium when the browser tells us: wifi, cellular, ...
  *   rtt  round-trip estimate in ms, rounded by the browser itself
@@ -194,7 +236,7 @@ export const DIAG_SURFACE_KINDS: Record<DiagSurface, readonly DiagDeviceKind[]> 
  * how good the connection is, which is the first thing to check when one
  * phone lags. They are rounded by the browser and cannot identify a phone.
  */
-export const DIAG_DEVICE_KEYS = ["br", "os", "dc", "sc", "ol", "rm", "theme", "et", "ty", "rtt", "dl"] as const;
+export const DIAG_DEVICE_KEYS = ["br", "os", "dc", "sc", "ol", "rm", "theme", "rel", "sha", "et", "ty", "rtt", "dl"] as const;
 
 /** Keys a `net` event (online / offline / connection changed) may carry. */
 export const DIAG_NET_KEYS = ["ev", "ol", "et", "ty", "rtt", "dl"] as const;

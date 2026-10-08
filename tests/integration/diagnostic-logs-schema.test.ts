@@ -152,9 +152,13 @@ describe("diagnostic logs schema", () => {
          ($1, 'player', 'sess-heather', $2, 'bcast', '2026-10-08T00:06:01Z', '2026-10-08T00:06:01.300Z', -1000, false, '{"ev": "reveal", "lag": 400}'),
          ($1, 'player', 'sess-heather', $2, 'ribbon', '2026-10-08T00:06:10Z', '2026-10-08T00:06:10.100Z', -1000, true,
             '{"from": "online", "to": "unreachable", "chan": "CLOSED", "reach": "unreachable", "ol": true}'),
-         ($1, 'tv', 'sess-tv-0001', null, 'fps', '2026-10-08T00:06:12Z', '2026-10-08T00:06:12.100Z', 0, true, '{"scene": "october", "fps": 22}')`,
-      [nightId, deviceId],
+         ($1, 'tv', 'sess-tv-0001', null, 'fps', '2026-10-08T00:06:12Z', '2026-10-08T00:06:12.100Z', 0, true, '{"scene": "october", "fps": 22}'),
+         ($1, 'host', 'sess-host-001', null, 'device', '2026-10-08T00:05:00Z', '2026-10-08T00:05:00.100Z', 0, true, '{"sc": "l", "rel": "dpl_OLDER", "sha": "aaaaaaaaaaaa"}'),
+         ($1, 'host', 'sess-host-001', null, 'tz', '2026-10-08T00:06:25.000Z', '2026-10-08T00:06:25.050Z', 0, true, jsonb_build_object('q', $3::text)),
+         ($1, 'host', 'sess-host-001', null, 'paint', '2026-10-08T00:06:27.000Z', '2026-10-08T00:06:27.040Z', 0, true, jsonb_build_object('q', $3::text))`,
+      [nightId, deviceId, questionId],
     );
+    await db.query("update diag_answer_events set deployment = 'dpl_CURRENT' where night_id = $1", [nightId]);
     await db.exec("reset role");
   });
 
@@ -385,7 +389,7 @@ describe("diagnostic logs schema", () => {
     await db.exec("reset role");
     const sources = rows.rows.map((r) => r.source);
     expect(new Set(sources)).toEqual(
-      new Set(["answer", "action", "device:player", "device:tv", "db_reveal", "db_answer"]),
+      new Set(["answer", "action", "device:player", "device:tv", "device:host", "db_reveal", "db_answer"]),
     );
     const ats = rows.rows.map((r) => r.at.getTime());
     expect(ats).toEqual([...ats].sort((a, b) => a - b));
@@ -960,12 +964,14 @@ describe("diagnostic logs schema", () => {
     const markdown = readFileSync(DOCS, "utf8");
     const queries = [...markdown.matchAll(/```sql\n(-- Q\d:[\s\S]*?)```/g)].map((m) => m[1]!);
 
-    test("there are exactly five, Q1 to Q5", () => {
-      expect(queries.map((q) => q.split(":")[0])).toEqual(["-- Q1", "-- Q2", "-- Q3", "-- Q4", "-- Q5"]);
+    const byLabel = (n: number) => queries.find((q) => q.startsWith(`-- Q${n}:`))!;
+
+    test("there are exactly seven, Q1 to Q7", () => {
+      expect(queries.map((q) => q.split(":")[0]).sort()).toEqual(["-- Q1", "-- Q2", "-- Q3", "-- Q4", "-- Q5", "-- Q6", "-- Q7"]);
     });
 
-    test.each([1, 2, 3, 4, 5])("Q%i runs and answers from the seeded night", async (n) => {
-      const sql = queries[n - 1]!
+    test.each([1, 2, 3, 4, 5, 6, 7])("Q%i runs and answers from the seeded night", async (n) => {
+      const sql = byLabel(n)
         .replaceAll(":night_id", nightId)
         .replaceAll(":question_id", questionId);
       await db.exec("set role service_role");
@@ -997,6 +1003,16 @@ describe("diagnostic logs schema", () => {
       if (n === 5) {
         expect(rows.map((r) => r.outcome)).toEqual(["saved", "late"]);
         expect(Number(rows[1]!.phone_held_tap_ms)).toBe(5800);
+      }
+      if (n === 6) {
+        // the one host page built by an older deployment than the one that served the taps
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({ surface: "host", page_built_by: "dpl_OLDER", page_commit: "aaaaaaaaaaaa" });
+      }
+      if (n === 7) {
+        // opened 00:06:00, so the 25 s mark is 00:06:25: zero was drawn 50 ms after it, the reveal 2.04 s after it
+        expect(rows.map((r) => r.kind)).toEqual(["tz", "paint"]);
+        expect(rows.map((r) => Number(r.ms_after_the_25s_mark))).toEqual([50, 2040]);
       }
     });
   });

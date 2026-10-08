@@ -649,17 +649,182 @@ describe("POST /api/diag/report", () => {
       expect(signIn.getUser).toHaveBeenCalledTimes(3);
     });
 
-    it("a failed sign-in check is never remembered", async () => {
+    it("a session the sign-in service turned down is remembered briefly: the same cookie costs nothing the second time", async () => {
+      vi.useFakeTimers();
       const { POST } = await loadRoute();
       signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 401, name: "AuthApiError" } });
       await POST(report(hostBatch(), HOST_COOKIE));
       await flushScheduled();
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
       writeMock.scheduleDiagWrite.mockClear();
+
+      // Sent again within the memory: no log turn, no sign-in call, same quick reply, counted as ignored.
+      writeMock.noteIgnored.mockClear();
+      for (let i = 0; i < 20; i++) {
+        vi.advanceTimersByTime(1_000);
+        expect((await POST(report(hostBatch({ sid: `host-laptop-again-${i}` }), HOST_COOKIE))).status).toBe(204);
+      }
+      expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
+      expect(writeMock.noteIgnored).toHaveBeenCalledTimes(20);
+
+      // The memory is short: after 30 s the same cookie is asked about again (and can now pass).
+      vi.advanceTimersByTime(31_000);
+      signIn.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
+      await POST(report(hostBatch({ sid: "host-laptop-later" }), HOST_COOKIE));
+      await flushScheduled();
+      expect(signIn.getUser).toHaveBeenCalledTimes(2);
+      expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(1);
+    });
+
+    it("'could not check' (the sign-in service is down) is remembered only for a few seconds, never as a failure", async () => {
+      vi.useFakeTimers();
+      const { POST } = await loadRoute();
+      signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 503, name: "AuthApiError" } });
+      await POST(report(hostBatch(), HOST_COOKIE));
+      await (writeMock.scheduleDiagWrite.mock.calls[0]![0] as () => Promise<void>)().catch(() => {});
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
+      writeMock.scheduleDiagWrite.mockClear();
+
+      // Inside the few seconds: no log turn, no sign-in call, the same quick reply.
+      vi.advanceTimersByTime(2_000);
+      expect((await POST(report(hostBatch({ sid: "host-laptop-soon" }), HOST_COOKIE))).status).toBe(204);
+      expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
+
+      // Then the service is back, and the same host is asked about again and stored.
+      vi.advanceTimersByTime(4_000);
       signIn.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
       await POST(report(hostBatch({ sid: "host-laptop-2" }), HOST_COOKIE));
       await flushScheduled();
       expect(signIn.getUser).toHaveBeenCalledTimes(2);
       expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(1);
+    });
+
+    it("one forged cookie sent again and again while the sign-in service cannot answer stays inside the cap (120 reports)", async () => {
+      vi.useFakeTimers();
+      const { POST } = await loadRoute();
+      signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 503, name: "AuthApiError" } });
+      const forger = { "x-forwarded-for": "203.0.113.77" };
+      const statuses = new Map<number, number>();
+      for (let i = 0; i < 120; i++) {
+        const res = await POST(report(hostBatch({ sid: `forged-same-${i}-abcdef` }), { ...hostCookie("one-forged-token"), ...forger }));
+        statuses.set(res.status, (statuses.get(res.status) ?? 0) + 1);
+      }
+      // Jobs run five at a time, as on the server.
+      const jobs = writeMock.scheduleDiagWrite.mock.calls.map((c) => c[0] as () => Promise<void>);
+      for (let i = 0; i < jobs.length; i += 5) await Promise.allSettled(jobs.slice(i, i + 5).map((job) => job()));
+      expect(signIn.getUser.mock.calls.length).toBeLessThanOrEqual(6);
+      expect(jobs.length).toBeLessThanOrEqual(12);
+      expect(statuses.get(429)).toBeGreaterThanOrEqual(100);
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+
+      // Over a long flood the cookie costs one sign-in call per 5 seconds, not one per job.
+      writeMock.scheduleDiagWrite.mockClear();
+      signIn.getUser.mockClear();
+      for (let second = 0; second < 60; second++) {
+        vi.advanceTimersByTime(1_000);
+        for (let i = 0; i < 5; i++) await POST(report(hostBatch({ sid: `forged-long-${second}-${i}-abcd` }), { ...hostCookie("one-forged-token"), ...forger }));
+        const more = writeMock.scheduleDiagWrite.mock.calls.splice(0).map((c) => c[0] as () => Promise<void>);
+        await Promise.allSettled(more.map((job) => job()));
+      }
+      expect(signIn.getUser.mock.calls.length).toBeLessThanOrEqual(13);
+    });
+
+    it("reports from one session that arrive together share ONE sign-in call", async () => {
+      const { POST } = await loadRoute();
+      let release: (v: unknown) => void = () => {};
+      signIn.getUser.mockImplementation(() => new Promise((resolve) => (release = resolve)));
+      for (let i = 0; i < 4; i++) await POST(report(hostBatch({ sid: `host-laptop-together-${i}` }), HOST_COOKIE));
+      const jobs = writeMock.scheduleDiagWrite.mock.calls.map((c) => (c[0] as () => Promise<void>)());
+      await Promise.resolve();
+      await new Promise((r) => setTimeout(r, 0));
+      release({ data: { user: { id: USER_ID } }, error: null });
+      await Promise.all(jobs);
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
+      expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(4);
+    });
+
+    it("a flood of forged cookies from one address (a different token each time) cannot crowd out a real host or phone", async () => {
+      vi.useFakeTimers();
+      const { POST } = await loadRoute();
+      // The sign-in service refuses every forged token (and is slow about it in real life).
+      signIn.getUser.mockImplementation(async (token: string) =>
+        token === ACCESS_TOKEN
+          ? { data: { user: { id: USER_ID } }, error: null }
+          : { data: { user: null }, error: { status: 401, name: "AuthApiError" } },
+      );
+      const forger = { "x-forwarded-for": "203.0.113.66" };
+      const statuses = new Map<number, number>();
+      for (let i = 0; i < 300; i++) {
+        const res = await POST(report(hostBatch({ sid: `forged-page-${i}-abcdef` }), { ...hostCookie(`forged-token-${i}`), ...forger }));
+        statuses.set(res.status, (statuses.get(res.status) ?? 0) + 1);
+      }
+      // Only the first handful reached the sign-in service; the rest got no log turn and no sign-in call.
+      expect(writeMock.scheduleDiagWrite.mock.calls.length).toBeLessThanOrEqual(6);
+      await flushScheduled();
+      expect(signIn.getUser.mock.calls.length).toBeLessThanOrEqual(6);
+      expect(statuses.get(429)).toBeGreaterThanOrEqual(290);
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+
+      // The real host, from the same venue address, is turned away for now (429: the screen tries again later)...
+      writeMock.scheduleDiagWrite.mockClear();
+      const during = await POST(report(hostBatch({ sid: "real-host-laptop" }), { ...HOST_COOKIE, ...forger }));
+      expect(during.status).toBe(429);
+      // ...but the allowance comes back: one new check every 10 s.
+      vi.advanceTimersByTime(10_000);
+      const later = await POST(report(hostBatch({ sid: "real-host-laptop" }), { ...HOST_COOKIE, ...forger }));
+      expect(later.status).toBe(204);
+      await flushScheduled();
+      expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(1);
+
+      // Another address is not affected at all, and phones never use host allowance.
+      writeMock.scheduleDiagWrite.mockClear();
+      const other = await POST(report(hostBatch({ sid: "other-venue-host" }), { ...hostCookie("other-venue-token"), "x-forwarded-for": "198.51.100.12" }));
+      expect(other.status).toBe(204);
+      expect(writeMock.scheduleDiagWrite).toHaveBeenCalledTimes(1);
+      authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+      expect((await POST(report(batch({ sid: "a-real-phone-abcdef" }), forger))).status).toBe(204);
+    });
+
+    it("a session that is already known is never held up by a flood from its own address", async () => {
+      vi.useFakeTimers();
+      const { POST } = await loadRoute();
+      const venue = { "x-forwarded-for": "203.0.113.10" };
+      await POST(report(hostBatch(), { ...HOST_COOKIE, ...venue }));
+      await flushScheduled();
+      writeMock.scheduleDiagWrite.mockClear();
+      signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 401, name: "AuthApiError" } });
+      for (let i = 0; i < 50; i++) await POST(report(hostBatch({ sid: `forged-${i}-abcdefgh` }), { ...hostCookie(`junk-${i}`), ...venue }));
+      writeMock.scheduleDiagWrite.mockClear();
+      expect((await POST(report(hostBatch({ sid: "host-laptop-next" }), { ...HOST_COOKIE, ...venue }))).status).toBe(204);
+      expect(writeMock.scheduleDiagWrite).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the draw receipts (timer zero, reveal) and the build labels from a verified host screen, and drops them from a phone", async () => {
+      const q = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+      const now = Date.now();
+      const ev = [
+        { t: now - 3000, k: "device", d: { sc: "l", rel: "dpl_8fJd2kQ1xYz", sha: "c696ef223708" }, f: 1 },
+        { t: now - 2000, k: "tz", d: { q }, f: 1 },
+        { t: now - 1000, k: "paint", d: { q }, f: 1 },
+      ];
+      const { POST } = await loadRoute();
+      await POST(report(hostBatch({ ev }), HOST_COOKIE));
+      await flushScheduled();
+      const rows = stored()[0]!.rows;
+      expect(rows.map((r) => r.kind)).toEqual(["device", "tz", "paint"]);
+      expect(rows[0]!.data).toMatchObject({ rel: "dpl_8fJd2kQ1xYz", sha: "c696ef223708", br: "Safari 17" });
+      expect(rows[1]!.data).toEqual({ q });
+      expect(rows[2]!.data).toEqual({ q });
+
+      // a phone never draws that screen: the kinds are refused for it
+      writeMock.recordDiagRows.mockClear();
+      writeMock.scheduleDiagWrite.mockClear();
+      authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+      await POST(report(batch({ ev })));
+      await flushScheduled();
+      expect(stored()[0]!.rows.map((r) => r.kind)).toEqual(["device"]);
     });
 
     it("needs a night id; a room code names nothing for a host", async () => {
