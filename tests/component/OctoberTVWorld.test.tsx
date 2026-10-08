@@ -317,4 +317,89 @@ describe("October world on the venue TV", () => {
     await waitFor(() => expect(world).toHaveAttribute("data-world-moment", "reveal"));
     expect(world).toHaveAttribute("data-world-horseman", "ride");
   });
+  // ── headstones (Heather's request, Oct 7): pure decoration in the backdrop ──
+  function renderStones(players: number, worldTier?: "full" | "still", themeKey: ThemeKey = "october", seated = players) {
+    const night = demoNight({ moment: "question", nowMs: Date.parse("2026-10-14T23:50:00Z"), secondsLeft: 14, locked: 3, players: seated });
+    const tv = (n: number) => (
+      <ThemeProvider themeKey={themeKey}>
+        <TVStateMachine
+          snapshot={{ ...night.snapshot, night: { ...night.snapshot.night, themeKey }, players: night.snapshot.players.slice(0, n), scores: night.snapshot.scores.slice(0, n) }}
+          lastBroadcastRevealedAt={night.revealedAt}
+          themeKey={themeKey}
+          worldTier={worldTier}
+        />
+      </ThemeProvider>
+    );
+    return { ...render(tv(players)), tv };
+  }
+  const standing = () =>
+    screen
+      .queryAllByTestId(/^october-stone-/)
+      .filter((el) => el.getAttribute("data-stone") === "on")
+      .map((el) => el.getAttribute("data-testid")!.replace("october-stone-", ""));
+
+  it("stands the headstones on the hill, by how many pumpkins are in the patch", async () => {
+    for (const [players, tier, ids] of [
+      [8, "three", ["left", "right", "extra"]],
+      [21, "pair", ["left", "right"]],
+      [29, "corners", ["corner-left", "corner-right"]],
+      [41, "corners", ["corner-left", "corner-right"]],
+    ] as const) {
+      const { unmount } = renderStones(players);
+      await waitFor(() => expect(screen.getByTestId("october-world")).toHaveAttribute("data-world-pumpkins", String(players)));
+      expect(screen.getByTestId("october-world")).toHaveAttribute("data-world-stones", tier);
+      expect(standing()).toEqual(ids);
+      unmount();
+    }
+  });
+
+  it("puts the stones in the backdrop: behind the screens, never in their way", () => {
+    renderStones(29);
+    const backdrop = screen.getByTestId("october-backdrop");
+    const world = screen.getByTestId("october-world");
+    for (const el of screen.getAllByTestId(/^october-stone-/)) {
+      expect(backdrop).toContainElement(el);
+      expect(el).toHaveAttribute("alt", "");
+    }
+    // The backdrop sits under the screens and takes no clicks.
+    expect(backdrop.style.zIndex).toBe("0");
+    expect(backdrop.style.pointerEvents).toBe("none");
+    expect(world.contains(screen.getByTestId("tv-question"))).toBe(true);
+  });
+
+  it("fades a stone change slowly, and instantly in the still tier", async () => {
+    const { unmount } = renderStones(8, "full");
+    expect(screen.getByTestId("october-stone-extra").style.transition).toMatch(/opacity 1\.4s/);
+    unmount();
+    renderStones(8, "still");
+    expect(screen.getByTestId("october-stone-extra").style.transition).toBe("none");
+  });
+
+  it("holds still while the count hovers near a line, and changes once across it", async () => {
+    const { rerender, tv } = renderStones(24, "full", "october", 30);
+    const world = () => screen.getByTestId("october-world");
+    const settle = async (n: number) => {
+      rerender(tv(n));
+      await waitFor(() => expect(world()).toHaveAttribute("data-world-pumpkins", String(n)));
+    };
+    await waitFor(() => expect(world()).toHaveAttribute("data-world-pumpkins", "24"));
+    expect(world()).toHaveAttribute("data-world-stones", "pair");
+    await settle(25);
+    expect(world()).toHaveAttribute("data-world-stones", "corners");
+    await settle(24); // one player drops: the stones do not flicker back
+    expect(world()).toHaveAttribute("data-world-stones", "corners");
+    await settle(23);
+    expect(world()).toHaveAttribute("data-world-stones", "corners");
+    await settle(22); // two below the line: the big stones return
+    expect(world()).toHaveAttribute("data-world-stones", "pair");
+    expect(standing()).toEqual(["left", "right"]);
+  });
+
+  it("is not drawn on any other theme", () => {
+    for (const theme of ["house", "may", "november"] as ThemeKey[]) {
+      const { unmount } = renderStones(8, "full", theme);
+      expect(screen.queryAllByTestId(/^october-stone-/)).toHaveLength(0);
+      unmount();
+    }
+  });
 });

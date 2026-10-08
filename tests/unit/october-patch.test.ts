@@ -4,13 +4,19 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  HEADSTONE_ART,
+  HEADSTONE_SPOTS,
   PATCH_BOX,
   RIDE_LEAD_SECONDS,
   RIDE_TAIL_SECONDS,
+  headstoneSpots,
+  nextHeadstoneTier,
   patchLayout,
   patchRows,
   patchScene,
   rawSecondsLeft,
+  type HeadstoneStyle,
+  type HeadstoneTier,
   type PatchAnswer,
   type PatchPlayer,
 } from "@/lib/experience/october/patch";
@@ -193,5 +199,195 @@ describe("patchLayout", () => {
 
   it("is empty for an empty room", () => {
     expect(patchLayout(0)).toEqual([]);
+  });
+});
+
+// ─── headstones ──────────────────────────────────────────────────────────
+
+const TIER_NAMES: HeadstoneTier[] = ["three", "pair", "corners", "none"];
+
+/** Fills a lobby up (or empties it) one player at a time and records each
+ *  time the tier changes. */
+function walk(counts: number[], start: HeadstoneTier | null = null) {
+  let tier = start;
+  const changes: Array<{ at: number; tier: HeadstoneTier }> = [];
+  for (const c of counts) {
+    const next = nextHeadstoneTier(tier, c);
+    if (next !== tier) changes.push({ at: c, tier: next });
+    tier = next;
+  }
+  return changes;
+}
+const range = (from: number, to: number) =>
+  Array.from({ length: Math.abs(to - from) + 1 }, (_, i) => (to >= from ? from + i : from - i));
+
+describe("headstones · which stones show", () => {
+  it("fresh look: three stones up to 16, a pair to 24, corners to 44, none past that", () => {
+    const at = (n: number) => nextHeadstoneTier(null, n);
+    expect([0, 8, 13, 16].map(at)).toEqual(["three", "three", "three", "three"]);
+    expect([17, 21, 24].map(at)).toEqual(["pair", "pair", "pair"]);
+    expect([25, 29, 41, 44].map(at)).toEqual(["corners", "corners", "corners", "corners"]);
+    expect([45, 80, 150].map(at)).toEqual(["none", "none", "none"]);
+  });
+
+  it("names the stones in each tier: slab left, mossy right, small cross beside the slab", () => {
+    expect(headstoneSpots("three").map((s) => [s.id, s.style])).toEqual([
+      ["left", "slab"],
+      ["right", "mossy"],
+      ["extra", "cross"],
+    ]);
+    expect(headstoneSpots("pair").map((s) => s.style)).toEqual(["slab", "mossy"]);
+    expect(headstoneSpots("corners").map((s) => [s.id, s.style, s.scale])).toEqual([
+      ["corner-left", "slab", 0.4],
+      ["corner-right", "cross", 0.4],
+    ]);
+    expect(headstoneSpots("none")).toEqual([]);
+  });
+
+  it("uses the Figma prototype's fixed spots", () => {
+    const spot = (id: string) => HEADSTONE_SPOTS.find((s) => s.id === id)!;
+    expect([spot("left").x, spot("left").top, spot("left").scale]).toEqual([36, 692, 1]);
+    expect([spot("right").x, spot("right").top, spot("right").scale]).toEqual([1416, 692, 1]);
+    expect([spot("extra").x, spot("extra").top, spot("extra").scale]).toEqual([175.2, 719.2, 0.8]);
+    // The corner stones differ from the prototype (0.4x, tucked in): see the note in patch.ts.
+    expect([spot("corner-left").x, spot("corner-left").top, spot("corner-left").scale]).toEqual([0, 686, 0.4]);
+    expect([spot("corner-right").x, spot("corner-right").top, spot("corner-right").scale]).toEqual([1536, 686, 0.4]);
+  });
+
+  it("is the same answer for the same input, and never reads a clock", () => {
+    for (const prev of [null, ...TIER_NAMES]) {
+      for (const n of [0, 16, 17, 24, 25, 44, 45]) {
+        expect(nextHeadstoneTier(prev, n)).toBe(nextHeadstoneTier(prev, n));
+      }
+    }
+  });
+
+  it("copes with a bad count (NaN, negative, huge, fractional)", () => {
+    expect(nextHeadstoneTier(null, Number.NaN)).toBe("three");
+    expect(nextHeadstoneTier(null, -5)).toBe("three");
+    expect(nextHeadstoneTier("pair", Number.POSITIVE_INFINITY)).toBe("three");
+    expect(nextHeadstoneTier(null, 1e9)).toBe("none");
+    expect(nextHeadstoneTier(null, 24.9)).toBe("pair");
+  });
+});
+
+describe("headstones · no jumping", () => {
+  it("a lobby filling from 0 to 30 changes the stones exactly twice (cross leaves at 17, pair shrinks at 25)", () => {
+    const changes = walk(range(0, 30), null).slice(1); // the first look is not a change
+    expect(changes).toEqual([
+      { at: 17, tier: "pair" },
+      { at: 25, tier: "corners" },
+    ]);
+  });
+
+  it("bouncing between 24 and 25 changes the stones once, not every time", () => {
+    const changes = walk([24, 25, 24, 25, 24, 25, 23, 25, 24], "pair");
+    expect(changes).toEqual([{ at: 25, tier: "corners" }]);
+  });
+
+  it("the big stones come back only at 22 or fewer", () => {
+    expect(nextHeadstoneTier("corners", 23)).toBe("corners");
+    expect(nextHeadstoneTier("corners", 22)).toBe("pair");
+  });
+
+  it("the cross comes back only at 14 or fewer", () => {
+    expect(nextHeadstoneTier("pair", 16)).toBe("pair");
+    expect(nextHeadstoneTier("pair", 15)).toBe("pair");
+    expect(nextHeadstoneTier("pair", 14)).toBe("three");
+    expect(nextHeadstoneTier("three", 16)).toBe("three");
+    expect(nextHeadstoneTier("three", 17)).toBe("pair");
+  });
+
+  it("the corner stones step aside at 45 and come back at 43 or fewer", () => {
+    expect(nextHeadstoneTier("corners", 44)).toBe("corners");
+    expect(nextHeadstoneTier("corners", 45)).toBe("none");
+    expect(nextHeadstoneTier("none", 44)).toBe("none");
+    expect(nextHeadstoneTier("none", 43)).toBe("corners");
+  });
+
+  it("a big jump settles in one step (a crowd leaves at once)", () => {
+    expect(nextHeadstoneTier("corners", 10)).toBe("three");
+    expect(nextHeadstoneTier("none", 10)).toBe("three");
+    expect(nextHeadstoneTier("three", 30)).toBe("corners");
+    expect(nextHeadstoneTier("three", 100)).toBe("none");
+  });
+
+  it("emptying a full night walks the stones back through each tier once", () => {
+    const changes = walk(range(46, 0), "none");
+    expect(changes.map((c) => c.tier)).toEqual(["corners", "pair", "three"]);
+    expect(changes.map((c) => c.at)).toEqual([43, 22, 14]);
+  });
+});
+
+// ─── headstones never touch a pumpkin, a name tag or the stage edge ──────
+
+/** Where each style's visible stone sits inside its 160×200 art box
+ *  (generous: includes the grass tufts and the cracked corner). */
+const VISIBLE: Record<HeadstoneStyle, { x0: number; x1: number; y0: number; y1: number }> = {
+  slab: { x0: 20, x1: 128, y0: 36, y1: 195 },
+  cross: { x0: 44, x1: 116, y0: 28, y1: 195 },
+  mossy: { x0: 10, x1: 148, y0: 46, y1: 195 },
+};
+
+/** Gap in stage px between a stone and the nearest pumpkin body or name stake
+ *  (negative = overlap). A pumpkin's body spans 44% either side of centre and
+ *  starts 28% down its art box (measured from the art). */
+function nearestGap(tier: HeadstoneTier, count: number): number {
+  let worst = Number.POSITIVE_INFINITY;
+  for (const spot of headstoneSpots(tier)) {
+    const v = VISIBLE[spot.style];
+    const stone = {
+      x0: spot.x + v.x0 * spot.scale,
+      x1: spot.x + v.x1 * spot.scale,
+      y0: spot.top + v.y0 * spot.scale,
+      y1: spot.top + v.y1 * spot.scale,
+    };
+    for (const p of patchLayout(count)) {
+      const parts = [
+        { x0: p.cx - 0.44 * p.w, x1: p.cx + 0.44 * p.w, y0: p.top + 0.28 * p.h, y1: p.top + p.h },
+        { x0: p.cx - p.stakeMaxW / 2, x1: p.cx + p.stakeMaxW / 2, y0: p.stakeTop, y1: p.stakeTop + p.stakeH },
+      ];
+      for (const r of parts) {
+        const dx = Math.max(r.x0 - stone.x1, stone.x0 - r.x1);
+        const dy = Math.max(r.y0 - stone.y1, stone.y0 - r.y1);
+        worst = Math.min(worst, Math.max(dx, dy));
+      }
+    }
+  }
+  return worst;
+}
+
+describe("headstones · stay clear of the patch", () => {
+  it("every stone stands inside the 1600×900 stage", () => {
+    for (const spot of HEADSTONE_SPOTS) {
+      expect(spot.x).toBeGreaterThanOrEqual(0);
+      expect(spot.top).toBeGreaterThanOrEqual(0);
+      expect(spot.x + HEADSTONE_ART.w * spot.scale).toBeLessThanOrEqual(1600);
+      expect(spot.top + HEADSTONE_ART.h * spot.scale).toBeLessThanOrEqual(900);
+    }
+  });
+
+  it("for every size of room 0 to 150, whatever tier the rule can be holding there clears every pumpkin and name stake", () => {
+    // Any tier can be showing when the count changes, so try every
+    // previous tier at every count and keep what the rule lands on.
+    for (let count = 0; count <= 150; count++) {
+      const held = new Set(TIER_NAMES.map((prev) => nextHeadstoneTier(prev, count)));
+      held.add(nextHeadstoneTier(null, count));
+      for (const tier of held) {
+        expect(nearestGap(tier, count), `${tier} at ${count} players`).toBeGreaterThanOrEqual(8);
+      }
+    }
+  });
+
+  it("the two corner stones stay small and above the end pumpkins at the 41-player record", () => {
+    expect(nextHeadstoneTier(null, 41)).toBe("corners");
+    expect(nearestGap("corners", 41)).toBeGreaterThanOrEqual(8);
+  });
+
+  it("the full-size spots do not depend on the count (people joining never push them around)", () => {
+    const pair = headstoneSpots("pair");
+    // The same two spots at every count from 17 to 24, and in the "three" tier.
+    for (let n = 17; n <= 24; n++) expect(headstoneSpots(nextHeadstoneTier(null, n))).toEqual(pair);
+    expect(headstoneSpots("three").slice(0, 2)).toEqual(pair);
   });
 });
