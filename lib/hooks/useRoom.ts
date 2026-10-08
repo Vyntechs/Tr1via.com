@@ -608,6 +608,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
      */
     async function refreshPlayers(nightId: string): Promise<void> {
       if (cancelled) return;
+      noteHostUpdate();
       const { data, error } = await supa
         .from("players")
         .select("*")
@@ -956,7 +957,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         Awaited<ReturnType<typeof readPlayers>>,
         Awaited<ReturnType<typeof readLiveQuestion>>,
         Awaited<ReturnType<typeof readLastResolved>>,
-        Awaited<ReturnType<typeof readRevealsFor>>,
+        RevealsRead,
       ];
       function readNight() {
         return supa.from("nights").select("*").eq("id", nightId).single();
@@ -1011,8 +1012,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // join on games.night_id: the permission check on `reveals` runs per row
       // and, with the join, ran over every night's rows (~1s live). Same rows,
       // same refusals — the permission policy is unchanged.
-      function readRevealsFor(gameIds: string[]) {
-        if (gameIds.length === 0) return Promise.resolve({ data: [] as RevealRow[], error: null });
+      function readRevealsFor(gameIds: string[]): Promise<RevealsRead> {
+        if (gameIds.length === 0) return Promise.resolve({ data: [], error: null });
         return withTimeout(
           Promise.resolve(
             supa
@@ -1025,6 +1026,25 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           BOOTSTRAP_TIMEOUT_MS,
           "reveals-read",
         );
+      }
+      // The games read failed, so there are no ids to scope by: ask the way the
+      // code did before (a join on the night), so a failed games read leaves the
+      // newest reveal exactly as it did.
+      async function readRevealsJoined(): Promise<RevealsRead> {
+        const res = await withTimeout(
+          Promise.resolve(
+            supa
+              .from("reveals")
+              .select("*, games!inner(night_id)")
+              .eq("games.night_id", nightId)
+              .order("occurred_at", { ascending: false })
+              .limit(1),
+          ),
+          BOOTSTRAP_TIMEOUT_MS,
+          "reveals-read",
+        );
+        const rows = (res.data ?? []) as Array<RevealRow & { games?: unknown }>;
+        return { data: rows.map((row) => stripJoin(row, "games") as RevealRow), error: res.error };
       }
       const gameIdsOf = (res: { data: GameRow[] | null }) => (res.data ?? []).map((g) => g.id);
       // Starts the games read and the newest-reveal read (for catch-up too).
@@ -1041,11 +1061,18 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           return res;
         });
         const revealsRead = (async () => {
-          if (!known) return readRevealsFor(gameIdsOf(await gamesRead));
+          if (!known) {
+            const gamesRes = await gamesRead;
+            return gamesRes.error ? readRevealsJoined() : readRevealsFor(gameIdsOf(gamesRes));
+          }
           const guess = readRevealsFor(known);
           guess.catch(() => undefined);
-          const fresh = gameIdsOf(await gamesRead);
-          // A game was added or removed since the last read: ask again, rarely.
+          const gamesRes = await gamesRead;
+          // If the games read failed we can't tell whether a game changed: the
+          // known ids are the best we have. Otherwise, if a game was added or
+          // removed since the last read, ask again (rare).
+          if (gamesRes.error) return guess;
+          const fresh = gameIdsOf(gamesRes);
           return fresh.join() === known.join() ? guess : readRevealsFor(fresh);
         })();
         // Awaited by the caller after its other reads; don't let an early failure
@@ -1622,6 +1649,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       function mergePlayerChange(payload: ChangePayload<PlayerRow>) {
         if (cancelled) return;
         markFresh();
+        noteHostUpdate();
         setSnapshot((prev) => ({
           ...prev,
           players: applyRow(prev.players, payload, (a, b) =>
@@ -1660,12 +1688,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         if (cancelled) return;
         markFresh();
         const row = (payload.new ?? payload.old) as QuestionRow;
-        // Filter to questions whose category belongs to a game in this night.
-        if (!categories.some((c) => c.id === row.category_id)) {
-          // Could be a category just added; fall through anyway since
-          // currentQuestion lookup will safely no-op if mismatched.
-        }
-        noteHostUpdate();
+        // Only questions whose category belongs to a game in this night can make
+        // an in-flight catch-up read stale; a change elsewhere (another night's
+        // quiz being built) must not keep it looping. A category added since
+        // bootstrap is not in the list yet: the change still applies below
+        // (the currentQuestion lookup safely no-ops if mismatched).
+        if (categories.some((c) => c.id === row.category_id)) noteHostUpdate();
         setSnapshot((prev) => {
           let nextQ = prev.currentQuestion;
           let nextResolved = prev.lastResolvedQuestion;
@@ -1758,6 +1786,9 @@ function playerPayloadToRoomSnapshot(
     questionScrambles: fallback.questionScrambles,
   };
 }
+
+/** Result of the newest-reveal read (scoped, or joined when the games read failed). */
+type RevealsRead = { data: RevealRow[] | null; error: unknown };
 
 interface ChangePayload<T> {
   eventType: "INSERT" | "UPDATE" | "DELETE";

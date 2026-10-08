@@ -648,6 +648,179 @@ describe("host laptop: re-reads the room in place when it may have missed someth
     expect(h.executed.players).toBe(3);
   });
 
+  describe("a read that started before a roster or question change", () => {
+    const player2 = {
+      id: "player-2",
+      night_id: "night-a",
+      device_id: "device-2",
+      display_name: "Bo",
+      joined_at: "2026-10-07T00:11:30.000Z",
+      removed_at: null,
+    };
+    const ids = (result: { current: { players: Array<{ id: string }> } }) =>
+      result.current.players.map((player) => player.id);
+
+    /** A catch-up read is in flight: its player/question reads have already been
+     *  answered (from the rows as they are now) and it waits on the games read. */
+    async function holdCatchUp(result: { current: { requestLiveCatchUp?: () => Promise<void> } }) {
+      const hold = deferred();
+      h.gates.set("games", hold.promise);
+      act(() => {
+        void result.current.requestLiveCatchUp?.();
+      });
+      await flush();
+      h.gates.delete("games");
+      return hold;
+    }
+
+    /** Let the held read finish while its queued follow-up read is still waiting,
+     *  so a wrongly applied older result would be visible on screen. */
+    async function finishWhileFollowUpWaits(hold: ReturnType<typeof deferred>) {
+      const followUp = deferred();
+      h.gates.set("games", followUp.promise);
+      hold.release();
+      await flush();
+      return async () => {
+        followUp.release();
+        h.gates.delete("games");
+        await flush();
+      };
+    }
+
+    it("keeps a player who joined (row change) while the read was in flight", async () => {
+      const { result } = await mountHost();
+      const hold = await holdCatchUp(result);
+
+      h.db.players.push(player2);
+      act(() => {
+        h.changeHandlers.get("players")?.({ eventType: "INSERT", new: player2, old: {} });
+      });
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+
+      const done = await finishWhileFollowUpWaits(hold);
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+      await done();
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+    });
+
+    it("keeps a player who joined (roster message) while the read was in flight", async () => {
+      const { result } = await mountHost();
+      const hold = await holdCatchUp(result);
+
+      h.db.players.push(player2);
+      act(() => {
+        h.broadcastHandlers.get("roster-changed")?.({
+          payload: { serverNow: "2026-10-07T00:11:30.100Z", displayName: "Bo" },
+        });
+      });
+      await flush();
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+
+      const done = await finishWhileFollowUpWaits(hold);
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+      await done();
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+    });
+
+    it("does not bring back a player who was removed while the read was in flight", async () => {
+      h.db.players.push(player2);
+      const { result } = await mountHost();
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+      const hold = await holdCatchUp(result);
+
+      const removed = { ...player2, removed_at: "2026-10-07T00:12:00.000Z" };
+      h.db.players[1] = removed;
+      act(() => {
+        h.changeHandlers.get("players")?.({ eventType: "UPDATE", new: removed, old: {} });
+      });
+      expect(ids(result)).toEqual(["player-1"]);
+
+      const done = await finishWhileFollowUpWaits(hold);
+      expect(ids(result)).toEqual(["player-1"]);
+      await done();
+      expect(ids(result)).toEqual(["player-1"]);
+    });
+
+    it("drops the older result for a question change in this night's categories", async () => {
+      const { result } = await mountHost();
+      h.db.players.push(player2);
+      const hold = await holdCatchUp(result);
+      const before = h.executed.players;
+
+      act(() => {
+        h.changeHandlers.get("questions")?.({
+          eventType: "UPDATE",
+          new: { id: "q2", category_id: "cat-a", played_at: null, finished_at: null },
+          old: {},
+        });
+      });
+      hold.release();
+      await flush();
+
+      // Dropped, and the follow-up read (queued by that change) ran instead.
+      expect(h.executed.players).toBe(before + 1);
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+    });
+
+    it("is not held up by question changes from other nights", async () => {
+      const { result } = await mountHost();
+      h.db.players.push(player2);
+      const hold = await holdCatchUp(result);
+      const before = h.executed.players;
+
+      for (let count = 0; count < 5; count += 1) {
+        act(() => {
+          h.changeHandlers.get("questions")?.({
+            eventType: "UPDATE",
+            new: { id: `other-${count}`, category_id: "cat-other", played_at: null, finished_at: null },
+            old: {},
+          });
+        });
+      }
+      hold.release();
+      await flush();
+
+      // The read applied as normal and nothing re-ran.
+      expect(h.executed.players).toBe(before);
+      expect(ids(result)).toEqual(["player-1", "player-2"]);
+    });
+  });
+
+  describe("when the games read fails", () => {
+    it("on first load still finds the newest reveal, the way the old joined read did", async () => {
+      h.failing.add("games");
+      const { result } = await mountHost();
+
+      expect(result.current.games).toEqual([]);
+      expect(result.current.currentReveal?.id).toBe("r1");
+      const joined = h.calls.filter((call) =>
+        call.table === "reveals" && call.ops.some(([name, column]) => name === "eq" && column === "games.night_id"));
+      expect(joined).toHaveLength(1);
+      expect(joined[0].ops).toContainEqual(["select", "*, games!inner(night_id)"]);
+    });
+
+    it("on a later read keeps using the game ids it already knows, with no extra read", async () => {
+      const { result } = await mountHost();
+      h.db.reveals.push({
+        id: "r2",
+        game_id: "game-a",
+        question_id: "q1",
+        event: "reveal",
+        occurred_at: "2026-10-07T00:11:00.000000+00:00",
+        metadata: null,
+      });
+      h.failing.add("games");
+      const before = h.executed.reveals;
+
+      await act(async () => {
+        await result.current.requestLiveCatchUp?.();
+      });
+
+      expect(h.executed.reveals).toBe(before + 1);
+      expect(result.current.currentReveal?.id).toBe("r2");
+    });
+  });
+
   it("keeps broadcast tags and the same row objects when nothing changed", async () => {
     h.db.questions[0].played_at = "2026-10-07T00:11:00.000Z";
     const { result } = await mountHost();
