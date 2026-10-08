@@ -13,7 +13,9 @@
 //                             A job keeps its turn until every database call
 //                             it made has RETURNED (see "turns" below), so the
 //                             limit is on what the database is running, not on
-//                             what the app is still waiting for.
+//                             what the app is still waiting for. That limit is
+//                             per server copy; the DATABASE adds one across all
+//                             copies (3 write slots in diag_insert_rows).
 //   recordDiagRows(...)       the way every normal row is stored. It first
 //                             asks the database for room under the night's
 //                             row caps (see "row caps" below), then inserts
@@ -130,11 +132,12 @@ export function __setDiagSchedulerForTests(next: Scheduler | null): void {
 //   queueFull       too many jobs were already waiting for a turn
 //   waitedTooLong   a job waited DIAG_QUEUE_WAIT_MS for a turn and was dropped
 //   busy            the row-cap counter was held by another server (even after retries)
-//   timedOut        the database cancelled the write (statement timeout) or it hit the ceiling
-//   paused          logging was paused because the database kept cancelling log writes
+//   slots           all of the database's fleet-wide log write slots were taken (see diag_insert_rows)
+//   timedOut        the database cancelled the write (statement or lock timeout) or it hit the ceiling
+//   paused          logging was paused because the database was in trouble with log writes
 //   failed          the database answered with some other error
 //   capped          rows past a row cap
-const pending = { queueFull: 0, waitedTooLong: 0, busy: 0, timedOut: 0, paused: 0, failed: 0, capped: 0 };
+const pending = { queueFull: 0, waitedTooLong: 0, busy: 0, slots: 0, timedOut: 0, paused: 0, failed: 0, capped: 0 };
 const LOG_EVERY_MS = 60_000;
 const COUNTER_FLUSH_EVERY_MS = 10_000;
 const lastLine = new Map<string, { at: number; skipped: number }>();
@@ -176,6 +179,7 @@ export function __resetDiagWriteForTests(options: { now?: () => number } = {}): 
   pending.queueFull = 0;
   pending.waitedTooLong = 0;
   pending.busy = 0;
+  pending.slots = 0;
   pending.timedOut = 0;
   pending.paused = 0;
   pending.failed = 0;
@@ -198,6 +202,11 @@ export function __resetDiagWriteForTests(options: { now?: () => number } = {}): 
   clock = options.now ?? (() => Date.now());
 }
 
+/** Test hook: put the owed counts at chosen values (to see the summary row with very large counts). */
+export function __setDiagCountersForTests(counts: Partial<typeof pending>): void {
+  Object.assign(pending, counts);
+}
+
 /** Test hook: how many writes were dropped / failed / capped and not yet recorded. */
 export function __diagWriteCountersForTests(): {
   /** Jobs that never got a turn (queue full + waited too long). */
@@ -205,6 +214,7 @@ export function __diagWriteCountersForTests(): {
   queueFull: number;
   waitedTooLong: number;
   busy: number;
+  slots: number;
   timedOut: number;
   paused: number;
   failed: number;
@@ -220,6 +230,7 @@ export function __diagWriteCountersForTests(): {
     queueFull: pending.queueFull,
     waitedTooLong: pending.waitedTooLong,
     busy: pending.busy,
+    slots: pending.slots,
     timedOut: pending.timedOut,
     paused: pending.paused,
     failed: pending.failed,
@@ -266,38 +277,76 @@ let running = 0;
 let outstanding = 0;
 const waiters: Array<{ grant: (got: boolean) => void; timer: ReturnType<typeof setTimeout> }> = [];
 
-// ─── a pause when the database keeps cancelling log writes ────────────
-// Even with the limit of 5 at a time, a database that stalls every log write
-// would keep 5 connections busy for as long as logs keep coming, and PostgREST has
-// only about 10 for everything: the game's own calls (the question-close calls
-// at timer end above all) would have to share what is left. So after
-// DIAG_PAUSE_AFTER_TIMEOUTS log writes in a row were cancelled as too slow, new
-// log jobs are dropped (counted as "paused") for DIAG_PAUSE_MS. After that ONE job
-// is let through to see whether the database is back; a good answer ends the
-// pause, another cancel starts a new one. Losing log rows while the database is
-// stalled is the intended trade; slowing a tap or a press is not.
+// ─── a pause when the database is in trouble with log writes ──────────
+// Even with the limits of 5 at a time per server and 3 at a time across all
+// servers (diag_insert_rows), a database that stalls every log write would keep
+// connections busy for as long as logs keep coming, and PostgREST has only about
+// 10 for everything: the game's own calls (the question-close calls at timer end
+// above all) would have to share what is left. So after DIAG_PAUSE_AFTER_TIMEOUTS
+// log calls in a row came back in trouble, new log jobs are dropped (counted as
+// "paused") for DIAG_PAUSE_MS. After that ONE job is let through to see whether
+// the database is back; a good answer ends the pause, another failure starts a
+// new one. Losing log rows while the database is in trouble is the intended
+// trade; slowing a tap or a press is not.
+//
+// What counts as "in trouble" (verdictOf): the database cancelling a write
+// (57014) or giving up on a lock (55P03), no answer at the ceiling, and every
+// failure that is NOT the database refusing one particular row: a full
+// connection pool (PGRST003), a gateway error, "fetch failed", a missing table or
+// function, a refused connection. What does not: a row the table refused (data
+// and constraint errors, class 22 and 23), which says nothing about the
+// database; a call the job never had time to send; and a single "busy" answer
+// (the night's counter or the write slots were taken), which is ordinary
+// contention. (A write that still finds every slot taken after all its
+// back-offs does count: the slots are then held by stalled writes.)
+// Only a stored INSERT resets the streak of failures: a fast row-cap answer
+// ("yes, room for 100 more") must not hide that every insert after it was
+// cancelled. A good row-cap answer to the one job testing the database after a pause
+// does end that pause (the database answered), without forgetting the streak.
 let slowStreak = 0;
 let pausedUntil = 0;
 let probing = false;
 
+type Verdict = "answered" | "trouble" | "not-sent";
+
+/** How a failed database call counts for the pause. */
+function verdictOf(error: unknown): Verdict {
+  if (error instanceof DiagTimeout) return error.sent ? "trouble" : "not-sent";
+  const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+  // The table refused one particular row: the database is fine, the next batch may be too.
+  if (typeof code === "string" && /^(22|23)[0-9A-Z]{3}$/.test(code)) return "answered";
+  return "trouble";
+}
+
 /**
- * What a database call for logging came to. "answered" is any answer at all
- * (even an error such as a missing table: the database is responding, so the
- * pause ends); "slow" is a call that was cancelled for being slow; "not-sent" is
- * a call the job never had time to send, which says nothing about the database.
+ * What a database call for logging came to. `call` says which kind: "insert"
+ * (a stored write), "check" (the row-cap question) or "read" (an id lookup).
  */
-function noteWriteOutcome(outcome: "answered" | "slow" | "not-sent"): void {
-  if (outcome === "answered") {
-    slowStreak = 0;
-    pausedUntil = 0;
-    probing = false;
-  } else if (outcome === "slow") {
+function noteWriteOutcome(call: "insert" | "check" | "read", verdict: Verdict): void {
+  if (verdict === "not-sent") return;
+  if (verdict === "trouble") {
     slowStreak += 1;
     if (slowStreak >= DIAG_PAUSE_AFTER_TIMEOUTS) {
       pausedUntil = clock() + DIAG_PAUSE_MS;
       probing = false;
     }
+    return;
   }
+  if (call === "insert") {
+    slowStreak = 0;
+    pausedUntil = 0;
+    probing = false;
+  } else if (call === "check" && probing) {
+    // Only the job testing the database after a pause may end it with a row-cap answer
+    // (a job that was already running when the pause began says nothing new).
+    pausedUntil = 0;
+    probing = false;
+  }
+}
+
+/** True while logging is paused (the database is in trouble with log writes). Cheap; no database call. */
+export function isLoggingPaused(): boolean {
+  return pausedUntil !== 0 && clock() < pausedUntil;
 }
 
 /** True if this job may use the database. Called once the job has its turn. */
@@ -424,28 +473,41 @@ export function scheduleDiagWrite(task: () => Promise<void>): void {
   }
 }
 
-/** Write the drop / failure counts once the database is taking writes again. Call it inside a turn. */
+/** The kinds of drop, in the order they are written down. */
+const COUNT_KEYS = ["queueFull", "waitedTooLong", "busy", "slots", "timedOut", "paused", "failed", "capped"] as const;
+
+/**
+ * Write the drop / failure counts once the database is taking writes again.
+ * Call it inside a turn.
+ *
+ * The numbers live in `steps` (always small enough); `reason` only NAMES the
+ * kinds that are not zero, so it always fits the column's 64 characters however
+ * large the counts have grown. If the database refuses the row itself (a data or
+ * constraint error), retrying would never work: the counts are discarded, with
+ * one console line, instead of being retried every ten seconds for ever.
+ */
 async function flushCounters(): Promise<void> {
   try {
     if (counterFlushRunning) return;
-    // While the database is cancelling log writes, do not add one more that would stall the same way:
+    // While the database is in trouble with log writes, do not add one more that would stall the same way:
     // the counts are written once a write has gone through again.
     if (pausedUntil !== 0 || slowStreak > 0) return;
-    const total = () =>
-      pending.queueFull +
-      pending.waitedTooLong +
-      pending.busy +
-      pending.timedOut +
-      pending.paused +
-      pending.failed +
-      pending.capped;
-    if (total() === 0) return;
+    if (COUNT_KEYS.every((key) => pending[key] === 0)) return;
     const now = clock();
     if (lastCounterFlushAt !== 0 && now - lastCounterFlushAt < COUNTER_FLUSH_EVERY_MS) return;
     counterFlushRunning = true;
     lastCounterFlushAt = now;
     const sent = { ...pending };
     const dropped = sent.queueFull + sent.waitedTooLong;
+    const names = [
+      dropped > 0 ? "dropped" : "",
+      sent.busy > 0 ? "busy" : "",
+      sent.slots > 0 ? "slots" : "",
+      sent.timedOut > 0 ? "timed_out" : "",
+      sent.paused > 0 ? "paused" : "",
+      sent.failed > 0 ? "failed" : "",
+      sent.capped > 0 ? "capped" : "",
+    ].filter(Boolean);
     try {
       const outcome = await insertCore("diag_server_actions", [
         {
@@ -454,12 +516,14 @@ async function flushCounters(): Promise<void> {
           actor: "system",
           http_status: 0,
           outcome: "gap",
-          reason: `dropped=${dropped} busy=${sent.busy} timed_out=${sent.timedOut} paused=${sent.paused} failed=${sent.failed} capped=${sent.capped}`,
+          // Names only (the numbers are in `steps`): this always fits 64 characters.
+          reason: `see steps: ${names.join(",")}`.slice(0, 64),
           steps: {
             dropped,
             queue_full: sent.queueFull,
             waited_too_long: sent.waitedTooLong,
             busy: sent.busy,
+            slots: sent.slots,
             timed_out: sent.timedOut,
             paused: sent.paused,
             failed: sent.failed,
@@ -469,10 +533,15 @@ async function flushCounters(): Promise<void> {
           deployment: process.env.VERCEL_DEPLOYMENT_ID?.slice(0, 64) ?? null,
         },
       ]);
+      // The database refused the row itself (data / constraint error): it never will accept it.
+      const refused = !outcome.ok && typeof outcome.code === "string" && /^(22|23)[0-9A-Z]{3}$/.test(outcome.code);
+      if (outcome.ok || refused) {
+        for (const key of COUNT_KEYS) pending[key] = Math.max(0, pending[key] - sent[key]);
+      }
+      if (refused) {
+        logOnce("summary-refused", `the drop summary row was refused by the database (code=${outcome.code}); its counts were discarded`);
+      }
       if (outcome.ok) {
-        for (const key of ["queueFull", "waitedTooLong", "busy", "timedOut", "paused", "failed", "capped"] as const) {
-          pending[key] = Math.max(0, pending[key] - sent[key]);
-        }
         // Say the TRUE reason for each kind of drop.
         if (dropped > 0) {
           logOnce(
@@ -483,11 +552,14 @@ async function flushCounters(): Promise<void> {
         if (sent.busy > 0) {
           logOnce("dropped-busy", `dropped ${sent.busy} log row batches (the row-cap counter was busy)`);
         }
+        if (sent.slots > 0) {
+          logOnce("dropped-slots", `dropped ${sent.slots} log row batches (all of the database's log write slots were taken)`);
+        }
         if (sent.timedOut > 0) {
           logOnce("dropped-timeout", `lost ${sent.timedOut} log writes (the database cancelled them or they ran out of time)`);
         }
         if (sent.paused > 0) {
-          logOnce("dropped-paused", `dropped ${sent.paused} log writes (logging was paused while the database kept cancelling log writes)`);
+          logOnce("dropped-paused", `dropped ${sent.paused} log writes (logging was paused while the database was in trouble with log writes)`);
         }
       }
     } finally {
@@ -524,46 +596,71 @@ function admin(): LooseAdmin {
 }
 
 /** What happened to one database call made for logging. */
-type CallOutcome = { ok: true } | { ok: false; timedOut: boolean };
+type CallOutcome =
+  | { ok: true }
+  | {
+      ok: false;
+      /** The database cancelled it (statement timeout, lock timeout) or the request ran out of time. */
+      timedOut: boolean;
+      /** Every fleet-wide write slot stayed taken, even after the back-offs: nothing was written. */
+      slotsFull?: boolean;
+      /** The database's error code, when it gave one. */
+      code?: string;
+    };
 
-/** The database cancelled the statement (error 57014), or the request ran out of time. */
+/** The database cancelled the statement (57014) or gave up on a lock (55P03), or the request ran out of time. */
 function isTimeout(error: unknown): boolean {
-  return error instanceof DiagTimeout || failureCode(error) === "57014";
-}
-
-/** How a failed call counts for the pause (see noteWriteOutcome). */
-function outcomeOf(error: unknown): "answered" | "slow" | "not-sent" {
-  if (error instanceof DiagTimeout && !error.sent) return "not-sent";
-  return isTimeout(error) ? "slow" : "answered";
+  if (error instanceof DiagTimeout) return true;
+  const code = failureCode(error);
+  return code === "57014" || code === "55P03";
 }
 
 /**
  * One insert, through diag_insert_rows. That function has its own statement
- * timeout, so a slow insert is cancelled BY THE DATABASE (error 57014) and
+ * timeout and lock timeout, so a stalled insert is cancelled BY THE DATABASE and
  * answers; we wait for that answer (see the notes at the top of this file), and
- * only cancel the request ourselves at DIAG_CALL_CEILING_MS.
+ * only cancel the request ourselves at DIAG_CALL_CEILING_MS. The function also
+ * hands out only a few write slots across ALL servers and answers -1 ("busy") at
+ * once when they are taken: we back off a few milliseconds and ask again, then
+ * give the rows up (counted), as for the night's counter.
  */
 async function insertCore(table: DiagTable, rows: Record<string, unknown>[]): Promise<CallOutcome> {
-  try {
-    const result = await trackedCall(
-      async (signal) => {
-        const call = admin().rpc("diag_insert_rows", { p_table: table, p_rows: rows });
-        return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
-      },
-      { ceilingMs: DIAG_CALL_CEILING_MS, holdAfterAbortMs: DIAG_ABORT_HOLD_MS },
-    );
-    // supabase-js hands failures back as `error` instead of throwing.
-    if (result && result.error) {
-      logOnce(`${table}:${failureCode(result.error)}`, `insert failed table=${table} code=${failureCode(result.error)}`);
-      noteWriteOutcome(outcomeOf(result.error));
-      return { ok: false, timedOut: isTimeout(result.error) };
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      const result = await trackedCall(
+        async (signal) => {
+          const call = admin().rpc("diag_insert_rows", { p_table: table, p_rows: rows });
+          return await (typeof call.abortSignal === "function" ? call.abortSignal(signal) : call);
+        },
+        { ceilingMs: DIAG_CALL_CEILING_MS, holdAfterAbortMs: DIAG_ABORT_HOLD_MS },
+      );
+      // supabase-js hands failures back as `error` instead of throwing.
+      if (result && result.error) {
+        const code = failureCode(result.error);
+        logOnce(`${table}:${code}`, `insert failed table=${table} code=${code}`);
+        noteWriteOutcome("insert", verdictOf(result.error));
+        return { ok: false, timedOut: isTimeout(result.error), code };
+      }
+      if (Number(result?.data) === -1) {
+        // One "busy" is ordinary contention (slots are held for milliseconds): neither a success nor trouble.
+        if (attempt >= DIAG_QUOTA_BUSY_RETRIES) {
+          // But a write that finds every slot still taken after all its back-offs means the
+          // slots are held by stalled writes: that counts toward the pause, so a copy whose own
+          // writes were not the stalled ones stops asking too, instead of making three quick calls per job.
+          noteWriteOutcome("insert", "trouble");
+          return { ok: false, timedOut: false, slotsFull: true };
+        }
+        await sleep(DIAG_QUOTA_BUSY_BACKOFF_MS * (1 + Math.random()));
+        continue;
+      }
+      noteWriteOutcome("insert", "answered");
+      return { ok: true };
+    } catch (error) {
+      const code = failureCode(error);
+      logOnce(`${table}:${code}`, `insert failed table=${table} code=${code}`);
+      noteWriteOutcome("insert", verdictOf(error));
+      return { ok: false, timedOut: isTimeout(error), code };
     }
-    noteWriteOutcome("answered");
-    return { ok: true };
-  } catch (error) {
-    logOnce(`${table}:${failureCode(error)}`, `insert failed table=${table} code=${failureCode(error)}`);
-    noteWriteOutcome(outcomeOf(error));
-    return { ok: false, timedOut: isTimeout(error) };
   }
 }
 
@@ -576,7 +673,10 @@ export async function insertDiagRows(
   try {
     const outcome = await insertCore(table, rows);
     if (!outcome.ok) {
-      if (outcome.timedOut) pending.timedOut += 1;
+      if (outcome.slotsFull) {
+        pending.slots += 1;
+        logOnce("slots", "log write slots all taken: dropping log rows instead of waiting");
+      } else if (outcome.timedOut) pending.timedOut += 1;
       else pending.failed += 1;
     }
   } catch {
@@ -676,15 +776,17 @@ async function askForBlock(
       );
       if (result && result.error) {
         logOnce(`quota:${failureCode(result.error)}`, `row-cap check failed code=${failureCode(result.error)}`);
-        noteWriteOutcome(outcomeOf(result.error));
+        noteWriteOutcome("check", verdictOf(result.error));
         return isTimeout(result.error) ? "timeout" : "failed";
       }
-      noteWriteOutcome("answered");
       granted = Number(result?.data);
       if (!Number.isFinite(granted) || granted < -1) return "failed";
+      // A row-cap answer ends a pause that is running, but never clears a streak of failed inserts;
+      // "busy" (-1) is ordinary contention and says nothing either way.
+      if (granted !== -1) noteWriteOutcome("check", "answered");
     } catch (error) {
       logOnce(`quota:${failureCode(error)}`, `row-cap check failed code=${failureCode(error)}`);
-      noteWriteOutcome(outcomeOf(error));
+      noteWriteOutcome("check", verdictOf(error));
       return isTimeout(error) ? "timeout" : "failed";
     }
     if (granted === -1) {
@@ -893,9 +995,11 @@ async function cached(
         holdAfterAbortMs: DIAG_ABORT_HOLD_MS,
         giveUpAfterMs: DIAG_WRITE_TIMEOUT_MS,
       });
-    } catch {
+    } catch (error) {
       // Too slow, or the database said no. That is NOT "no such row": say so
       // (and do not remember it), so the caller does not take a real player for a stranger.
+      // A read in trouble counts toward the pause too (see "a pause", above).
+      noteWriteOutcome("read", verdictOf(error));
       throw new DiagLookupSlow();
     }
     if (value !== null) {
@@ -909,6 +1013,19 @@ async function cached(
   })().finally(() => inFlight.delete(key));
   inFlight.set(key, run);
   return run;
+}
+
+/**
+ * What is already known about a room code WITHOUT asking the database: its night
+ * id, `null` (remembered as not a room), or `undefined` (not known yet).
+ */
+export function peekRoomNight(roomCode: string): string | null | undefined {
+  const key = `room-night:${roomCode}`;
+  const hit = cache.get(key);
+  if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value;
+  const missUntil = misses.get(key);
+  if (missUntil !== undefined && Date.now() < missUntil) return null;
+  return undefined;
 }
 
 /** question -> category -> game -> night, as ids. */

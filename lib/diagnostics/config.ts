@@ -32,8 +32,15 @@ export const DIAG_MAX_EVENTS_PER_BATCH = 60;
 //   - the DATABASE cancels a slow log write by itself: the log functions
 //     (diag_insert_rows, diag_take_rows) carry a statement timeout of
 //     DIAG_DB_STATEMENT_TIMEOUT_MS in the migration (a function-level setting, so
-//     it applies to those functions only and to no other query). The value
-//     here must equal the migration's; a test checks that they agree;
+//     it applies to those functions only and to no other query), and
+//     diag_insert_rows gives up on a table lock after DIAG_DB_LOCK_TIMEOUT_MS.
+//     The values here must equal the migration's; a test checks that they agree;
+//   - and the DATABASE limits log writes across ALL server copies: it hands out
+//     only DIAG_FLEET_WRITE_SLOTS write slots (try-locks, never waited for). The
+//     per-server limit below is per copy; ten copies are fifty, and PostgREST has
+//     about ten connections for everything. When every slot is taken the
+//     function answers "busy" at once and the write is dropped after a short
+//     back-off instead of queuing for a connection the game needs;
 //   - at most DIAG_MAX_WRITES_IN_FLIGHT log jobs touch the database at once on
 //     one server (a small budget, so a burst of taps at timer-end cannot take
 //     the connections real answers need); the rest wait their turn in a short
@@ -56,11 +63,13 @@ export const DIAG_MAX_EVENTS_PER_BATCH = 60;
 //     During a pause new log jobs are dropped and counted; after it one job
 //     tries again, and a good answer ends the pause.
 export const DIAG_WRITE_TIMEOUT_MS = 2_000;
-export const DIAG_DB_STATEMENT_TIMEOUT_MS = 1_500;
+export const DIAG_DB_STATEMENT_TIMEOUT_MS = 500;
+export const DIAG_DB_LOCK_TIMEOUT_MS = 100;
+export const DIAG_FLEET_WRITE_SLOTS = 3;
 export const DIAG_CALL_CEILING_MS = 12_000;
 export const DIAG_ABORT_HOLD_MS = DIAG_DB_STATEMENT_TIMEOUT_MS + 500;
 /** This many log writes in a row cancelled as too slow start a pause. */
-export const DIAG_PAUSE_AFTER_TIMEOUTS = 3;
+export const DIAG_PAUSE_AFTER_TIMEOUTS = 2;
 /** How long a pause lasts before one log job is let through to try again. */
 export const DIAG_PAUSE_MS = 10_000;
 export const DIAG_MAX_WRITES_IN_FLIGHT = 5;

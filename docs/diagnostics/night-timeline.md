@@ -125,6 +125,15 @@ or host: answer=3 report=12`).
 | Host laptop / phone report | a signed-in host who owns the night. This is checked after the 204 reply, so the host screen never waits on the sign-in service, and **strictly read-only**: the check reads the access token from the sign-in cookie as it is and asks the sign-in service who owns that exact token; it never renews a session and never writes a cookie (a renewal from here could use up the host's refresh token while the new one cannot reach her browser, and her browser's own renewal could then be refused, signing her out mid-show). A token that has already run out is dropped without any network call; the report is just counted. A session that passed in the last 5 minutes is remembered (by a hash of its cookies, in memory), so reports do not add a sign-in call each. |
 | TV report | the signed pass the server gave the TV page when it loaded. The pass names one night and lasts 8 hours; the night is read from the pass, never from the report. No pass, a forged or expired pass: nothing stored. The pass is signed with a key of its own (derived from `SESSION_SECRET` under a fixed label), so its signature is never valid as a device cookie, and a device-cookie signature is never valid as a pass. |
 
+The pass is made while the TV page renders, which is outside every log job, so it
+has limits of its own: a code that is not in the room-code format costs nothing;
+a code the log already knows (found for ten minutes, not found for 30 seconds)
+is answered from memory; only a never-seen code reaches the database, at most 10
+in a burst and about 10 a minute after that, at most 3 at once, and none while
+logging is paused. So 400 loads of made-up TV codes add about ten reads, not 400
+(a real venue loads its TV page a handful of times a night). A load the limits
+turn away simply gets no pass: that TV is not logged until it is reloaded.
+
 The TV page is public by design (anyone with the room code can open it), so the
 pass is not a login. It means a report cannot be invented for a night without
 first loading that night's TV page, passes die on their own, and every report
@@ -154,7 +163,8 @@ the database): 2,500 report rows and 1,500 tap / timer-call rows per phone per
 server per night. It is in memory on purpose: a database row per phone would be
 one extra database call per phone the first time each is seen (60 at once at
 the first timer-end), all queuing on the night's counter. The cost is that a
-verified phone that floods can get that much per server, not in total; the kind
+verified phone that floods can get that much per server copy, not in total (a
+dozen copies could fill the phones' 30,000-row share with one phone's reports); the kind
 and night caps still hold for everyone.
 
 Chatty device reports stop at 40,000 for the night; the server's own rows (taps,
@@ -189,49 +199,72 @@ where rows_refused > 0 or bucket = '_night' order by rows_taken desc limit 20;
 ### When logging itself has trouble
 
 Log writes never change a response, and they must never compete with real
-answers for the database. At most **5 log jobs per server** touch the database
-at once; the rest wait in a short queue (200 jobs). A job that waits more than 8
-seconds for its turn, or arrives to a full queue, is dropped and counted.
+answers for the database. Three limits stack, each one a different failure:
 
-**A slow log write is cancelled by the database itself.** Hanging up the HTTP
-request does not stop the statement behind it (PostgREST keeps running it after
-the app has gone, and runs a request that was still waiting for a connection
-later), so the app does not rely on that. Every log write goes through the
-database function `diag_insert_rows` (and the row-cap check is
-`diag_take_rows`), and both carry a statement timeout of 1.5 seconds as a setting
-on the function itself. PostgREST applies a function's own `statement_timeout`
-to the call of that function only, so no other query (nothing the game runs) gets
-a shorter limit, and nothing is set on a role or on the database. A write that
-runs past 1.5 seconds is cancelled and rolled back with error `57014`; the app
-sees that answer and counts a timed-out write. (This relies on PostgREST applying
-function-level `statement_timeout`, which it does by default; if a PostgREST
-ever stopped doing that, a stalled write would simply last as long as the
-stall, and the limit below would still hold.)
+1. **At most 5 log jobs per server copy** touch the database at once; the rest
+   wait in a short queue (200 jobs). A job that waits more than 8 seconds for its
+   turn, or arrives to a full queue, is dropped and counted.
+2. **At most 3 log writes at once across ALL server copies, enforced by the
+   database.** The per-copy limit alone is not enough: ten copies are fifty, and
+   PostgREST has only about ten connections for everything. So the function
+   `diag_insert_rows` first tries, without ever waiting, to take one of 3 "write
+   slots" (transaction-scoped advisory locks in a key class nothing else uses). If
+   all 3 are taken it answers `-1` ("busy") at once, having written nothing and
+   holding no connection; the app waits a few milliseconds and asks again (twice),
+   then drops the rows and counts them (`slots`). So when the log tables stall,
+   at most 3 statements can be waiting at the database, whatever the number of
+   copies, and everything else is turned away in about a millisecond instead of
+   queuing for a connection a tap or a question-close call needs. A healthy
+   insert holds a slot for a few milliseconds.
+3. **A slow write is cancelled by the database itself, quickly.** Hanging up the
+   HTTP request does not stop the statement behind it (PostgREST keeps running it
+   after the app has gone, and runs a request that was still waiting for a
+   connection later), so the app does not rely on that. `diag_insert_rows` and the
+   row-cap check `diag_take_rows` carry a **statement timeout of 0.5 seconds**,
+   and `diag_insert_rows` a **lock timeout of 0.1 seconds** (a healthy insert
+   takes a few milliseconds), as settings on the functions themselves.
+   PostgREST applies a function's own `statement_timeout` to the call of that
+   function only, so no other query (nothing the game runs) gets a shorter limit,
+   and nothing is set on a role or on the database. A write that runs past it is
+   cancelled and rolled back with error `57014` (or `55P03` for a table lock that
+   would not give way). (This relies on PostgREST applying function-level
+   `statement_timeout`, which it does by default and which was checked on a local
+   PostgREST only; if a PostgREST ever stopped doing that, a stalled write would
+   last as long as the stall, and limits 1 and 2 would still hold.)
 
 **The turn is not given back until the database is done.** A job keeps its turn
-until every database call it made has *returned*: a normal answer, the
-database's own "cancelled" error, or, only if nothing answers for 12 seconds,
-the app cancels the request and holds the turn 2 seconds longer. No call starts
-after the job's 5 second clock, and one job makes one call at a time (reading
-the drop counts back out to the database is a call too, and happens inside the
-turn). So the database never sees more than 5 log statements from one server,
-however slow it is, and the app never counts a statement as finished when it
-is still running. **Logging pauses itself when the database keeps cancelling log writes.** Even
-five stalled log statements at a time would keep half of PostgREST's connections
-busy for as long as taps keep coming, and those are the connections the
-question-close calls at timer end need. So after 3 log writes in a row are
-cancelled as too slow, this server drops new log jobs, without asking the
-database anything, for 10 seconds (counted as `paused`). After that ONE job is
-let through to see whether the database is back; a good answer ends the pause,
-another cancel starts a new one. A log row lost this way is the intended price;
-a slower tap or press is not. (An ordinary error answer, such as a missing
-table, is an answer and never starts a pause; neither does a job that simply ran
-out of time before it could send its write.)
+until every database call it made has *returned*: a normal answer, the database's
+own "cancelled" error, or, only if nothing answers for 12 seconds, the app
+cancels the request and holds the turn 1 second longer. No call starts after the
+job's 5 second clock, and one job makes one call at a time (reading the drop
+counts back out to the database is a call too, and happens inside the turn). So
+the app never counts a statement as finished when it is still running.
 
-The id lookups ("is this device a player of the night?") are
-reads of the game's own tables, which cannot be given a log-only time limit;
-the job that started one keeps its turn until it returns, even if the log gave
-up waiting for the answer after 2 seconds (and counted the caller as "slow").
+**Logging pauses itself when the database is in trouble with log writes.** Even 3
+stalled log statements at a time would keep connections busy for as long as taps
+keep coming, and those are the connections the question-close calls at timer end
+need. So after 2 log calls in a row come back in trouble, this server copy drops
+new log jobs, without asking the database anything, for 10 seconds (counted as
+`paused`). After that ONE job is let through to see whether the database is back;
+a good answer ends the pause, another failure starts a new one. A log row lost
+this way is the intended price; a slower tap or press is not.
+
+*What counts as "in trouble":* the database cancelling a write (`57014`) or giving
+up on a lock (`55P03`); no answer in 12 seconds; a full connection pool
+(`PGRST003`); a gateway error; "fetch failed"; a missing table or function; a
+refused connection; and an id lookup that takes more than 2 seconds. *What does
+not:* the table refusing one particular row (a data or constraint error); a job
+that ran out of its 5 seconds before it could send its write; and a "busy"
+answer (the night's counter or the write slots were taken), which is ordinary
+contention. Only a stored INSERT clears the streak of failures: a fast row-cap
+answer ("yes, room for 100 more") does not.
+
+The id lookups ("is this device a player of the night?") are reads of the game's
+own tables, which cannot be given a log-only time limit; the job that started one
+keeps its turn until it returns, even if the log gave up waiting for the answer
+after 2 seconds (and counted the caller as "slow"). The TV page's pass lookup is
+bounded separately (see "Who gets a row").
+
 If a write fails, times out or is dropped, the server prints one short line to
 its console, at most one per kind a minute:
 
@@ -241,6 +274,7 @@ its console, at most one per kind a minute:
 [diag] dropping log writes: too many waiting
 [diag] dropping log writes: waited too long for a turn
 [diag] row-cap check busy: dropping log rows instead of waiting
+[diag] log write slots all taken: dropping log rows instead of waiting
 [diag] pausing log writes: the database keeps cancelling them for being slow
 [diag] stored nothing for requests with no verified player or host (slow = could not be checked in time): answer=3 report=12 slow=2
 ```
@@ -251,18 +285,23 @@ could not be answered in time; those callers are NOT counted as strangers.
 
 (`code` is the database's error code, or `timeout`; never the message, which
 could contain row contents. `57014` is the database cancelling a write that ran
-past its 1.5 seconds; `timeout` is the app cancelling a request nothing answered
+past its 0.5 seconds; `timeout` is the app cancelling a request nothing answered
 for in 12 seconds.) The counts are saved as one row in `diag_server_actions`
-(`actor = 'system'`, `action = 'diag_drops'`,
-`reason = 'dropped=N busy=B timed_out=T paused=P failed=M capped=K'`) as soon as the database
-takes a write again, so a gap in a night's evidence says so, and says why:
+(`actor = 'system'`, `action = 'diag_drops'`) as soon as the database takes a
+write again, so a gap in a night's evidence says so, and says why. The numbers are
+in `steps`; `reason` only names the kinds that are not zero (for example
+`see steps: dropped,timed_out,paused`), so it always fits the column's 64
+characters however large the counts have grown. (If the database ever refused the
+row itself, the counts are discarded with one console line instead of being
+retried every ten seconds.)
 
-| Count | The true reason |
+| Count (in `steps`) | The true reason |
 | --- | --- |
 | `dropped` | jobs that never got a turn: `queue_full` (too many waiting) plus `waited_too_long` (8 seconds without a turn), both in `steps` |
 | `busy` | the row-cap counter of the night was held by another server at that instant, even after retries |
-| `timed_out` | the database cancelled the write (`57014`) or nothing answered in 12 seconds |
-| `paused` | dropped on purpose while logging was paused because the database kept cancelling log writes |
+| `slots` | all 3 of the database's log write slots stayed taken, even after retries |
+| `timed_out` | the database cancelled the write (`57014`, `55P03`) or nothing answered in 12 seconds |
+| `paused` | dropped on purpose while logging was paused because the database was in trouble with log writes |
 | `failed` | the database answered with some other error (a missing table, for example) |
 | `capped` | rows past a row cap |
 
@@ -271,11 +310,39 @@ example `[diag] dropped 3 log writes (jobs that never got a turn: 3 found the qu
 `[diag] dropped 1 log row batches (the row-cap counter was busy)`.
 
 ```sql
-select received_at, reason from diag_server_actions where action = 'diag_drops' order by received_at desc;
+select received_at, reason, steps from diag_server_actions where action = 'diag_drops' order by received_at desc;
 ```
 
 A test or a reader checking that logging works can look for any `[diag] insert
 failed` line in the Vercel logs.
+
+**Never `truncate` or `lock` the log tables during a show.** Both take a lock that
+every log write has to wait for (the writes give up after 0.1 seconds and the
+copies pause, so play is not slowed, but the evidence for that stretch is lost).
+Do it between shows.
+
+## Switching it off, and taking it out
+
+*Switch off:* set `DIAGNOSTIC_LOGGING` to `off` (or remove it) for Production and
+redeploy (never during a show). From then on nothing is written, no phone or TV
+sends anything, and no log code path runs. What is already stored stays until the
+45-day cleanup removes it (the cleanup keeps running whenever `CRON_SECRET` is
+set, flag on or off). To stop even the cleanup, remove `CRON_SECRET`.
+
+*Take it out completely* (nothing else in the database depends on these objects,
+so plain drops are enough, and applying the migration again later brings it back):
+
+```sql
+drop table if exists public.diag_answer_events, public.diag_server_actions,
+  public.diag_device_events, public.diag_quota;
+drop function if exists public.diag_insert_rows(text, jsonb);
+drop function if exists public.diag_take_rows(uuid, text, integer, integer, integer);
+drop function if exists public.cleanup_diagnostic_logs(integer, integer);
+drop function if exists public.diag_night_timeline(uuid, timestamptz, timestamptz);
+```
+
+Then remove the `CRON_SECRET` setting (or the cleanup route answers 500 every day
+because its function is gone).
 
 ## Reading times
 
@@ -301,14 +368,16 @@ and never finish).
 It runs by itself once a day (09:17 UTC, which is 4:17 am Central in summer and
 3:17 am in winter) from a Vercel cron entry in `vercel.json`, which calls
 `GET /api/cron/diag-cleanup`. Each run repeats the function until it removes
-nothing, up to 20 calls or about 15 seconds, then stops and says so
+nothing, up to 20 calls or about 20 seconds (each call is capped at 10 seconds, and
+the route may run for at most 30), then stops and says so
 (`"more": true`); the next day's run carries on. Vercel's delivery is best
 effort (a run can be missed or doubled); that is fine, because every run is the
 same "delete what is older than 45 days".
 
-* It runs **whenever `CRON_SECRET` is set, whether or not logging is on**, so
-  turning logging off never leaves old rows behind. On empty tables it removes
-  nothing.
+* It runs **whenever `CRON_SECRET` is set, whether or not logging is on**
+  (yes: with the flag off the daily cleanup still runs), so turning logging off
+  never leaves old rows behind. On empty tables it removes nothing. While the
+  migration has not been applied it answers 500 every day (harmless).
 * It needs the header `Authorization: Bearer <CRON_SECRET>`, which Vercel sends
   by itself once a `CRON_SECRET` environment variable (a random string of at
   least 16 characters) is set for Production. With no secret set it refuses

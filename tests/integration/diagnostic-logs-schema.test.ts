@@ -17,7 +17,9 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import {
   DIAG_BUCKET_ROW_CAPS,
+  DIAG_DB_LOCK_TIMEOUT_MS,
   DIAG_DB_STATEMENT_TIMEOUT_MS,
+  DIAG_FLEET_WRITE_SLOTS,
   DIAG_NIGHT_PRESS_ROW_CAP,
   DIAG_NIGHT_ROW_CAP,
   DIAG_NIGHT_SERVER_ROW_CAP,
@@ -727,6 +729,17 @@ describe("diagnostic logs schema", () => {
     });
   });
 
+  test("the write slots in the insert function are the number the app expects (and a pair of integers no other lock uses)", async () => {
+    const sql = readFileSync(path.join(MIGRATIONS, MIGRATION_FILE), "utf8");
+    const body = sql.slice(sql.indexOf("create or replace function public.diag_insert_rows"), sql.indexOf("revoke all privileges on function public.diag_insert_rows"));
+    expect(body).toContain(`for i in 1..${DIAG_FLEET_WRITE_SLOTS} loop`);
+    expect(body).toContain("pg_try_advisory_xact_lock(20261008, i)"); // never the waiting form
+    expect(body).not.toMatch(/pg_advisory_(xact_)?lock\(/); // nothing in it ever waits for a lock
+    expect(body).toMatch(/if v_slot = 0 then\s+return -1;/);
+    // and the key class differs from the row-cap function's
+    expect(sql).toContain("pg_try_advisory_xact_lock(20261007,");
+  });
+
   describe("diag_insert_rows: the one way the app stores log rows, with a time limit of its own", () => {
     const insertRows = async (table: string, rows: unknown) =>
       Number((await one<{ n: number }>("select public.diag_insert_rows($1, $2::jsonb) as n", [table, JSON.stringify(rows)])).n);
@@ -928,6 +941,9 @@ describe("diagnostic logs schema", () => {
         expect(row.proconfig, row.proname).toContain(`statement_timeout=${DIAG_DB_STATEMENT_TIMEOUT_MS}ms`);
         expect(row.proconfig, row.proname).toContain('search_path=""');
       }
+      // the insert function also gives up on a table lock quickly
+      const insertFn = fns.rows.find((r) => r.proname === "diag_insert_rows")!;
+      expect(insertFn.proconfig).toContain(`lock_timeout=${DIAG_DB_LOCK_TIMEOUT_MS}ms`);
       // The limit is a setting on those two functions only: no role, database or
       // system-wide setting is changed, so no other query anywhere gets a limit.
       const sql = readFileSync(path.join(MIGRATIONS, MIGRATION_FILE), "utf8");

@@ -6,10 +6,14 @@ import { createHmac } from "node:crypto";
 import { render } from "@testing-library/react";
 import { Suspense, isValidElement, type ReactElement, type ReactNode } from "react";
 
-const writeMock = vi.hoisted(() => ({ lookupRoomNight: vi.fn() }));
+const writeMock = vi.hoisted(() => ({
+  lookupRoomNight: vi.fn(),
+  peekRoomNight: vi.fn(),
+  isLoggingPaused: vi.fn(),
+}));
 vi.mock("@/lib/diagnostics/write", () => writeMock);
 
-import { issueTvPassForRoom, signTvPass, verifyTvPass } from "@/lib/diagnostics/tvPass";
+import { __resetTvPassLimitsForTests, issueTvPassForRoom, signTvPass, verifyTvPass } from "@/lib/diagnostics/tvPass";
 import { DIAG_TV_PASS_TTL_MS } from "@/lib/diagnostics/config";
 import { DiagTvPassSetter } from "@/components/diagnostics/DiagTvPassSetter";
 import { DiagTvPass } from "@/components/diagnostics/DiagTvPass";
@@ -28,6 +32,9 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv("SESSION_SECRET", SECRET);
   writeMock.lookupRoomNight.mockResolvedValue(NIGHT);
+  writeMock.peekRoomNight.mockReturnValue(undefined); // nothing known about the room yet
+  writeMock.isLoggingPaused.mockReturnValue(false);
+  __resetTvPassLimitsForTests();
   __resetDiagClientForTests();
 });
 afterEach(() => vi.unstubAllEnvs());
@@ -124,6 +131,49 @@ describe("issueTvPassForRoom: who is given a pass", () => {
     expect(await issueTvPassForRoom("ZZZZZZ")).toBeNull();
     writeMock.lookupRoomNight.mockRejectedValue(new Error("database down"));
     expect(await issueTvPassForRoom("K9PR4M")).toBeNull();
+  });
+});
+
+describe("issueTvPassForRoom: loading the TV page adds almost no database reads for junk codes", () => {
+  beforeEach(() => vi.stubEnv("DIAGNOSTIC_LOGGING", "on"));
+  const randomCode = (i: number) => `K${String(i).padStart(5, "7")}`.slice(0, 6);
+
+  it("400 loads of never-seen codes at once reach the database only a handful of times", async () => {
+    let answer: (v: string | null) => void = () => {};
+    // every lookup stays pending, as in a slow database, so nothing is cached and nothing is released
+    writeMock.lookupRoomNight.mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+    const loads = Array.from({ length: 400 }, (_, i) => issueTvPassForRoom(randomCode(i)));
+    await Promise.resolve();
+    expect(writeMock.lookupRoomNight.mock.calls.length).toBeLessThanOrEqual(3); // at most 3 at once
+    answer(null);
+    const results = await Promise.race([Promise.all(loads), new Promise<null[]>((r) => setTimeout(() => r([]), 50))]);
+    expect(results.length === 0 || results.every((r) => r === null)).toBe(true);
+  });
+
+  it("one after another, a flood of fresh codes is cut off after a small burst (and refills only slowly)", async () => {
+    writeMock.lookupRoomNight.mockResolvedValue(null);
+    for (let i = 0; i < 400; i++) await issueTvPassForRoom(randomCode(i));
+    expect(writeMock.lookupRoomNight.mock.calls.length).toBe(10);
+  });
+
+  it("a code the log already knows costs no database read at all, found or not", async () => {
+    writeMock.peekRoomNight.mockReturnValue(NIGHT);
+    for (let i = 0; i < 50; i++) expect(verifyTvPass(await issueTvPassForRoom("K9PR4M"))).toBe(NIGHT);
+    writeMock.peekRoomNight.mockReturnValue(null);
+    for (let i = 0; i < 50; i++) expect(await issueTvPassForRoom("ZZZZZZ")).toBeNull();
+    expect(writeMock.lookupRoomNight).not.toHaveBeenCalled();
+  });
+
+  it("a malformed code costs nothing", async () => {
+    for (const bad of ["", "abc", "K9PR4M-extra", "<script>", "K9PR4"]) expect(await issueTvPassForRoom(bad)).toBeNull();
+    expect(writeMock.peekRoomNight).not.toHaveBeenCalled();
+    expect(writeMock.lookupRoomNight).not.toHaveBeenCalled();
+  });
+
+  it("while logging is paused (the database is in trouble) an unknown code is not looked up", async () => {
+    writeMock.isLoggingPaused.mockReturnValue(true);
+    expect(await issueTvPassForRoom("K9PR4M")).toBeNull();
+    expect(writeMock.lookupRoomNight).not.toHaveBeenCalled();
   });
 });
 

@@ -21,7 +21,9 @@
 --   diag_insert_rows()  the one way the app stores log rows. It carries a
 --                       statement timeout of its own (see "a time limit of
 --                       its own" below), so the DATABASE cancels a slow log
---                       write by itself.
+--                       write by itself, and it hands out only 3 write slots
+--                       across ALL server copies, so a stalled log table can
+--                       never hold more than 3 connections.
 --   diag_night_timeline() a read-only FUNCTION (not a view, see below) that
 --                       lines all of it up by time for one night (see
 --                       docs/diagnostics/night-timeline.md).
@@ -251,7 +253,7 @@ returns integer
 language plpgsql
 security definer
 set search_path = ''
-set statement_timeout = '1500ms'
+set statement_timeout = '500ms'
 as $$
 declare
   v_want integer;
@@ -311,13 +313,30 @@ grant execute on function public.diag_take_rows(uuid, text, integer, integer, in
 -- so a stalled log insert used to go on holding a connection for as long as it
 -- liked, long after the app had given up on it.
 --
--- The limit is a setting on THESE FUNCTIONS (statement_timeout = 1500 ms here
+-- The limit is a setting on THESE FUNCTIONS (statement_timeout = 500 ms here
 -- and on diag_take_rows above), not on a role or the database: PostgREST applies
 -- a function's own statement_timeout to the call of that function only, so no
 -- other query (nothing the game runs) gets a shorter limit. (The app-side
 -- constant DIAG_DB_STATEMENT_TIMEOUT_MS in lib/diagnostics/config.ts must equal
--- it; a test checks.) A write that runs past it is cancelled and rolled back
--- with error 57014, which the app counts as a timed-out log write.
+-- it; a test checks.) A healthy insert takes a few milliseconds; a write that
+-- runs past it is cancelled and rolled back with error 57014, and one that
+-- cannot even get the table's lock within 100 ms (lock_timeout, also a setting
+-- on the function) gives up with 55P03. The app counts both as a log write in
+-- trouble.
+--
+-- A FLEET-WIDE LIMIT, not just a per-server one. Every server copy limits itself
+-- to 5 log jobs at a time, but ten copies are fifty, and PostgREST has about ten
+-- connections for everything. So the database itself hands out only 3 write
+-- SLOTS (DIAG_FLEET_WRITE_SLOTS in config.ts must equal it; a test checks): the
+-- first thing diag_insert_rows does is try, without waiting, to take one of 3
+-- transaction-scoped advisory locks (two-integer key space, class 20261008, which
+-- nothing else uses). If all 3 are taken it returns -1 AT ONCE ("busy", nothing
+-- written, no connection held), and the app backs off for a few milliseconds and
+-- asks again, then drops the rows and counts them. So when the log tables stall
+-- (a lock, a slow disk) at most 3 log statements can be waiting at the database,
+-- however many server copies there are, and the rest are turned away in about a
+-- millisecond instead of queuing for a connection the game needs. A healthy insert
+-- holds a slot for a few milliseconds.
 --
 -- This is the same insert PostgREST used to run for `.from(table).insert(rows)`:
 -- the columns are the ones the rows actually carry, taken from the table itself,
@@ -325,7 +344,7 @@ grant execute on function public.diag_take_rows(uuid, text, integer, integer, in
 -- The table name is checked against a fixed list and column names come from the
 -- catalog and are quoted, so nothing from the caller is ever pasted into SQL.
 -- Service role only; one call stores at most 1000 rows. Returns how many rows
--- were stored.
+-- were stored, or -1 when every write slot was taken (nothing was written).
 create or replace function public.diag_insert_rows(
   p_table text,
   p_rows jsonb
@@ -334,11 +353,14 @@ returns integer
 language plpgsql
 security definer
 set search_path = ''
-set statement_timeout = '1500ms'
+set statement_timeout = '500ms'
+set lock_timeout = '100ms'
 as $$
 declare
   v_cols text;
   v_count integer;
+  v_slot integer := 0;
+  i integer;
 begin
   if p_table is null
      or p_table not in ('diag_answer_events', 'diag_server_actions', 'diag_device_events') then
@@ -352,6 +374,18 @@ begin
   end if;
   if pg_catalog.jsonb_array_length(p_rows) > 1000 then
     raise exception 'diag_insert_rows: at most 1000 rows per call' using errcode = '22023';
+  end if;
+
+  -- Fleet-wide write slots (see above): try each, never wait for one. All taken:
+  -- answer "busy" (-1) at once, having written nothing and holding nothing.
+  for i in 1..3 loop
+    if pg_catalog.pg_try_advisory_xact_lock(20261008, i) then
+      v_slot := i;
+      exit;
+    end if;
+  end loop;
+  if v_slot = 0 then
+    return -1;
   end if;
 
   select pg_catalog.string_agg(pg_catalog.quote_ident(a.attname::text), ', ' order by a.attnum)

@@ -26,7 +26,7 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { DIAG_TV_PASS_TTL_MS, diagnosticsEnabled } from "./config";
-import { lookupRoomNight } from "./write";
+import { isLoggingPaused, lookupRoomNight, peekRoomNight } from "./write";
 
 // The signing key is derived from the server secret with this label, so the
 // key that signs passes is a different key from the one that signs device
@@ -82,17 +82,60 @@ export function verifyTvPass(
   }
 }
 
+// The pass is issued while the TV PAGE renders, which is outside every log job
+// (and so outside the turns, the queue and the pause in write.ts). The page is
+// public, so anyone can load /tv/<any code>. To keep logging from adding reads for
+// junk loads:
+//   1. a code that is not in the room-code format costs nothing;
+//   2. a code already known (found for ten minutes, not found for 30 seconds) costs
+//      nothing: it is answered from memory;
+//   3. only a code never seen before reaches the database, and only a few per
+//      minute (a small bucket that refills slowly: a real venue loads its TV page a
+//      handful of times a night), at most 3 at once, and none at all while logging
+//      is paused because the database is in trouble;
+//   4. any other load simply gets no pass: its TV page is not logged until it is reloaded.
+const LOOKUP_BURST = 10;
+const LOOKUP_REFILL_PER_MS = 10 / 60_000;
+const LOOKUP_IN_FLIGHT_MAX = 3;
+let lookupTokens = LOOKUP_BURST;
+let lookupRefilledAt = 0;
+let lookupsRunning = 0;
+
+function takeLookupTurn(now: number = Date.now()): boolean {
+  if (lookupRefilledAt === 0) lookupRefilledAt = now;
+  lookupTokens = Math.min(LOOKUP_BURST, lookupTokens + (now - lookupRefilledAt) * LOOKUP_REFILL_PER_MS);
+  lookupRefilledAt = now;
+  if (lookupTokens < 1 || lookupsRunning >= LOOKUP_IN_FLIGHT_MAX) return false;
+  lookupTokens -= 1;
+  lookupsRunning += 1;
+  return true;
+}
+
+/** Test hook: a full bucket and nothing in flight. */
+export function __resetTvPassLimitsForTests(): void {
+  lookupTokens = LOOKUP_BURST;
+  lookupRefilledAt = 0;
+  lookupsRunning = 0;
+}
+
 /**
  * The pass for the TV page of this room, or null (logging off, a code that is
- * not a real room, or any trouble). The lookup is the same small cached one the
- * rest of the log uses, with its own 2-second limit; it never throws.
+ * not a real room, a code the limits above turned away, or any trouble). Never throws.
  */
 export async function issueTvPassForRoom(roomCodeRaw: string): Promise<string | null> {
   try {
     if (!diagnosticsEnabled()) return null;
     const code = parseRoomCode(roomCodeRaw);
     if (!isValidRoomCode(code)) return null;
-    const nightId = await lookupRoomNight(code);
+    let nightId = peekRoomNight(code);
+    if (nightId === undefined) {
+      if (isLoggingPaused() || !takeLookupTurn()) return null;
+      try {
+        nightId = await lookupRoomNight(code);
+      } finally {
+        lookupsRunning = Math.max(0, lookupsRunning - 1);
+      }
+    }
     return nightId ? signTvPass(nightId) : null;
   } catch {
     return null;
