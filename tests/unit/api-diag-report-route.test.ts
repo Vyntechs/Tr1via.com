@@ -175,8 +175,29 @@ describe("POST /api/diag/report", () => {
       for (let i = 0; i < 40; i++) {
         statuses.push((await POST(fromVenue(batch({ surface: "tv", sid: `invented-${i}-xyz` })))).status);
       }
-      expect(statuses.filter((s) => s === 204)).toHaveLength(12);
-      expect(statuses.slice(12).every((s) => s === 429)).toBe(true);
+      expect(statuses.filter((s) => s === 204)).toHaveLength(30);
+      expect(statuses.slice(30).every((s) => s === 429)).toBe(true);
+    });
+
+    it("never turns away three TVs on one room (and a TV that reloads) over ten minutes", async () => {
+      vi.useFakeTimers();
+      try {
+        authMock.getDeviceId.mockResolvedValue(null);
+        const { POST } = await loadRoute();
+        const bad: number[] = [];
+        for (let i = 0; i < 60; i++) {
+          for (const sid of ["tv-page-load-1", "tv-page-load-2", "tv-page-load-3"]) {
+            // every tenth minute-ish a TV reloads and starts a new page load
+            const id = i % 15 === 0 ? `${sid}-reload-${i}` : sid;
+            const res = await POST(fromVenue(batch({ surface: "tv", sid: id })));
+            if (res.status !== 204) bad.push(res.status);
+          }
+          vi.advanceTimersByTime(10_000);
+        }
+        expect(bad).toEqual([]);
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("still holds one address to its allowance when it keeps minting fresh device cookies", async () => {

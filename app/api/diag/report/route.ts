@@ -50,9 +50,10 @@ const perSession = createRateLimiter({ capacity: 12, refillMs: 5_000 });
 // address inventing cookies or page-load ids is held to 10 a second.
 const perAddress = createRateLimiter({ capacity: 120, refillMs: 100 });
 // The venue TV has no cookie and no login. All page loads of one room's TV
-// share this small allowance, so inventing page-load ids for a real room code
-// cannot fill that night's log.
-const perTvRoom = createRateLimiter({ capacity: 12, refillMs: 5_000 });
+// share this allowance (a burst of 30, then one every 2 s: room for several TVs
+// and a few reloads, since one TV reports about every 10 s), so inventing
+// page-load ids for a real room code cannot fill that night's log.
+const perTvRoom = createRateLimiter({ capacity: 30, refillMs: 2_000 });
 
 function empty(status: number) {
   return new Response(null, { status, headers: { "Cache-Control": "no-store" } });
