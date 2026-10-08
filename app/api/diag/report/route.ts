@@ -56,6 +56,7 @@ import {
   type SessionCookie,
 } from "@/lib/diagnostics/hostSession";
 import { verifyTvPass } from "@/lib/diagnostics/tvPass";
+import { DiagLookupSlow } from "@/lib/diagnostics/deadline";
 import {
   lookupNightOwner,
   lookupPlayerId,
@@ -98,11 +99,16 @@ const hostSessions = new Map<string, { hostId: string; at: number }>();
 
 // A session the sign-in service turned down (forged, signed out, not a host) is
 // remembered for a short while too, so the same cookie sent again and again costs
-// nothing. Only a definite "no" is remembered: "could not check" (the sign-in
-// service is slow or down) never is, or a slow service would lock the real host out.
+// nothing. A definite "no" is remembered for 30 s. "Could not check" (the sign-in
+// service is slow or down) is remembered only for HOST_UNCHECKED_MEMORY_MS: long
+// enough that one cookie cannot make a sign-in call per log job while the service
+// is struggling, short enough that a real host is asked about again within seconds
+// of the service coming back (her reports in that gap are not stored: logging only).
 const HOST_FAILURE_MEMORY_MS = 30_000;
+const HOST_UNCHECKED_MEMORY_MS = 5_000;
 const HOST_FAILURE_MAX = 500;
 const hostFailures = new Map<string, number>();
+const hostUnchecked = new Map<string, number>();
 
 // Checks that are already running, so reports from one session that arrive
 // together share ONE sign-in call.
@@ -123,6 +129,13 @@ const hostClaims = new Map<string, number>();
 // a log turn. Turned-away reports get a 429 (a real host screen tries again later).
 const checksPerAddress = createRateLimiter({ capacity: 6, refillMs: 10_000 });
 const checksPerCopy = createRateLimiter({ capacity: 30, refillMs: 1_000 });
+// Every report from a session that is NOT yet known good (not remembered), even
+// one that rides on a check already claimed or running, spends from this
+// allowance first, per network address: a burst of 12, then one a second. So one
+// forged cookie sent over and over is held to this many log jobs, not one per
+// report, and a genuine host screen (a handful of reports while its first check
+// runs) never notices it.
+const unverifiedPerAddress = createRateLimiter({ capacity: 12, refillMs: 1_000 });
 
 function sessionFingerprint(cookies: SessionCookie[]): string | null {
   if (cookies.length === 0) return null;
@@ -145,23 +158,36 @@ function recentlyFailed(fingerprint: string): boolean {
   return false;
 }
 
+function recentlyUnchecked(fingerprint: string): boolean {
+  const until = hostUnchecked.get(fingerprint);
+  if (until === undefined) return false;
+  if (Date.now() < until) return true;
+  hostUnchecked.delete(fingerprint);
+  return false;
+}
+
 /**
  * What to do with a host report, decided in the request, BEFORE anything is
  * scheduled (a forged report must not take a log turn):
- *   ok      a remembered good session, a check already running, or a new
+ *   ok      a remembered good session, or an unknown one that the address's
+ *           allowance lets through: a check already running or claimed, or a new
  *           session that may start a check
- *   bad     remembered as turned down, or no usable token (none, unreadable,
- *           already run out): nothing to ask anyone
- *   limited the address or this copy has used up its allowance of new checks
+ *   bad     remembered as turned down or as "could not check" a moment ago, or
+ *           no usable token (none, unreadable, already run out): nothing to ask
+ *           anyone
+ *   limited the address or this copy has used up its allowance
+ * The order matters: everything that is not a remembered good session is charged
+ * to the address's allowance BEFORE a claim or a running check can wave it through.
  */
 function hostCheckDecision(fingerprint: string, cookies: SessionCookie[], address: string): "ok" | "bad" | "limited" {
   if (rememberedHost(fingerprint)) return "ok";
-  if (recentlyFailed(fingerprint)) return "bad";
+  if (recentlyFailed(fingerprint) || recentlyUnchecked(fingerprint)) return "bad";
+  // No network call is needed to see that there is no usable token.
+  if (!accessTokenFromCookies(cookies)) return "bad";
+  if (!unverifiedPerAddress.allow(`host-unverified:${address}`)) return "limited";
   if (hostChecks.has(fingerprint)) return "ok";
   const claimedUntil = hostClaims.get(fingerprint);
   if (claimedUntil !== undefined && Date.now() < claimedUntil) return "ok";
-  // No network call is needed to see that there is no usable token.
-  if (!accessTokenFromCookies(cookies)) return "bad";
   if (!checksPerAddress.allow(`host-check:${address}`) || !checksPerCopy.allow("host-check")) return "limited";
   if (hostClaims.size >= HOST_FAILURE_MAX) hostClaims.delete(hostClaims.keys().next().value as string);
   hostClaims.set(fingerprint, Date.now() + HOST_CLAIM_MS);
@@ -180,9 +206,18 @@ async function verifiedHostId(fingerprint: string, cookies: SessionCookie[]): Pr
   if (recentlyFailed(fingerprint)) return null;
   let running = hostChecks.get(fingerprint);
   if (!running) {
+    // "Could not check" a moment ago: do not ask again yet (see HOST_UNCHECKED_MEMORY_MS).
+    if (recentlyUnchecked(fingerprint)) throw new DiagLookupSlow();
     running = (async () => {
-      // Throws when the sign-in service could not answer in time: not remembered.
-      const hostId = await verifyHostSessionReadOnly(cookies);
+      let hostId: string | null;
+      try {
+        hostId = await verifyHostSessionReadOnly(cookies);
+      } catch (error) {
+        // The sign-in service could not answer in time: remembered only briefly, and not as a "no".
+        if (hostUnchecked.size >= HOST_FAILURE_MAX) hostUnchecked.delete(hostUnchecked.keys().next().value as string);
+        hostUnchecked.set(fingerprint, Date.now() + HOST_UNCHECKED_MEMORY_MS);
+        throw error;
+      }
       if (!hostId) {
         rememberFailure(fingerprint);
         return null;

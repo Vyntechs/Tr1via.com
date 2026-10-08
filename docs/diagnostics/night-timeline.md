@@ -153,7 +153,7 @@ or host: answer=3 report=12`).
 | Host press (reveal, next, ...) | the request is from a signed-in host who owns the night |
 | Timer-end call (resolve / finalize) | the signed device cookie is a player of that night. The venue TV sends these without any login, so its calls are not stored (the TV's own `res` reports show them). |
 | Phone report | valid device cookie + a player row in the night its room code names |
-| Host laptop / phone report | a signed-in host who owns the night. This is checked after the 204 reply, so the host screen never waits on the sign-in service, and **strictly read-only**: the check reads the access token from the sign-in cookie as it is and asks the sign-in service who owns that exact token; it never renews a session and never writes a cookie (a renewal from here could use up the host's refresh token while the new one cannot reach her browser, and her browser's own renewal could then be refused, signing her out mid-show). A token that has already run out is dropped without any network call; the report is just counted. A session that passed in the last 5 minutes is remembered (by a hash of its cookies, in memory), so reports do not add a sign-in call each. A session the sign-in service turned down is remembered for 30 seconds too (only a definite "no"; "could not check" never is), and how many NEW sessions may start a check is limited per network address (6, then one every 10 seconds) and per server copy, all before anything is queued: a flood of forged cookies, a different one each time, costs no log turn and, past the first few, no sign-in call (those reports get a 429 and a real host screen simply tries again later). |
+| Host laptop / phone report | a signed-in host who owns the night. This is checked after the 204 reply, so the host screen never waits on the sign-in service, and **strictly read-only**: the check reads the access token from the sign-in cookie as it is and asks the sign-in service who owns that exact token; it never renews a session and never writes a cookie (a renewal from here could use up the host's refresh token while the new one cannot reach her browser, and her browser's own renewal could then be refused, signing her out mid-show). A token that has already run out is dropped without any network call; the report is just counted. A session that passed in the last 5 minutes is remembered (by a hash of its cookies, in memory), so reports do not add a sign-in call each. A session the sign-in service turned down is remembered for 30 seconds too (a definite "no"), and a "could not check" (the sign-in service is slow or down) for 5 seconds, so one cookie sent again and again cannot make a sign-in call per log job while the service struggles (a real host's reports in those 5 seconds are not stored). Every report from a session that is not yet known good is charged first to its network address (a burst of 12, then one a second), and how many NEW sessions may start a check is limited per network address (6, then one every 10 seconds) and per server copy, all before anything is queued: a flood of forged cookies, a different one each time or the same one over and over, costs few log turns and, past the first few, no sign-in call (those reports get a 429 and a real host screen simply tries again later). Measured with the same forged cookie sent 120 times while the sign-in service answers "cannot tell": 12 log jobs and 1 sign-in call (before this change: 120 jobs and 24 calls). |
 | TV report | the signed pass the server gave the TV page when it loaded. The pass names one night and lasts 8 hours; the night is read from the pass, never from the report. No pass, a forged or expired pass: nothing stored. The pass is signed with a key of its own (derived from `SESSION_SECRET` under a fixed label), so its signature is never valid as a device cookie, and a device-cookie signature is never valid as a pass. |
 
 The pass is made while the TV page renders, which is outside every log job, so it
@@ -216,10 +216,15 @@ check never waits for a lock**: the database function takes a per-night try-lock
 use, so it can never be a lock an answer is waiting on) and answers "busy" at
 once if another server is updating that night's counter at that instant (and
 gives up on any row lock after 50 ms); the server then backs off without
-holding a connection, asks again (up to 5 more times, see "Busy is not trouble"
-below), and drops the rows if it is still busy. The function touches only `diag_quota`, never a game
+holding a connection, asks again (up to 5 more times while the copy's retry
+budget lasts, see "Busy is not trouble" below), and drops the rows if it is still busy. The function touches only `diag_quota`, never a game
 table. Per-instance rate limits (per address, per device, per TV night) stay as a
-first filter only.
+first filter only. One consequence to know about: everything at a venue shares one
+network address, so a guest on the venue's wifi who floods the report route from
+that address can use up its allowance (a burst of 120, then 10 a second) and the real
+host laptop's NEW sessions are turned away (429) until it refills; the host's own
+log can be blind for that time. This costs only log rows, never play, and the
+night's other evidence (the server's own rows for taps and presses) is unaffected.
 
 ```sql
 -- how close was each night to its caps?
@@ -272,25 +277,48 @@ job's 5 second clock, and one job makes one call at a time (reading the drop
 counts back out to the database is a call too, and happens inside the turn). So
 the app never counts a statement as finished when it is still running.
 
-**Busy is not trouble.** When many server copies log in the same instant (the
-timer-end burst: 25 to 60 phones asking to close the question at clock zero), the 3
-write slots and the night's row-cap counter are each taken for a few milliseconds at
-a time, on a perfectly healthy database. A "busy" answer therefore never counts toward
-the pause, however often it repeats. Instead a job that hears "busy" waits and asks
-again: the wait starts at 20 ms, doubles each time up to 160 ms, and each wait is a
-random 50 to 100% of that so the copies do not collide again together, at most 5
-more tries and about 0.45 seconds in all, holding no connection while it waits. This
-all happens after the response has gone out; the only cost is that the job keeps its
-turn (one of the 5 per copy) a little longer. A job that is still told "busy" after
-the last try gives its rows up (`slots` or `busy`) and, for the slots only, this
-server copy then makes just one try per job, with no retries, for 1.5 seconds (a brake
-on calls, not a pause: it is not a failure, a try that finds a free slot still stores
-its rows and ends the brake, and the host's button presses, which are rare, ignore it),
-so a database whose slots are really stuck is not also hit by every job's retries. The stalled writes that really hold slots in a stall answer with
-`57014` / `55P03` to the copies that made them, and those copies pause as below.
-Measured on a local test database in this branch (see the pull request): the same
-bursts that used to lose rows and trip the 10-second pause now keep nearly all rows,
-and the pause only follows a database that really cancels writes.
+**Busy is not trouble, but it is rationed.** When many server copies log in the same
+instant (the timer-end burst: 25 to 60 phones asking to close the question at clock
+zero), the 3 write slots and the night's row-cap counter are each taken for a few
+milliseconds at a time, on a perfectly healthy database. A "busy" answer therefore
+never counts toward the pause, however often it repeats. Instead a job that hears
+"busy" waits and asks again: the wait starts at 20 ms, doubles each time up to 160 ms,
+and each wait is a random 50 to 100% of that so the copies do not collide again
+together, at most 5 more tries and about 0.45 seconds in all, holding no connection
+while it waits. This all happens after the response has gone out; the only cost is
+that the job keeps its turn (one of the 5 per copy) a little longer.
+
+A "busy" answer is cheap for the database but not free: it is still a request through
+the same gateway and the same few connections the game's own reads use. The first
+version of this follow-up let every job retry 5 times and never paused, and under a
+sustained flood that made about 1.5 to 3 times the calls of #210 and slowed a plain
+game read through the API 3 to 10 times (see "Measured" below). So retries are
+rationed across the whole server copy: one shared budget of 40 retries that refills at
+5 a second (row-cap checks and inserts draw on the same budget). A timer-end burst
+fits inside it; a sustained flood runs it dry, and from then on this copy is
+"braked" for 1.5 seconds: it makes at most ONE insert try every quarter second
+(a little random either way) and every other job gives its rows up at once, without
+calling the database (counted as `slots`). A try that finds a free slot stores its
+rows and ends the brake; a try that finds the slots still taken keeps the brake on.
+The host's button presses, which are rare, ignore both the budget and the brake. The
+brake is a limit on calls, not a pause: it is not a failure. The stalled writes that
+really hold slots in a stall answer with `57014` / `55P03` to the copies that made
+them, and those copies pause as below. When the game's database is under real
+pressure the choice is deliberate: **game speed wins over keeping every log row**.
+
+*Measured* (local Supabase on one Mac, one in-process "copy" per server copy, a plain
+game-table read through the API from a separate process, #210 and this branch
+interleaved, medians over several runs; the machine was shared with other jobs, so
+the database was healthy in some runs and saturated in others): on a healthy
+database, 12 copies x 25 jobs/s for 15 s stores 4,500 of 4,500 rows on both versions
+and the game read is about 0.8 ms on both. (A reviewer, on a database that was already
+struggling, got only 1,572 to 2,515 of 4,500 on the first version of this branch;
+the earlier "4,500 of 4,500" holds only when the database is healthy, and no number
+here should be read as what hosted Supabase would do.) On a saturated database the
+first version of this branch stored about as many rows as #210 but made 1.5 to 3
+times its calls and the game read went from about 3 ms to 13 to 36 ms; with the
+retry budget the calls are about the same as #210's and the game read stays at
+#210's level. See the pull request for the table.
 
 **Logging pauses itself when the database is in trouble with log writes.** Even 3
 stalled log statements at a time would keep connections busy for as long as taps
@@ -421,6 +449,15 @@ where d.night_id = ':night_id' and d.kind in ('tz', 'paint')
 order by q.played_at, d.at_est;
 ```
 
+What `tz` means: "this screen painted the timer reading 0". It is sent the first
+time a screen shows 0 for a question, so a TV or host laptop that is **loaded or
+reloaded after the 25 seconds are already over** also sends one, as soon as it has
+drawn its first frame: for that screen `tz` means "drawn when the page loaded", not
+"drawn on time". Read it together with the screen's `device` row (its first report
+of this page load, whose time is when the page started): a `tz` that arrives within
+a second or two of a new `device` row from the same screen is a late mount, not a
+late frame. Q7's `ms_after_the_25s_mark` also assumes the 25 second question length.
+
 `at_est` is the device's clock moved onto the server's (good to about the upload
 delay, so roughly a second on a bad connection; see below): use it to see a screen
 that drew zero seconds late or never, not to argue about a few hundred
@@ -470,9 +507,12 @@ same "delete what is older than 45 days".
   migration has not been applied it answers 500 every day (harmless).
 * It needs the header `Authorization: Bearer <CRON_SECRET>`, which Vercel sends
   by itself once a `CRON_SECRET` environment variable (a random string of at
-  least 16 characters) is set for Production. With no secret set, or one shorter
-  than 16 characters (treated as not set, even if the caller sends exactly that
-  string), it refuses (401) and cleans nothing. It never takes a day count from the request.
+  least 16 characters) is set for Production. With no secret set, or a wrong
+  one, it refuses (401) and cleans nothing. A secret that is set but shorter than
+  16 characters is refused loudly, whatever the caller sends: the route prints one
+  line to the server log (`cleanup NOT running: CRON_SECRET is set but shorter than
+  16 characters`) and answers 500 with that sentence (never the secret), so a day
+  of failed cron runs in Vercel shows why. It never takes a day count from the request.
 * Vercel calls the project's Production deployment URL, so preview copies of a
   branch never run it.
 * If the migration has not been applied it answers 500 with the database's

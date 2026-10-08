@@ -77,6 +77,7 @@ import {
   DIAG_BUCKET_ROW_CAPS,
   DIAG_BUSY_BACKOFF_MAX_MS,
   DIAG_BUSY_BACKOFF_MS,
+  DIAG_BRAKE_PROBE_MS,
   DIAG_BUSY_RETRIES,
   DIAG_CALL_CEILING_MS,
   DIAG_CLEANUP_BATCH_ROWS,
@@ -94,6 +95,8 @@ import {
   DIAG_QUOTA_FULL_MEMORY_MS,
   DIAG_QUOTA_LEASE_ROWS,
   DIAG_RETENTION_DAYS,
+  DIAG_RETRY_BUDGET,
+  DIAG_RETRY_REFILL_PER_SEC,
   DIAG_SLOT_BRAKE_MS,
   DIAG_WRITE_QUEUE_MAX,
   DIAG_WRITE_TIMEOUT_MS,
@@ -190,6 +193,9 @@ export function __resetDiagWriteForTests(options: { now?: () => number } = {}): 
   pausedUntil = 0;
   probing = false;
   slotBrakeUntil = 0;
+  nextBrakeProbeAt = 0;
+  retryTokens = DIAG_RETRY_BUDGET;
+  retryTokensAt = 0;
   ignored.clear();
   lastIgnoredLineAt = 0;
   leases.clear();
@@ -623,12 +629,34 @@ function isTimeout(error: unknown): boolean {
 }
 
 /**
- * Set when one insert found every write slot taken on every one of its tries:
- * until then (DIAG_SLOT_BRAKE_MS) this server copy's inserts make one try each
- * and no retries, so a saturated database does not also get every job's retries. Not a failure and
- * not the pause (which is for a database cancelling writes).
+ * Set when one insert heard "busy" with no retry left: until then
+ * (DIAG_SLOT_BRAKE_MS) this server copy's inserts are rationed to one try every
+ * DIAG_BRAKE_PROBE_MS, and the jobs in between give up at once without calling
+ * the database, so a saturated database is not also hit by every job. Not a
+ * failure and not the pause (which is for a database cancelling writes).
  */
 let slotBrakeUntil = 0;
+let nextBrakeProbeAt = 0;
+
+/**
+ * One budget of retries for the whole server copy (see config.ts, "Busy"
+ * answers): every job's retries, for the row-cap check and the insert alike,
+ * are paid from it, so a flood of jobs cannot each ask again and again. It
+ * refills with the clock (DIAG_RETRY_REFILL_PER_SEC a second, up to the full
+ * budget). `retryTokensAt` of 0 means "full, nothing taken since the last reset".
+ */
+let retryTokens = DIAG_RETRY_BUDGET;
+let retryTokensAt = 0;
+function takeRetry(): boolean {
+  const now = clock();
+  if (retryTokensAt !== 0) {
+    retryTokens = Math.min(DIAG_RETRY_BUDGET, retryTokens + ((now - retryTokensAt) / 1000) * DIAG_RETRY_REFILL_PER_SEC);
+  }
+  retryTokensAt = now;
+  if (retryTokens < 1) return false;
+  retryTokens -= 1;
+  return true;
+}
 
 /**
  * One insert, through diag_insert_rows. That function has its own statement
@@ -637,24 +665,32 @@ let slotBrakeUntil = 0;
  * only cancel the request ourselves at DIAG_CALL_CEILING_MS. The function also
  * hands out only a few write slots across ALL servers and answers -1 ("busy") at
  * once when they are taken. That is ordinary contention, never trouble: we back
- * off (no connection held, jittered, see busyWaitMs) and ask again up to
- * DIAG_BUSY_RETRIES times, then give the rows up (counted as "slots") and put a
- * short brake on this copy: for DIAG_SLOT_BRAKE_MS its jobs make one try each and
- * no retries. `press` rows (the host's buttons, rare) ignore the brake.
+ * off (no connection held, jittered, see busyWaitMs) and ask again, up to
+ * DIAG_BUSY_RETRIES times while this copy's shared retry budget lasts. With no
+ * retry left the rows are given up (counted as "slots") and a short brake goes
+ * on this copy: for DIAG_SLOT_BRAKE_MS its inserts are rationed to one try every
+ * DIAG_BRAKE_PROBE_MS and the rest give up without calling the database. `press`
+ * rows (the host's buttons, rare) ignore the budget and the brake.
  */
 async function insertCore(
   table: DiagTable,
   rows: Record<string, unknown>[],
   options: { press?: boolean } = {},
 ): Promise<CallOutcome> {
-  // While braked (and not a press) a job makes ONE try and no retries: rows still
-  // flow as fast as the slots free up, but a saturated database is not also hit by
-  // every job's whole set of retries. Any success ends the brake.
-  let retries = DIAG_BUSY_RETRIES;
-  if (!options.press && slotBrakeUntil !== 0) {
-    if (clock() < slotBrakeUntil) retries = 0;
-    else slotBrakeUntil = 0;
+  const press = options.press === true;
+  if (!press && slotBrakeUntil !== 0) {
+    const now = clock();
+    if (now >= slotBrakeUntil) {
+      slotBrakeUntil = 0;
+      nextBrakeProbeAt = 0;
+    } else if (now < nextBrakeProbeAt) {
+      // Braked, and not this job's turn to test the slots: give up without a call.
+      return { ok: false, timedOut: false, slotsFull: true };
+    } else {
+      nextBrakeProbeAt = now + DIAG_BRAKE_PROBE_MS * (0.75 + Math.random() * 0.5);
+    }
   }
+  const braked = !press && slotBrakeUntil !== 0;
   for (let attempt = 0; ; attempt += 1) {
     try {
       const result = await trackedCall(
@@ -673,14 +709,25 @@ async function insertCore(
       }
       if (Number(result?.data) === -1) {
         // "Busy": every slot was taken for a moment. Neither a success nor trouble, however often it repeats.
-        if (attempt >= retries) {
+        if (braked) {
+          // A test made under the brake found the slots still taken: no retries, and the brake stays on a while longer.
           slotBrakeUntil = clock() + DIAG_SLOT_BRAKE_MS;
+          return { ok: false, timedOut: false, slotsFull: true };
+        }
+        // This job's own retries are used up: its rows are given up, nothing more.
+        if (attempt >= DIAG_BUSY_RETRIES) return { ok: false, timedOut: false, slotsFull: true };
+        if (!press && !takeRetry()) {
+          // The copy's whole budget of retries is spent: a flood, not a burst. Brake.
+          const now = clock();
+          slotBrakeUntil = now + DIAG_SLOT_BRAKE_MS;
+          nextBrakeProbeAt = now + DIAG_BRAKE_PROBE_MS * (0.75 + Math.random() * 0.5);
           return { ok: false, timedOut: false, slotsFull: true };
         }
         await sleep(busyWaitMs(attempt));
         continue;
       }
       slotBrakeUntil = 0;
+      nextBrakeProbeAt = 0;
       noteWriteOutcome("insert", "answered");
       return { ok: true };
     } catch (error) {
@@ -730,8 +777,9 @@ export async function insertDiagRows(
 // of the same night's counter (and it gives up on any row lock after 50 ms), so
 // a log job can never sit holding a database connection behind other logging.
 // On "busy" this side backs off (no connection held, a jittered doubling wait,
-// see busyWaitMs) and asks again, up to DIAG_BUSY_RETRIES times, then drops the
-// rows and counts them. A "busy" answer is ordinary contention, never trouble.
+// see busyWaitMs) and asks again, up to DIAG_BUSY_RETRIES times and only while
+// this copy's shared retry budget lasts (takeRetry), then drops the rows and
+// counts them. A "busy" answer is ordinary contention, never trouble.
 export type DiagSource =
   // device reports
   | { kind: "player"; deviceId: string }
@@ -826,7 +874,7 @@ async function askForBlock(
       return isTimeout(error) ? "timeout" : "failed";
     }
     if (granted === -1) {
-      if (attempt >= DIAG_BUSY_RETRIES) return "busy";
+      if (attempt >= DIAG_BUSY_RETRIES || !takeRetry()) return "busy";
       await sleep(busyWaitMs(attempt));
     }
   }

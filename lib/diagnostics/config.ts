@@ -135,23 +135,38 @@ export const DIAG_QUOTA_LEASE_ROWS = { player: 100, tap: 100, tv: 25, host: 25, 
  * backs off (holding no connection) and asks again, up to DIAG_BUSY_RETRIES more
  * times: the wait starts at DIAG_BUSY_BACKOFF_MS, doubles each time up to
  * DIAG_BUSY_BACKOFF_MAX_MS, and each wait is a random 50-100% of that so the
- * copies do not collide again together. At most about 0.45 s in all, after the
- * response has gone out. Then the rows are dropped and counted. A "busy" answer
- * is never counted as trouble (it does not start a pause).
+ * copies do not collide again together. Then the rows are dropped and counted. A
+ * "busy" answer is never counted as trouble (it does not start a pause).
+ *
+ * A "busy" answer is cheap for the database but NOT free: every call, busy or
+ * not, is a request through the same gateway and the same few connections the
+ * game's own reads use (measured: five retries per job turned a saturated
+ * burst into about four times the calls and slowed a plain game read through
+ * the API 5-10x; see docs/diagnostics/night-timeline.md). So retries are rationed
+ * ACROSS all the jobs of one server copy: a shared budget of DIAG_RETRY_BUDGET
+ * retries that refills at DIAG_RETRY_REFILL_PER_SEC a second. A healthy burst
+ * (a timer-end) fits inside the budget; a sustained flood runs it dry, and then
+ * a job that hears "busy" gives its rows up at once instead of asking again.
+ * (Host presses, which are rare, do not draw on the budget.)
  */
 export const DIAG_BUSY_RETRIES = 5;
 export const DIAG_BUSY_BACKOFF_MS = 20;
 export const DIAG_BUSY_BACKOFF_MAX_MS = 160;
+export const DIAG_RETRY_BUDGET = 40;
+export const DIAG_RETRY_REFILL_PER_SEC = 5;
 /**
- * If one insert asked for a slot DIAG_BUSY_RETRIES + 1 times in a row and every
- * slot stayed taken, the slots are saturated (a stall, or a real flood). For
- * this long the server copy's inserts make ONE try each and no retries (a try that
- * finds a free slot still stores its rows, and any success ends the brake;
- * host presses, which are rare, ignore it), so a saturated database is not also
- * hit by every job's whole set of retries. This is a brake on calls, NOT the
- * pause for trouble: it never counts as a failure.
+ * If one insert heard "busy" with no retry left, the slots are saturated (a
+ * stall, or a real flood). For DIAG_SLOT_BRAKE_MS the server copy's inserts are
+ * rationed hard: at most ONE try every DIAG_BRAKE_PROBE_MS (a little random
+ * either way), no retries, and every other job gives its rows up at once, WITHOUT
+ * calling the database (counted as "slots"). A try that finds a free slot still
+ * stores its rows and ends the brake. So a saturated database is asked at most
+ * a few times a second by each copy, and the game's reads never queue behind
+ * logging. Host presses, which are rare, ignore the brake. This is a brake on
+ * calls, NOT the pause for trouble: it never counts as a failure.
  */
 export const DIAG_SLOT_BRAKE_MS = 1_500;
+export const DIAG_BRAKE_PROBE_MS = 250;
 /** A source found to be full is not asked about again for this long. */
 export const DIAG_QUOTA_FULL_MEMORY_MS = 60_000;
 

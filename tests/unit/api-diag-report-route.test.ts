@@ -677,17 +677,58 @@ describe("POST /api/diag/report", () => {
       expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(1);
     });
 
-    it("'could not check' (the sign-in service is down) is never remembered as a failure", async () => {
+    it("'could not check' (the sign-in service is down) is remembered only for a few seconds, never as a failure", async () => {
+      vi.useFakeTimers();
       const { POST } = await loadRoute();
       signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 503, name: "AuthApiError" } });
       await POST(report(hostBatch(), HOST_COOKIE));
       await (writeMock.scheduleDiagWrite.mock.calls[0]![0] as () => Promise<void>)().catch(() => {});
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
       writeMock.scheduleDiagWrite.mockClear();
+
+      // Inside the few seconds: no log turn, no sign-in call, the same quick reply.
+      vi.advanceTimersByTime(2_000);
+      expect((await POST(report(hostBatch({ sid: "host-laptop-soon" }), HOST_COOKIE))).status).toBe(204);
+      expect(writeMock.scheduleDiagWrite).not.toHaveBeenCalled();
+      expect(signIn.getUser).toHaveBeenCalledTimes(1);
+
+      // Then the service is back, and the same host is asked about again and stored.
+      vi.advanceTimersByTime(4_000);
       signIn.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
       await POST(report(hostBatch({ sid: "host-laptop-2" }), HOST_COOKIE));
       await flushScheduled();
       expect(signIn.getUser).toHaveBeenCalledTimes(2);
       expect(writeMock.recordDiagRows).toHaveBeenCalledTimes(1);
+    });
+
+    it("one forged cookie sent again and again while the sign-in service cannot answer stays inside the cap (120 reports)", async () => {
+      vi.useFakeTimers();
+      const { POST } = await loadRoute();
+      signIn.getUser.mockResolvedValue({ data: { user: null }, error: { status: 503, name: "AuthApiError" } });
+      const forger = { "x-forwarded-for": "203.0.113.77" };
+      const statuses = new Map<number, number>();
+      for (let i = 0; i < 120; i++) {
+        const res = await POST(report(hostBatch({ sid: `forged-same-${i}-abcdef` }), { ...hostCookie("one-forged-token"), ...forger }));
+        statuses.set(res.status, (statuses.get(res.status) ?? 0) + 1);
+      }
+      // Jobs run five at a time, as on the server.
+      const jobs = writeMock.scheduleDiagWrite.mock.calls.map((c) => c[0] as () => Promise<void>);
+      for (let i = 0; i < jobs.length; i += 5) await Promise.allSettled(jobs.slice(i, i + 5).map((job) => job()));
+      expect(signIn.getUser.mock.calls.length).toBeLessThanOrEqual(6);
+      expect(jobs.length).toBeLessThanOrEqual(12);
+      expect(statuses.get(429)).toBeGreaterThanOrEqual(100);
+      expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
+
+      // Over a long flood the cookie costs one sign-in call per 5 seconds, not one per job.
+      writeMock.scheduleDiagWrite.mockClear();
+      signIn.getUser.mockClear();
+      for (let second = 0; second < 60; second++) {
+        vi.advanceTimersByTime(1_000);
+        for (let i = 0; i < 5; i++) await POST(report(hostBatch({ sid: `forged-long-${second}-${i}-abcd` }), { ...hostCookie("one-forged-token"), ...forger }));
+        const more = writeMock.scheduleDiagWrite.mock.calls.splice(0).map((c) => c[0] as () => Promise<void>);
+        await Promise.allSettled(more.map((job) => job()));
+      }
+      expect(signIn.getUser.mock.calls.length).toBeLessThanOrEqual(13);
     });
 
     it("reports from one session that arrive together share ONE sign-in call", async () => {

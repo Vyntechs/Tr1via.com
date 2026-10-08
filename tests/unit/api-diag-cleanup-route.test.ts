@@ -44,12 +44,21 @@ describe("GET /api/cron/diag-cleanup", () => {
     expect(writeMock.runDiagCleanup).not.toHaveBeenCalled();
   });
 
-  it("treats a secret shorter than 16 characters as not set, even when the caller sends exactly that secret", async () => {
+  it("refuses a secret shorter than 16 characters LOUDLY (a log line and a clear 500, no secret in either), even when the caller sends exactly that secret", async () => {
     vi.stubEnv("DIAGNOSTIC_LOGGING", "on");
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
     for (const short of ["s3cret-value", "0123456789abcde"]) {
       vi.stubEnv("CRON_SECRET", short);
-      expect((await call({ authorization: `Bearer ${short}` })).status, short).toBe(401);
+      const res = await call({ authorization: `Bearer ${short}` });
+      expect(res.status, short).toBe(500);
+      const text = await res.text();
+      expect(text).toContain("shorter than 16 characters");
+      expect(text).not.toContain(short);
     }
+    expect(errorLog).toHaveBeenCalledTimes(2);
+    expect(String(errorLog.mock.calls[0]![0])).toContain("CRON_SECRET");
+    expect(errorLog.mock.calls.flat().join(" ")).not.toContain("s3cret-value");
+    errorLog.mockRestore();
     expect(writeMock.runDiagCleanup).not.toHaveBeenCalled();
     // Exactly 16 characters is the shortest that works.
     vi.stubEnv("CRON_SECRET", "0123456789abcdef");
