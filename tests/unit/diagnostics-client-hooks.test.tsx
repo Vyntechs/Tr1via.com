@@ -66,7 +66,7 @@ afterEach(() => {
 });
 
 describe("useAnswerSubmit", () => {
-  it("sends exactly the same request as before when logging is off", async () => {
+  it("sends exactly the same request as before when logging is off (plus only a cancel switch)", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(reply(200));
     const { result } = renderHook(() => useAnswerSubmit({ questionId: "q1", scramble: [0, 1, 2, 3] }));
     act(() => result.current.submit(2));
@@ -74,6 +74,8 @@ describe("useAnswerSubmit", () => {
     expect(fetchSpy).toHaveBeenCalledWith("/api/answers", {
       method: "POST",
       credentials: "same-origin",
+      // The only addition: the phone can now drop a request it no longer needs.
+      signal: expect.any(AbortSignal),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ questionId: "q1", slotChosen: 2, scramble: [0, 1, 2, 3] }),
     });

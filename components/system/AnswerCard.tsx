@@ -32,6 +32,12 @@ export interface AnswerCardProps {
   state?: AnswerCardState;
   /** Stagger entrance animation by ms (used for the initial 4-card cascade). */
   delay?: number;
+  /**
+   * Play the rise-in entrance on mount (default true). Pass false where the
+   * card appears as the continuation of something the player just did (the
+   * locked screen after a tap), so nothing fades or slides in again.
+   */
+  entrance?: boolean;
   onTap?: () => void;
   disabled?: boolean;
   /** Forwarded data-testid for E2E targeting. */
@@ -44,6 +50,7 @@ export function AnswerCard({
   accent,
   state = "idle",
   delay = 0,
+  entrance = true,
   onTap,
   disabled,
   "data-testid": dataTestId,
@@ -119,7 +126,7 @@ export function AnswerCard({
         opacity,
         transform: `scale(${scale})`,
         transition: "all .35s cubic-bezier(.2,.7,.3,1)",
-        animation: `tr1via-rise .5s cubic-bezier(.2,.7,.3,1) ${delay}ms both`,
+        animation: entrance ? `tr1via-rise .5s cubic-bezier(.2,.7,.3,1) ${delay}ms both` : "none",
         cursor: isTappable ? "pointer" : "default",
         textAlign: "left",
         font: "inherit",

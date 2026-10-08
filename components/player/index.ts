@@ -9,7 +9,7 @@ export type { PlayerQuestionProps, PlayerQuestionSlot } from "./PlayerQuestion";
 export { RoomMagicReactionControls } from "./RoomMagicReactionControls";
 export type { RoomMagicReactionControlsProps } from "./RoomMagicReactionControls";
 export { PlayerLocked } from "./PlayerLocked";
-export type { PlayerLockedProps } from "./PlayerLocked";
+export type { PlayerLockedProps, PlayerLockedSendState } from "./PlayerLocked";
 export { PlayerRevealCorrect } from "./PlayerRevealCorrect";
 export type { PlayerRevealCorrectProps } from "./PlayerRevealCorrect";
 export { PlayerRevealCorrectSequence } from "./PlayerRevealCorrectSequence";

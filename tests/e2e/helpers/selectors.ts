@@ -16,7 +16,7 @@ export const TID = {
   // Player phone — in-room
   playerLobby: { root: "player-lobby" },
   playerQuestion: { root: "player-question", answer: (slot: 1 | 2 | 3 | 4) => `player-answer-${slot}` },
-  playerLocked: { root: "player-locked" },
+  playerLocked: { root: "player-locked", status: "player-send-status" },
   playerRevealCorrect: { root: "player-reveal-correct", points: "player-reveal-points" },
   playerRevealWrong: { root: "player-reveal-wrong" },
   playerBetweenGames: { root: "player-between-games", topics: "player-between-games-topics", topic: "player-between-games-topic" },

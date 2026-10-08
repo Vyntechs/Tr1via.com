@@ -3,6 +3,11 @@
 // for everyone else) + the four answer cards in mixed states. Self pick is
 // scaled & glowing; siblings fade. Bottom shows quiet "waiting on the room"
 // status with a pulse dot so it doesn't feel frozen.
+//
+// This one screen is shown from the instant of the tap. `sendState` says how
+// far the answer has got: sending → locked (the server said yes) or, when the
+// network is bad, retrying → locked, or unconfirmed if the question closed
+// first. Only "locked" claims anything about the answer being counted.
 
 "use client";
 
@@ -23,6 +28,14 @@ import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import type { StandingRow } from "@/lib/player/betweenGames";
 
+/** How far this phone's answer has got. Defaults to "locked" (gallery/demo). */
+export type PlayerLockedSendState =
+  | "sending"
+  | "retrying"
+  | "locked"
+  | "unconfirmed"
+  | "rejected";
+
 export interface PlayerLockedProps {
   themeKey?: ThemeKey;
   category?: string;
@@ -33,8 +46,14 @@ export interface PlayerLockedProps {
   chosenSlot?: 1 | 2 | 3 | 4;
   /** Seconds remaining (still counting down for the rest of the room). */
   seconds?: number;
-  /** Time-to-lock in seconds — drives the "Locked at 2.3s" stat. */
-  msToLock?: number;
+  /** Time-to-lock in ms — drives the "Locked at 2.3s" stat. `null` = the
+   *  server has said yes but its saved time has not reached this phone yet, so
+   *  no time is claimed. Omitted → the gallery's sample value. */
+  msToLock?: number | null;
+  /** How far the answer has got (see the file header). Default "locked". */
+  sendState?: PlayerLockedSendState;
+  /** "rejected" only: lets the player send the same answer again. */
+  onRetry?: () => void;
   /** Static locked-in count, e.g. "21/32". Optional, and never defaulted: a
    *  made-up count on a real phone tells the room something untrue. */
   lockedSummary?: string;
@@ -114,6 +133,8 @@ export function PlayerLocked({
   chosenSlot = 2,
   seconds = 11,
   msToLock = 2300,
+  sendState = "locked",
+  onRetry,
   lockedSummary,
   questionNumber: _questionNumber,
   lockedCount,
@@ -129,8 +150,11 @@ export function PlayerLocked({
   const catColor = categoryColor(category, t.accent);
   const septemberQuestion = themeKey === "september";
   const bannerBottomGap = septemberQuestion ? 0 : 18;
-  const secondsToLock = (msToLock / 1000).toFixed(1);
-  const speedBonus = msToLock < 5000;
+  const isLocked = sendState === "locked";
+  const showLockedAt = isLocked && msToLock !== null;
+  const secondsToLock = msToLock === null ? "" : (msToLock / 1000).toFixed(1);
+  const speedBonus = msToLock !== null && msToLock < 5000;
+  const inFlight = sendState === "sending" || sendState === "retrying";
   const hasStandings = !!standings && standings.top.length > 0;
 
   // Live "X of Y locked in" — the one thing on this screen that actually moves
@@ -178,18 +202,93 @@ export function PlayerLocked({
         }}
       >
         <TimerRing accent={catColor} seconds={seconds} />
-        <div style={{ flex: 1 }} role="status" aria-live="polite">
-          <Eyebrow color={t.inkMid} size={9}>LOCKED AT</Eyebrow>
-          <div style={{ marginTop: 2, fontSize: 14, color: t.ink, fontWeight: 600 }}>
-            <Numeric size={15} color={catColor}>{secondsToLock}s</Numeric>
-            <span style={{ color: t.inkMid, fontWeight: 400, marginLeft: 6, fontSize: 12 }}>
-              {speedBonus ? "· speed bonus locked in" : "· locked in"}
-            </span>
-          </div>
+        <div
+          // Same height in every state (the saved-time line is the tallest), so
+          // Sending → Locked in → Locked at 2.3s never moves the cards below.
+          style={{ flex: 1, minWidth: 0, minHeight: 49 }}
+          role="status"
+          aria-live="polite"
+          data-testid="player-send-status"
+          data-send-state={sendState}
+        >
+          {showLockedAt ? (
+            <>
+              <Eyebrow color={t.inkMid} size={9}>LOCKED AT</Eyebrow>
+              <div style={{ marginTop: 2, fontSize: 14, color: t.ink, fontWeight: 600 }}>
+                <Numeric size={15} color={catColor}>{secondsToLock}s</Numeric>
+                <span style={{ color: t.inkMid, fontWeight: 400, marginLeft: 6, fontSize: 12 }}>
+                  {speedBonus ? "· speed bonus locked in" : "· locked in"}
+                </span>
+              </div>
+            </>
+          ) : (
+            <>
+              <Eyebrow color={t.inkMid} size={9}>
+                {sendState === "unconfirmed" ? "TIME\u2019S UP" : "YOUR ANSWER"}
+              </Eyebrow>
+              <div
+                style={{
+                  marginTop: 2,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  fontSize: 14,
+                  lineHeight: 1.2,
+                  color: sendState === "sending" ? t.inkMid : t.ink,
+                  fontWeight: 600,
+                }}
+              >
+                {(inFlight || isLocked) && (
+                  <span
+                    aria-hidden="true"
+                    data-testid="player-send-dot"
+                    style={{
+                      flexShrink: 0,
+                      width: 6,
+                      height: 6,
+                      borderRadius: 99,
+                      background: isLocked ? catColor : t.inkMid,
+                      animation: inFlight ? pulseAnimation : "none",
+                    }}
+                  />
+                )}
+                <span>
+                  {sendState === "sending" && "Sending\u2026"}
+                  {sendState === "retrying" && "Didn\u2019t go through \u2014 retrying"}
+                  {isLocked && "Locked in"}
+                  {sendState === "unconfirmed" && "We couldn\u2019t confirm your answer"}
+                  {sendState === "rejected" && "Couldn\u2019t send your answer"}
+                  {sendState === "rejected" && onRetry && (
+                    <button
+                      type="button"
+                      onClick={onRetry}
+                      style={{
+                        marginLeft: 10,
+                        padding: "6px 2px",
+                        background: "none",
+                        border: "none",
+                        color: t.ink,
+                        font: "inherit",
+                        fontWeight: 700,
+                        textDecoration: "underline",
+                        cursor: "pointer",
+                      }}
+                    >
+                      Try again
+                    </button>
+                  )}
+                </span>
+              </div>
+            </>
+          )}
         </div>
         {hasPhoneLayer(themeKey) ? (
-          // October: your pumpkin lit the instant you locked in.
-          <YourPumpkin mood="lit" size={56} style={{ margin: "-18px 0 -8px" }} />
+          // October: your pumpkin lights the moment the server says yes.
+          <YourPumpkin
+            mood={isLocked ? "lit" : sendState === "unconfirmed" ? "toppled" : "waiting"}
+            size={56}
+            style={{ margin: "-18px 0 -8px" }}
+          />
         ) : null}
         {!hasLiveCount && lockedSummary && <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>}
       </div>
@@ -234,6 +333,9 @@ export function PlayerLocked({
             n={slot}
             text={options[i] ?? ""}
             state={slot === chosenSlot ? "locked-self" : "locked-other"}
+            // Continuation of the tap: the cards are already there, so they
+            // never fade or slide in again.
+            entrance={false}
           />
         ))}
       </div>
@@ -269,26 +371,35 @@ export function PlayerLocked({
             data-testid="player-house-lights-confirmation"
             style={{
               marginBottom: 8,
+              minHeight: 18,
               color: t.ink,
               fontSize: 13,
               fontWeight: 700,
             }}
           >
-            Answer saved.
+            {isLocked ? "Answer saved." : "\u00A0"}
           </div>
         )}
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-          <span
-            data-testid="player-waiting-pulse-dot"
-            style={{
-              width: 5,
-              height: 5,
-              borderRadius: 99,
-              background: catColor,
-              animation: pulseAnimation,
-            }}
-          />
-          Waiting for the room to lock in&hellip;
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minHeight: 18 }}>
+          {(isLocked || sendState === "sending") && (
+            <span
+              data-testid="player-waiting-pulse-dot"
+              style={{
+                width: 5,
+                height: 5,
+                borderRadius: 99,
+                background: catColor,
+                animation: pulseAnimation,
+              }}
+            />
+          )}
+          {isLocked || sendState === "sending"
+            ? "Waiting for the room to lock in\u2026"
+            : sendState === "retrying"
+              ? "Keep this screen open while we retry."
+              : sendState === "unconfirmed"
+                ? "Waiting for the reveal\u2026"
+                : ""}
         </span>
       </div>
     </PhoneScreen>

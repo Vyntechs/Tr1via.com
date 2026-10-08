@@ -59,6 +59,7 @@ import {
   PlayerJoinGame2,
   PlayerBetweenGames,
   type PlayerQuestionSlot,
+  type PlayerLockedSendState,
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useReachability } from "@/lib/realtime/reachability";
@@ -523,8 +524,7 @@ function RoomStateMachine({
   const neighborhood: Neighborhood = buildNeighborhood(scores, me.id, 4);
 
   // ── Compute the screen content. The bolt overlay is rendered once below,
-  //    outside this branch, so it persists across the QuestionView→LockedView
-  //    transition after the signed snapshot confirms the answer row.
+  //    outside this branch, so it persists across the question→locked change.
   let inner: React.ReactNode;
 
   // ── Between games: 'join' recap (not opted in) or 'waiting' (opted in, G2 not started) ──
@@ -621,43 +621,29 @@ function RoomStateMachine({
       myAnswers.find((a) => a.question_id === currentQuestion.id) ?? null;
     const isResolved = currentQuestion.finished_at !== null;
     if (!isResolved) {
-      if (myAnswerForQ) {
-        inner = (
-          <LockedView
-            question={currentQuestion}
-            category={currentCategory}
-            myAnswer={myAnswerForQ}
-            roomCode={roomCode}
-            allAnswers={myAnswers}
-            categories={snapshot.categories}
-            allQuestions={allQuestions}
-            game={currentGame}
-            themeKey={themeKey}
-            revealBroadcast={snapshot.lastBroadcast}
-            standings={buildGame1Standings(scores, me.id)}
-            totalPlayers={scores.length > 0 ? scores.length : snapshot.players.length}
-            roomMagicEnabled={roomMagicEnabled}
-            onResolveSettled={handleResolveSettled}
-          />
-        );
-      } else {
-        inner = (
-          <QuestionView
-            question={currentQuestion}
-            category={currentCategory}
-            player={me}
-            roomCode={roomCode}
-            revealBroadcast={snapshot.lastBroadcast}
-            game={currentGame}
-            categories={snapshot.categories}
-            allQuestions={allQuestions}
-            onServerConfirm={handleServerConfirm}
-            themeKey={themeKey}
-            serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
-            onResolveSettled={handleResolveSettled}
-          />
-        );
-      }
+      // One screen for the whole answer: the question until the tap, then the
+      // locked screen from that same instant (sending → locked in), and the
+      // signed answer row only fills in the saved details later. Keyed by
+      // question so nothing from one question can leak into the next.
+      inner = (
+        <LiveQuestionView
+          key={currentQuestion.id}
+          question={currentQuestion}
+          category={currentCategory}
+          player={me}
+          myAnswer={myAnswerForQ}
+          revealBroadcast={snapshot.lastBroadcast}
+          categories={snapshot.categories}
+          allQuestions={allQuestions}
+          onServerConfirm={handleServerConfirm}
+          themeKey={themeKey}
+          serverScramble={snapshot.questionScrambles?.[currentQuestion.id]}
+          standings={buildGame1Standings(scores, me.id)}
+          totalPlayers={scores.length > 0 ? scores.length : snapshot.players.length}
+          roomMagicEnabled={roomMagicEnabled}
+          onResolveSettled={handleResolveSettled}
+        />
+      );
     } else {
       // Resolved. Show reveal-correct or reveal-wrong for THIS question.
       inner = (
@@ -913,39 +899,45 @@ function OwnWelcomeFlash({ playerId }: { playerId: string }) {
   );
 }
 
-// ─── QUESTION (LIVE, BEFORE ANSWER) ──────────────────────────────────────
+// ─── LIVE QUESTION (BEFORE, DURING AND AFTER THE TAP) ────────────────────
 
-function QuestionView({
+function LiveQuestionView({
   question,
   category,
   player,
-  roomCode: _roomCode,
+  myAnswer,
   revealBroadcast,
-  game: _game,
   categories,
   allQuestions,
   onServerConfirm,
   onResolveSettled,
   themeKey,
   serverScramble,
+  standings,
+  totalPlayers,
+  roomMagicEnabled,
 }: {
   question: QuestionRow;
   category: CategoryRow;
   player: PlayerRow;
-  roomCode: string;
+  /** The signed snapshot's saved answer for this question, once it has one. */
+  myAnswer: AnswerRow | null;
   revealBroadcast: ReturnType<typeof useRoom>["lastBroadcast"];
-  game: GameRow;
   categories: CategoryRow[];
   /** Every picked question of the night; numbers this one in play order. */
   allQuestions: QuestionRow[];
   /** Called the moment the server confirms the answer. Used to fire
-   *  the bolt ceremony from the parent, which survives this unmount. */
+   *  the bolt ceremony from the parent. */
   onServerConfirm: () => void;
   /** Reconcile the signed player snapshot after resolve settles so score and
    *  standing update even when this phone misses the realtime broadcast. */
   onResolveSettled: () => void;
   themeKey?: ThemeKey;
   serverScramble?: [number, number, number, number];
+  standings?: { top: StandingRow[]; you: StandingRow | null };
+  /** Players who can answer this question — denominator for the live bar. */
+  totalPlayers: number;
+  roomMagicEnabled: boolean;
 }) {
   // Compute the player-specific scramble. Same fn the server runs to verify
   // submissions, so the slot the player taps maps back to the canonical
@@ -954,15 +946,18 @@ function QuestionView({
     () => serverScramble ?? scrambleFor(question.id, player.id),
     [question.id, player.id, serverScramble],
   );
+  // Once the saved answer exists its scramble is the one to show (same value
+  // in practice: same player + question = same permutation).
+  const shownScramble = myAnswer?.scramble ?? scramble;
   const optionsInScrambleOrder = useMemo<[string, string, string, string]>(() => {
     const raw = question.options;
     return [
-      raw[scramble[0]] ?? "",
-      raw[scramble[1]] ?? "",
-      raw[scramble[2]] ?? "",
-      raw[scramble[3]] ?? "",
+      raw[shownScramble[0]] ?? "",
+      raw[shownScramble[1]] ?? "",
+      raw[shownScramble[2]] ?? "",
+      raw[shownScramble[3]] ?? "",
     ];
-  }, [question.options, scramble]);
+  }, [question.options, shownScramble]);
 
   // Timer aligned to the server's `played_at`. The reveal broadcast (if we
   // got it) carries `serverNow`, which `useTimer` uses to derive clock skew.
@@ -973,7 +968,10 @@ function QuestionView({
       : null;
 
   // When the timer hits zero on THIS device, fire /resolve — the first phone
-  // to arrive wins; the rest get no-ops.
+  // to arrive wins; the rest get no-ops. This also runs once the player has
+  // locked in: if every player locks in early there is nobody else to trigger
+  // the resolve, the server never sets finished_at, and every phone would sit
+  // on "Waiting for the room to lock in…" indefinitely.
   const resolveCalled = useRef(false);
   const handleZero = useCallback(() => {
     if (resolveCalled.current) return;
@@ -998,19 +996,26 @@ function QuestionView({
     onZero: handleZero,
   });
 
-  // Submit with exponential-backoff retry on transient failures. The tapped
-  // question disables while sending, but PlayerLocked waits for the signed
-  // snapshot to carry the canonical answer. A failed-after-retries state
-  // surfaces a small retry prompt the player can tap to re-attempt manually.
-  const { submit, status: submitStatus, retry, confirmedAt } = useAnswerSubmit({
+  // The tap locks the choice on screen at once; the send keeps going (with
+  // backoff and a time limit per try) until the server confirms or the
+  // question closes. "Locked in" comes from the send reply itself. Scoring
+  // still waits for the signed snapshot's answer row (`myAnswer`).
+  const {
+    submit,
+    status: submitStatus,
+    retry,
+    confirmedAt,
+    chosenSlot: tappedSlot,
+    failure,
+  } = useAnswerSubmit({
     questionId: question.id,
     scramble: Array.from(scramble),
     accepting: !hasExpired,
+    serverHasAnswer: myAnswer != null,
   });
 
   // Propagate server confirmation so the parent immediately refreshes the
-  // signed snapshot and can keep any themed bolt across the canonical
-  // QuestionView→LockedView transition.
+  // signed snapshot and can fire any themed bolt.
   useEffect(() => {
     if (!confirmedAt) return;
     onServerConfirm();
@@ -1022,8 +1027,6 @@ function QuestionView({
   const handleTap = useCallback(
     (slot: PlayerQuestionSlot) => {
       if (hasExpired) return;
-      // The tap is submission intent only. PlayerLocked and scoring wait for
-      // the signed snapshot to return the canonical answer row.
       submit(slot);
     },
     [hasExpired, submit],
@@ -1031,8 +1034,12 @@ function QuestionView({
 
   const questionNumber = computeQuestionNumber(question, categories, allQuestions);
 
-  return (
-    <>
+  const chosenSlot = myAnswer
+    ? ((shownScramble.indexOf(myAnswer.chosen_index) + 1) as 1 | 2 | 3 | 4)
+    : tappedSlot;
+
+  if (chosenSlot == null) {
+    return (
       <PlayerQuestion
         seconds={displaySeconds}
         category={category.name}
@@ -1042,134 +1049,34 @@ function QuestionView({
         prompt={question.prompt}
         imageUrl={question.image_url}
         onTap={handleTap}
-        disabled={hasExpired || submitStatus === "pending" || submitStatus === "sent"}
+        disabled={hasExpired}
       />
-      {submitStatus === "failed" && !hasExpired && (
-        <button
-          type="button"
-          onClick={retry}
-          aria-label="Retry sending your answer"
-          style={{
-            position: "fixed",
-            bottom: 20,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 60,
-            background: "var(--wrong)",
-            color: "#FFF",
-            border: "none",
-            borderRadius: 99,
-            padding: "12px 22px",
-            fontFamily: "var(--font-mono)",
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: "0.08em",
-            textTransform: "uppercase",
-            boxShadow: "0 10px 24px rgba(0,0,0,0.3)",
-            cursor: "pointer",
-          }}
-        >
-          Couldn&rsquo;t send · Tap to retry
-        </button>
-      )}
-    </>
-  );
-}
+    );
+  }
 
-// ─── LOCKED (LIVE, AFTER ANSWER) ─────────────────────────────────────────
-
-function LockedView({
-  question,
-  category,
-  myAnswer,
-  roomCode: _roomCode,
-  allAnswers: _allAnswers,
-  categories,
-  allQuestions,
-  game,
-  themeKey,
-  revealBroadcast,
-  standings,
-  totalPlayers,
-  roomMagicEnabled,
-  onResolveSettled,
-}: {
-  question: QuestionRow;
-  category: CategoryRow;
-  myAnswer: AnswerRow;
-  roomCode: string;
-  allAnswers: AnswerRow[];
-  categories: CategoryRow[];
-  /** Every picked question of the night; numbers this one in play order. */
-  allQuestions: QuestionRow[];
-  game: GameRow;
-  themeKey?: ThemeKey;
-  revealBroadcast: ReturnType<typeof useRoom>["lastBroadcast"];
-  standings?: { top: StandingRow[]; you: StandingRow | null };
-  /** Players who can answer this question — denominator for the live bar. */
-  totalPlayers: number;
-  roomMagicEnabled: boolean;
-  onResolveSettled: () => void;
-}) {
-  // Reuse the same scramble — same player + question = same permutation.
-  const scramble = useMemo(
-    () => myAnswer.scramble,
-    [myAnswer.scramble],
-  );
-  const options = useMemo<[string, string, string, string]>(
-    () => [
-      question.options[scramble[0]] ?? "",
-      question.options[scramble[1]] ?? "",
-      question.options[scramble[2]] ?? "",
-      question.options[scramble[3]] ?? "",
-    ],
-    [question.options, scramble],
-  );
-  const chosenSlot = (scramble.indexOf(myAnswer.chosen_index) + 1) as 1 | 2 | 3 | 4;
-
-  // Re-tick the timer client-side so the LOCKED screen also shows seconds
-  // counting down (everyone else is still racing). Also fire /resolve when
-  // the timer hits zero — same handler as QuestionView. Without this, if
-  // every player locks in early there is nobody mounted in QuestionView to
-  // trigger the resolve, the server never sets finished_at, and every
-  // phone sits on "Waiting for the room to lock in…" indefinitely. The
-  // resolve route is idempotent — first call wins, the rest no-op.
-  const revealedAtMs = question.played_at ? new Date(question.played_at).getTime() : null;
-  const serverNowMs =
-    revealBroadcast?.event === "reveal" && revealBroadcast.questionId === question.id
-      ? new Date(revealBroadcast.serverNow).getTime()
-      : null;
-  const resolveCalled = useRef(false);
-  const handleZero = useCallback(() => {
-    if (resolveCalled.current) return;
-    resolveCalled.current = true;
-    void fetch(`/api/questions/${question.id}/resolve`, {
-      method: "POST",
-      credentials: "same-origin",
-    })
-      .catch((e) => console.warn("resolve failed (locked)", e))
-      .finally(() => onResolveSettled());
-  }, [onResolveSettled, question.id]);
-  useEffect(() => {
-    resolveCalled.current = false;
-  }, [question.id]);
-  const { displaySeconds } = useTimer({
-    revealedAtMs,
-    serverNowMs,
-    durationS: questionDurationFor(themeKey),
-    onZero: handleZero,
-  });
-
-  const questionNumber = computeQuestionNumber(question, categories, allQuestions);
+  const sendState: PlayerLockedSendState = myAnswer
+    ? "locked"
+    : submitStatus === "sent"
+      ? "locked"
+      : submitStatus === "retrying"
+        ? "retrying"
+        : submitStatus === "failed"
+          ? failure === "closed" || hasExpired
+            ? "unconfirmed"
+            : "rejected"
+          : "sending";
 
   return (
     <PlayerLocked
       category={category.name}
       value={question.point_value ?? 100}
-      options={options}
+      options={optionsInScrambleOrder}
       chosenSlot={chosenSlot}
       seconds={displaySeconds}
-      msToLock={myAnswer.ms_to_lock}
+      // Only the saved row knows the real time; before it arrives no time is claimed.
+      msToLock={myAnswer ? myAnswer.ms_to_lock : null}
+      sendState={sendState}
+      onRetry={retry}
       questionNumber={questionNumber}
       totalPlayers={totalPlayers}
       standings={standings}
