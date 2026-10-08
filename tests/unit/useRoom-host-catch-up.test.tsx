@@ -601,6 +601,53 @@ describe("host laptop: re-reads the room in place when it may have missed someth
     expect(result.current.currentQuestion?.id).toBe("q1");
   });
 
+  it("does not put the board back when a read that started before a reveal finishes after it", async () => {
+    const shown: Array<string | null> = [];
+    const { result } = renderHook(() => {
+      const room = useRoom({ roomCode: "ABCDEF", audience: "host" });
+      shown.push(room.currentQuestion?.id ?? null);
+      return room;
+    });
+    await flush();
+
+    // A catch-up read starts: it reads the questions (no live one yet), then waits
+    // on the slow players read.
+    const hold = deferred();
+    h.gates.set("players", hold.promise);
+    act(() => {
+      void result.current.requestLiveCatchUp?.();
+    });
+    await flush();
+    expect(h.executed.players).toBe(2);
+    h.gates.delete("players");
+
+    // The reveal lands and its own refresh shows the question first...
+    h.db.questions[0].played_at = "2026-10-07T00:13:00.000Z";
+    act(() => {
+      h.broadcastHandlers.get("reveal")?.({
+        payload: { questionId: "q1", serverNow: "2026-10-07T00:13:00.100Z" },
+      });
+    });
+    await flush();
+    expect(result.current.currentQuestion?.id).toBe("q1");
+
+    // ...then the older read finishes (the queued follow-up read is still on its
+    // way). The screen must not go back to the board in between.
+    const followUp = deferred();
+    h.gates.set("players", followUp.promise);
+    hold.release();
+    await flush();
+    expect(result.current.currentQuestion?.id).toBe("q1");
+
+    followUp.release();
+    h.gates.delete("players");
+    await flush();
+    expect(shown.slice(shown.indexOf("q1"))).not.toContain(null);
+    expect(result.current.currentQuestion?.id).toBe("q1");
+    // The follow-up that was already queued is the only extra read.
+    expect(h.executed.players).toBe(3);
+  });
+
   it("keeps broadcast tags and the same row objects when nothing changed", async () => {
     h.db.questions[0].played_at = "2026-10-07T00:11:00.000Z";
     const { result } = await mountHost();

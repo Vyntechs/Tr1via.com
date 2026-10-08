@@ -585,6 +585,15 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     // plus one trailing read if another request or a broadcast arrives mid-read.
     let hostCatchUpInFlight: Promise<void> | null = null;
     let hostCatchUpQueued = false;
+    // Bumped whenever a live update (broadcast refresh or game/question/reveal
+    // row change) is about to be applied. A catch-up read that started before it
+    // may have read older rows, so it drops its result and the queued follow-up
+    // read applies the newest state instead (no extra read: it was queued anyway).
+    let hostUpdateSeq = 0;
+    function noteHostUpdate(): void {
+      hostUpdateSeq += 1;
+      if (hostCatchUpInFlight) hostCatchUpQueued = true;
+    }
 
     /**
      * Re-fetch the players list and merge it into the snapshot. Called as a
@@ -743,9 +752,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     ): Promise<void> {
       if (cancelled) return;
       // A catch-up read already in flight may have started before this event
-      // landed; make it read once more when it finishes so it can't leave older
-      // rows behind.
-      if (hostCatchUpInFlight) hostCatchUpQueued = true;
+      // landed: it reads once more when it finishes, and drops its older result.
+      noteHostUpdate();
       type GamesQueryResult = { data: GameRow[] | null; error: unknown };
       type QuestionQueryResult = { data: QuestionRow | null; error: unknown };
       let gamesRes: GamesQueryResult;
@@ -1200,6 +1208,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // alone if its read failed. Resilient nights keep their server projection.
       async function catchUpHostRoomOnce(): Promise<void> {
         try {
+          const seq = hostUpdateSeq;
           const { gamesRead, revealsRead } = startGamesAndReveals();
           const [gamesRes, playersRes, liveRes, lastRes] = await withTimeout(
             Promise.all([gamesRead, readPlayers(), readLiveQuestion(), readLastResolved()]),
@@ -1230,6 +1239,10 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           }
           const newest = revealsRes.error ? undefined : (revealsRes.data ?? [])[0];
           const nextReveal = (newest ?? null) as RevealRow | null;
+          // A newer message was applied while this read was in flight: this result
+          // may predate it (question, board, question flicker). Drop it; the
+          // follow-up read already queued by that message applies the latest.
+          if (hostUpdateSeq !== seq) return;
           setSnapshot((prev) => {
             if (prev.night?.id !== nightId) return prev;
             let next = prev;
@@ -1625,6 +1638,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       function mergeGameChange(payload: ChangePayload<GameRow>) {
         if (cancelled) return;
         markFresh();
+        noteHostUpdate();
         setSnapshot((prev) => {
           const games = applyRow(prev.games, payload, (a, b) => a.game_no - b.game_no);
           return { ...prev, games, currentGame: pickCurrentGame(games) };
@@ -1651,6 +1665,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           // Could be a category just added; fall through anyway since
           // currentQuestion lookup will safely no-op if mismatched.
         }
+        noteHostUpdate();
         setSnapshot((prev) => {
           let nextQ = prev.currentQuestion;
           let nextResolved = prev.lastResolvedQuestion;
@@ -1690,6 +1705,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         const row = payload.new as RevealRow;
         // Filter to reveals whose game belongs to this night.
         if (!games.some((g) => g.id === row.game_id)) return;
+        noteHostUpdate();
         setSnapshot((prev) => ({ ...prev, currentReveal: row }));
       }
     }
