@@ -1544,3 +1544,109 @@ describe("HostPhoneClient reveal flow", () => {
     expect(h.fetch.mock.calls.some(([url]) => url === "/api/nights/night-1/preflight")).toBe(false);
   });
 });
+
+// A host window narrower than 860px (and Heather's real host phone) uses this
+// screen. Like the laptop console, it re-reads the room as soon as one of its own
+// presses succeeds, instead of waiting on a broadcast it may have missed.
+describe("HostPhoneClient re-reads the room after its own presses", () => {
+  const catchUp = vi.fn(async () => undefined);
+  const liveQuestion = { ...pickedQuestion, played_at: "2026-07-08T00:01:30Z" };
+
+  function renderPhone() {
+    return render(
+      <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+    );
+  }
+
+  function answerWith(status: number, error?: string) {
+    h.fetch.mockImplementation(async () =>
+      new Response(JSON.stringify(error ? { error } : { ok: true }), { status }));
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    catchUp.mockClear();
+    const liveGame = game("g1", 1, "live");
+    h.room = {
+      ...room(),
+      games: [liveGame],
+      currentGame: liveGame,
+      currentQuestion: liveQuestion,
+      requestLiveCatchUp: catchUp,
+    };
+    h.questions = [pickedQuestion, secondPickedQuestion];
+    h.fetch.mockReset();
+    h.refresh.mockReset();
+    h.scoreRows = [];
+    h.scoreChangeHandlers = [];
+    h.fallback = { backupMode: false, payload: null };
+    h.autoRevealOptions = null;
+    answerWith(200);
+    vi.stubGlobal("fetch", h.fetch);
+  });
+
+  it("Reveal: re-reads once, only after the server says it worked", async () => {
+    h.room = { ...h.room!, currentQuestion: null };
+    let reply!: (response: Response) => void;
+    h.fetch.mockImplementation(() => new Promise<Response>((resolve) => { reply = resolve; }));
+    renderPhone();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Salsa for 200 points" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith("/api/games/g1/reveal", expect.anything()));
+    expect(catchUp).not.toHaveBeenCalled();
+
+    reply(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([
+    ["End early", "/api/games/g1/end-early"],
+    ["Undo", "/api/games/g1/undo"],
+  ])("%s: re-reads after it worked", async (label, path) => {
+    renderPhone();
+    fireEvent.click(await screen.findByRole("button", { name: new RegExp(label, "i") }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(path, expect.anything()));
+    await waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1));
+  });
+
+  it("End early: also re-reads when the timer had already resolved the question", async () => {
+    answerWith(409, "question is already resolved");
+    renderPhone();
+    fireEvent.click(await screen.findByRole("button", { name: /End early/i }));
+    await waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1));
+  });
+
+  it("End Game: re-reads after the confirmed press worked", async () => {
+    h.room = { ...h.room!, currentQuestion: null };
+    renderPhone();
+    fireEvent.click(await screen.findByRole("button", { name: "End Game 1" }));
+    expect(catchUp).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm end Game 1" }));
+    await waitFor(() => expect(h.fetch).toHaveBeenCalledWith("/api/games/g1/end", expect.anything()));
+    await waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1));
+  });
+
+  it.each([
+    ["Reveal"],
+    ["End early"],
+    ["Undo"],
+    ["End Game"],
+  ])("%s: does not re-read when the press fails", async (label) => {
+    if (label === "Reveal" || label === "End Game") {
+      h.room = { ...h.room!, currentQuestion: null };
+    }
+    answerWith(500, "boom");
+    renderPhone();
+    if (label === "Reveal") {
+      fireEvent.click(await screen.findByRole("button", { name: "Salsa for 200 points" }));
+    } else if (label === "End Game") {
+      fireEvent.click(await screen.findByRole("button", { name: "End Game 1" }));
+      fireEvent.click(screen.getByRole("button", { name: "Confirm end Game 1" }));
+    } else {
+      fireEvent.click(await screen.findByRole("button", { name: new RegExp(label, "i") }));
+    }
+    await waitFor(() => expect(h.fetch).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByRole("alert")).toBeInTheDocument());
+    expect(catchUp).not.toHaveBeenCalled();
+  });
+});

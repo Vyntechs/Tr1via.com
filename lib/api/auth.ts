@@ -90,6 +90,16 @@ export async function requireOwnedNight(
 ): Promise<NightOwnershipResult> {
   const auth = await getAuthedHost();
   if (!auth.ok) return auth;
+  return ownedNightFor(auth.host, nightId);
+}
+
+// The owned*For helpers below take a host that THIS request has already signed
+// in, so a chain (question -> category -> game -> night) checks the sign-in once
+// instead of once per link. Every ownership comparison still runs.
+async function ownedNightFor(
+  host: HostRow,
+  nightId: string,
+): Promise<NightOwnershipResult> {
   const admin = getSupabaseAdmin();
   const { data: night } = await admin
     .from("nights")
@@ -97,10 +107,10 @@ export async function requireOwnedNight(
     .eq("id", nightId)
     .maybeSingle();
   if (!night) return { ok: false, status: 404, error: "night not found" };
-  if (night.host_id !== auth.host.id) {
+  if (night.host_id !== host.id) {
     return { ok: false, status: 403, error: "not your night" };
   }
-  return { ok: true, host: auth.host, night: night as NightRow };
+  return { ok: true, host, night: night as NightRow };
 }
 
 /**
@@ -113,6 +123,13 @@ export async function requireOwnedGame(gameId: string): Promise<
 > {
   const auth = await getAuthedHost();
   if (!auth.ok) return auth;
+  return ownedGameFor(auth.host, gameId);
+}
+
+async function ownedGameFor(host: HostRow, gameId: string): Promise<
+  | { ok: true; host: HostRow; night: NightRow; gameId: string }
+  | { ok: false; status: 401 | 403 | 404; error: string }
+> {
   const admin = getSupabaseAdmin();
   const { data: game } = await admin
     .from("games")
@@ -120,7 +137,7 @@ export async function requireOwnedGame(gameId: string): Promise<
     .eq("id", gameId)
     .maybeSingle();
   if (!game) return { ok: false, status: 404, error: "game not found" };
-  const night = await requireOwnedNight(game.night_id);
+  const night = await ownedNightFor(host, game.night_id);
   if (!night.ok) return night;
   return { ok: true, host: night.host, night: night.night, gameId };
 }
@@ -138,6 +155,13 @@ export async function requireOwnedCategory(
 ): Promise<CategoryOwnershipResult> {
   const auth = await getAuthedHost();
   if (!auth.ok) return auth;
+  return ownedCategoryFor(auth.host, categoryId);
+}
+
+async function ownedCategoryFor(
+  host: HostRow,
+  categoryId: string,
+): Promise<CategoryOwnershipResult> {
   const admin = getSupabaseAdmin();
   const { data: category } = await admin
     .from("categories")
@@ -145,7 +169,7 @@ export async function requireOwnedCategory(
     .eq("id", categoryId)
     .maybeSingle();
   if (!category) return { ok: false, status: 404, error: "category not found" };
-  const game = await requireOwnedGame(category.game_id);
+  const game = await ownedGameFor(host, category.game_id);
   if (!game.ok) return game;
   return {
     ok: true,
@@ -181,7 +205,7 @@ export async function requireOwnedQuestion(
     .eq("id", questionId)
     .maybeSingle();
   if (!question) return { ok: false, status: 404, error: "question not found" };
-  const category = await requireOwnedCategory(question.category_id);
+  const category = await ownedCategoryFor(auth.host, question.category_id);
   if (!category.ok) return category;
   return {
     ok: true,
