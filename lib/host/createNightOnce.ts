@@ -42,18 +42,28 @@ export type LockedResult =
 // Postgres answers 42883 when no function matches the arguments.
 const MISSING_FUNCTION_CODES = new Set(["PGRST202", "42883"]);
 
+// Test-only request header. The e2e seeding route (app/api/_test/seed-night)
+// sends it so every seeded night is a brand-new one, even when a spec seeds an
+// empty night and then a full one for the same host seconds apart. POST
+// /api/nights honors it ONLY in test mode (TEST_AUTH_ENABLED=1 plus a matching
+// x-test-secret); in production it is ignored and reuse works as normal.
+export const TEST_NEW_NIGHT_HEADER = "x-test-new-night";
+
 export async function createNightLocked(
   admin: SupabaseClient,
   req: CreateNightRequest,
   roomCodes: string[],
+  opts: { reuse?: boolean } = {},
 ): Promise<LockedResult> {
+  const reuse = opts.reuse ?? true;
   const { data, error } = await admin.rpc("create_night_once", {
     p_host_id: req.hostId,
     p_venue_name: req.venueName,
     p_theme_key: req.themeKey,
     p_scheduled_at: req.scheduledAt,
     p_room_codes: roomCodes,
-    p_reuse_window_seconds: Math.round(NIGHT_TWIN_WINDOW_MS / 1000),
+    // 0 = never hand back an existing night (the function checks this).
+    p_reuse_window_seconds: reuse ? Math.round(NIGHT_TWIN_WINDOW_MS / 1000) : 0,
   });
   if (error) {
     if (error.code && MISSING_FUNCTION_CODES.has(error.code)) return { kind: "unavailable" };

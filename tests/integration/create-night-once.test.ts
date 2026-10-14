@@ -104,6 +104,17 @@ describe("create_night_once (proposed migration, real Postgres)", () => {
     expect((await createOnce(["AAAAA4"])).reused).toBe(false);
   });
 
+  test("a reuse window of 0 always makes a new night (test seeding)", async () => {
+    const first = await createOnce(["ZERO01"]);
+    const res = await db.query<{ night_id: string; reused: boolean }>(
+      "select * from create_night_once($1, 'Soul Fire Pizza', null, null, $2::text[], 0)",
+      [hostId, ["ZERO02"]],
+    );
+    expect(res.rows[0].reused).toBe(false);
+    expect(res.rows[0].night_id).not.toBe(first.night_id);
+    expect(await count("select 1 from nights")).toBe(2);
+  });
+
   test("a room-code collision moves on to the next code", async () => {
     const other = await newHost("Sarah");
     await createOnce(["TAKEN1"], "Soul Fire Pizza", other);

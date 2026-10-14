@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
 
 const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
@@ -67,19 +67,19 @@ const twoDraftGames = [
   { id: "g2", night_id: FIRST, state: "draft", started_at: null },
 ];
 
-function post() {
+function post(headers: Record<string, string> = {}) {
   return new NextRequest("http://test/api/nights", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", ...headers },
     body: JSON.stringify({ venueName: "Soul Fire Pizza" }),
   });
 }
 
-async function call(setup: Setup) {
+async function call(setup: Setup, headers: Record<string, string> = {}) {
   const m = makeAdmin(setup);
   adminMock.getSupabaseAdmin.mockReturnValue(m.admin);
   const { POST } = await import("@/app/api/nights/route");
-  const res = await POST(post());
+  const res = await POST(post(headers));
   return { res, body: await res.json(), ...m };
 }
 
@@ -160,5 +160,50 @@ describe("POST /api/nights — one night per tap", () => {
     });
     expect(res.status).toBe(500);
     expect(nightsInsert).not.toHaveBeenCalled();
+  });
+
+  describe("test seeding asks for a brand-new night (x-test-new-night)", () => {
+    const SEED = { "x-test-new-night": "1", "x-test-secret": "seed-secret" };
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("in test mode it makes a new night even when a fresh empty one exists", async () => {
+      vi.stubEnv("TEST_AUTH_ENABLED", "1");
+      vi.stubEnv("TEST_SECRET", "seed-secret");
+      const { res, body, nightsInsert } = await call(
+        { rpc: MISSING_FN, recent: [freshEmpty], games: twoDraftGames },
+        SEED,
+      );
+      expect(res.status).toBe(201);
+      expect(body).toEqual({ nightId: NEW, roomCode: "EYBRKT", reused: false });
+      expect(nightsInsert).toHaveBeenCalledTimes(1);
+    });
+
+    it("in test mode it tells the database function not to reuse (window 0)", async () => {
+      vi.stubEnv("TEST_AUTH_ENABLED", "1");
+      vi.stubEnv("TEST_SECRET", "seed-secret");
+      const { rpc } = await call(
+        { rpc: { data: [{ night_id: NEW, room_code: "EYBRKT", reused: false }], error: null } },
+        SEED,
+      );
+      const [, args] = rpc.mock.calls[0] as unknown as [string, Record<string, unknown>];
+      expect(args.p_reuse_window_seconds).toBe(0);
+    });
+
+    it("is ignored outside test mode, or with the wrong secret: the host still gets her night back", async () => {
+      for (const env of [
+        { TEST_AUTH_ENABLED: "", TEST_SECRET: "seed-secret" },
+        { TEST_AUTH_ENABLED: "1", TEST_SECRET: "another-secret" },
+      ]) {
+        vi.stubEnv("TEST_AUTH_ENABLED", env.TEST_AUTH_ENABLED);
+        vi.stubEnv("TEST_SECRET", env.TEST_SECRET);
+        const { res, body, nightsInsert } = await call(
+          { rpc: MISSING_FN, recent: [freshEmpty], games: twoDraftGames },
+          SEED,
+        );
+        expect(res.status).toBe(200);
+        expect(body).toEqual({ nightId: FIRST, roomCode: "ZN4WJW", reused: true });
+        expect(nightsInsert).not.toHaveBeenCalled();
+      }
+    });
   });
 });

@@ -17,7 +17,8 @@
 -- "Fresh empty night" = same host, created within p_reuse_window_seconds,
 -- never opened/closed/run, same venue/theme/date as asked, both games still
 -- draft and never started, no categories, no players. A night with anything
--- in it is never reused.
+-- in it is never reused. p_reuse_window_seconds <= 0 means "never reuse,
+-- always make a new night" (the e2e seeding route uses that, test mode only).
 --
 -- The app works with or without this function: until it exists the route
 -- falls back to the same check in app code (lib/host/createNightOnce.ts).
@@ -57,11 +58,12 @@ begin
   select n.id, n.room_code
     into v_night_id, v_room_code
     from nights n
-   where n.host_id = p_host_id
+   where p_reuse_window_seconds > 0
+     and n.host_id = p_host_id
      and n.opened_at is null
      and n.closed_at is null
      and n.current_run_id is null
-     and n.created_at >= now() - make_interval(secs => greatest(p_reuse_window_seconds, 0))
+     and n.created_at >= now() - make_interval(secs => p_reuse_window_seconds)
      and n.venue_name = p_venue_name
      and n.theme_key is not distinct from p_theme_key
      and n.scheduled_at is not distinct from p_scheduled_at

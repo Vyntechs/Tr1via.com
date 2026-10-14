@@ -21,9 +21,11 @@ import { badRequest, ok, serverError, unauthorized, forbidden } from "@/lib/api/
 import { getAuthedHost } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { newRoomCode } from "@/lib/game/room-code";
+import { isTestModeEnabled } from "@/lib/api/require-test-mode";
 import {
   createNightLocked,
   findReusableEmptyNight,
+  TEST_NEW_NIGHT_HEADER,
   type CreateNightRequest,
 } from "@/lib/host/createNightOnce";
 
@@ -52,19 +54,25 @@ export async function POST(req: NextRequest) {
     scheduledAt: parsed.data.scheduledAt ?? null,
   };
 
+  // Test seeding only: always make a brand-new night. Ignored unless the
+  // server is in test mode AND the request carries the test secret.
+  const forceNew = req.headers.get(TEST_NEW_NIGHT_HEADER) === "1" && isTestModeEnabled(req);
+
   // 1. Locked get-or-create in the database, once the proposed migration
   //    (supabase/proposed/20261014_create_night_once.sql) is applied.
   const roomCodes = Array.from({ length: MAX_CODE_RETRIES }, () => newRoomCode());
-  const locked = await createNightLocked(admin, request, roomCodes);
+  const locked = await createNightLocked(admin, request, roomCodes, { reuse: !forceNew });
   if (locked.kind === "error") return serverError(locked.message);
   if (locked.kind === "ok") {
     return ok(locked.night, locked.night.reused ? 200 : 201);
   }
 
   // 2. Same rule in app code while the function is not there yet.
-  const reusable = await findReusableEmptyNight(admin, request);
-  if (reusable.error) return serverError(reusable.error);
-  if (reusable.night) return ok(reusable.night, 200);
+  if (!forceNew) {
+    const reusable = await findReusableEmptyNight(admin, request);
+    if (reusable.error) return serverError(reusable.error);
+    if (reusable.night) return ok(reusable.night, 200);
+  }
 
   // Mint a fresh room code, retrying on collision against the active
   // unique partial index.
