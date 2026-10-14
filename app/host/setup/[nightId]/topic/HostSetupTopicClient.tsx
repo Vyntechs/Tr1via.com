@@ -107,6 +107,9 @@ export function HostSetupTopicClient({
       // with the browser Back button, from an old setup screen, or from a
       // second device). The server kept the slot to one category; say so
       // instead of quietly opening the old topic or starting a second one.
+      // A slot whose row is still EMPTY (a typo fix after question-writing
+      // failed) never lands here: the server gives that row the new topic in
+      // place and answers sameTopic: true, so she just carries on.
       if (reused && sameTopic === false) {
         throw new Error(slotTakenMessage(position, category.name));
       }

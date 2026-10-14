@@ -50,6 +50,7 @@ function createAdmin({
   insertError,
   rowsAfterInsertError,
   picked = [],
+  questionCount = 0,
 }: {
   existing: boolean;
   selectError?: boolean;
@@ -61,6 +62,8 @@ function createAdmin({
   rowsAfterInsertError?: Row[];
   /** Picked questions the route sees if it counts them for a doubled slot. */
   picked?: Array<{ category_id: string }>;
+  /** Question rows the slot's category has (read before an in-place topic change). */
+  questionCount?: number;
 }) {
   const pickedLookups: unknown[][] = [];
   const insert = vi.fn(() => ({
@@ -91,8 +94,14 @@ function createAdmin({
           });
         }
         q.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
-          Promise.resolve({ data: picked, error: null }).then(resolve, reject);
+          Promise.resolve({ data: picked, count: questionCount, error: null }).then(resolve, reject);
         return q;
+      }
+      if (table === "games") {
+        const g: Record<string, unknown> = {};
+        for (const method of ["select", "eq"]) g[method] = vi.fn(() => g);
+        g.maybeSingle = vi.fn(async () => ({ data: { state: "draft" }, error: null }));
+        return g;
       }
       if (table !== "categories") throw new Error(`unexpected table: ${table}`);
       const lookup: Record<string, unknown> = {};
@@ -222,6 +231,8 @@ describe("POST /api/categories — idempotent get-or-create", () => {
           state: "review",
         },
       ],
+      // It had its 20 questions, so it is not an empty row a typo fix may take over.
+      questionCount: 20,
     });
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
 

@@ -32,6 +32,7 @@ import {
   notFound,
   ok,
   paymentRequired,
+  serverError,
   unauthorized,
 } from "@/lib/api/responses";
 import { hostAIAccess } from "@/lib/api/entitlements";
@@ -206,6 +207,32 @@ export async function POST(
     );
   }
 
+  // Read the topic again now that this attempt owns the job. The copy read at
+  // the top of the request can be stale: a typo fix on the topic screen lets an
+  // empty row take a new topic in place (POST /api/categories), and a slow or
+  // retried request for the old words could otherwise begin after that and
+  // write old-topic questions into the renamed row. A change made after this
+  // read bumps the attempt, which fences this worker out instead.
+  const { data: current, error: currentError } = await admin
+    .from("categories")
+    .select("name, topic")
+    .eq("id", categoryId)
+    .maybeSingle();
+  if (currentError || !current) {
+    try {
+      await failQuestionGeneration(rpcClient, {
+        categoryId,
+        attempt: job.attempt,
+        restoreState: null,
+        error: "The question builder could not start. Try again.",
+      });
+    } catch {
+      /* best-effort: the job is resumable either way */
+    }
+    return serverError(currentError?.message ?? "category not found");
+  }
+  const { name: categoryName, topic } = current as { name: string; topic: string };
+
   // Fire-and-forget the background job. `after` runs once the response has
   // been flushed — the host UI sees the 202 immediately and then subscribes
   // to the category channel for progress events.
@@ -215,8 +242,8 @@ export async function POST(
     gameId: category.game_id,
     nightId: owned.night.id,
     hostId: owned.host.id,
-    categoryName: category.name,
-    topic: category.topic,
+    categoryName,
+    topic,
     mode: parsed.data.autoPick
       ? "auto_build"
       : parsed.data.keptIds
@@ -226,7 +253,7 @@ export async function POST(
   after(async () => {
     await runGenerationJob({
       categoryId,
-      topic: category.topic,
+      topic,
       flavor: parsed.data.flavor,
       difficulty: parsed.data.difficulty,
       themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,

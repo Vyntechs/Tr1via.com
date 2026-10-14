@@ -13,6 +13,7 @@ import type { NextRequest } from "next/server";
 import { CreateCategoryBodySchema } from "@/lib/api/schemas";
 import {
   badRequest,
+  conflict,
   forbidden,
   notFound,
   ok,
@@ -23,6 +24,7 @@ import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { pickSlotWinner, sameTopicText } from "@/lib/host/oneCategoryPerSlot";
 import { loadPickedCountsForDoubledSlots } from "@/lib/host/loadSlotPickedCounts";
+import { retopicEmptyCategory } from "@/lib/host/retopicEmptyCategory";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -66,6 +68,24 @@ export async function POST(req: NextRequest) {
     return serverError(slot.error);
   }
   if (slot.category) {
+    // A different topic for a slot whose row is still EMPTY (no questions at
+    // all, game in setup) is a typo fix after question-writing failed, not a
+    // second category: the row takes the new topic in place, same id, and any
+    // build still running for the old topic is fenced off first. Only a slot
+    // with exactly one row qualifies; a doubled slot keeps the message.
+    if (slot.rowCount === 1 && !sameTopicText(slot.category.topic, topic)) {
+      const outcome = await retopicEmptyCategory(admin, slot.category, { topic, name });
+      if (outcome.kind === "retopicked") {
+        // `sameTopic: true` = the slot now holds the topic she typed, so even
+        // an older copy of the topic screen carries on to question-writing.
+        return ok(
+          { category: outcome.category, reused: true, sameTopic: true, retopicked: true },
+          200,
+        );
+      }
+      if (outcome.kind === "busy") return conflict(outcome.message);
+      if (outcome.kind === "error") return serverError(outcome.message);
+    }
     return ok(reusedBody(slot.category, topic), 200);
   }
 
@@ -109,7 +129,7 @@ interface SlotCategory {
 }
 
 type SlotLookup =
-  | { ok: true; category: SlotCategory | null }
+  | { ok: true; category: SlotCategory | null; rowCount: number }
   | { ok: false; error: string };
 
 async function findSlotCategory(
@@ -133,7 +153,7 @@ async function findSlotCategory(
   // needs no count, so the normal path makes no extra query.
   const rows = (data ?? []) as SlotCategory[];
   const picked = await loadPickedCountsForDoubledSlots(admin, rows);
-  return { ok: true, category: pickSlotWinner(rows, picked) };
+  return { ok: true, category: pickSlotWinner(rows, picked), rowCount: rows.length };
 }
 
 function reusedBody(category: SlotCategory, requestedTopic: string) {

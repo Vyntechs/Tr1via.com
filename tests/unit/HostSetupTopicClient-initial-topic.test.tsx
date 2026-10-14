@@ -115,6 +115,45 @@ describe("HostSetupTopicClient initialTopic", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("a typo fix after question-writing failed: the empty row takes the new topic and keeps going", async () => {
+    // "Ghost Storys" was saved, writing its questions failed, she fixed the
+    // spelling. The server changed the empty row in place (same id).
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            category: { id: "cat-ghost", name: "Ghost Stories", state: "draft" },
+            reused: true,
+            sameTopic: true,
+            retopicked: true,
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(new Response("{}", { status: 202 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <HostSetupTopicClient
+        nightId="night-1"
+        gameId="game-2"
+        gameNo={2}
+        position={3}
+        themeKey="july"
+        initialTopic="Ghost Stories"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /pull 20 questions/i }));
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/host/setup/night-1/pick/cat-ghost");
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(String(fetchMock.mock.calls[1][0])).toBe("/api/categories/cat-ghost/generate");
+    expect(screen.queryByText(/already has/)).not.toBeInTheDocument();
+  });
+
   it("re-typing the same topic for a locked slot opens it without starting generation again", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       new Response(
