@@ -37,7 +37,7 @@ function makeCtx(categoryId = CATEGORY_ID) {
   return { params: Promise.resolve({ id: categoryId }) };
 }
 
-function makeAdmin(deleteError: { message: string } | null = null) {
+function makeAdmin(deleteError: { message: string; code?: string } | null = null) {
   const calls = {
     deletedIds: [] as string[],
   };
@@ -167,5 +167,49 @@ describe("DELETE /api/categories/[id]", () => {
     expect(res.status).toBe(500);
     const body = (await res.json()) as { error?: string };
     expect(body.error).toContain("boom");
+  });
+
+  // The board guard (0031) checks the game's state, not the category's. A
+  // started or finished game's categories cannot be deleted; say so plainly
+  // instead of a bare server error.
+  it("409 with a plain reason when the game has started (board guard, 55000)", async () => {
+    authMock.requireOwnedCategory.mockResolvedValue({
+      ok: true,
+      host: { id: "h1" },
+      night: { id: NIGHT_ID },
+      category: { id: CATEGORY_ID, state: "review" },
+    });
+    const { client } = makeAdmin({
+      message: "the board cannot change after its game starts",
+      code: "55000",
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(client);
+
+    const { DELETE } = await import("@/app/api/categories/[id]/route");
+    const res = await DELETE(makeRequest(), makeCtx());
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe(
+      "This game has started, so its categories can't be deleted. They stay as they are.",
+    );
+  });
+
+  it("409 try-again when another write holds the game (55P03)", async () => {
+    authMock.requireOwnedCategory.mockResolvedValue({
+      ok: true,
+      host: { id: "h1" },
+      night: { id: NIGHT_ID },
+      category: { id: CATEGORY_ID, state: "review" },
+    });
+    const { client } = makeAdmin({ message: "could not obtain lock", code: "55P03" });
+    adminMock.getSupabaseAdmin.mockReturnValue(client);
+
+    const { DELETE } = await import("@/app/api/categories/[id]/route");
+    const res = await DELETE(makeRequest(), makeCtx());
+
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain("Try again");
   });
 });
