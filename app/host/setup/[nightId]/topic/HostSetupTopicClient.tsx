@@ -13,6 +13,9 @@ import {
   type DifficultyTarget,
   type RecentTopic,
 } from "@/components/host/gen";
+import { Display, Eyebrow, ThemeProvider, useTheme } from "@/components/system";
+import { LaptopShell } from "@/components/shells";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
 import { fetchWithRetry } from "@/lib/realtime/fetchWithRetry";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
@@ -37,9 +40,9 @@ async function postWithRetry(url: string, payload: unknown): Promise<Response> {
   }
 }
 
-function slotTakenMessage(position: number, existingName: string | undefined): string {
+export function slotTakenMessage(position: number, existingName: string | undefined): string {
   const label = existingName?.trim() ? `\u201c${existingName.trim()}\u201d` : "a topic";
-  return `Slot ${position} already has ${label}. To use a new topic there, go back to the setup screen and remove that one first.`;
+  return `Slot ${position} already has ${label}. To change the topic, delete it on the setup screen first.`;
 }
 
 export interface HostSetupTopicClientProps {
@@ -51,6 +54,12 @@ export interface HostSetupTopicClientProps {
   initialTopic?: string;
   /** The host's own topics from earlier nights. Empty → no chip row. */
   recent?: RecentTopic[];
+  /**
+   * The category already in this slot. Set when she reaches the form from an
+   * old setup screen or a second device: she gets a plain notice and a way to
+   * open it or go back and delete it, never a second topic form.
+   */
+  takenBy?: { id: string; name: string } | null;
 }
 
 export function HostSetupTopicClient({
@@ -61,6 +70,7 @@ export function HostSetupTopicClient({
   themeKey,
   initialTopic = "",
   recent = [],
+  takenBy = null,
 }: HostSetupTopicClientProps) {
   const router = useRouter();
   const draftKey = `host-topic:${nightId}:${gameId}:${position}`;
@@ -135,6 +145,20 @@ export function HostSetupTopicClient({
     }
   }
 
+  if (takenBy) {
+    return (
+      <ThemeProvider themeKey={themeKey as ThemeKey}>
+        <SlotTakenNotice
+          gameNo={gameNo}
+          position={position}
+          name={takenBy.name}
+          onOpen={() => router.replace(`/host/setup/${nightId}/pick/${takenBy.id}`)}
+          onBack={() => router.replace(`/host/setup/${nightId}`)}
+        />
+      </ThemeProvider>
+    );
+  }
+
   return (
     <>
       <HostGenTopicEntry
@@ -168,5 +192,93 @@ export function HostSetupTopicClient({
         </div>
       )}
     </>
+  );
+}
+
+// Shown in place of the topic form when the slot is already filled. Two ways
+// on: open what is there, or go back to the setup screen, where every slot has
+// its delete button. Nothing here deletes anything.
+function SlotTakenNotice({
+  gameNo,
+  position,
+  name,
+  onOpen,
+  onBack,
+}: {
+  gameNo: number;
+  position: number;
+  name: string;
+  onOpen: () => void;
+  onBack: () => void;
+}) {
+  const { t } = useTheme();
+  const mobile = useMediaQuery("(max-width: 860px)");
+  const label = name.trim() || "this category";
+  const buttonBase = {
+    flex: mobile ? "1 1 100%" : "1 1 220px",
+    minHeight: mobile ? 52 : undefined,
+    padding: "14px 22px",
+    borderRadius: 12,
+    fontSize: 14,
+    fontWeight: 700,
+    fontFamily: "var(--font-sans)",
+    cursor: "pointer",
+  } as const;
+  return (
+    <LaptopShell>
+      <div
+        data-host-mobile-surface="true"
+        style={{
+          flex: 1,
+          padding: mobile ? "24px 16px max(24px, env(safe-area-inset-bottom))" : "56px 56px 40px",
+          display: "flex",
+          alignItems: mobile ? "flex-start" : "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          role="status"
+          data-testid="slot-taken-notice"
+          style={{ width: "100%", maxWidth: 640, display: "flex", flexDirection: "column", gap: 18 }}
+        >
+          <Eyebrow color={t.accent} size={11}>
+            {`GAME ${gameNo} · SLOT ${position} OF 6`}
+          </Eyebrow>
+          <Display size={mobile ? 32 : 42} color={t.ink} tracking={-0.03} style={{ display: "block" }}>
+            This slot is already set up.
+          </Display>
+          <p style={{ margin: 0, color: t.ink, fontSize: 15, lineHeight: 1.55, fontWeight: 500 }}>
+            {slotTakenMessage(position, name)}
+          </p>
+          <div style={{ marginTop: 8, display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={onOpen}
+              style={{
+                ...buttonBase,
+                border: "none",
+                background: t.accent,
+                color: "#FFF",
+                boxShadow: `0 12px 26px -12px ${t.accent}88`,
+              }}
+            >
+              {`Open \u201c${label}\u201d`}
+            </button>
+            <button
+              type="button"
+              onClick={onBack}
+              style={{
+                ...buttonBase,
+                border: `1px solid ${t.line}`,
+                background: "transparent",
+                color: t.ink,
+              }}
+            >
+              Back to setup
+            </button>
+          </div>
+        </div>
+      </div>
+    </LaptopShell>
   );
 }

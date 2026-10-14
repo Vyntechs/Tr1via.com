@@ -22,6 +22,7 @@ import {
 import { requireOwnedGame } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { pickSlotWinner, sameTopicText } from "@/lib/host/oneCategoryPerSlot";
+import { loadPickedCountsForDoubledSlots } from "@/lib/host/loadSlotPickedCounts";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -128,8 +129,11 @@ async function findSlotCategory(
     };
   }
   // A slot doubled before this fix can hold two rows; answer with the one every
-  // screen shows for that slot.
-  return { ok: true, category: pickSlotWinner((data ?? []) as SlotCategory[]) };
+  // screen shows for that slot (most picked questions first). A single row
+  // needs no count, so the normal path makes no extra query.
+  const rows = (data ?? []) as SlotCategory[];
+  const picked = await loadPickedCountsForDoubledSlots(admin, rows);
+  return { ok: true, category: pickSlotWinner(rows, picked) };
 }
 
 function reusedBody(category: SlotCategory, requestedTopic: string) {

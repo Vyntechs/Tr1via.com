@@ -49,6 +49,7 @@ function createAdmin({
   rows,
   insertError,
   rowsAfterInsertError,
+  picked = [],
 }: {
   existing: boolean;
   selectError?: boolean;
@@ -58,7 +59,10 @@ function createAdmin({
   insertError?: { code?: string; message: string };
   /** What the slot holds when the route looks again after a failed insert. */
   rowsAfterInsertError?: Row[];
+  /** Picked questions the route sees if it counts them for a doubled slot. */
+  picked?: Array<{ category_id: string }>;
 }) {
+  const pickedLookups: unknown[][] = [];
   const insert = vi.fn(() => ({
     select: vi.fn(() => ({
       single: vi.fn(async () =>
@@ -78,6 +82,18 @@ function createAdmin({
 
   const admin = {
     from: vi.fn((table: string) => {
+      if (table === "questions") {
+        const q: Record<string, unknown> = {};
+        for (const method of ["select", "in", "eq"]) {
+          q[method] = vi.fn((...args: unknown[]) => {
+            pickedLookups.push([method, ...args]);
+            return q;
+          });
+        }
+        q.then = (resolve: (value: unknown) => unknown, reject: (reason: unknown) => unknown) =>
+          Promise.resolve({ data: picked, error: null }).then(resolve, reject);
+        return q;
+      }
       if (table !== "categories") throw new Error(`unexpected table: ${table}`);
       const lookup: Record<string, unknown> = {};
       for (const method of ["select", "limit", "order"]) lookup[method] = vi.fn(() => lookup);
@@ -96,7 +112,7 @@ function createAdmin({
       return { ...lookup, insert };
     }),
   };
-  return { admin, insert, lookupEqCalls, lookupCount: () => lookups };
+  return { admin, insert, lookupEqCalls, lookupCount: () => lookups, pickedLookups };
 }
 
 describe("POST /api/categories — idempotent get-or-create", () => {
@@ -259,6 +275,33 @@ describe("POST /api/categories — idempotent get-or-create", () => {
     const body = (await response.json()) as { category: { id: string } };
     expect(body.category.id).toBe(EXISTING_ID);
     expect(insert).not.toHaveBeenCalled();
+  });
+
+  it("in a doubled slot, answers with the older row that has her picked questions, not a newer empty one", async () => {
+    const filled: Row = { ...EXISTING_ROW, id: "44444444-4444-4444-4444-444444444444", state: "review", created_at: "2026-10-14T18:00:00Z" };
+    const empty: Row = { ...EXISTING_ROW, id: "55555555-5555-5555-5555-555555555555", state: "review", created_at: "2026-10-14T18:01:00Z" };
+    const picked = Array.from({ length: 7 }, () => ({ category_id: filled.id }));
+    const { admin, insert, pickedLookups } = createAdmin({ existing: true, rows: [filled, empty], picked });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+
+    const { POST } = await import("@/app/api/categories/route");
+    const response = await POST(createRequest(validBody));
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { category: { id: string } };
+    expect(body.category.id).toBe(filled.id);
+    expect(insert).not.toHaveBeenCalled();
+    // Only the doubled slot's rows are counted, picked questions only.
+    expect(pickedLookups).toContainEqual(["in", "category_id", [filled.id, empty.id]]);
+    expect(pickedLookups).toContainEqual(["eq", "is_picked", true]);
+  });
+
+  it("makes no picked-question lookup for a normal filled slot", async () => {
+    const { admin, pickedLookups } = createAdmin({ existing: true });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { POST } = await import("@/app/api/categories/route");
+    await POST(createRequest(validBody));
+    expect(pickedLookups).toEqual([]);
   });
 
   it("answers with the winning row when two creates race and the one-per-slot rule rejects the second", async () => {

@@ -26,7 +26,7 @@
 //
 // Caller passes all four. They're already in scope in HostLiveConsoleClient.
 
-import { oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
+import { countPickedByCategory, oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
 import type {
   CategoryRow,
   GameRow,
@@ -91,7 +91,7 @@ export function roomToTVSnapshot(
   const night = nightToTVNight(room.night, room.hostDefaultThemeKey);
   const games = room.games.map(gameRowToTVGame);
   // One column per board slot, even if the data still holds a doubled slot.
-  const slotCategories = oneCategoryPerSlot(room.categories);
+  const slotCategories = oneCategoryPerSlot(room.categories, countPickedByCategory(allQuestions));
   const categories = slotCategories.map(categoryRowToTVCategory);
 
   // Surface the live question even when the host's `useRoom` snapshot has

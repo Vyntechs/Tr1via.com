@@ -14,8 +14,9 @@
 --
 -- What it does, in one transaction:
 --   1. For every doubled slot, keeps the row every screen already shows
---      (more finished state first, then newest, then id; the same rule as
---      lib/host/oneCategoryPerSlot.ts).
+--      (most picked questions first, then more finished state, then newest,
+--      then id; the same rule as lib/host/oneCategoryPerSlot.ts). So a filled
+--      older row is kept and a newer empty one is the one removed.
 --   2. Deletes the other rows ONLY when nothing would be lost: no picked
 --      questions, no played questions, no live-engine plays. (Deleting a category also deletes
 --      its questions, plays and answers.)
@@ -26,17 +27,25 @@
 
 begin;
 
-with ranked as (
+with picked as (
+  select q.category_id, count(*) as picked_count
+  from public.questions q
+  where q.is_picked
+  group by q.category_id
+),
+ranked as (
   select
     c.id,
     row_number() over (
       partition by c.game_id, c.position
       order by
+        coalesce(p.picked_count, 0) desc,
         case c.state when 'ready' then 3 when 'review' then 2 when 'generating' then 1 else 0 end desc,
         c.created_at desc,
         c.id desc
     ) as slot_rank
   from public.categories c
+  left join picked p on p.category_id = c.id
 ),
 losers as (
   select r.id

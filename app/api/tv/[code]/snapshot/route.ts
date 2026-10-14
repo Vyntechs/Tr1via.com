@@ -16,7 +16,7 @@
 // channel fires `reveal`/`undo`/`resolve`/`end-early`; this route also
 // serves the initial bootstrap and the periodic safety re-fetch.
 
-import { oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
+import { countPickedByCategory, oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
 import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { rankScores } from "@/lib/game/rankScores";
@@ -167,7 +167,12 @@ export async function GET(
   // (2026-10-07: "Legendary Ghost stories" beside "Ghost Stories") showed as an
   // extra column of dead 100-700 tiles. The board shows the slot's winner only,
   // and only that winner's picked questions.
-  const categories = oneCategoryPerSlot(nightCategories);
+  const categories = oneCategoryPerSlot(
+    nightCategories,
+    countPickedByCategory(
+      (pickedQuestionsRes.data ?? []).filter((q) => categoryIds.has(q.category_id)),
+    ),
+  );
   const boardCategoryIds = new Set(categories.map((c) => c.id));
   // Filter to questions owned by this night's board.
   const questions = (pickedQuestionsRes.data ?? []).filter((q) =>

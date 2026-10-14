@@ -6,7 +6,7 @@
 
 "use client";
 
-import { oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
+import { countPickedByCategory, oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
@@ -319,10 +319,10 @@ export function HostPhoneClient({
   const controlCategories = useMemo(
     () =>
       // One column per board slot, even if the data still holds a doubled slot.
-      oneCategoryPerSlot(room.categories)
+      oneCategoryPerSlot(room.categories, countPickedByCategory(allQuestions))
         .filter((category) => category.game_id === controlGame?.id)
         .sort((a, b) => a.position - b.position),
-    [controlGame?.id, room.categories],
+    [allQuestions, controlGame?.id, room.categories],
   );
   const controlCategoryIds = useMemo(
     () => new Set(controlCategories.map((category) => category.id)),

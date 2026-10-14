@@ -15,6 +15,7 @@ import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { buildTopTopicSuggestions, type TopicSuggestionSourceRow } from "@/lib/host/topicSuggestions";
 import type { CategoryRow, GameRow } from "@/lib/supabase/types";
 import { oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
+import { loadPickedCountsForDoubledSlots } from "@/lib/host/loadSlotPickedCounts";
 import { HostSetupOverviewClient } from "./HostSetupOverviewClient";
 
 export const dynamic = "force-dynamic";
@@ -63,8 +64,13 @@ export default async function SetupOverviewPage({
   ]);
   const games = (gameRows ?? []) as GameRow[];
   // A slot doubled before the one-per-slot fix shows once: the row that every
-  // other screen (TV, live console) also picks for that slot.
-  const categories = oneCategoryPerSlot((catRows ?? []) as CategoryRow[]);
+  // other screen (TV, live console) also picks for that slot. Picked counts
+  // are only looked up when a slot is actually doubled.
+  const allCategoryRows = (catRows ?? []) as CategoryRow[];
+  const categories = oneCategoryPerSlot(
+    allCategoryRows,
+    await loadPickedCountsForDoubledSlots(admin, allCategoryRows),
+  );
   const recentNightIds = ((recentNightRows ?? []) as Array<{ id: string }>).map((n) => n.id);
   const { data: playerRows } =
     recentNightIds.length === 0

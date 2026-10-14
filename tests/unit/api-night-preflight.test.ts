@@ -29,8 +29,14 @@ type Fixture = {
   playerError?: { message: string } | null;
 };
 
-function category(id: string, state = "ready") {
-  return { id, state };
+let nextPosition = 0;
+function category(
+  id: string,
+  state = "ready",
+  position = ++nextPosition,
+  createdAt = "2026-10-01T00:00:00Z",
+) {
+  return { id, game_id: GAME_ID, position, state, created_at: createdAt };
 }
 
 function question(categoryId: string, overrides: Record<string, unknown> = {}) {
@@ -372,5 +378,50 @@ describe("GET /api/nights/[id]/preflight", () => {
 
     expect(response.status).toBe(500);
     expect(await response.json()).toEqual({ error: "could not check game readiness" });
+  });
+});
+
+describe("GET /api/nights/[id]/preflight · doubled board slot", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authMock.requireOwnedNight.mockResolvedValue({
+      ok: true,
+      host: { id: "host-1" },
+      night: { id: NIGHT_ID, room_code: "ABC123" },
+    });
+  });
+
+  it("counts a doubled slot once, as the row the setup screen and TV show", async () => {
+    // 2026-10-07 shape: slot 2 holds an old unlocked extra row (one stray pick)
+    // next to the real locked one. Setup says every slot is locked; the
+    // readiness check must agree instead of seeing 3 categories on a 2-slot board.
+    const admin = adminWith({
+      game: { id: GAME_ID, state: "ready", category_count: 2, question_count: 1 },
+      categories: [
+        category("cat-1", "ready", 1),
+        category("cat-ghost-extra", "review", 2, "2026-10-03T15:36:41Z"),
+        category("cat-ghost", "ready", 2, "2026-10-03T15:37:09Z"),
+      ],
+      questions: [
+        question("cat-1"),
+        question("cat-ghost"),
+        question("cat-ghost-extra", { id: "q-extra-1" }),
+      ],
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { GET } = await import("@/app/api/nights/[id]/preflight/route");
+
+    const response = await GET(request(), context());
+    const body = (await response.json()) as {
+      checks: { content: string };
+      canStart: boolean;
+      content: { categoryCount: number; pickedQuestionCount: number; reason: string | null };
+    };
+
+    expect(body.checks.content).toBe("ready");
+    expect(body.canStart).toBe(true);
+    expect(body.content.categoryCount).toBe(2);
+    expect(body.content.pickedQuestionCount).toBe(2);
+    expect(body.content.reason).toBeNull();
   });
 });

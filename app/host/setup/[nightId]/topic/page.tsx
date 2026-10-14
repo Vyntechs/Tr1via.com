@@ -14,6 +14,7 @@ import { requireOwnedNight } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { pickSlotWinner } from "@/lib/host/oneCategoryPerSlot";
+import { loadPickedCountsForDoubledSlots } from "@/lib/host/loadSlotPickedCounts";
 import { buildRecentTopics, type RecentTopicSourceRow } from "@/lib/host/recentTopics";
 import type { RecentTopic } from "@/components/host/gen";
 import { HostSetupTopicClient } from "./HostSetupTopicClient";
@@ -76,16 +77,14 @@ export default async function SetupTopicPage({
 
   // A filled slot never gets a second topic form. An old setup screen (Back
   // button, a second device) can still show the slot as empty; tapping it lands
-  // here, so open the category that already owns the slot instead. If this
-  // check fails, the form still opens: the create route refuses a second
-  // category in the slot on its own.
+  // here, so she gets a plain notice naming what is already there, with a
+  // button to open it and one back to setup (where she can delete it). No
+  // silent jump to another category's screen. If this check fails, the form
+  // still opens: the create route refuses a second category in the slot.
   const owner = await findSlotOwner(admin, gameId, position).catch((err: unknown) => {
     console.error("[host/setup/topic] could not check the slot", err);
     return null;
   });
-  if (owner) {
-    redirect(`/host/setup/${nightId}/pick/${owner.id}`);
-  }
 
   return (
     <HostSetupTopicClient
@@ -96,6 +95,7 @@ export default async function SetupTopicPage({
       themeKey={resolveTheme(owned.night, owned.host)}
       initialTopic={initialTopic}
       recent={recent}
+      takenBy={owner ? { id: owner.id, name: owner.name } : null}
     />
   );
 }
@@ -155,10 +155,10 @@ async function findSlotOwner(
   admin: ReturnType<typeof getSupabaseAdmin>,
   gameId: string,
   position: number,
-): Promise<{ id: string } | null> {
+): Promise<{ id: string; name: string } | null> {
   const { data, error } = await admin
     .from("categories")
-    .select("id, game_id, position, state, created_at")
+    .select("id, game_id, name, position, state, created_at")
     .eq("game_id", gameId)
     .eq("position", position);
   if (error) throw new Error(`slot lookup failed: ${error.message}`);
@@ -166,10 +166,11 @@ async function findSlotOwner(
     (data ?? []) as Array<{
       id: string;
       game_id: string;
+      name: string;
       position: number;
       state: string;
       created_at: string | null;
     }>
   ).filter((row) => row.game_id === gameId && row.position === position && Boolean(row.id));
-  return pickSlotWinner(rows);
+  return pickSlotWinner(rows, await loadPickedCountsForDoubledSlots(admin, rows));
 }

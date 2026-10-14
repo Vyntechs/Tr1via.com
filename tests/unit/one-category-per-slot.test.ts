@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  countPickedByCategory,
+  doubledSlotCategoryIds,
   oneCategoryPerSlot,
   pickSlotWinner,
   sameTopicText,
@@ -59,6 +61,41 @@ describe("oneCategoryPerSlot", () => {
     const newer = { ...orphan, id: "b", name: "Is That Actually Catholic?", created_at: "2026-10-13T19:00:18Z" };
     expect(pickSlotWinner([older, newer])?.name).toBe("Is That Actually Catholic?");
     expect(pickSlotWinner([newer, older])?.name).toBe("Is That Actually Catholic?");
+  });
+
+  it("keeps the row with more picked questions over a newer empty one in the same state", () => {
+    // The Back-button double: her filled row is OLDER; the retyped one is newer
+    // and empty. The newer one must not hide her work.
+    const filled = { ...orphan, id: "a-filled", name: "Ghosts", created_at: "2026-10-14T18:00:00Z" };
+    const empty = { ...orphan, id: "b-empty", name: "ghosts", created_at: "2026-10-14T18:01:00Z" };
+    const picked = new Map([[filled.id, 7]]);
+    expect(pickSlotWinner([filled, empty], picked)?.id).toBe("a-filled");
+    expect(pickSlotWinner([empty, filled], picked)?.id).toBe("a-filled");
+    expect(oneCategoryPerSlot([empty, filled, pumpkins], picked).map((c) => c.id)).toEqual([
+      "a-filled",
+      pumpkins.id,
+    ]);
+    // Picks come before state: a filled review row beats an empty locked one.
+    const emptyLocked = { ...empty, state: "ready" };
+    expect(pickSlotWinner([filled, emptyLocked], picked)?.id).toBe("a-filled");
+    // Same picks: the locked row wins, then the newer row.
+    const lockedSame = { ...empty, state: "ready" };
+    expect(pickSlotWinner([filled, lockedSame], new Map([[filled.id, 7], [lockedSame.id, 7]]))?.id).toBe(
+      lockedSame.id,
+    );
+  });
+
+  it("counts picked questions per category and lists only doubled slots", () => {
+    const counts = countPickedByCategory([
+      { category_id: "x" },
+      { category_id: "x", is_picked: true },
+      { category_id: "x", is_picked: false },
+      { category_id: "y" },
+    ]);
+    expect(counts.get("x")).toBe(2);
+    expect(counts.get("y")).toBe(1);
+    expect(doubledSlotCategoryIds([orphan, real, pumpkins]).sort()).toEqual([orphan.id, real.id].sort());
+    expect(doubledSlotCategoryIds([real, pumpkins])).toEqual([]);
   });
 
   it("leaves a normal board untouched and keeps slots in different games apart", () => {
@@ -135,5 +172,18 @@ describe("TV board from a doubled slot", () => {
 
     expect(snapshot?.categories.map((c) => c.name)).toEqual(["Ghost Stories", "Pumpkins"]);
     expect(snapshot?.questions.map((q) => q.id)).not.toContain("q-orphan");
+
+    // The Back-button double: her OLDER row holds the picks, a newer retyped
+    // row is empty, both unlocked. The board shows the filled one.
+    const filled = { ...orphan, id: "a-filled", name: "Ghosts", created_at: "2026-10-14T18:00:00Z" };
+    const emptyNewer = { ...orphan, id: "b-empty", name: "ghosts", created_at: "2026-10-14T18:01:00Z" };
+    const filledBoard = roomToTVSnapshot({
+      room: { ...room, categories: [filled, emptyNewer, pumpkins] as unknown as CategoryRow[] },
+      allQuestions: [picked("q-f1", filled.id), picked("q-f2", filled.id)],
+      scores: [],
+      answers: [],
+    });
+    expect(filledBoard?.categories.map((c) => c.id)).toEqual(["a-filled", pumpkins.id]);
+    expect(filledBoard?.questions.map((q) => q.id).sort()).toEqual(["q-f1", "q-f2"]);
   });
 });

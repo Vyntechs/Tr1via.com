@@ -105,6 +105,27 @@ describe("proposed one-category-per-slot rule", () => {
     expect(await names()).toEqual(["Saint or Sitcom Character?", "Is That Actually Catholic?"]);
   });
 
+  test("keeps a filled older row and removes the newer empty one (the Back-button double)", async () => {
+    // Older row: her work, 7 picked. Newer row: the topic typed again, nothing
+    // picked yet. Both still "review". The screens keep the filled one, so the
+    // cleanup must too (and can then remove the empty one safely).
+    const filled = await category("Ghosts", 4, "review", "2026-10-14T18:00:00Z");
+    for (let i = 0; i < 7; i++) await question(filled, true);
+    for (let i = 0; i < 13; i++) await question(filled, false);
+    const empty = await category("ghosts", 4, "review", "2026-10-14T18:01:00Z");
+    for (let i = 0; i < 20; i++) await question(empty, false);
+
+    await db.exec(PROPOSAL);
+
+    const rows = await db.query<{ id: string }>("select id from categories where position = 4");
+    expect(rows.rows.map((r) => r.id)).toEqual([filled]);
+    const picked = await db.query<{ n: number }>(
+      "select count(*)::int n from questions where category_id = $1 and is_picked",
+      [filled],
+    );
+    expect(picked.rows[0].n).toBe(7);
+  });
+
   test("after the rule is in, a second row in a filled slot is refused with a duplicate-key error", async () => {
     await category("Haunted Highways", 2, "ready", "2026-10-03T15:36:18Z");
     await db.exec(PROPOSAL);

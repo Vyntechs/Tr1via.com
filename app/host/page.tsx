@@ -15,6 +15,7 @@
 // happens client-side via the HostHomeClient wrapper below.
 
 import { oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
+import { loadPickedCountsForDoubledSlots } from "@/lib/host/loadSlotPickedCounts";
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -218,8 +219,10 @@ async function fetchCategoriesByNight(
     .in("game_id", gameIds)
     .order("position", { ascending: true });
   // One name per board slot, even if the data still holds a doubled slot.
+  const allCatRows = (cats ?? []) as Pick<CategoryRow, "id" | "name" | "game_id" | "position" | "state" | "created_at">[];
   const catRows = oneCategoryPerSlot(
-    (cats ?? []) as Pick<CategoryRow, "id" | "name" | "game_id" | "position" | "state" | "created_at">[],
+    allCatRows,
+    await loadPickedCountsForDoubledSlots(admin, allCatRows),
   );
 
   const gameIdToNightId = new Map(gameRows.map((g) => [g.id, g.night_id]));

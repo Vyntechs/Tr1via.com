@@ -18,6 +18,27 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("HostSetupTopicClient · slot already filled", () => {
+  it("opens the category that is there, or goes back to setup to delete it", () => {
+    render(
+      <HostSetupTopicClient
+        nightId="night-1"
+        gameId="game-1"
+        gameNo={2}
+        position={2}
+        themeKey="july"
+        takenBy={{ id: "cat-ghost", name: "Ghost Stories" }}
+      />,
+    );
+    expect(screen.getByText(/Slot 2 already has \u201cGhost Stories\u201d\. To change the topic, delete it on the setup screen first\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Open \u201cGhost Stories\u201d/ }));
+    expect(replace).toHaveBeenCalledWith("/host/setup/night-1/pick/cat-ghost");
+    fireEvent.click(screen.getByRole("button", { name: "Back to setup" }));
+    expect(replace).toHaveBeenLastCalledWith("/host/setup/night-1");
+    expect(push).not.toHaveBeenCalled();
+  });
+});
+
 describe("HostSetupTopicClient initialTopic", () => {
   it("prefills and submits a player idea through the existing category flow", async () => {
     const fetchMock = vi
