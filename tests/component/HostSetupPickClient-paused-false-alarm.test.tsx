@@ -105,7 +105,7 @@ function questionRow(n: number) {
   };
 }
 
-function renderScreen() {
+function renderScreen(initialQuestions: unknown[] = []) {
   return render(
     <HostSetupPickClient
       nightId="night-1"
@@ -113,7 +113,7 @@ function renderScreen() {
       categoryName="Movies from 2026"
       categoryTopic="movies from 2026"
       initialState="generating"
-      initialQuestions={[]}
+      initialQuestions={initialQuestions as never}
       themeKey="house"
     />,
   );
@@ -258,5 +258,90 @@ describe("pick screen: paused screen only for a build that is really stopped", (
     expect(screen.getByRole("alert")).toBeInTheDocument();
     expect(pausedShown()).toBe(true);
     expect(screen.getByRole("button", { name: /continue/i })).toBeInTheDocument();
+  });
+
+  // Review should-fix #1: a build that goes silent while the calm text shows.
+
+  /** A job row whose heartbeat is always one second old, like a live worker. */
+  function liveJob(over: Record<string, unknown>) {
+    const row = jobRow(over);
+    Object.defineProperty(row, "heartbeat_at", {
+      enumerable: true,
+      get: () => new Date(Date.now() - 1_000).toISOString(),
+    });
+    return row;
+  }
+
+  async function minutes(n: number) {
+    // Poll-sized steps so every 5-second check runs, like real time.
+    const steps = Math.round((n * 60_000) / 5_000);
+    for (let i = 0; i < steps; i++) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+        await settle();
+      });
+    }
+    await flush();
+  }
+
+  async function reachCalmAttempt2() {
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    world.job = liveJob({ attempt: 2, phase: "writing", certified_count: 5 });
+    // Certified questions are already on screen, so the status hook's own
+    // "nothing landed" timeout can never fire: only the new guard can.
+    world.questions = Array.from({ length: 5 }, (_, i) => questionRow(i + 1));
+    renderScreen(world.questions);
+    await flush();
+    await pollOnce();
+    expect(screen.getByText(/still building your questions/i)).toBeInTheDocument();
+    expect(pausedShown()).toBe(false);
+  }
+
+  it("(d) the job row goes missing for 6 minutes while calm text shows: the paused screen comes back", async () => {
+    await reachCalmAttempt2();
+
+    world.job = null; // row deleted / unreadable from now on
+    await minutes(6);
+
+    expect(pausedShown()).toBe(true);
+    expect(screen.getByRole("alert")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /enter manually|type|by hand/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /back to setup/i })).toBeInTheDocument();
+    expect(screen.queryByText(/still building your questions/i)).not.toBeInTheDocument();
+  });
+
+  it("(e) not too early: 3 minutes of a missing row is still calm", async () => {
+    await reachCalmAttempt2();
+
+    world.job = null;
+    await minutes(3);
+
+    expect(pausedShown()).toBe(false);
+    expect(screen.getByText(/still building your questions/i)).toBeInTheDocument();
+  });
+
+  it("(f) a healthy attempt 2 with fresh heartbeats for 8 minutes never shows the paused screen", async () => {
+    await reachCalmAttempt2();
+
+    for (let minute = 0; minute < 8; minute++) {
+      await minutes(1);
+      expect(pausedShown()).toBe(false);
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    }
+    expect(screen.getByText(/still building your questions/i)).toBeInTheDocument();
+  });
+
+  it("(g) the row comes back after the silence alarm: the paused screen goes away again", async () => {
+    await reachCalmAttempt2();
+    world.job = null;
+    await minutes(6);
+    expect(pausedShown()).toBe(true);
+
+    world.job = liveJob({ attempt: 2, phase: "checking", certified_count: 9 });
+    await minutes(0.2);
+
+    expect(pausedShown()).toBe(false);
+    expect(screen.getByText(/still building your questions/i)).toBeInTheDocument();
   });
 });

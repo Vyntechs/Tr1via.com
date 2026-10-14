@@ -64,6 +64,12 @@ import {
 } from "@/lib/host/pickFlowMessages";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
+// How long the page waits with no sign of life from the build (no fresh job
+// row on a poll, no broadcast) before it gives the paused screen back. Stays
+// under GENERATION_STALL_TIMEOUT_MS so it only catches the cases that hook
+// cannot: a job row that vanished or cannot be read.
+const GENERATION_SILENCE_LIMIT_MS = 300_000;
+
 export interface HostSetupPickClientProps {
   nightId: string;
   categoryId: string;
@@ -693,6 +699,48 @@ export function HostSetupPickClient({
     // intentionally invoked from the queued transition without rearming it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchStatus]);
+
+  // ── silence guard ────────────────────────────────────────────────────
+  // The calm "Still building your questions…" text rests on the last job row
+  // we managed to read. If that row later goes missing or unreadable, or the
+  // worker goes quiet, the status hook keeps its last "progress" value and
+  // nothing would ever bring the real paused screen back. So: every sign of
+  // life (a fresh, non-stale job row on a poll, or a broadcast) restarts a
+  // timer; if it runs out, raise the paused screen. A healthy attempt keeps
+  // restarting it. "Alive" is the same notion as the job row's own check
+  // (heartbeat within the last 90 seconds): a stale row is already reported
+  // as needs-attention by the status hook, never as progress.
+  const silenceFailureRef = useRef(false);
+  useEffect(() => {
+    if (watchStatus.kind !== "progress" || state !== "generating") return;
+    // A new sign of life after a silence alarm means the build is back.
+    const wasSilent = silenceFailureRef.current;
+    silenceFailureRef.current = false;
+    const clearId = wasSilent
+      ? window.setTimeout(() => setGenerationFailureMessage(null), 0)
+      : null;
+    if (watchStatus.progress.ready) {
+      return () => {
+        if (clearId !== null) window.clearTimeout(clearId);
+      };
+    }
+    const attempt = watchStatus.progress.attempt;
+    const id = window.setTimeout(() => {
+      silenceFailureRef.current = true;
+      raiseGenerationFailure(
+        explainGenerationFailure({
+          broadcastMessage: null,
+          fromTimeout: true,
+          fromRollback: false,
+        }),
+        attempt,
+      );
+    }, GENERATION_SILENCE_LIMIT_MS);
+    return () => {
+      window.clearTimeout(id);
+      if (clearId !== null) window.clearTimeout(clearId);
+    };
+  }, [watchStatus, lastActivityAt, state, raiseGenerationFailure]);
 
   // ── pick toggling ────────────────────────────────────────────────────
   function togglePick(questionId: string) {
