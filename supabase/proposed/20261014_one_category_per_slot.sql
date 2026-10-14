@@ -152,10 +152,13 @@ $$;
 commit;
 
 -- Run this on its own first (read-only). It lists every doubled slot, with
--- each row's state, picked count and the game's state:
+-- each row's state, picked count, total question count (what a delete of
+-- that row would take) and the game's state:
 -- select c.game_id, g.state as game_state, c.position,
 --        array_agg(c.id || ' ' || c.state || ' picked=' ||
 --          (select count(*) from public.questions q where q.category_id = c.id and q.is_picked)
+--          || ' questions=' ||
+--          (select count(*) from public.questions q where q.category_id = c.id)
 --          || ' ' || c.name order by c.created_at)
 -- from public.categories c join public.games g on g.id = c.game_id
 -- group by c.game_id, g.state, c.position having count(*) > 1;

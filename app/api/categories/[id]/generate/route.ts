@@ -223,7 +223,8 @@ export async function POST(
       await failQuestionGeneration(rpcClient, {
         categoryId,
         attempt: job.attempt,
-        restoreState: null,
+        // A reroll goes back to its usable pool, as in the job's own failure path.
+        restoreState: parsed.data.keptIds ? "review" : null,
         error: "The question builder could not start. Try again.",
       });
     } catch {
