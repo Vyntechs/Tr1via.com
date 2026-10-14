@@ -24,7 +24,7 @@
 --      newest, then id; the same rule as lib/host/oneCategoryPerSlot.ts).
 --      Rank 1 is the row the screens show.
 --   2. Deletes a lower-ranked row ONLY when its game has not started
---      (games.state 'draft' or 'ready', which the guard allows) AND nothing
+--      (games.state not 'live'/'done', the exact test the guard uses) AND nothing
 --      would be lost: no picked questions, no played questions, no live-engine
 --      plays. Deleting a category also deletes its questions, plays and answers.
 --   3. Leaves lower-ranked rows in started or finished games ('live'/'done')
@@ -83,7 +83,7 @@ delete from public.categories c
 using one_per_slot_ranked r
 where c.id = r.id
   and r.slot_rank > 1
-  and r.game_state in ('draft', 'ready')
+  and r.game_state not in ('live', 'done')
   and not exists (
     select 1 from public.questions q
     where q.category_id = r.id
