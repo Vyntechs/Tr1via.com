@@ -27,12 +27,8 @@ import { HostHomeClient } from "./HostHomeClient";
 import { fetchResetPreview } from "@/lib/api/resetNightCounts";
 import { isNightToday } from "@/lib/host/tonightDate";
 import { classifyNights } from "@/lib/host/classifyNights";
-import {
-  DEFAULT_VENUE_FALLBACK,
-  hiddenEmptyTwinIds,
-  twinCandidateIds,
-} from "@/lib/host/nightTwins";
-import { loadNightTwinContent } from "@/lib/host/loadNightTwinContent";
+import { DEFAULT_VENUE_FALLBACK } from "@/lib/host/nightTwins";
+import { withoutEmptyTwinNights } from "@/lib/host/loadNightTwinContent";
 
 export const dynamic = "force-dynamic";
 
@@ -74,14 +70,9 @@ export default async function HostHomePage() {
   // Hide empty twin nights (a second night made by a repeated tap, never
   // used) so the host sees one night to continue, and the headline is the
   // twin she actually built in. Never hides a night that was opened or has
-  // any category or player; if the counts can't be read, nothing is hidden.
+  // any category or player; if the lookup fails in any way, nothing is hidden.
   const twinRule = { defaultVenue: host.default_venue ?? DEFAULT_VENUE_FALLBACK };
-  const twinContent = await loadNightTwinContent(
-    getSupabaseAdmin(),
-    twinCandidateIds(allNights, twinRule),
-  );
-  const hiddenTwins = hiddenEmptyTwinIds(allNights, twinContent, twinRule);
-  const nights = allNights.filter((n) => !hiddenTwins.has(n.id));
+  const nights = await withoutEmptyTwinNights(admin, allNights, twinRule);
 
   // Classify nights by opened_at — the reliable "this night actually ran"
   // signal (closed_at is empty across all prod data today). tonightRow is the

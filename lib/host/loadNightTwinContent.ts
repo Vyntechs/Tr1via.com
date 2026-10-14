@@ -4,7 +4,34 @@
 // nothing is hidden.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { NightContent, TwinGame } from "@/lib/host/nightTwins";
+import {
+  hiddenEmptyTwinIds,
+  twinCandidateIds,
+  type NightContent,
+  type TwinGame,
+  type TwinNight,
+  type TwinRule,
+} from "@/lib/host/nightTwins";
+
+/**
+ * The nights the home page shows: every night minus empty twins. If anything
+ * in the twin lookup throws, it logs once and returns every night, so the
+ * home page never fails and never hides a night because of an error.
+ */
+export async function withoutEmptyTwinNights<T extends TwinNight>(
+  admin: Pick<SupabaseClient, "from">,
+  nights: T[],
+  rule: TwinRule,
+): Promise<T[]> {
+  try {
+    const content = await loadNightTwinContent(admin, twinCandidateIds(nights, rule));
+    const hidden = hiddenEmptyTwinIds(nights, content, rule);
+    return nights.filter((n) => !hidden.has(n.id));
+  } catch (err) {
+    console.error("[host home] twin night lookup failed; showing every night", err);
+    return nights;
+  }
+}
 
 export async function loadNightTwinContent(
   admin: Pick<SupabaseClient, "from">,
