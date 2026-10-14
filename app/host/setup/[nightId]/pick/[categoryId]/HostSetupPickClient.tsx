@@ -260,11 +260,32 @@ export function HostSetupPickClient({
       initialQuestionCount: initialQuestions.length,
     }),
   );
+  // Which build attempt the failure message above came from (0 = unknown or
+  // seeded from the server render). A newer attempt that is alive supersedes
+  // it, so an old "paused" message can never sit on top of a healthy build.
+  const [failureAttempt, setFailureAttempt] = useState(0);
+  const failureAttemptRef = useRef(0);
   const [retrying, setRetrying] = useState(false);
   // Durable attempts, not component renders, bound automatic recovery. A
   // stale poll can repeat many times while the resume POST is in flight.
   const autoResumedAttemptsRef = useRef(new Set<number>());
   const currentGenerationAttemptRef = useRef(0);
+
+  const raiseGenerationFailure = useCallback(
+    (message: string, attempt: number = currentGenerationAttemptRef.current) => {
+      failureAttemptRef.current = attempt;
+      setFailureAttempt(attempt);
+      setGenerationFailureMessage(message);
+    },
+    [],
+  );
+  // A sign of life from a NEWER attempt than the one that failed (the server
+  // auto-restarts a stopped job) means the build is healthy again.
+  const clearSupersededFailure = useCallback((aliveAttempt: number) => {
+    if (aliveAttempt > failureAttemptRef.current) {
+      setGenerationFailureMessage(null);
+    }
+  }, []);
 
   const refetchQuestions = useCallback(async (
     reconciliation: "merge" | "canonical" = "merge",
@@ -363,6 +384,9 @@ export function HostSetupPickClient({
         }
         setLastActivityAt(Date.now());
         setLastSignalAt(Date.now());
+        if (typeof payload.attempt === "number") {
+          clearSupersededFailure(payload.attempt);
+        }
         if (payload.phase) setGenPhase(payload.phase);
         // A refill is starting. On a resume the server just deleted stored
         // questions that failed the re-check; reload the cards so they leave
@@ -391,6 +415,9 @@ export function HostSetupPickClient({
         }
         setLastActivityAt(Date.now());
         setLastSignalAt(Date.now());
+        if (typeof payload.attempt === "number") {
+          clearSupersededFailure(payload.attempt);
+        }
         // Refetch the question list to absorb the new row.
         void refetchQuestions();
       })
@@ -491,12 +518,15 @@ export function HostSetupPickClient({
           return;
         }
         // First-time generation failed — show the persistent failure UI.
-        setGenerationFailureMessage(
+        raiseGenerationFailure(
           explainGenerationFailure({
             broadcastMessage: payload.error ?? null,
             fromTimeout: false,
             fromRollback: true,
           }),
+          typeof payload.attempt === "number"
+            ? payload.attempt
+            : currentGenerationAttemptRef.current,
         );
         setRegenerating(false);
       })
@@ -506,7 +536,7 @@ export function HostSetupPickClient({
       void supa.removeChannel(channel);
     };
     // Subscription lifetime is category-scoped; callbacks are stable.
-  }, [categoryId, isCurrentTerminalAttempt, refetchAuditSummary, refetchQuestions]);
+  }, [categoryId, isCurrentTerminalAttempt, refetchAuditSummary, refetchQuestions, raiseGenerationFailure, clearSupersededFailure]);
 
   // Re-fetch on mount when we're already in review (covers reload during pick).
   useEffect(() => {
@@ -599,6 +629,11 @@ export function HostSetupPickClient({
     ) {
       currentGenerationAttemptRef.current = watchStatus.progress.attempt;
     }
+    if (watchStatus.kind === "progress") {
+      // The job is alive (fresh heartbeat, not stopped). If an older attempt's
+      // failure is still on screen, drop it: the build is healthy.
+      clearSupersededFailure(watchStatus.progress.attempt);
+    }
     if (watchStatus.kind === "completed") {
       const id = window.setTimeout(() => {
         setGenerationFailureMessage(null);
@@ -626,7 +661,10 @@ export function HostSetupPickClient({
         return () => window.clearTimeout(id);
       }
       const id = window.setTimeout(() => {
-        setGenerationFailureMessage(watchStatus.progress.statusLine);
+        raiseGenerationFailure(
+          watchStatus.progress.statusLine,
+          watchStatus.progress.attempt,
+        );
         setGenPhase("needs_attention");
       }, 0);
       return () => window.clearTimeout(id);
@@ -647,7 +685,7 @@ export function HostSetupPickClient({
           : null;
     if (!nextMessage) return;
     const id = window.setTimeout(() => {
-      setGenerationFailureMessage(nextMessage);
+      raiseGenerationFailure(nextMessage);
       setState("draft");
     }, 0);
     return () => window.clearTimeout(id);
@@ -1233,14 +1271,14 @@ export function HostSetupPickClient({
       });
       if (res.status === 409) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setGenerationFailureMessage(
+        raiseGenerationFailure(
           body.error ?? "Generation is still paused. Continue when you are ready.",
         );
         return;
       }
       if (!res.ok && res.status !== 202) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        setGenerationFailureMessage(
+        raiseGenerationFailure(
           explainGenerationFailure({
             broadcastMessage: body.error ?? null,
             fromTimeout: false,
@@ -1264,7 +1302,7 @@ export function HostSetupPickClient({
         setState("generating");
       }
     } catch (err) {
-      setGenerationFailureMessage(
+      raiseGenerationFailure(
         explainGenerationFailure({
           broadcastMessage:
             err instanceof Error ? err.message : null,
@@ -1318,12 +1356,20 @@ export function HostSetupPickClient({
     [categoryId],
   );
 
-  const showGenerationFailure =
-    generationFailureMessage !== null && state !== "review" && state !== "ready";
   const durableProgress =
     watchStatus.kind === "progress" || watchStatus.kind === "needs-attention"
       ? watchStatus.progress
       : null;
+  // Only a job that is truly stopped gets the "paused" screen. A newer attempt
+  // that is alive (the server auto-restarts a stopped job) hides the old
+  // attempt's message right away, without waiting for the next effect pass.
+  const failureSuperseded =
+    watchStatus.kind === "progress" && watchStatus.progress.attempt > failureAttempt;
+  const showGenerationFailure =
+    generationFailureMessage !== null &&
+    !failureSuperseded &&
+    state !== "review" &&
+    state !== "ready";
   const autoResumeLoading =
     durableProgress !== null &&
     shouldAutoResumeGeneration(durableProgress) &&
