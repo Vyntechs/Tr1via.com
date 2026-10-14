@@ -13,6 +13,7 @@ import { notFound, redirect } from "next/navigation";
 import { requireOwnedNight } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
+import { pickSlotWinner } from "@/lib/host/oneCategoryPerSlot";
 import { buildRecentTopics, type RecentTopicSourceRow } from "@/lib/host/recentTopics";
 import type { RecentTopic } from "@/components/host/gen";
 import { HostSetupTopicClient } from "./HostSetupTopicClient";
@@ -71,6 +72,19 @@ export default async function SetupTopicPage({
   ]);
   if (!game || game.night_id !== nightId) {
     redirect(`/host/setup/${nightId}`);
+  }
+
+  // A filled slot never gets a second topic form. An old setup screen (Back
+  // button, a second device) can still show the slot as empty; tapping it lands
+  // here, so open the category that already owns the slot instead. If this
+  // check fails, the form still opens: the create route refuses a second
+  // category in the slot on its own.
+  const owner = await findSlotOwner(admin, gameId, position).catch((err: unknown) => {
+    console.error("[host/setup/topic] could not check the slot", err);
+    return null;
+  });
+  if (owner) {
+    redirect(`/host/setup/${nightId}/pick/${owner.id}`);
   }
 
   return (
@@ -133,4 +147,29 @@ async function loadRecentTopics(
     night_opened_at: openedAtByNight.get(nightByGame.get(c.game_id) ?? "") ?? null,
   }));
   return buildRecentTopics(rows);
+}
+
+// The category that already owns this slot, if any. Rows are re-checked
+// against the game and slot (defense in depth on top of the query filters).
+async function findSlotOwner(
+  admin: ReturnType<typeof getSupabaseAdmin>,
+  gameId: string,
+  position: number,
+): Promise<{ id: string } | null> {
+  const { data, error } = await admin
+    .from("categories")
+    .select("id, game_id, position, state, created_at")
+    .eq("game_id", gameId)
+    .eq("position", position);
+  if (error) throw new Error(`slot lookup failed: ${error.message}`);
+  const rows = (
+    (data ?? []) as Array<{
+      id: string;
+      game_id: string;
+      position: number;
+      state: string;
+      created_at: string | null;
+    }>
+  ).filter((row) => row.game_id === gameId && row.position === position && Boolean(row.id));
+  return pickSlotWinner(rows);
 }

@@ -21,6 +21,7 @@
 //
 // Cache: no-store. This is the degraded-network fallback + (optionally) a poll.
 
+import { oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
 import { ok, badRequest, forbidden, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
@@ -194,6 +195,13 @@ async function loadSharedRoomStateUncached(
     : { data: [] as GameScoreRow[], error: null };
   if (scoresError) return { ok: false, kind: "server-error" };
 
+  // One category per board slot (see lib/host/oneCategoryPerSlot.ts): a slot
+  // doubled before the fix shows once on every phone, the console and the TV.
+  const boardCategories = oneCategoryPerSlot(
+    stripJoins(categoriesRes.data ?? [], "games") as CategoryRow[],
+  );
+  const boardCategoryIds = new Set(boardCategories.map((c) => c.id));
+
   return {
     ok: true,
     value: {
@@ -201,9 +209,11 @@ async function loadSharedRoomStateUncached(
       hostDefaultThemeKey,
       currentPlay: playRes.data?.[0] ?? null,
       games,
-      categories: stripJoins(categoriesRes.data ?? [], "games") as CategoryRow[],
+      categories: boardCategories,
       activePlayerRows: (playersRes.data ?? []) as SafePlayerRow[],
-      allQuestionsRaw: stripJoins(pickedRes.data ?? [], "categories") as QuestionRow[],
+      allQuestionsRaw: (stripJoins(pickedRes.data ?? [], "categories") as QuestionRow[]).filter(
+        (q) => boardCategoryIds.has(q.category_id),
+      ),
       reveals: stripJoins(revealsRes.data ?? [], "games") as RevealRow[],
       allScores: (scoresData ?? []) as GameScoreRow[],
     },

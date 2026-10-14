@@ -37,6 +37,11 @@ async function postWithRetry(url: string, payload: unknown): Promise<Response> {
   }
 }
 
+function slotTakenMessage(position: number, existingName: string | undefined): string {
+  const label = existingName?.trim() ? `\u201c${existingName.trim()}\u201d` : "a topic";
+  return `Slot ${position} already has ${label}. To use a new topic there, go back to the setup screen and remove that one first.`;
+}
+
 export interface HostSetupTopicClientProps {
   nightId: string;
   gameId: string;
@@ -82,7 +87,19 @@ export function HostSetupTopicClient({
         const body = (await catRes.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "could not create category");
       }
-      const { category } = (await catRes.json()) as { category: { id: string } };
+      const { category, reused, sameTopic } = (await catRes.json()) as {
+        category: { id: string; name?: string };
+        reused?: boolean;
+        sameTopic?: boolean;
+      };
+
+      // This slot already holds a different topic (she came back to this form
+      // with the browser Back button, from an old setup screen, or from a
+      // second device). The server kept the slot to one category; say so
+      // instead of quietly opening the old topic or starting a second one.
+      if (reused && sameTopic === false) {
+        throw new Error(slotTakenMessage(position, category.name));
+      }
 
       // 2. Kick off generation. Idempotent on the server (claims/resumes the
       // existing job), so a retry never double-generates.
@@ -102,8 +119,10 @@ export function HostSetupTopicClient({
       }
 
       // 3. Hand off to the pick screen, which subscribes to the
-      // generation progress channel.
-      router.push(`/host/setup/${nightId}/pick/${category.id}`);
+      // generation progress channel. `replace`, not `push`: the topic form
+      // leaves the history, so Back from the pick screen returns to the setup
+      // screen instead of a blank form for a slot that is now filled.
+      router.replace(`/host/setup/${nightId}/pick/${category.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not pull questions.");
       setSubmitting(false);

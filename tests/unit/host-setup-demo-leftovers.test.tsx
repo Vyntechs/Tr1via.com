@@ -162,6 +162,27 @@ describe("topic page · loading her past topics", () => {
 
   const GAME_ROW = { id: "game-1", night_id: "night-tonight", game_no: 1 };
 
+  it("opens the existing category instead of a second topic form when the slot is already filled", async () => {
+    owned();
+    const games = query([], GAME_ROW);
+    const nights = query([]);
+    // Slot 3 of game 1 already holds a locked category plus an older extra row.
+    const categories = query([
+      { id: "cat-old", game_id: "game-1", position: 3, state: "review", created_at: "2026-10-03T15:36:41Z" },
+      { id: "cat-real", game_id: "game-1", position: 3, state: "ready", created_at: "2026-10-03T15:37:09Z" },
+    ]);
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      from: (table: string) => {
+        if (table === "games") return games.builder;
+        if (table === "nights") return nights.builder;
+        if (table === "categories") return categories.builder;
+        throw new Error(`unexpected table ${table}`);
+      },
+    });
+
+    await expect(loadPage()).rejects.toThrow("redirect:/host/setup/night-tonight/pick/cat-real");
+  });
+
   it("uses her earlier nights only, newest first, and a chip fills in its own board name", async () => {
     owned();
     // One "games" stand-in serves both the game check (maybeSingle) and the

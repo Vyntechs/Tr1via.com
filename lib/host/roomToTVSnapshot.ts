@@ -26,6 +26,7 @@
 //
 // Caller passes all four. They're already in scope in HostLiveConsoleClient.
 
+import { oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
 import type {
   CategoryRow,
   GameRow,
@@ -89,14 +90,27 @@ export function roomToTVSnapshot(
 
   const night = nightToTVNight(room.night, room.hostDefaultThemeKey);
   const games = room.games.map(gameRowToTVGame);
-  const categories = room.categories.map(categoryRowToTVCategory);
+  // One column per board slot, even if the data still holds a doubled slot.
+  const slotCategories = oneCategoryPerSlot(room.categories);
+  const categories = slotCategories.map(categoryRowToTVCategory);
 
   // Surface the live question even when the host's `useRoom` snapshot has
   // it but it isn't yet in the broader `allQuestions` cache (which is
   // populated separately on mount). Merge by id so the state machine can
   // always look up the live question by `snapshot.liveQuestionId`.
   const questionsById = new Map<string, QuestionRow>();
-  for (const q of allQuestions) questionsById.set(q.id, q);
+  // Picked questions of a hidden extra row in a doubled slot stay off the
+  // board too (only rows we know are hidden; anything else passes through).
+  const slotCategoryIds = new Set(slotCategories.map((category) => category.id));
+  const hiddenCategoryIds = new Set(
+    room.categories
+      .filter((category) => !slotCategoryIds.has(category.id))
+      .map((category) => category.id),
+  );
+  for (const q of allQuestions) {
+    if (hiddenCategoryIds.has(q.category_id)) continue;
+    questionsById.set(q.id, q);
+  }
   if (room.currentQuestion) {
     questionsById.set(room.currentQuestion.id, room.currentQuestion);
   }
@@ -132,7 +146,7 @@ export function roomToTVSnapshot(
   const gameOne = room.games.find((game) => game.game_no === 1) ?? null;
   const liveGame = room.games.find((game) => game.state === "live") ?? null;
   const liveGameCategoryIds = new Set(
-    room.categories
+    slotCategories
       .filter((category) => category.game_id === liveGame?.id)
       .map((category) => category.id),
   );
