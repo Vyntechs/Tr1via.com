@@ -27,6 +27,8 @@ import { HostHomeClient } from "./HostHomeClient";
 import { fetchResetPreview } from "@/lib/api/resetNightCounts";
 import { isNightToday } from "@/lib/host/tonightDate";
 import { classifyNights } from "@/lib/host/classifyNights";
+import { DEFAULT_VENUE_FALLBACK } from "@/lib/host/nightTwins";
+import { withoutEmptyTwinNights } from "@/lib/host/loadNightTwinContent";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +65,14 @@ export default async function HostHomePage() {
     .select("*")
     .eq("host_id", host.id)
     .order("created_at", { ascending: false });
-  const nights = (nightRows ?? []) as NightRow[];
+  const allNights = (nightRows ?? []) as NightRow[];
+
+  // Hide empty twin nights (a second night made by a repeated tap, never
+  // used) so the host sees one night to continue, and the headline is the
+  // twin she actually built in. Never hides a night that was opened or has
+  // any category or player; if the lookup fails in any way, nothing is hidden.
+  const twinRule = { defaultVenue: host.default_venue ?? DEFAULT_VENUE_FALLBACK };
+  const nights = await withoutEmptyTwinNights(admin, allNights, twinRule);
 
   // Classify nights by opened_at — the reliable "this night actually ran"
   // signal (closed_at is empty across all prod data today). tonightRow is the
@@ -148,7 +157,7 @@ export default async function HostHomePage() {
     <HostHomeClient
       hostName={host.display_name}
       hostSubtitle={host.default_venue ?? "Independent"}
-      defaultVenue={host.default_venue ?? "Soul Fire Pizza"}
+      defaultVenue={host.default_venue ?? DEFAULT_VENUE_FALLBACK}
       isFirstNightComplete={host.is_first_night_complete}
       isFounder={host.role === "founder"}
       isPaywallBypassed={host.is_paywall_bypassed}

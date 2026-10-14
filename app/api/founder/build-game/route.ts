@@ -8,7 +8,7 @@
 
 import { type NextRequest } from "next/server";
 import { requireFounder } from "@/lib/api/auth";
-import { forbidden, ok, serverError, unauthorized } from "@/lib/api/responses";
+import { forbidden, ok, serverError, unauthorized, conflict } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { makeInternalFetch } from "@/lib/api/internalFetch";
 import { pickRealTopics } from "@/lib/host/realTopicBank";
@@ -18,6 +18,35 @@ export const dynamic = "force-dynamic";
 
 const GAMES_PER_NIGHT = 2;
 const CATEGORIES_PER_GAME = 6;
+// A build adds its first topic within a second or two of making the night.
+// A handed-back night still without topics after this long has no build on it.
+const BUILD_STALE_MS = 30_000;
+
+type ReusedDecision = "filling" | "wait" | "take_over";
+
+async function reusedNightDecision(
+  admin: ReturnType<typeof getSupabaseAdmin>,
+  nightId: string,
+  nowMs: number = Date.now(),
+): Promise<ReusedDecision> {
+  const { data: night } = await admin
+    .from("nights")
+    .select("created_at")
+    .eq("id", nightId)
+    .maybeSingle();
+  const { data: games } = await admin.from("games").select("id").eq("night_id", nightId);
+  const gameIds = ((games ?? []) as Array<{ id: string }>).map((g) => g.id);
+  if (!night || gameIds.length === 0) return "wait";
+  const { data: cats, error } = await admin
+    .from("categories")
+    .select("id")
+    .in("game_id", gameIds)
+    .limit(1);
+  if (error) return "wait";
+  if ((cats ?? []).length > 0) return "filling";
+  const ageMs = nowMs - Date.parse((night as { created_at: string }).created_at);
+  return ageMs > BUILD_STALE_MS ? "take_over" : "wait";
+}
 
 export async function POST(req: NextRequest) {
   const auth = await requireFounder();
@@ -39,10 +68,29 @@ export async function POST(req: NextRequest) {
       `create night failed: ${nightRes.status} ${await nightRes.text()}`,
     );
   }
-  const { nightId, roomCode } = (await nightRes.json()) as {
+  const { nightId, roomCode, reused } = (await nightRes.json()) as {
     nightId: string;
     roomCode: string;
+    reused?: boolean;
   };
+  // /api/nights hands back a fresh empty night instead of making a twin.
+  // Either another build is filling it right now (double tap), or an earlier
+  // build made it and died before adding topics. Adding a second set of
+  // topics to a night another build is filling would double every slot, so:
+  //   - it already has topics: another build is filling it; open that one;
+  //   - no topics and it is young: that build may be about to add them; stop;
+  //   - no topics and older than BUILD_STALE_MS: that build died; fill it.
+  if (reused) {
+    const decision = await reusedNightDecision(admin, nightId);
+    if (decision === "filling") {
+      return ok({ nightId, roomCode, categoryIds: [], generating: 0, failedKicks: [], alreadyBuilding: true });
+    }
+    if (decision === "wait") {
+      return conflict(
+        "A build for this night just started. Wait a few seconds, then open it from the dashboard.",
+      );
+    }
+  }
 
   // 2. Look up the two game shells /api/nights just created.
   const { data: games, error: gamesError } = await admin

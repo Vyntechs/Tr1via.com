@@ -5,7 +5,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   HostDashboard,
@@ -19,6 +19,17 @@ import { OnboardingFirstDashboard } from "@/components/onboarding";
 import { BillingUpgrade } from "@/components/host/BillingUpgrade";
 import { hostRunPath } from "@/lib/host/hostRunPath";
 import { HOST_NEWS, shouldAutoShowWhatsNew, whatsNewSeenKey } from "@/lib/host/whats-new";
+
+// How long a create tap waits for the request and the page change before the
+// button unlocks again.
+const CREATE_NIGHT_STALL_MS = 10_000;
+const BUILD_GAME_STALL_MS = 60_000;
+const CREATE_NIGHT_STALL_MESSAGE =
+  "That is taking a while. Tap again; it will not make a second night.";
+// A second founder build is a second full game, so this one does not promise
+// otherwise.
+const BUILD_GAME_STALL_MESSAGE =
+  "The build is taking a while. Check your nights below before tapping again; another tap builds a second game.";
 
 
 export interface HostHomeClientProps {
@@ -53,6 +64,43 @@ export function HostHomeClient({
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  // Tap locks. State alone is not enough: two taps can land before React
+  // re-renders the disabled button, and each would POST a new night. The ref
+  // flips synchronously on the first tap. It stays locked after success,
+  // because the page is leaving for the new night's setup screen.
+  const createInFlight = useRef(false);
+  const buildInFlight = useRef(false);
+  // Bar wifi can stall the request, or the move to the new page, with no
+  // error at all. So every tap also starts a timer: if the page is still here
+  // when it fires, the button unlocks with a plain message. Each tap gets a
+  // number, and a late answer from an older tap is ignored once she has
+  // tapped again.
+  const createAttempt = useRef(0);
+  const buildAttempt = useRef(0);
+  const createStallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const buildStallTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (createStallTimer.current) clearTimeout(createStallTimer.current);
+      if (buildStallTimer.current) clearTimeout(buildStallTimer.current);
+    },
+    [],
+  );
+
+  // If the browser restores this page from its back/forward cache, unlock it
+  // so the buttons are not stuck on "Setting up…".
+  useEffect(() => {
+    function onPageShow(event: PageTransitionEvent) {
+      if (!event.persisted) return;
+      createInFlight.current = false;
+      buildInFlight.current = false;
+      setSubmitting(false);
+      setBuilding(false);
+    }
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   useEffect(() => {
     if (!isFirstNightComplete) return;
@@ -69,8 +117,21 @@ export function HostHomeClient({
   // photos, auto topics + auto-pick) so we can stand up a genuine night to
   // fact-check without manual setup.
   async function buildFullGameAndGo() {
+    if (buildInFlight.current) return;
+    buildInFlight.current = true;
+    const attempt = ++buildAttempt.current;
     setBuilding(true);
     setError(null);
+    if (buildStallTimer.current) clearTimeout(buildStallTimer.current);
+    // A full build makes 12 topics before it answers, so it gets longer than a
+    // plain night. Unlocking here does not cancel it; a late answer still
+    // opens the night.
+    buildStallTimer.current = setTimeout(() => {
+      if (buildAttempt.current !== attempt) return;
+      buildInFlight.current = false;
+      setBuilding(false);
+      setError(BUILD_GAME_STALL_MESSAGE);
+    }, BUILD_GAME_STALL_MS);
     try {
       const res = await fetch("/api/founder/build-game", {
         method: "POST",
@@ -81,16 +142,33 @@ export function HostHomeClient({
         throw new Error(body.error ?? `build failed (${res.status})`);
       }
       const data = (await res.json()) as { nightId: string };
+      if (buildAttempt.current !== attempt) return;
       router.push(`/host/setup/${data.nightId}`);
     } catch (err) {
+      if (buildAttempt.current !== attempt) return;
+      if (buildStallTimer.current) clearTimeout(buildStallTimer.current);
       setError(err instanceof Error ? err.message : "Could not build the game.");
+      buildInFlight.current = false;
       setBuilding(false);
     }
   }
 
   async function createNightAndGo() {
+    if (createInFlight.current) return;
+    createInFlight.current = true;
+    const attempt = ++createAttempt.current;
     setSubmitting(true);
     setError(null);
+    if (createStallTimer.current) clearTimeout(createStallTimer.current);
+    // Tapping again after this is safe: POST /api/nights hands back the empty
+    // night the first tap made (same host and venue, last 10 minutes) instead
+    // of making a second one.
+    createStallTimer.current = setTimeout(() => {
+      if (createAttempt.current !== attempt) return;
+      createInFlight.current = false;
+      setSubmitting(false);
+      setError(CREATE_NIGHT_STALL_MESSAGE);
+    }, CREATE_NIGHT_STALL_MS);
     try {
       const res = await fetch("/api/nights", {
         method: "POST",
@@ -102,9 +180,13 @@ export function HostHomeClient({
         throw new Error(body.error ?? `create-night failed (${res.status})`);
       }
       const data = (await res.json()) as { nightId: string };
+      if (createAttempt.current !== attempt) return;
       router.push(`/host/setup/${data.nightId}`);
     } catch (err) {
+      if (createAttempt.current !== attempt) return;
+      if (createStallTimer.current) clearTimeout(createStallTimer.current);
       setError(err instanceof Error ? err.message : "Could not create the night.");
+      createInFlight.current = false;
       setSubmitting(false);
     }
   }
@@ -189,6 +271,7 @@ export function HostHomeClient({
         lifetime={lifetime}
         tonight={tonight}
         onSetupTonight={createNightAndGo}
+        isSettingUp={submitting}
         onResume={goToTonight}
         onResetGame={() => setResetOpen(true)}
       />

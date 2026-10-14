@@ -150,6 +150,7 @@ function OnboardingFirstDashboardInner({
 
           <button
             type="button"
+            data-testid="onboarding-setup-btn"
             onClick={onSetup}
             disabled={isSettingUp}
             style={{

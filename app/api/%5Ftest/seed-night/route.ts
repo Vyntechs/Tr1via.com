@@ -29,6 +29,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { isTestModeEnabled } from "@/lib/api/require-test-mode";
+import { TEST_NEW_NIGHT_HEADER } from "@/lib/host/createNightOnce";
 
 interface SeedReq {
   hostId?: string;
@@ -141,8 +142,13 @@ export async function POST(req: NextRequest) {
 
   // 1. Create the night via the REAL endpoint. This creates both games
   //    in 'draft' state (the prod default) — same path a real host hits.
+  //    /api/nights hands back a host's fresh empty night instead of making a
+  //    twin (one night per tap). Specs seed an "empty-night" and then a full
+  //    one for the same host seconds apart and need two DIFFERENT nights, so
+  //    seeding always asks for a new one (honored in test mode only).
   const nightRes = await callProd("/api/nights", {
     method: "POST",
+    headers: { [TEST_NEW_NIGHT_HEADER]: "1" },
     body: JSON.stringify({ venueName, themeKey }),
   });
   if (!nightRes.ok) {
@@ -151,7 +157,23 @@ export async function POST(req: NextRequest) {
       { status: 500 },
     );
   }
-  const nightBody = (await nightRes.json()) as { nightId: string; roomCode: string };
+  const nightBody = (await nightRes.json()) as {
+    nightId: string;
+    roomCode: string;
+    reused?: boolean;
+  };
+  // A reused night would make two seeds share one night id and quietly break
+  // the spec (categories landing in the "empty" night). Fail loudly instead.
+  if (nightBody.reused) {
+    return NextResponse.json(
+      {
+        error:
+          "create night returned an existing night (reused); seeding needs a new one. " +
+          "Is TEST_AUTH_ENABLED=1 set on the server and x-test-secret forwarded?",
+      },
+      { status: 500 },
+    );
+  }
   const nightId = nightBody.nightId;
 
   if (typeof body.roomMagicEnabled === "boolean") {
