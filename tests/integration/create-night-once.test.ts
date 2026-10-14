@@ -66,6 +66,19 @@ beforeEach(async () => {
     create table if not exists live_room_events (night_id uuid);
     create table if not exists live_command_receipts (night_id uuid);
     create table if not exists room_magic_reactions (night_id uuid);
+    alter table nights add column if not exists answer_engine_latched_at timestamptz;
+    alter table nights add column if not exists room_revision bigint not null default 0;
+    alter table nights add column if not exists control_revision bigint not null default 0;
+    alter table nights add column if not exists room_magic_enabled boolean not null default false;
+    alter table question_generation_jobs add column if not exists game_id uuid;
+    alter table question_generation_reports add column if not exists game_id uuid;
+    create table if not exists question_play_eligibility (night_id uuid);
+    create table if not exists live_command_receipt_archive (night_id uuid references nights on delete cascade);
+    create table if not exists surface_observations (night_id uuid references nights on delete cascade);
+    create table if not exists diag_server_actions (night_id uuid);
+    create table if not exists diag_device_events (night_id uuid);
+    create table if not exists diag_answer_events (night_id uuid);
+    create table if not exists diag_quota (night_id uuid);
   `);
   await db.exec(CREATE_ONCE);
   hostId = await newHost("Heather");
@@ -179,5 +192,97 @@ describe("empty twin cleanup (proposed, real Postgres)", () => {
     // Deleting a night takes only its two empty game shells with it.
     expect(await count("select 1 from games")).toBe(remaining.length * 2);
     expect(await count("select 1 from categories")).toBe(1);
+  });
+
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000).toISOString();
+  async function remainingIds() {
+    const left = await db.query<{ id: string }>("select id from nights order by created_at");
+    return left.rows.map((r) => r.id);
+  }
+
+  test("keeps empty twins made in the last hour (someone may be setting one up right now)", async () => {
+    await night(id(1), minutesAgo(5));
+    await night(id(2), minutesAgo(4.9));
+    await night(id(3), minutesAgo(59));
+    await night(id(4), minutesAgo(58.5));
+    await db.exec(CLEANUP);
+    expect(await remainingIds()).toEqual([id(3), id(4), id(1), id(2)]);
+  });
+
+  test("keeps a night that anything at all points at (TV records, archives, logs, scores)", async () => {
+    const markers = [
+      "insert into surface_observations (night_id) values ($1)",
+      "insert into live_command_receipt_archive (night_id) values ($1)",
+      "insert into diag_server_actions (night_id) values ($1)",
+      "insert into diag_device_events (night_id) values ($1)",
+      "insert into question_play_eligibility (night_id) values ($1)",
+      "update nights set room_revision = 1 where id = $1",
+      "update nights set answer_engine_latched_at = now() where id = $1",
+      `insert into adjustments (game_id, player_id, delta, reason)
+         select g.id, null, 0, 'x' from games g where g.night_id = $1 and g.game_no = 1`,
+    ];
+    // An adjustment normally belongs to a player; let it stand alone here so
+    // the only thing on the night is the adjustment itself.
+    await db.exec("alter table adjustments alter column player_id drop not null");
+    for (const [i, sql] of markers.entries()) {
+      const older = id(100 + i * 2);
+      await night(older, `2026-09-0${1 + i}T0${i}:00:00.000Z`);
+      await night(id(101 + i * 2), `2026-09-0${1 + i}T0${i}:00:02.000Z`);
+      await db.query(sql, [older]);
+    }
+    await db.exec(CLEANUP);
+    const remaining = await remainingIds();
+    for (let i = 0; i < markers.length; i++) {
+      expect(remaining, markers[i]).toContain(id(100 + i * 2));
+    }
+  });
+
+  test("refuses to run if a table it does not know points at nights", async () => {
+    await night(id(1), "2026-10-08T16:46:06.524Z");
+    await night(id(2), "2026-10-08T16:46:07.596Z");
+    await db.exec("create table brand_new_thing (night_id uuid references nights on delete cascade)");
+    await expect(db.exec(CLEANUP)).rejects.toThrow(/brand_new_thing/);
+    await db.exec("rollback").catch(() => undefined);
+    expect(await count("select 1 from nights")).toBe(2);
+  });
+
+  test("the delete re-checks: a player who joins after the list is made keeps the night", async () => {
+    const [beforeDelete, deleteAndCommit] = CLEANUP.split("-- 5. Delete,");
+    expect(deleteAndCommit).toBeDefined();
+    await night(id(1), "2026-10-08T16:46:06.524Z");
+    await night(id(2), "2026-10-08T16:46:07.596Z");
+    await db.exec(beforeDelete);
+    // id(1) is on the delete list now; a player lands on it before the delete.
+    expect(await count("select 1 from twin_nights_to_delete where id = $1", [id(1)])).toBe(1);
+    await db.query("insert into players (night_id, device_id, display_name) values ($1, gen_random_uuid(), 'Pat')", [id(1)]);
+    await db.exec(`-- 5. Delete,${deleteAndCommit}`);
+    expect(await remainingIds()).toEqual([id(1), id(2)]);
+  });
+
+  test("the dry run lists exactly what the cleanup deletes", async () => {
+    await night(id(1), "2026-10-08T16:46:06.524Z");
+    await night(id(2), "2026-10-08T16:46:07.596Z");
+    await db.query(
+      `insert into categories (game_id, name, topic, position)
+       select g.id, 'Ghosts', 'Ghosts', 1 from games g where g.night_id = $1 and g.game_no = 1`,
+      [id(2)],
+    );
+    await night(id(3), "2026-05-25T11:58:50.353Z");
+    await night(id(4), "2026-05-25T11:58:56.066Z");
+    await night(id(5), minutesAgo(3));
+    await night(id(6), minutesAgo(2.9));
+    await night(id(7), "2026-05-29T20:50:37.730Z");
+    const dryRun = CLEANUP.split("-- Dry run (read-only).")[1]!
+      .split("\n")
+      .filter((l) => l.startsWith("-- ") && !/^-- (Same rules|with the settings)/.test(l))
+      .map((l) => l.slice(3))
+      .join("\n");
+    const listed = (await db.query<{ id: string }>(dryRun)).rows.map((r) => r.id).sort();
+    const before = await remainingIds();
+    await db.exec(CLEANUP);
+    const after = new Set(await remainingIds());
+    const deleted = before.filter((x) => !after.has(x)).sort();
+    expect(listed).toEqual([id(1), id(3)]);
+    expect(deleted).toEqual(listed);
   });
 });
