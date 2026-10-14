@@ -29,6 +29,12 @@ import { hostRecoverySeed } from "@/lib/room/hostRecoverySeed";
 import type { RoomFallbackPayload } from "@/lib/room/roomSnapshotPayload";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
+  loadNightPickedQuestions,
+  PICKED_QUESTIONS_RETRY_MESSAGE,
+  PICKED_RETRY_NOTE_STYLE,
+  startPickedQuestionsLoad,
+} from "@/lib/host/loadNightPickedQuestions";
+import {
   AddLatecomerModal,
   AdjustPointsModal,
   HostLiveConsole,
@@ -118,6 +124,7 @@ function DesktopHostLiveConsoleClient({
   // True once the first picked-questions read has come back (even if empty).
   // Until then a doubled board slot's winner is unknown, so it is held back.
   const [directQuestionsLoaded, setDirectQuestionsLoaded] = useState(false);
+  const [pickedQuestionsRetrying, setPickedQuestionsRetrying] = useState(false);
   const [directAnswers, setAnswers] = useState<AnswerRow[]>([]);
   const [directScores, setScores] = useState<GameScoreRow[]>([]);
   const [directScoresReadyForGameId, setDirectScoresReadyForGameId] =
@@ -177,24 +184,15 @@ function DesktopHostLiveConsoleClient({
     if (room.games.length === 0) return;
     const gameIds = room.games.map((g) => g.id);
     const supa = getSupabaseBrowser();
-    void (async () => {
-      const { data: catData } = await supa
-        .from("categories")
-        .select("id")
-        .in("game_id", gameIds);
-      const catIds = ((catData ?? []) as Array<{ id: string }>).map((c) => c.id);
-      if (catIds.length === 0) {
+    // A failed read is never "no picks" and is tried again (see the helper).
+    return startPickedQuestionsLoad({
+      load: () => loadNightPickedQuestions(supa, gameIds),
+      onRetrying: setPickedQuestionsRetrying,
+      onRows: (rows) => {
+        setAllQuestions(rows);
         setDirectQuestionsLoaded(true);
-        return;
-      }
-      const { data: qData } = await supa
-        .from("questions")
-        .select("*")
-        .in("category_id", catIds)
-        .eq("is_picked", true);
-      setAllQuestions((qData as QuestionRow[] | null) ?? []);
-      setDirectQuestionsLoaded(true);
-    })();
+      },
+    });
   }, [room.games]);
 
   // ── load + subscribe to scores from the materialized game_scores view ─
@@ -678,6 +676,11 @@ function DesktopHostLiveConsoleClient({
   return (
     <>
       <HostConnectionBanner />
+      {pickedQuestionsRetrying && !backupMode && (
+        <p role="status" style={PICKED_RETRY_NOTE_STYLE}>
+          {PICKED_QUESTIONS_RETRY_MESSAGE}
+        </p>
+      )}
       {/* Schedules the July firework beat so the embedded TV preview ignites
           the same burst at the same instant as the venue TV. Render-less;
           no-op on non-July nights. */}

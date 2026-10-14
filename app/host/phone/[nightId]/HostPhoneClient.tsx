@@ -16,6 +16,12 @@ import { rankScores } from "@/lib/game/rankScores";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 import { getSupabaseBrowser } from "@/lib/supabase/client";
 import {
+  loadNightPickedQuestions,
+  PICKED_QUESTIONS_RETRY_MESSAGE,
+  PICKED_RETRY_NOTE_STYLE,
+  startPickedQuestionsLoad,
+} from "@/lib/host/loadNightPickedQuestions";
+import {
   HostBetweenGames,
   HostVenueMonitor,
   HostPhoneLive,
@@ -62,6 +68,7 @@ export function HostPhoneClient({
   // True once the first picked-questions read has come back (even if empty).
   // Until then a doubled board slot's winner is unknown, so it is held back.
   const [directQuestionsLoaded, setDirectQuestionsLoaded] = useState(false);
+  const [pickedQuestionsRetrying, setPickedQuestionsRetrying] = useState(false);
   const [directAnswers, setDirectAnswers] = useState<AnswerRow[]>([]);
   const [directScoreSnapshot, setDirectScoreSnapshot] = useState<{
     gameId: string;
@@ -141,38 +148,23 @@ export function HostPhoneClient({
   // next one).
   useEffect(() => {
     if (room.games.length === 0) return;
-    let cancelled = false;
     const gameIds = room.games.map((g) => g.id);
     const supa = getSupabaseBrowser();
-    void (async () => {
-      const { data: catData } = await supa
-        .from("categories")
-        .select("id")
-        .in("game_id", gameIds);
-      const catIds = ((catData ?? []) as Array<{ id: string }>).map((c) => c.id);
-      if (catIds.length === 0) {
-        if (!cancelled) setDirectQuestionsLoaded(true);
-        return;
-      }
-      const { data: qData } = await supa
-        .from("questions")
-        .select("*")
-        .in("category_id", catIds)
-        .eq("is_picked", true);
-      if (cancelled) return;
-      const rows = (qData as QuestionRow[] | null) ?? [];
-      setDirectAllQuestions(
-        rows.map((question) =>
-          question.id === room.currentQuestion?.id
-            ? { ...question, played_at: room.currentQuestion.played_at }
-            : question,
-        ),
-      );
-      setDirectQuestionsLoaded(true);
-    })();
-    return () => {
-      cancelled = true;
-    };
+    // A failed read is never "no picks" and is tried again (see the helper).
+    return startPickedQuestionsLoad({
+      load: () => loadNightPickedQuestions(supa, gameIds),
+      onRetrying: setPickedQuestionsRetrying,
+      onRows: (rows) => {
+        setDirectAllQuestions(
+          rows.map((question) =>
+            question.id === room.currentQuestion?.id
+              ? { ...question, played_at: room.currentQuestion.played_at }
+              : question,
+          ),
+        );
+        setDirectQuestionsLoaded(true);
+      },
+    });
   }, [room.games, room.currentQuestion]);
 
   // Subscribe to the live or current-game resolved question. The latter is
@@ -1003,6 +995,11 @@ export function HostPhoneClient({
       )}
     >
       {sectionContent}
+      {pickedQuestionsRetrying && !backupMode && (
+        <p role="status" style={PICKED_RETRY_NOTE_STYLE}>
+          {PICKED_QUESTIONS_RETRY_MESSAGE}
+        </p>
+      )}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
     </PhoneCenter>
   );
