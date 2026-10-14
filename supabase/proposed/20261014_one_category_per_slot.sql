@@ -24,9 +24,16 @@
 --      newest, then id; the same rule as lib/host/oneCategoryPerSlot.ts).
 --      Rank 1 is the row the screens show.
 --   2. Deletes a lower-ranked row ONLY when its game has not started
---      (games.state not 'live'/'done', the exact test the guard uses) AND nothing
---      would be lost: no picked questions, no played questions, no live-engine
---      plays. Deleting a category also deletes its questions, plays and answers.
+--      (games.state not 'live'/'done', the exact test the guard uses) AND the
+--      row has no picked questions, no played questions and no live-engine
+--      plays, so nothing on the board, no score and no answer goes.
+--      The delete DOES take with it:
+--        - the row's unpicked candidate questions (usually about 20; writing
+--          them cost AI money and they cannot be brought back),
+--        - its question_generation_jobs row (cascade),
+--      and its question_generation_reports rows stay but lose their category
+--      link (set null). Run the read-only listing at the bottom first to see
+--      exactly which rows and how many questions that is.
 --   3. Leaves lower-ranked rows in started or finished games ('live'/'done')
 --      exactly as they are. The guard would refuse to delete them, and they
 --      are history. The screens already show only the rank-1 row.
@@ -45,14 +52,22 @@
 -- the hidden row becomes the slot's only row and only the app's create route
 -- (which checks the slot) stops a second row there.
 --
--- Locks: the guard takes the game row with NOWAIT, so a write to the same game
--- at the same moment makes this fail and roll back instead of waiting. The
--- index build blocks writes to categories for the few milliseconds it takes.
--- Run it with no show in progress.
+-- Locks: first thing, it locks the categories and questions tables in SHARE
+-- ROW EXCLUSIVE mode until it commits. Reads carry on, but nobody else can add,
+-- change, pick or delete a category or question while it runs, so the ranking
+-- in step 1 and the "nothing picked or played" checks in step 2 cannot go stale
+-- before the delete (for example a build auto-picking questions on a row that
+-- is about to be deleted). Both tables are locked because picks live on
+-- questions, not on categories. If either lock is not free within 5 seconds it
+-- stops and changes nothing. The guard also takes each game row with NOWAIT,
+-- so a write to the same game at that moment makes it fail and roll back
+-- instead of waiting. Run it with no show in progress.
 
 begin;
 
 set local lock_timeout = '5s';
+
+lock table public.categories, public.questions in share row exclusive mode;
 
 create temp table one_per_slot_ranked on commit drop as
 with picked as (

@@ -199,6 +199,65 @@ describe("proposed one-category-per-slot rule", () => {
     expect(await indexExists()).toBe(true);
   });
 
+  test("locks categories and questions before ranking, and holds them until the end", async () => {
+    // Order in the file: lock_timeout, then the table lock, then the ranking.
+    const timeoutAt = PROPOSAL.indexOf("set local lock_timeout");
+    const lockAt = PROPOSAL.search(
+      /lock table public\.categories, public\.questions in share row exclusive mode;/,
+    );
+    const rankAt = PROPOSAL.indexOf("create temp table one_per_slot_ranked");
+    expect(PROPOSAL.indexOf("begin;")).toBeLessThan(timeoutAt);
+    expect(timeoutAt).toBeGreaterThan(-1);
+    expect(lockAt).toBeGreaterThan(timeoutAt);
+    expect(rankAt).toBeGreaterThan(lockAt);
+
+    // Run everything except the final commit, then look at the locks held.
+    const g = await game(2);
+    const orphan = await category(g, "Legendary Ghost stories", 2, "review", "2026-10-03T15:36:41Z");
+    await questions(orphan, 20, false);
+    const real = await category(g, "Ghost Stories", 2, "ready", "2026-10-03T15:37:09Z");
+    await questions(real, 7, true);
+    const commitAt = PROPOSAL.lastIndexOf("commit;");
+    await db.exec(PROPOSAL.slice(0, commitAt));
+    const held = await db.query<{ rel: string }>(
+      `select relation::regclass::text rel from pg_locks
+       where locktype = 'relation' and mode = 'ShareRowExclusiveLock' and granted
+       order by 1`,
+    );
+    expect(held.rows.map((r) => r.rel)).toEqual(["categories", "questions"]);
+    await db.exec("rollback");
+    // Rolled back: both rows are still there and no index was built.
+    expect(await names(g)).toHaveLength(2);
+    expect(await indexExists()).toBe(false);
+  });
+
+  test("what a removed extra row takes with it: its unpicked questions and its job", async () => {
+    const g = await game(2);
+    const orphan = await category(g, "Legendary Ghost stories", 2, "review", "2026-10-03T15:36:41Z");
+    await questions(orphan, 20, false);
+    await db.query(
+      `insert into question_generation_jobs (category_id, game_id, night_id, host_id, phase, target_count)
+       select $1, $2, n.id, n.host_id, 'ready', 20 from nights n where n.id = $3`,
+      [orphan, g, nightId],
+    );
+    const real = await category(g, "Ghost Stories", 2, "ready", "2026-10-03T15:37:09Z");
+    await questions(real, 7, true);
+
+    expect(await applyProposal()).toBeNull();
+    const left = await db.query<{ q: number; j: number }>(
+      `select (select count(*)::int from questions where category_id = $1) q,
+              (select count(*)::int from question_generation_jobs where category_id = $1) j`,
+      [orphan],
+    );
+    expect(left.rows[0]).toEqual({ q: 0, j: 0 });
+    // The kept row's picked questions are untouched.
+    const kept = await db.query<{ n: number }>(
+      "select count(*)::int n from questions where category_id = $1 and is_picked",
+      [real],
+    );
+    expect(kept.rows[0].n).toBe(7);
+  });
+
   test("in a game still in setup, the unlocked extra row is removed and the real one kept", async () => {
     const g = await game(2);
     const orphan = await category(g, "Legendary Ghost stories", 2, "review", "2026-10-03T15:36:41Z");
