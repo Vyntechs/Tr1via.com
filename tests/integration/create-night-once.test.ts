@@ -201,13 +201,21 @@ describe("empty twin cleanup (proposed, real Postgres)", () => {
     return left.rows.map((r) => r.id);
   }
 
-  test("keeps empty twins made in the last hour (someone may be setting one up right now)", async () => {
-    await night(id(1), minutesAgo(5));
-    await night(id(2), minutesAgo(4.9));
-    await night(id(3), minutesAgo(59));
-    await night(id(4), minutesAgo(58.5));
+  test("keeps a true twin pair made in the last hour, and removes the same pair once it is over an hour old", async () => {
+    // A real repeat tap: same venue, 1 second apart, made 5 minutes ago.
+    // Only the 1-hour guard keeps it (someone may be setting it up right now).
+    const base = Date.now() - 5 * 60_000;
+    await night(id(1), new Date(base).toISOString());
+    await night(id(2), new Date(base + 1000).toISOString());
     await db.exec(CLEANUP);
-    expect(await remainingIds()).toEqual([id(3), id(4), id(1), id(2)]);
+    expect(await remainingIds()).toEqual([id(1), id(2)]);
+
+    // The same pair, still 1 second apart, now about 65 minutes old: the
+    // older empty twin goes, the newer one stays with its two games.
+    await db.query("update nights set created_at = created_at - interval '1 hour'");
+    await db.exec(CLEANUP);
+    expect(await remainingIds()).toEqual([id(2)]);
+    expect(await count("select 1 from games")).toBe(2);
   });
 
   test("keeps a night that anything at all points at (TV records, archives, logs, scores)", async () => {
@@ -236,6 +244,29 @@ describe("empty twin cleanup (proposed, real Postgres)", () => {
     for (let i = 0; i < markers.length; i++) {
       expect(remaining, markers[i]).toContain(id(100 + i * 2));
     }
+  });
+
+  test("keeps a night with a row in the answer-event log or the quota log", async () => {
+    const logs = [
+      "insert into diag_answer_events (night_id) values ($1)",
+      "insert into diag_quota (night_id) values ($1)",
+    ];
+    for (const [i, sql] of logs.entries()) {
+      const older = id(300 + i * 2);
+      await night(older, `2026-09-2${i}T01:00:00.000Z`);
+      await night(id(301 + i * 2), `2026-09-2${i}T01:00:01.000Z`);
+      await db.query(sql, [older]);
+    }
+    // Control: the same kind of pair with no log row loses its older twin.
+    await night(id(310), "2026-09-25T01:00:00.000Z");
+    await night(id(311), "2026-09-25T01:00:01.000Z");
+    await db.exec(CLEANUP);
+    const remaining = await remainingIds();
+    for (let i = 0; i < logs.length; i++) {
+      expect(remaining, logs[i]).toContain(id(300 + i * 2));
+    }
+    expect(remaining).not.toContain(id(310));
+    expect(remaining).toContain(id(311));
   });
 
   test("never deletes a twin the host edited (theme, room magic, date, venue, game counts), even next to a newer untouched one", async () => {
