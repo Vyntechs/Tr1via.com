@@ -8,7 +8,7 @@
 
 import { type NextRequest } from "next/server";
 import { requireFounder } from "@/lib/api/auth";
-import { forbidden, ok, serverError, unauthorized } from "@/lib/api/responses";
+import { forbidden, ok, serverError, unauthorized, conflict } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { makeInternalFetch } from "@/lib/api/internalFetch";
 import { pickRealTopics } from "@/lib/host/realTopicBank";
@@ -39,10 +39,19 @@ export async function POST(req: NextRequest) {
       `create night failed: ${nightRes.status} ${await nightRes.text()}`,
     );
   }
-  const { nightId, roomCode } = (await nightRes.json()) as {
+  const { nightId, roomCode, reused } = (await nightRes.json()) as {
     nightId: string;
     roomCode: string;
+    reused?: boolean;
   };
+  // /api/nights hands back a fresh empty night instead of making a twin. For
+  // this tool that means another build is already filling it (double tap):
+  // adding a second set of categories would double every slot, so stop here.
+  if (reused) {
+    return conflict(
+      "A build for this night is already running. Open it from the dashboard.",
+    );
+  }
 
   // 2. Look up the two game shells /api/nights just created.
   const { data: games, error: gamesError } = await admin

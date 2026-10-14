@@ -77,6 +77,9 @@ export interface HostDashboardProps {
   tonight?: HostDashboardTonight | null;
   /** Called when the host taps the headline CTA. */
   onSetupTonight?: () => void;
+  /** True while a new night is being created. The create buttons are
+   *  disabled and say "Setting up…" so a second tap can't make a twin. */
+  isSettingUp?: boolean;
   /** Called when the host taps Resume on a live/setup night. */
   onResume?: (nightId: string) => void;
   /** Called when the host taps "Reset and edit game". Only meaningful
@@ -135,6 +138,7 @@ function HostDashboardInner({
   lifetime,
   tonight = null,
   onSetupTonight,
+  isSettingUp = false,
   onResume,
   onResetGame,
 }: Omit<HostDashboardProps, "themeKey">) {
@@ -166,8 +170,11 @@ function HostDashboardInner({
       : tonight.status === "done"
         ? "See tonight's recap"
         : "Continue setup";
+  const ctaCreates = !tonight;
+  const ctaBusy = ctaCreates && isSettingUp;
   function handleCta() {
     if (!tonight) {
+      if (isSettingUp) return;
       onSetupTonight?.();
       return;
     }
@@ -259,6 +266,8 @@ function HostDashboardInner({
             >
               <button
                 onClick={handleCta}
+                disabled={ctaBusy}
+                aria-busy={ctaBusy || undefined}
                 data-testid={tonight ? `host-open-room-${tonight.nightId}` : "host-new-night-btn"}
                 style={{
                   background: t.accent,
@@ -269,15 +278,16 @@ function HostDashboardInner({
                   fontSize: 15,
                   fontWeight: 600,
                   fontFamily: "var(--font-sans)",
-                  cursor: "pointer",
+                  cursor: ctaBusy ? "default" : "pointer",
+                  opacity: ctaBusy ? 0.7 : 1,
                   display: "flex",
                   alignItems: "center",
                   gap: 10,
                   boxShadow: `0 10px 22px -10px ${t.accent}55`,
                 }}
               >
-                {ctaLabel}
-                {!tonight && (
+                {ctaBusy ? "Setting up…" : ctaLabel}
+                {!tonight && !ctaBusy && (
                   <span
                     style={{ opacity: 0.65, fontFamily: "var(--font-mono)", fontSize: 12 }}
                   >
@@ -293,7 +303,12 @@ function HostDashboardInner({
               {tonight && (
                 <button
                   type="button"
-                  onClick={() => onSetupTonight?.()}
+                  onClick={() => {
+                    if (isSettingUp) return;
+                    onSetupTonight?.();
+                  }}
+                  disabled={isSettingUp}
+                  aria-busy={isSettingUp || undefined}
                   data-testid="host-plan-new-night-btn"
                   style={{
                     background: "transparent",
@@ -304,14 +319,21 @@ function HostDashboardInner({
                     fontSize: 13,
                     fontWeight: 500,
                     fontFamily: "var(--font-sans)",
-                    cursor: "pointer",
+                    cursor: isSettingUp ? "default" : "pointer",
+                    opacity: isSettingUp ? 0.6 : 1,
                     display: "flex",
                     alignItems: "center",
                     gap: 8,
                   }}
                 >
-                  <span style={{ fontSize: 14, lineHeight: 1, opacity: 0.7 }}>+</span>
-                  Plan a new night
+                  {isSettingUp ? (
+                    "Setting up…"
+                  ) : (
+                    <>
+                      <span style={{ fontSize: 14, lineHeight: 1, opacity: 0.7 }}>+</span>
+                      Plan a new night
+                    </>
+                  )}
                 </button>
               )}
               {tonight && tonight.status === "live" && tonight.resetPreview && (

@@ -27,6 +27,11 @@ import { HostHomeClient } from "./HostHomeClient";
 import { fetchResetPreview } from "@/lib/api/resetNightCounts";
 import { isNightToday } from "@/lib/host/tonightDate";
 import { classifyNights } from "@/lib/host/classifyNights";
+import {
+  hiddenEmptyTwinIds,
+  twinCandidateIds,
+  type NightContent,
+} from "@/lib/host/nightTwins";
 
 export const dynamic = "force-dynamic";
 
@@ -63,7 +68,15 @@ export default async function HostHomePage() {
     .select("*")
     .eq("host_id", host.id)
     .order("created_at", { ascending: false });
-  const nights = (nightRows ?? []) as NightRow[];
+  const allNights = (nightRows ?? []) as NightRow[];
+
+  // Hide empty twin nights (a second night made by a repeated tap, never
+  // used) so the host sees one night to continue, and the headline is the
+  // twin she actually built in. Never hides a night that was opened or has
+  // any category or player; if the counts can't be read, nothing is hidden.
+  const twinContent = await fetchNightContent(twinCandidateIds(allNights));
+  const hiddenTwins = hiddenEmptyTwinIds(allNights, twinContent);
+  const nights = allNights.filter((n) => !hiddenTwins.has(n.id));
 
   // Classify nights by opened_at — the reliable "this night actually ran"
   // signal (closed_at is empty across all prod data today). tonightRow is the
@@ -225,6 +238,47 @@ async function fetchCategoriesByNight(
     if (!nightId) continue;
     if (!result[nightId]) result[nightId] = [];
     if (result[nightId].length < 6) result[nightId].push(c.name);
+  }
+  return result;
+}
+
+// Category and player counts (players incl. removed ones) for the few nights
+// that might be empty twins. Any read error returns {} so nothing is hidden.
+async function fetchNightContent(
+  nightIds: string[],
+): Promise<Record<string, NightContent>> {
+  if (nightIds.length === 0) return {};
+  const admin = getSupabaseAdmin();
+  const { data: games, error: gamesError } = await admin
+    .from("games")
+    .select("id, night_id")
+    .in("night_id", nightIds);
+  if (gamesError) return {};
+  const gameRows = (games ?? []) as Pick<GameRow, "id" | "night_id">[];
+  let catRows: Array<{ game_id: string }> = [];
+  if (gameRows.length > 0) {
+    const { data: cats, error: catsError } = await admin
+      .from("categories")
+      .select("game_id")
+      .in("game_id", gameRows.map((g) => g.id));
+    if (catsError) return {};
+    catRows = (cats ?? []) as Array<{ game_id: string }>;
+  }
+  const { data: players, error: playersError } = await admin
+    .from("players")
+    .select("night_id")
+    .in("night_id", nightIds);
+  if (playersError) return {};
+
+  const result: Record<string, NightContent> = {};
+  for (const id of nightIds) result[id] = { categories: 0, players: 0 };
+  const nightOfGame = new Map(gameRows.map((g) => [g.id, g.night_id]));
+  for (const c of catRows) {
+    const nightId = nightOfGame.get(c.game_id);
+    if (nightId && result[nightId]) result[nightId].categories += 1;
+  }
+  for (const p of (players ?? []) as Array<{ night_id: string }>) {
+    if (result[p.night_id]) result[p.night_id].players += 1;
   }
   return result;
 }

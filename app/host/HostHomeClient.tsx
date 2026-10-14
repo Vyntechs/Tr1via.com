@@ -5,7 +5,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   HostDashboard,
@@ -53,6 +53,26 @@ export function HostHomeClient({
   const [building, setBuilding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [whatsNewOpen, setWhatsNewOpen] = useState(false);
+  // Tap locks. State alone is not enough: two taps can land before React
+  // re-renders the disabled button, and each would POST a new night. The ref
+  // flips synchronously on the first tap. It stays locked after success,
+  // because the page is leaving for the new night's setup screen.
+  const createInFlight = useRef(false);
+  const buildInFlight = useRef(false);
+
+  // If the browser restores this page from its back/forward cache, unlock it
+  // so the buttons are not stuck on "Setting up…".
+  useEffect(() => {
+    function onPageShow(event: PageTransitionEvent) {
+      if (!event.persisted) return;
+      createInFlight.current = false;
+      buildInFlight.current = false;
+      setSubmitting(false);
+      setBuilding(false);
+    }
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
 
   useEffect(() => {
     if (!isFirstNightComplete) return;
@@ -69,6 +89,8 @@ export function HostHomeClient({
   // photos, auto topics + auto-pick) so we can stand up a genuine night to
   // fact-check without manual setup.
   async function buildFullGameAndGo() {
+    if (buildInFlight.current) return;
+    buildInFlight.current = true;
     setBuilding(true);
     setError(null);
     try {
@@ -84,11 +106,14 @@ export function HostHomeClient({
       router.push(`/host/setup/${data.nightId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not build the game.");
+      buildInFlight.current = false;
       setBuilding(false);
     }
   }
 
   async function createNightAndGo() {
+    if (createInFlight.current) return;
+    createInFlight.current = true;
     setSubmitting(true);
     setError(null);
     try {
@@ -105,6 +130,7 @@ export function HostHomeClient({
       router.push(`/host/setup/${data.nightId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not create the night.");
+      createInFlight.current = false;
       setSubmitting(false);
     }
   }
@@ -189,6 +215,7 @@ export function HostHomeClient({
         lifetime={lifetime}
         tonight={tonight}
         onSetupTonight={createNightAndGo}
+        isSettingUp={submitting}
         onResume={goToTonight}
         onResetGame={() => setResetOpen(true)}
       />
