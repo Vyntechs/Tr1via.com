@@ -1,13 +1,15 @@
 // GET /api/questions/[id]/photos
 //
-// Returns up to 12 alternative Pexels photos for the swap UI. The query
-// is re-derived from the question:
-//   * Prefer the `photoQuery` Claude originally generated (we don't have
-//     it stored, so we fall back to a 2-4 word slice of the prompt).
-//   * In practice the original `photoQuery` is embedded in the existing
-//     image_url's referer for Pexels-sourced images, but Pexels doesn't
-//     give us a clean way to recover it; the prompt-derived query is
-//     adequate for the "show me more" use case.
+// Returns up to 12 alternative Pexels photos for the swap UI. The query:
+//   * The `photo_query` Claude wrote for this question when it was made
+//     (stored on the row), but only while the question is unedited
+//     (source 'ai'). It is the search that found the auto-matched photo,
+//     so the alternatives match the same subject.
+//   * Otherwise (edited, hand-written or older questions), a 2-4 word
+//     slice of the prompt as it reads now. An edit may have changed the
+//     subject, and the stored words would then find the old one.
+//   * If the stored words find nothing, one more search with the prompt
+//     words, so "Try again" is not stuck repeating an empty search.
 //
 // Host-only. Errors:
 //   503 → Pexels rate-limited or unreachable.
@@ -23,10 +25,16 @@ import {
   serverError,
   unauthorized,
 } from "@/lib/api/responses";
+import { choosePhotoQuery, fallbackPhotoQuery } from "@/lib/pexels/photo-query";
 import { PexelsRateLimitError, searchPexels } from "@/lib/pexels/search";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+// The host's screen stops waiting for this lookup after 8 seconds. The
+// second search only starts when the first came back quickly, so the two
+// together stay well inside that on a normal day.
+const FALLBACK_SEARCH_BUDGET_MS = 3_000;
 
 export async function GET(
   _req: NextRequest,
@@ -42,9 +50,18 @@ export async function GET(
   }
   const { question } = owned;
 
-  const query = derivePhotoQuery(question.prompt);
+  const chosen = choosePhotoQuery(question);
   try {
-    const photos = await searchPexels(query, 12);
+    const startedAt = Date.now();
+    let query = chosen.query;
+    let photos = await searchPexels(query, 12);
+    if (photos.length === 0 && chosen.fromStored) {
+      const fallback = fallbackPhotoQuery(question, query);
+      if (fallback && Date.now() - startedAt < FALLBACK_SEARCH_BUDGET_MS) {
+        query = fallback;
+        photos = await searchPexels(fallback, 12);
+      }
+    }
     return ok({ query, photos });
   } catch (err) {
     if (err instanceof PexelsRateLimitError) {
@@ -57,50 +74,4 @@ export async function GET(
       `photo search failed: ${err instanceof Error ? err.message : "unknown"}`,
     );
   }
-}
-
-/**
- * Best-effort query derivation. Picks the first 3 meaningful words of the
- * prompt — drops stopwords and the question mark. NOT a perfect inverse
- * of Claude's original photoQuery, but adequate for "show me 12 more."
- */
-function derivePhotoQuery(prompt: string): string {
-  const STOPWORDS = new Set([
-    "the",
-    "a",
-    "an",
-    "of",
-    "and",
-    "or",
-    "is",
-    "are",
-    "was",
-    "were",
-    "which",
-    "what",
-    "who",
-    "where",
-    "when",
-    "why",
-    "how",
-    "to",
-    "in",
-    "on",
-    "for",
-    "with",
-    "by",
-    "this",
-    "that",
-    "these",
-    "those",
-    "his",
-    "her",
-    "their",
-    "its",
-  ]);
-  const words = prompt
-    .replace(/[?.,!:;"'()\[\]]/g, "")
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
-  return words.slice(0, 3).join(" ") || prompt.slice(0, 40);
 }

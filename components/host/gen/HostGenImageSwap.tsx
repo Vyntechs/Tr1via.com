@@ -63,6 +63,10 @@ export interface HostGenImageSwapProps {
   errorMessage?: string | null;
   /** Called when the host taps "Try again" on the error banner. */
   onErrorRetry?: () => void;
+  /** True while the library photos for this question are being looked up.
+   *  Shows "Finding photos…" so an empty grid never reads as "the library
+   *  has nothing, upload your own". */
+  isLoadingCandidates?: boolean;
 }
 
 // Demo gallery — left empty so `StockImage` falls back to the seeded
@@ -104,6 +108,7 @@ function HostGenImageSwapInner({
   isSaving = false,
   errorMessage = null,
   onErrorRetry,
+  isLoadingCandidates = false,
 }: Omit<HostGenImageSwapProps, "themeKey">) {
   const { t } = useTheme();
   const mobile = useMediaQuery("(max-width: 860px)");
@@ -132,7 +137,7 @@ function HostGenImageSwapInner({
           {/* Tabs */}
           <div style={{ marginTop: 22, display: mobile ? "grid" : "flex", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : undefined, width: mobile ? "100%" : undefined, gap: 4, padding: 4, borderRadius: mobile ? 14 : 99, background: t.surface, alignSelf: "flex-start" }}>
             {[
-              { id: "lib", label: "From the library", sub: `${candidates.length} fresh`, active: true },
+              { id: "lib", label: "From the library", sub: isLoadingCandidates ? "finding…" : `${candidates.length} fresh`, active: true },
               { id: "upload", label: "Upload new", sub: "+ add", active: false },
             ].map((tab) => (
               <button
@@ -220,8 +225,26 @@ function HostGenImageSwapInner({
             </div>
           )}
 
+          {isLoadingCandidates && !errorMessage && (
+            <div
+              role="status"
+              data-testid="host-gen-image-swap-loading"
+              style={{ marginTop: 18, fontSize: 13, color: t.inkMid, fontWeight: 500 }}
+            >
+              Finding photos from the library for this question…
+            </div>
+          )}
+
           {/* From the library */}
-          <div style={{ marginTop: 18, flex: 1, overflow: mobile ? "visible" : "auto", display: "grid", gridTemplateColumns: mobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, 1fr)", gap: 10, gridAutoRows: mobile ? "112px" : "130px", paddingBottom: 24 }}>
+          <div aria-busy={isLoadingCandidates || undefined} style={{ marginTop: 18, flex: 1, overflow: mobile ? "visible" : "auto", display: "grid", gridTemplateColumns: mobile ? "repeat(2, minmax(0, 1fr))" : "repeat(4, 1fr)", gap: 10, gridAutoRows: mobile ? "112px" : "130px", paddingBottom: 24 }}>
+            {isLoadingCandidates && candidates.length === 0 && !errorMessage &&
+              [0, 1, 2, 3].map((i) => (
+                <div
+                  key={`loading-${i}`}
+                  aria-hidden="true"
+                  style={{ borderRadius: 12, background: t.surface, border: `1px solid ${t.line}`, opacity: 0.7 }}
+                />
+              ))}
             {candidates.map((c) => {
               const isCurrent = c.url === currentImageUrl;
               const isSelected = selectedId === c.id;

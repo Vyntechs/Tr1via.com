@@ -85,6 +85,10 @@ type AuditReportRow = {
   risk_flag_count: number;
 };
 
+/** How long the photo screen waits for the library photos before it says
+ *  the library is slow and offers Try again. */
+const PHOTO_LOOKUP_TIMEOUT_MS = 8_000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -176,7 +180,17 @@ export function HostSetupPickClient({
   const [uploadFilename, setUploadFilename] = useState<string | undefined>(undefined);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [photoCandidates, setPhotoCandidates] = useState<HostGenPhotoCandidate[]>([]);
+  // Which question the library photos above were found for. The photo
+  // screen only shows them for that question, so it can never offer one
+  // question's photos on another.
+  const [photoCandidatesFor, setPhotoCandidatesFor] = useState<string | null>(null);
   const [photoLookupError, setPhotoLookupError] = useState<string | null>(null);
+  const [photosLoading, setPhotosLoading] = useState(false);
+  // Only the newest library lookup may fill the screen; an older, slower
+  // reply for a question she already left is dropped.
+  const photoLookupSeqRef = useRef(0);
+  // Lets a newer lookup (or the 8-second limit) cancel the one in flight.
+  const photoLookupAbortRef = useRef<AbortController | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A point-slot PATCH is not fully reconciled until the authoritative rows
   // have replaced local picks. Keep this outside the modal lifecycle so a
@@ -859,7 +873,9 @@ export function HostSetupPickClient({
     if (modal.kind !== "edit") return;
     const questionId = modal.questionId;
     const saved = await persistEdit(values, questionId);
-    if (saved) setModal({ kind: "swap", questionId });
+    // openSwap, not a bare modal switch: it is what loads the library
+    // photos. Without it this screen offered only "Upload your own".
+    if (saved) void openSwap(questionId);
   }
 
   /** "Rewrite to match" inside the edit panel. Saves first — the route reads
@@ -899,13 +915,32 @@ export function HostSetupPickClient({
   }
 
   async function openSwap(questionId: string) {
+    const seq = ++photoLookupSeqRef.current;
+    const isCurrent = () => photoLookupSeqRef.current === seq;
     setModal({ kind: "swap", questionId });
     setPhotoCandidates([]);
+    setPhotoCandidatesFor(questionId);
     setPhotoLookupError(null);
+    setPhotosLoading(true);
+    // A slow library must not leave "Finding photos…" up for a minute.
+    // After 8 seconds give up, say so, and offer Try again; Upload your
+    // own and No image stay usable the whole time.
+    photoLookupAbortRef.current?.abort();
+    const controller = new AbortController();
+    photoLookupAbortRef.current = controller;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, PHOTO_LOOKUP_TIMEOUT_MS);
     try {
-      const res = await fetch(`/api/questions/${questionId}/photos`);
+      const res = await fetch(`/api/questions/${questionId}/photos`, {
+        signal: controller.signal,
+      });
+      if (!isCurrent()) return;
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!isCurrent()) return;
         setPhotoLookupError(explainPhotoLookupFailure(body.error, res.status));
         return;
       }
@@ -915,6 +950,7 @@ export function HostSetupPickClient({
         photographer?: string;
       }
       const body = (await res.json()) as { photos?: PexelsPhoto[] };
+      if (!isCurrent()) return;
       const candidates: HostGenPhotoCandidate[] = (body.photos ?? []).map((p) => ({
         id: String(p.id),
         url: p.src?.large ?? p.src?.medium ?? "",
@@ -928,12 +964,25 @@ export function HostSetupPickClient({
       }
       setPhotoCandidates(candidates);
     } catch (err) {
+      if (!isCurrent()) return;
+      if (timedOut) {
+        setPhotoLookupError(
+          "The photo library is taking too long to answer. Tap Try again, or upload your own photo.",
+        );
+        return;
+      }
       setPhotoLookupError(
         explainPhotoLookupFailure(
           err instanceof Error ? err.message : undefined,
           0,
         ),
       );
+    } finally {
+      clearTimeout(timer);
+      if (photoLookupAbortRef.current === controller) {
+        photoLookupAbortRef.current = null;
+      }
+      if (isCurrent()) setPhotosLoading(false);
     }
   }
 
@@ -1322,7 +1371,10 @@ export function HostSetupPickClient({
             prompt={swapQuestion.prompt}
             pointValue={swapQuestion.point_value ?? swapQuestion.difficulty * 100}
             currentImageUrl={swapQuestion.image_url}
-            candidates={photoCandidates}
+            candidates={
+              photoCandidatesFor === swapQuestion.id ? photoCandidates : []
+            }
+            isLoadingCandidates={photosLoading}
             onChoose={handleChoosePhoto}
             onClear={handleClearPhoto}
             onOpenUpload={() => {
@@ -1348,7 +1400,13 @@ export function HostSetupPickClient({
             onFileChosen={(file) => void handleUploadFile(file)}
             onBack={() => {
               setUploadError(null);
-              setModal({ kind: "swap", questionId: uploadQuestion.id });
+              // Same question's library photos already loaded: go straight
+              // back to them. Otherwise look them up.
+              if (photoCandidatesFor === uploadQuestion.id) {
+                setModal({ kind: "swap", questionId: uploadQuestion.id });
+              } else {
+                void openSwap(uploadQuestion.id);
+              }
             }}
             errorMessage={uploadError}
             onErrorRetry={() => setUploadError(null)}
