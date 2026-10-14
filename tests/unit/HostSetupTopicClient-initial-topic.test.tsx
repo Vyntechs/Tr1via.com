@@ -94,6 +94,37 @@ describe("HostSetupTopicClient initialTopic", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("re-typing the same topic for a locked slot opens it without starting generation again", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          category: { id: "cat-ghost", name: "Ghost Stories", state: "ready" },
+          reused: true,
+          sameTopic: true,
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <HostSetupTopicClient
+        nightId="night-1"
+        gameId="game-2"
+        gameNo={2}
+        position={2}
+        themeKey="july"
+        initialTopic="Legendary Ghost Stories"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /pull 20 questions/i }));
+
+    await waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/host/setup/night-1/pick/cat-ghost");
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("a different topic aimed at a filled slot says the slot is taken and starts nothing", async () => {
     const fetchMock = vi.fn().mockResolvedValueOnce(
       new Response(

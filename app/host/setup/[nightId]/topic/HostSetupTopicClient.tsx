@@ -88,7 +88,7 @@ export function HostSetupTopicClient({
         throw new Error(body.error ?? "could not create category");
       }
       const { category, reused, sameTopic } = (await catRes.json()) as {
-        category: { id: string; name?: string };
+        category: { id: string; name?: string; state?: string };
         reused?: boolean;
         sameTopic?: boolean;
       };
@@ -102,14 +102,20 @@ export function HostSetupTopicClient({
       }
 
       // 2. Kick off generation. Idempotent on the server (claims/resumes the
-      // existing job), so a retry never double-generates.
-      const genRes = await postWithRetry(`/api/categories/${category.id}/generate`, {
-        flavor: input.flavor.length > 0 ? input.flavor : undefined,
-        difficulty: input.difficulty,
-      });
-      if (!genRes.ok && genRes.status !== 202) {
-        const body = (await genRes.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "could not start generation");
+      // existing job), so a retry never double-generates. A slot that already
+      // has its questions (review) or is locked (ready) is left alone: the
+      // same words typed again just open it.
+      const alreadyBuilt =
+        reused && (category.state === "review" || category.state === "ready");
+      if (!alreadyBuilt) {
+        const genRes = await postWithRetry(`/api/categories/${category.id}/generate`, {
+          flavor: input.flavor.length > 0 ? input.flavor : undefined,
+          difficulty: input.difficulty,
+        });
+        if (!genRes.ok && genRes.status !== 202) {
+          const body = (await genRes.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? "could not start generation");
+        }
       }
 
       try {
