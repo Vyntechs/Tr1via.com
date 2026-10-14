@@ -115,6 +115,9 @@ function DesktopHostLiveConsoleClient({
 }: HostLiveConsoleClientProps) {
   const room = useRoom({ roomCode, audience: "host" });
   const [directAllQuestions, setAllQuestions] = useState<QuestionRow[]>([]);
+  // True once the first picked-questions read has come back (even if empty).
+  // Until then a doubled board slot's winner is unknown, so it is held back.
+  const [directQuestionsLoaded, setDirectQuestionsLoaded] = useState(false);
   const [directAnswers, setAnswers] = useState<AnswerRow[]>([]);
   const [directScores, setScores] = useState<GameScoreRow[]>([]);
   const [directScoresReadyForGameId, setDirectScoresReadyForGameId] =
@@ -127,6 +130,7 @@ function DesktopHostLiveConsoleClient({
   const { backupMode, payload: fallbackPayload } = useRoomFallback();
   const allQuestions =
     backupMode && fallbackPayload ? fallbackPayload.allQuestions : directAllQuestions;
+  const pickedCountsReady = backupMode && fallbackPayload ? true : directQuestionsLoaded;
   const answers =
     backupMode && fallbackPayload ? fallbackPayload.liveAnswers : directAnswers;
   const scores =
@@ -179,13 +183,17 @@ function DesktopHostLiveConsoleClient({
         .select("id")
         .in("game_id", gameIds);
       const catIds = ((catData ?? []) as Array<{ id: string }>).map((c) => c.id);
-      if (catIds.length === 0) return;
+      if (catIds.length === 0) {
+        setDirectQuestionsLoaded(true);
+        return;
+      }
       const { data: qData } = await supa
         .from("questions")
         .select("*")
         .in("category_id", catIds)
         .eq("is_picked", true);
       setAllQuestions((qData as QuestionRow[] | null) ?? []);
+      setDirectQuestionsLoaded(true);
     })();
   }, [room.games]);
 
@@ -404,8 +412,9 @@ function DesktopHostLiveConsoleClient({
         allQuestions,
         scores,
         answers,
+        pickedCountsReady,
       }),
-    [room, allQuestions, scores, answers],
+    [room, allQuestions, scores, answers, pickedCountsReady],
   );
   const tvLastBroadcastRevealedAt =
     room.lastBroadcast?.event === "reveal"

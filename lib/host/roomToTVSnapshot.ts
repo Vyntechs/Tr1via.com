@@ -26,7 +26,7 @@
 //
 // Caller passes all four. They're already in scope in HostLiveConsoleClient.
 
-import { countPickedByCategory, oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
+import { countPickedByCategory, oneCategoryPerSlotOnceCounted } from "@/lib/host/oneCategoryPerSlot";
 import type {
   CategoryRow,
   GameRow,
@@ -76,6 +76,10 @@ export interface RoomToTVSnapshotInput {
    *  question. Host's subscription targets the current question; when that
    *  question resolves, the rows stay valid through the reveal frame. */
   answers: RoomAnswerRow[];
+  /** False while `allQuestions` has not loaded yet. A doubled board slot is
+   *  then held back (neither row shown) until its picked counts are known,
+   *  so the header never flashes the wrong row. Defaults to true. */
+  pickedCountsReady?: boolean;
 }
 
 /**
@@ -85,13 +89,16 @@ export interface RoomToTVSnapshotInput {
 export function roomToTVSnapshot(
   input: RoomToTVSnapshotInput,
 ): TVSnapshot | null {
-  const { room, allQuestions, scores, allScores, answers } = input;
+  const { room, allQuestions, scores, allScores, answers, pickedCountsReady = true } = input;
   if (!room.night) return null;
 
   const night = nightToTVNight(room.night, room.hostDefaultThemeKey);
   const games = room.games.map(gameRowToTVGame);
   // One column per board slot, even if the data still holds a doubled slot.
-  const slotCategories = oneCategoryPerSlot(room.categories, countPickedByCategory(allQuestions));
+  const slotCategories = oneCategoryPerSlotOnceCounted(
+    room.categories,
+    pickedCountsReady ? countPickedByCategory(allQuestions) : null,
+  );
   const categories = slotCategories.map(categoryRowToTVCategory);
 
   // Surface the live question even when the host's `useRoom` snapshot has

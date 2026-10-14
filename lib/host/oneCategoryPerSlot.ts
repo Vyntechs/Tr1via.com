@@ -142,3 +142,20 @@ export function oneCategoryPerSlot<T extends SlotCategoryLike>(
   const keep = new Set(Array.from(winnerBySlot.values(), (row) => row.id));
   return rows.filter((row) => keep.has(row.id));
 }
+
+/**
+ * For screens whose picked questions load after first paint (host phone,
+ * host console). Pass null until they have loaded: a doubled slot then shows
+ * NEITHER row, instead of a zero-count guess that can flip to the other row
+ * when the counts land. Clean slots show as usual, so a clean board looks the
+ * same before and after. Once counts are in this is oneCategoryPerSlot.
+ */
+export function oneCategoryPerSlotOnceCounted<T extends SlotCategoryLike>(
+  rows: readonly T[],
+  picked: PickedCounts | null,
+): T[] {
+  if (picked) return oneCategoryPerSlot(rows, picked);
+  const doubled = new Set(doubledSlotCategoryIds(rows));
+  if (doubled.size === 0) return [...rows];
+  return rows.filter((row) => !doubled.has(row.id));
+}

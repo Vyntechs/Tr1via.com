@@ -6,7 +6,7 @@
 
 "use client";
 
-import { countPickedByCategory, oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
+import { countPickedByCategory, oneCategoryPerSlotOnceCounted } from "@/lib/host/oneCategoryPerSlot";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRoom } from "@/lib/hooks/useRoom";
 import { useTimer } from "@/lib/hooks/useTimer";
@@ -59,6 +59,9 @@ export function HostPhoneClient({
 }: HostPhoneClientProps) {
   const room = useRoom({ roomCode, audience: "host" });
   const [directAllQuestions, setDirectAllQuestions] = useState<QuestionRow[]>([]);
+  // True once the first picked-questions read has come back (even if empty).
+  // Until then a doubled board slot's winner is unknown, so it is held back.
+  const [directQuestionsLoaded, setDirectQuestionsLoaded] = useState(false);
   const [directAnswers, setDirectAnswers] = useState<AnswerRow[]>([]);
   const [directScoreSnapshot, setDirectScoreSnapshot] = useState<{
     gameId: string;
@@ -91,6 +94,7 @@ export function HostPhoneClient({
     (resolvedBelongsToCurrentLiveGame ? room.lastResolvedQuestion?.id ?? null : null);
   const sourceQuestions =
     backupMode && fallbackPayload ? fallbackPayload.allQuestions : directAllQuestions;
+  const pickedCountsReady = backupMode && fallbackPayload ? true : directQuestionsLoaded;
   const allQuestions = useMemo(
     () =>
       sourceQuestions.map((question) => {
@@ -146,7 +150,10 @@ export function HostPhoneClient({
         .select("id")
         .in("game_id", gameIds);
       const catIds = ((catData ?? []) as Array<{ id: string }>).map((c) => c.id);
-      if (catIds.length === 0) return;
+      if (catIds.length === 0) {
+        if (!cancelled) setDirectQuestionsLoaded(true);
+        return;
+      }
       const { data: qData } = await supa
         .from("questions")
         .select("*")
@@ -161,6 +168,7 @@ export function HostPhoneClient({
             : question,
         ),
       );
+      setDirectQuestionsLoaded(true);
     })();
     return () => {
       cancelled = true;
@@ -319,10 +327,14 @@ export function HostPhoneClient({
   const controlCategories = useMemo(
     () =>
       // One column per board slot, even if the data still holds a doubled slot.
-      oneCategoryPerSlot(room.categories, countPickedByCategory(allQuestions))
+      // A doubled slot waits for its picked counts (see pickedCountsReady).
+      oneCategoryPerSlotOnceCounted(
+        room.categories,
+        pickedCountsReady ? countPickedByCategory(allQuestions) : null,
+      )
         .filter((category) => category.game_id === controlGame?.id)
         .sort((a, b) => a.position - b.position),
-    [allQuestions, controlGame?.id, room.categories],
+    [allQuestions, controlGame?.id, pickedCountsReady, room.categories],
   );
   const controlCategoryIds = useMemo(
     () => new Set(controlCategories.map((category) => category.id)),
@@ -776,8 +788,9 @@ export function HostPhoneClient({
       scores,
       allScores: room.allScores,
       answers,
+      pickedCountsReady,
     }),
-    [allQuestions, answers, room, scores],
+    [allQuestions, answers, pickedCountsReady, room, scores],
   );
   const isGame1Preflight =
     stage.stage === "game-ready" &&

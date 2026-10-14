@@ -3,6 +3,7 @@ import {
   countPickedByCategory,
   doubledSlotCategoryIds,
   oneCategoryPerSlot,
+  oneCategoryPerSlotOnceCounted,
   pickSlotWinner,
   sameTopicText,
 } from "@/lib/host/oneCategoryPerSlot";
@@ -185,5 +186,26 @@ describe("TV board from a doubled slot", () => {
     });
     expect(filledBoard?.categories.map((c) => c.id)).toEqual(["a-filled", pumpkins.id]);
     expect(filledBoard?.questions.map((q) => q.id).sort()).toEqual(["q-f1", "q-f2"]);
+  });
+});
+
+describe("oneCategoryPerSlotOnceCounted (host screens before picked counts load)", () => {
+  const filled = { ...orphan, id: "a-filled", name: "Ghosts", created_at: "2026-10-14T18:00:00Z" };
+  const emptyNewer = { ...orphan, id: "b-empty", name: "ghosts", created_at: "2026-10-14T18:01:00Z" };
+
+  it("holds back both rows of a doubled slot until counts are in, then shows the filled one", () => {
+    const rows = [filled, emptyNewer, pumpkins];
+    expect(oneCategoryPerSlotOnceCounted(rows, null).map((r) => r.id)).toEqual([pumpkins.id]);
+    const counts = countPickedByCategory([{ category_id: filled.id }, { category_id: filled.id }]);
+    expect(oneCategoryPerSlotOnceCounted(rows, counts).map((r) => r.id)).toEqual([
+      "a-filled",
+      pumpkins.id,
+    ]);
+  });
+
+  it("leaves a clean board as it is, counts or not", () => {
+    const rows = [real, pumpkins];
+    expect(oneCategoryPerSlotOnceCounted(rows, null)).toEqual(rows);
+    expect(oneCategoryPerSlotOnceCounted(rows, new Map())).toEqual(rows);
   });
 });
