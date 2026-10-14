@@ -9,6 +9,9 @@
 --     minutes old, so it can never be handed to a host while this runs;
 --   - it was never opened, closed, run, locked or latched, and its room and
 --     control revisions are still 0;
+--   - it is still exactly as the home page button made it: no theme, no
+--     date, room magic off. A night the host set up on purpose is never
+--     deleted, even next to a newer untouched one;
 --   - both of its games are still draft and never started;
 --   - NOTHING points at it or at its games. Every table with a foreign key
 --     to nights or games is checked (step 0 refuses to run if a new one
@@ -109,7 +112,11 @@ select n.id, n.host_id, n.created_at
 create temporary table twin_nights_to_delete on commit drop as
 select e.id, e.host_id
   from empty_nights e
+  join nights t on t.id = e.id
  where e.created_at < now() - interval '1 hour'
+   and t.theme_key is null
+   and t.scheduled_at is null
+   and t.room_magic_enabled = false
    and exists (
          select 1
            from nights m
@@ -145,6 +152,9 @@ with deleted as (
   delete from nights n
    where n.id in (select id from twin_nights_to_delete)
      and n.created_at < now() - interval '1 hour'
+     and n.theme_key is null
+     and n.scheduled_at is null
+     and n.room_magic_enabled = false
      and n.opened_at is null
      and n.closed_at is null
      and n.current_run_id is null
@@ -225,6 +235,7 @@ commit;
 -- select n.id, n.host_id, n.created_at, n.venue_name, n.theme_key, n.room_magic_enabled
 --   from empty_nights e join nights n on n.id = e.id
 --  where e.created_at < now() - interval '1 hour'
+--    and n.theme_key is null and n.scheduled_at is null and n.room_magic_enabled = false
 --    and exists (select 1 from nights m where m.host_id = e.host_id and m.id <> e.id
 --                  and abs(extract(epoch from (m.created_at - e.created_at))) <= 600
 --                  and (m.id not in (select id from empty_nights) or m.created_at > e.created_at))

@@ -237,6 +237,25 @@ describe("empty twin cleanup (proposed, real Postgres)", () => {
     }
   });
 
+  test("never deletes a twin the host edited (theme, room magic, date), even next to a newer untouched one", async () => {
+    const edits = [
+      "update nights set theme_key = 'halloween' where id = $1",
+      "update nights set room_magic_enabled = true where id = $1",
+      "update nights set scheduled_at = '2026-10-16T00:00:00Z' where id = $1",
+    ];
+    for (const [i, sql] of edits.entries()) {
+      const edited = id(200 + i * 2);
+      await night(edited, `2026-08-1${i}T01:00:00.000Z`);
+      await night(id(201 + i * 2), `2026-08-1${i}T01:00:02.000Z`);
+      await db.query(sql, [edited]);
+    }
+    await db.exec(CLEANUP);
+    const remaining = await remainingIds();
+    for (let i = 0; i < edits.length; i++) {
+      expect(remaining, edits[i]).toContain(id(200 + i * 2));
+    }
+  });
+
   test("refuses to run if a table it does not know points at nights", async () => {
     await night(id(1), "2026-10-08T16:46:06.524Z");
     await night(id(2), "2026-10-08T16:46:07.596Z");
