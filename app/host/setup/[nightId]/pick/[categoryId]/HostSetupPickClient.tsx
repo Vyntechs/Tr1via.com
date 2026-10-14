@@ -85,6 +85,10 @@ type AuditReportRow = {
   risk_flag_count: number;
 };
 
+/** How long the photo screen waits for the library photos before it says
+ *  the library is slow and offers Try again. */
+const PHOTO_LOOKUP_TIMEOUT_MS = 8_000;
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
@@ -185,6 +189,8 @@ export function HostSetupPickClient({
   // Only the newest library lookup may fill the screen; an older, slower
   // reply for a question she already left is dropped.
   const photoLookupSeqRef = useRef(0);
+  // Lets a newer lookup (or the 8-second limit) cancel the one in flight.
+  const photoLookupAbortRef = useRef<AbortController | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A point-slot PATCH is not fully reconciled until the authoritative rows
   // have replaced local picks. Keep this outside the modal lifecycle so a
@@ -916,8 +922,21 @@ export function HostSetupPickClient({
     setPhotoCandidatesFor(questionId);
     setPhotoLookupError(null);
     setPhotosLoading(true);
+    // A slow library must not leave "Finding photos…" up for a minute.
+    // After 8 seconds give up, say so, and offer Try again; Upload your
+    // own and No image stay usable the whole time.
+    photoLookupAbortRef.current?.abort();
+    const controller = new AbortController();
+    photoLookupAbortRef.current = controller;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, PHOTO_LOOKUP_TIMEOUT_MS);
     try {
-      const res = await fetch(`/api/questions/${questionId}/photos`);
+      const res = await fetch(`/api/questions/${questionId}/photos`, {
+        signal: controller.signal,
+      });
       if (!isCurrent()) return;
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
@@ -946,6 +965,12 @@ export function HostSetupPickClient({
       setPhotoCandidates(candidates);
     } catch (err) {
       if (!isCurrent()) return;
+      if (timedOut) {
+        setPhotoLookupError(
+          "The photo library is taking too long to answer. Tap Try again, or upload your own photo.",
+        );
+        return;
+      }
       setPhotoLookupError(
         explainPhotoLookupFailure(
           err instanceof Error ? err.message : undefined,
@@ -953,6 +978,10 @@ export function HostSetupPickClient({
         ),
       );
     } finally {
+      clearTimeout(timer);
+      if (photoLookupAbortRef.current === controller) {
+        photoLookupAbortRef.current = null;
+      }
       if (isCurrent()) setPhotosLoading(false);
     }
   }

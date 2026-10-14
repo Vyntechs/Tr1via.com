@@ -123,6 +123,43 @@ function installFetch(opts: { holdPhotos?: boolean } = {}) {
   return { fetchMock, release: () => release?.() };
 }
 
+/** Fake network where each photo lookup waits until the test answers it.
+ *  `honourAbort` makes a lookup fail when the screen cancels it, like a
+ *  real browser; without it the reply still arrives late, like one that
+ *  was already on its way. */
+function installHeldFetch(opts: { honourAbort?: boolean } = {}) {
+  const pending: Array<{ id: string; answer: () => void }> = [];
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = init?.method ?? "GET";
+    const photos = url.match(/\/api\/questions\/([^/]+)\/photos$/);
+    if (photos && method === "GET") {
+      const id = photos[1];
+      return new Promise<Response>((resolve, reject) => {
+        const entry = { id, answer: () => resolve(json(photosFor(id))) };
+        pending.push(entry);
+        if (opts.honourAbort) {
+          init?.signal?.addEventListener("abort", () => {
+            pending.splice(pending.indexOf(entry), 1);
+            reject(new DOMException("The operation was aborted.", "AbortError"));
+          });
+        }
+      });
+    }
+    return json({});
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return {
+    fetchMock,
+    /** Answer the oldest still-waiting lookup for this question. */
+    answer: (id: string) => {
+      const i = pending.findIndex((p) => p.id === id);
+      if (i < 0) throw new Error(`no lookup waiting for ${id}`);
+      pending.splice(i, 1)[0].answer();
+    },
+  };
+}
+
 function renderPick() {
   return render(
     <HostSetupPickClient
@@ -153,6 +190,7 @@ function libraryImgSrcs(): string[] {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
   vi.unstubAllGlobals();
@@ -219,5 +257,59 @@ describe("Pick screen photo choice", () => {
 
     await waitFor(() => expect(libraryImgSrcs()).toHaveLength(3));
     expect(photoCalls(fetchMock, "q1")).toBe(1);
+  });
+  it("a slower reply from an earlier lookup never changes the screen she is on", async () => {
+    const { answer } = installHeldFetch();
+    renderPick();
+
+    // Open Q1's photos, back out before they arrive, then open Q2's.
+    fireEvent.click(screen.getAllByRole("button", { name: "Image" })[0]);
+    await screen.findByTestId("host-gen-image-swap-layout");
+    fireEvent.click(screen.getByRole("button", { name: /back without changes/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Image" })[1]);
+    const swap = await screen.findByTestId("host-gen-image-swap-layout");
+    expect(within(swap).getByText(/finding photos/i)).toBeInTheDocument();
+
+    // Q1's old reply lands now. Q2 is still loading, so the screen must
+    // keep saying so and must not show Q1's photos.
+    await act(async () => {
+      answer("q1");
+    });
+    expect(within(swap).getByText(/finding photos/i)).toBeInTheDocument();
+    expect(libraryImgSrcs()).toHaveLength(0);
+
+    await act(async () => {
+      answer("q2");
+    });
+    await waitFor(() => expect(libraryImgSrcs()).toHaveLength(3));
+    for (const src of libraryImgSrcs()) expect(src).toContain("q2-alt-");
+    expect(within(swap).queryByText(/finding photos/i)).not.toBeInTheDocument();
+  });
+
+  it("stops waiting after 8 seconds, says the library is slow, and Try again works", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const { fetchMock, answer } = installHeldFetch({ honourAbort: true });
+    renderPick();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Image" })[0]);
+    const swap = await screen.findByTestId("host-gen-image-swap-layout");
+    expect(within(swap).getByText(/finding photos/i)).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(8_000);
+    });
+    expect(within(swap).getByText(/taking too long/i)).toBeInTheDocument();
+    expect(within(swap).queryByText(/finding photos/i)).not.toBeInTheDocument();
+    // Her other choices stay open while the library is slow.
+    expect(within(swap).getAllByRole("button", { name: /upload your own/i }).length).toBeGreaterThan(0);
+    expect(within(swap).getByRole("button", { name: /no image/i })).toBeEnabled();
+
+    fireEvent.click(within(swap).getByRole("button", { name: /try again/i }));
+    await waitFor(() => expect(photoCalls(fetchMock, "q1")).toBe(2));
+    await act(async () => {
+      answer("q1");
+    });
+    await waitFor(() => expect(libraryImgSrcs()).toHaveLength(3));
+    expect(within(swap).queryByText(/taking too long/i)).not.toBeInTheDocument();
   });
 });
