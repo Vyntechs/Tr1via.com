@@ -2,12 +2,29 @@ import { describe, expect, it } from "vitest";
 import { classifyNights } from "@/lib/host/classifyNights";
 import { hiddenEmptyTwinIds, twinCandidateIds, type TwinNight } from "@/lib/host/nightTwins";
 
-const night = (id: string, created_at: string, opened_at: string | null = null): TwinNight => ({
+// A night exactly as a tap on "+ Plan a new night" stores it.
+const night = (
+  id: string,
+  created_at: string,
+  opened_at: string | null = null,
+  extra: Partial<TwinNight> = {},
+): TwinNight => ({
   id,
   created_at,
   opened_at,
   closed_at: null,
+  venue_name: "Soul Fire Pizza",
+  theme_key: null,
+  scheduled_at: null,
+  room_magic_enabled: false,
+  is_locked: false,
+  current_run_id: null,
+  answer_engine_latched_at: null,
+  room_revision: 0,
+  control_revision: 0,
+  ...extra,
 });
+const EMPTY_COUNTS = { categories: 0, players: 0 };
 
 // Heather's real nights (newest first), Oct 8 2026.
 const BUILT = night("0993af1d", "2026-10-08T16:46:07.596Z");
@@ -51,7 +68,7 @@ describe("empty twin nights on the host dashboard", () => {
 
   it("when both twins are empty, keeps exactly one (the newest)", () => {
     const a = night("a", "2026-05-25T11:58:56.066Z");
-    const b = night("b", "2026-05-25T11:58:50.353Z");
+    const b = night("b", "2026-05-25T11:58:55.010Z");
     expect([...hiddenEmptyTwinIds([a, b], { a: { categories: 0, players: 0 }, b: { categories: 0, players: 0 } })]).toEqual(["b"]);
   });
 
@@ -62,6 +79,50 @@ describe("empty twin nights on the host dashboard", () => {
     const opened = night("o", "2026-10-08T16:46:06.000Z", "2026-10-08T23:00:00Z");
     expect(hiddenEmptyTwinIds([a, opened], { a: { categories: 0, players: 0 } })).toEqual(new Set(["a"]));
     expect(hiddenEmptyTwinIds([a, b], {}).size).toBe(0);
+  });
+
+  it("never hides a second night planned on purpose a little later, even if both are empty", () => {
+    // 30 seconds, 2 minutes, 9 minutes: all used to be "twins" (10-minute rule).
+    for (const gapMs of [30_000, 120_000, 540_000]) {
+      const first = night("first", "2026-10-08T16:40:00.000Z");
+      const second = night("second", new Date(Date.parse(first.created_at) + gapMs).toISOString());
+      const nights = [second, first];
+      expect(twinCandidateIds(nights)).toEqual([]);
+      expect(hiddenEmptyTwinIds(nights, { first: EMPTY_COUNTS, second: EMPTY_COUNTS }).size).toBe(0);
+    }
+    // The test host's 5.7s pair (May 25) is past the 5-second window too: both stay listed.
+    const a = night("a", "2026-05-25T11:58:56.066Z");
+    const b = night("b", "2026-05-25T11:58:50.353Z");
+    expect(hiddenEmptyTwinIds([a, b], { a: EMPTY_COUNTS, b: EMPTY_COUNTS }).size).toBe(0);
+  });
+
+  it("never hides a twin the host touched (theme, room magic, date, lock, revisions)", () => {
+    const built = night("built", "2026-10-08T16:46:07.596Z");
+    const edits: Partial<TwinNight>[] = [
+      { theme_key: "halloween" },
+      { room_magic_enabled: true },
+      { scheduled_at: "2026-10-16T00:00:00Z" },
+      { is_locked: true },
+      { room_revision: 1 },
+      { control_revision: "2" },
+      { answer_engine_latched_at: "2026-10-08T16:50:00Z" },
+      { current_run_id: "run-1" },
+      { room_revision: undefined }, // not known = keep it
+    ];
+    for (const edit of edits) {
+      const twin = night("twin", "2026-10-08T16:46:06.524Z", null, edit);
+      const content = { built: { categories: 12, players: 0 }, twin: EMPTY_COUNTS };
+      expect(twinCandidateIds([built, twin]), JSON.stringify(edit)).toEqual(["built"]);
+      expect(hiddenEmptyTwinIds([built, twin], content).size, JSON.stringify(edit)).toBe(0);
+    }
+  });
+
+  it("never hides a twin made for another venue", () => {
+    const built = night("built", "2026-10-08T16:46:07.596Z");
+    const other = night("other", "2026-10-08T16:46:06.524Z", null, { venue_name: "Another Bar" });
+    expect(
+      hiddenEmptyTwinIds([built, other], { built: { categories: 12, players: 0 }, other: EMPTY_COUNTS }).size,
+    ).toBe(0);
   });
 
   it("leaves nights alone when they are more than 10 minutes apart", () => {

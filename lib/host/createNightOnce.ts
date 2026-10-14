@@ -12,13 +12,13 @@
 //      apart); two calls inside the same ~100ms can still both create until
 //      the migration is applied, which the client tap lock also prevents.
 //
-// "Reusable" means: same host, created within NIGHT_TWIN_WINDOW_MS, never
+// "Reusable" means: same host, created within NIGHT_REUSE_WINDOW_MS, never
 // opened/closed/run, same venue/theme/date as asked, both game shells
 // still draft and never started, and no categories and no players yet. A night with anything in it
 // is never reused.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { NIGHT_TWIN_WINDOW_MS } from "@/lib/host/nightTwins";
+import { NIGHT_REUSE_WINDOW_MS } from "@/lib/host/nightTwins";
 
 export interface CreateNightRequest {
   hostId: string;
@@ -63,7 +63,7 @@ export async function createNightLocked(
     p_scheduled_at: req.scheduledAt,
     p_room_codes: roomCodes,
     // 0 = never hand back an existing night (the function checks this).
-    p_reuse_window_seconds: reuse ? Math.round(NIGHT_TWIN_WINDOW_MS / 1000) : 0,
+    p_reuse_window_seconds: reuse ? Math.round(NIGHT_REUSE_WINDOW_MS / 1000) : 0,
   });
   if (error) {
     if (error.code && MISSING_FUNCTION_CODES.has(error.code)) return { kind: "unavailable" };
@@ -92,7 +92,7 @@ export async function findReusableEmptyNight(
   req: CreateNightRequest,
   nowMs: number = Date.now(),
 ): Promise<{ night: CreatedNight | null; error: string | null }> {
-  const sinceIso = new Date(nowMs - NIGHT_TWIN_WINDOW_MS).toISOString();
+  const sinceIso = new Date(nowMs - NIGHT_REUSE_WINDOW_MS).toISOString();
   const { data: rows, error } = await admin
     .from("nights")
     .select("id, room_code, venue_name, theme_key, scheduled_at, created_at")
