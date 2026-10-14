@@ -530,4 +530,42 @@ describe("restarting a build killed after its photos had started", () => {
     expect(job.image_count).toBe(3);
     expect(job.certified_count).toBe(20);
   });
+
+  test("a build that starts after a typo fix writes about the NEW topic, not a stale copy", async () => {
+    // The request read the row before the topic screen swapped "Ghost Storys"
+    // for "Ghost Stories" in place, and only then started the build. The worker
+    // must use the topic the row holds once this attempt owns the job.
+    const category = await one<{ id: string }>(
+      `insert into categories (game_id, name, topic, position, state)
+       values ($1, 'Ghost Stories', 'Ghost Stories', $2, 'draft')
+       returning id`,
+      [gameId, position++],
+    );
+    h.state.owned = {
+      ok: true,
+      host: {
+        id: hostId,
+        role: "host",
+        is_paywall_bypassed: true,
+        trial_ends_at: null,
+        subscription_status: null,
+      },
+      night: { id: nightId, theme_key: "house" },
+      category: {
+        id: category.id,
+        game_id: gameId,
+        name: "Ghost Storys",
+        topic: "Ghost Storys",
+        state: "draft",
+      },
+    };
+    h.state.generateQuestions.mockRejectedValue(new Error("stop after the first call"));
+    const res = await pressContinue(category.id);
+    expect(res.status).toBe(202);
+    expect(h.state.generateQuestions).toHaveBeenCalled();
+    const topics = h.state.generateQuestions.mock.calls.map(
+      (call: unknown[]) => (call[0] as { topic: string }).topic,
+    );
+    expect(new Set(topics)).toEqual(new Set(["Ghost Stories"]));
+  });
 });

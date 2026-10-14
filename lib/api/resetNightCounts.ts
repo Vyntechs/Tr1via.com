@@ -8,6 +8,10 @@
 // all games, players in the room).
 
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import {
+  countPickedByCategory,
+  oneCategoryPerSlot,
+} from "@/lib/host/oneCategoryPerSlot";
 
 export interface ResetPreview {
   revealsToWipe: number;
@@ -37,7 +41,7 @@ export async function fetchResetPreview(nightId: string): Promise<ResetPreview> 
   const { data: catRows } = allGameIds.length
     ? await admin
         .from("categories")
-        .select("id, name, game_id, position")
+        .select("id, name, game_id, position, state, created_at")
         .in("game_id", allGameIds)
         .order("position")
     : { data: [] };
@@ -46,6 +50,8 @@ export async function fetchResetPreview(nightId: string): Promise<ResetPreview> 
     name: string;
     game_id: string;
     position: number;
+    state: string;
+    created_at: string | null;
   }>;
   const liveOrDoneCategoryIds = categories
     .filter((c) => liveOrDoneGameIds.includes(c.game_id))
@@ -95,16 +101,25 @@ export async function fetchResetPreview(nightId: string): Promise<ResetPreview> 
     }
   }
 
+  // "Kept" counts match the board: a slot doubled before the one-per-slot fix
+  // counts once, as the row the setup screen and TV show. (The wipe counts
+  // above stay on every row: the reset really does clear the hidden one too.)
   const allCategoryIds = categories.map((c) => c.id);
-  const pickedQuestionsKept = allCategoryIds.length
-    ? (
-        await admin
-          .from("questions")
-          .select("id", { count: "exact", head: true })
-          .in("category_id", allCategoryIds)
-          .eq("is_picked", true)
-      ).count ?? 0
-    : 0;
+  const { data: pickedRows } = allCategoryIds.length
+    ? await admin
+        .from("questions")
+        .select("category_id")
+        .in("category_id", allCategoryIds)
+        .eq("is_picked", true)
+    : { data: [] };
+  const pickedByCategory = countPickedByCategory(
+    (pickedRows ?? []) as Array<{ category_id: string }>,
+  );
+  const boardCategories = oneCategoryPerSlot(categories, pickedByCategory);
+  const pickedQuestionsKept = boardCategories.reduce(
+    (sum, c) => sum + (pickedByCategory.get(c.id) ?? 0),
+    0,
+  );
 
   const playersInRoom =
     (
@@ -120,9 +135,9 @@ export async function fetchResetPreview(nightId: string): Promise<ResetPreview> 
     adjustmentsToWipe,
     answersToWipe,
     finishedQuestionsToWipe,
-    categoriesKept: categories.length,
+    categoriesKept: boardCategories.length,
     pickedQuestionsKept,
     playersInRoom,
-    categoryNamesSample: categories.slice(0, 2).map((c) => c.name),
+    categoryNamesSample: boardCategories.slice(0, 2).map((c) => c.name),
   };
 }

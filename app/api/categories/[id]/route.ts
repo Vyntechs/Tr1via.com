@@ -22,11 +22,22 @@
 // finishes harmlessly even if its target row is gone. Out of scope:
 // deleting categories from a live night — that's the existing
 // "Reset and edit game" path.
+//
+// The database decides, not this route: the board guard from 0031
+// (fence_category_authoring) runs on every category delete and checks the
+// GAME's state, not the category's. While the game is 'draft' or 'ready'
+// (setup) any category can go, whatever its own state or picks. Once the game
+// is 'live' or 'done' every delete is refused with 55000 ("the board cannot
+// change after its game starts"), even a 'review' row with no picks. The guard
+// takes the game row with NOWAIT, so a delete that lands while another write
+// holds that game (Start, a generation finishing) fails at once with 55P03.
+// Both come back as a plain 409 the setup screen can show.
 
 import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import {
   badRequest,
+  conflict,
   forbidden,
   noContent,
   notFound,
@@ -40,6 +51,11 @@ import { PatchCategoryBodySchema } from "@/lib/api/schemas";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+/** 0031 board guard: the game is live or done. */
+const BOARD_GUARD_REFUSED = "55000";
+/** 0031 board guard: another write holds the game row (NOWAIT). */
+const GAME_ROW_BUSY = "55P03";
 
 export async function PATCH(
   req: NextRequest,
@@ -90,6 +106,15 @@ export async function DELETE(
   const admin = getSupabaseAdmin();
   const { error } = await admin.from("categories").delete().eq("id", id);
   if (error) {
+    const code = (error as { code?: string }).code;
+    if (code === BOARD_GUARD_REFUSED) {
+      return conflict(
+        "This game has started, so its categories can't be deleted. They stay as they are.",
+      );
+    }
+    if (code === GAME_ROW_BUSY) {
+      return conflict("This game is being changed right now. Try again in a moment.");
+    }
     return serverError(error.message ?? "could not delete category");
   }
   return noContent();

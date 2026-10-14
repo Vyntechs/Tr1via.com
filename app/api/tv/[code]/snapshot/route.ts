@@ -16,6 +16,7 @@
 // channel fires `reveal`/`undo`/`resolve`/`end-early`; this route also
 // serves the initial bootstrap and the periodic safety re-fetch.
 
+import { countPickedByCategory, oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
 import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { rankScores } from "@/lib/game/rankScores";
@@ -105,7 +106,7 @@ export async function GET(
       .order("joined_at", { ascending: true }),
     admin
       .from("categories")
-      .select("id, game_id, name, topic, position, color, state, games!inner(night_id)")
+      .select("id, game_id, name, topic, position, color, state, created_at, games!inner(night_id)")
       .eq("games.night_id", nightId)
       .order("position", { ascending: true }),
     admin
@@ -160,11 +161,22 @@ export async function GET(
   const gameIds = new Set(games.map((g) => g.id));
   // Queries are already scoped in Postgres; keep ownership filters as
   // defense-in-depth and to discard malformed relationship rows.
-  const categories = (categoriesRes.data ?? []).filter((c) => gameIds.has(c.game_id));
-  const categoryIds = new Set(categories.map((c) => c.id));
-  // Filter to questions owned by this night.
+  const nightCategories = (categoriesRes.data ?? []).filter((c) => gameIds.has(c.game_id));
+  const categoryIds = new Set(nightCategories.map((c) => c.id));
+  // One column per board slot: a slot doubled before the one-per-slot fix
+  // (2026-10-07: "Legendary Ghost stories" beside "Ghost Stories") showed as an
+  // extra column of dead 100-700 tiles. The board shows the slot's winner only,
+  // and only that winner's picked questions.
+  const categories = oneCategoryPerSlot(
+    nightCategories,
+    countPickedByCategory(
+      (pickedQuestionsRes.data ?? []).filter((q) => categoryIds.has(q.category_id)),
+    ),
+  );
+  const boardCategoryIds = new Set(categories.map((c) => c.id));
+  // Filter to questions owned by this night's board.
   const questions = (pickedQuestionsRes.data ?? []).filter((q) =>
-    categoryIds.has(q.category_id),
+    boardCategoryIds.has(q.category_id),
   );
 
   // A healthy game has at most one unresolved picked question. Retain the

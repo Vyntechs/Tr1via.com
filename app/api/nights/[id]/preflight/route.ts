@@ -13,11 +13,23 @@ import {
   unauthorized,
 } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import {
+  countPickedByCategory,
+  oneCategoryPerSlot,
+} from "@/lib/host/oneCategoryPerSlot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type ContentStatus = "ready" | "invalid";
+
+interface PreflightCategory {
+  id: string;
+  game_id: string;
+  position: number;
+  state: string;
+  created_at: string | null;
+}
 
 interface PickedQuestion {
   category_id: string;
@@ -50,19 +62,20 @@ export async function GET(
       .maybeSingle();
     if (gameError) throw gameError;
 
-    let categories: Array<{ id: string; state: string }> = [];
+    let categories: PreflightCategory[] = [];
     let questions: PickedQuestion[] = [];
 
     if (game) {
       const categoriesResult = await admin
         .from("categories")
-        .select("id, state")
+        .select("id, game_id, position, state, created_at")
         .eq("game_id", game.id)
         .order("position", { ascending: true });
       if (categoriesResult.error) throw categoriesResult.error;
-      categories = categoriesResult.data ?? [];
+      const allCategories = (categoriesResult.data ?? []) as PreflightCategory[];
 
-      const categoryIds = categories.map((category) => category.id);
+      const categoryIds = allCategories.map((category) => category.id);
+      let allQuestions: PickedQuestion[] = [];
       if (categoryIds.length > 0) {
         const questionsResult = await admin
           .from("questions")
@@ -70,8 +83,16 @@ export async function GET(
           .in("category_id", categoryIds)
           .eq("is_picked", true);
         if (questionsResult.error) throw questionsResult.error;
-        questions = (questionsResult.data ?? []) as PickedQuestion[];
+        allQuestions = (questionsResult.data ?? []) as PickedQuestion[];
       }
+
+      // One category per board slot, the same row the setup screen and the TV
+      // show (lib/host/oneCategoryPerSlot.ts). A slot doubled before that fix
+      // would otherwise count 7 categories on a 6-slot board and flag the
+      // board "not ready" while every other screen shows it locked.
+      categories = oneCategoryPerSlot(allCategories, countPickedByCategory(allQuestions));
+      const boardIds = new Set(categories.map((category) => category.id));
+      questions = allQuestions.filter((question) => boardIds.has(question.category_id));
     }
 
     const playersResult = await admin

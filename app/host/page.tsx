@@ -14,6 +14,8 @@
 // Both branches need to POST /api/nights when the host taps the CTA; that
 // happens client-side via the HostHomeClient wrapper below.
 
+import { oneCategoryPerSlot } from "@/lib/host/oneCategoryPerSlot";
+import { loadPickedCountsForDoubledSlots } from "@/lib/host/loadSlotPickedCounts";
 import { redirect } from "next/navigation";
 import { getSupabaseServer } from "@/lib/supabase/server";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -222,10 +224,15 @@ async function fetchCategoriesByNight(
   if (gameIds.length === 0) return {};
   const { data: cats } = await admin
     .from("categories")
-    .select("id, name, game_id, position")
+    .select("id, name, game_id, position, state, created_at")
     .in("game_id", gameIds)
     .order("position", { ascending: true });
-  const catRows = (cats ?? []) as Pick<CategoryRow, "id" | "name" | "game_id" | "position">[];
+  // One name per board slot, even if the data still holds a doubled slot.
+  const allCatRows = (cats ?? []) as Pick<CategoryRow, "id" | "name" | "game_id" | "position" | "state" | "created_at">[];
+  const catRows = oneCategoryPerSlot(
+    allCatRows,
+    await loadPickedCountsForDoubledSlots(admin, allCatRows),
+  );
 
   const gameIdToNightId = new Map(gameRows.map((g) => [g.id, g.night_id]));
   const result: Record<string, string[]> = {};

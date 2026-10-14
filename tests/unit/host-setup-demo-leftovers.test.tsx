@@ -162,6 +162,42 @@ describe("topic page · loading her past topics", () => {
 
   const GAME_ROW = { id: "game-1", night_id: "night-tonight", game_no: 1 };
 
+  it("shows a plain notice naming the category already in a filled slot, not a second topic form", async () => {
+    owned();
+    const games = query([], GAME_ROW);
+    const nights = query([]);
+    // Slot 3 of game 1 already holds a locked category plus an older extra row.
+    const categories = query([
+      { id: "cat-old", game_id: "game-1", name: "Legendary Ghost stories", position: 3, state: "review", created_at: "2026-10-03T15:36:41Z" },
+      { id: "cat-real", game_id: "game-1", name: "Ghost Stories", position: 3, state: "ready", created_at: "2026-10-03T15:37:09Z" },
+    ]);
+    const questions = query([]);
+    adminMock.getSupabaseAdmin.mockReturnValue({
+      from: (table: string) => {
+        if (table === "games") return games.builder;
+        if (table === "nights") return nights.builder;
+        if (table === "categories") return categories.builder;
+        if (table === "questions") return questions.builder;
+        throw new Error(`unexpected table ${table}`);
+      },
+    });
+
+    // No silent jump to another category's pick screen.
+    const page = (await loadPage()) as ReactElement<{ takenBy?: { id: string; name: string } | null }>;
+    expect(navigation.redirect).not.toHaveBeenCalledWith("/host/setup/night-tonight/pick/cat-real");
+    expect(page.props.takenBy).toEqual({ id: "cat-real", name: "Ghost Stories" });
+
+    render(page);
+    const notice = screen.getByTestId("slot-taken-notice");
+    expect(notice.textContent).toContain(
+      "Slot 3 already has \u201cGhost Stories\u201d. To change the topic, delete it on the setup screen first.",
+    );
+    expect(within(notice).getByRole("button", { name: /Open \u201cGhost Stories\u201d/ })).toBeInTheDocument();
+    expect(within(notice).getByRole("button", { name: "Back to setup" })).toBeInTheDocument();
+    // No topic form, so no way to type a second topic into the slot.
+    expect(screen.queryByRole("button", { name: /pull 20 questions/i })).not.toBeInTheDocument();
+  });
+
   it("uses her earlier nights only, newest first, and a chip fills in its own board name", async () => {
     owned();
     // One "games" stand-in serves both the game check (maybeSingle) and the

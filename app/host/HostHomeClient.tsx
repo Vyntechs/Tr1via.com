@@ -223,7 +223,11 @@ export function HostHomeClient({
         kept?: { categories?: number; players?: number };
       };
       const wipedAnswers = data.wiped?.answers ?? 0;
-      const keptCategories = data.kept?.categories ?? 0;
+      // Same number the popup just showed: board slots, so a slot doubled
+      // before the one-per-slot fix counts once. The database reply counts
+      // every row (and the live-engine reset reply has no count at all).
+      const keptCategories =
+        tonight.resetPreview?.categoriesKept ?? data.kept?.categories ?? 0;
       const keptPlayers = data.kept?.players ?? 0;
       setSuccessMessage(
         `Game rolled back. Wiped ${wipedAnswers} answers, kept ${keptCategories} categories. The ${keptPlayers} players will see the waiting screen.`,
