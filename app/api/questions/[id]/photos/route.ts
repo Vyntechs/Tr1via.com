@@ -1,13 +1,11 @@
 // GET /api/questions/[id]/photos
 //
-// Returns up to 12 alternative Pexels photos for the swap UI. The query
-// is re-derived from the question:
-//   * Prefer the `photoQuery` Claude originally generated (we don't have
-//     it stored, so we fall back to a 2-4 word slice of the prompt).
-//   * In practice the original `photoQuery` is embedded in the existing
-//     image_url's referer for Pexels-sourced images, but Pexels doesn't
-//     give us a clean way to recover it; the prompt-derived query is
-//     adequate for the "show me more" use case.
+// Returns up to 12 alternative Pexels photos for the swap UI. The query:
+//   * The `photo_query` Claude wrote for this question when it was made
+//     (stored on the row). It is the search that found the auto-matched
+//     photo, so the alternatives match the same subject.
+//   * If that is empty (hand-written or older questions), a 2-4 word
+//     slice of the prompt.
 //
 // Host-only. Errors:
 //   503 → Pexels rate-limited or unreachable.
@@ -23,6 +21,7 @@ import {
   serverError,
   unauthorized,
 } from "@/lib/api/responses";
+import { choosePhotoQuery } from "@/lib/pexels/photo-query";
 import { PexelsRateLimitError, searchPexels } from "@/lib/pexels/search";
 
 export const runtime = "nodejs";
@@ -42,7 +41,7 @@ export async function GET(
   }
   const { question } = owned;
 
-  const query = derivePhotoQuery(question.prompt);
+  const query = choosePhotoQuery(question.photo_query, question.prompt);
   try {
     const photos = await searchPexels(query, 12);
     return ok({ query, photos });
@@ -57,50 +56,4 @@ export async function GET(
       `photo search failed: ${err instanceof Error ? err.message : "unknown"}`,
     );
   }
-}
-
-/**
- * Best-effort query derivation. Picks the first 3 meaningful words of the
- * prompt — drops stopwords and the question mark. NOT a perfect inverse
- * of Claude's original photoQuery, but adequate for "show me 12 more."
- */
-function derivePhotoQuery(prompt: string): string {
-  const STOPWORDS = new Set([
-    "the",
-    "a",
-    "an",
-    "of",
-    "and",
-    "or",
-    "is",
-    "are",
-    "was",
-    "were",
-    "which",
-    "what",
-    "who",
-    "where",
-    "when",
-    "why",
-    "how",
-    "to",
-    "in",
-    "on",
-    "for",
-    "with",
-    "by",
-    "this",
-    "that",
-    "these",
-    "those",
-    "his",
-    "her",
-    "their",
-    "its",
-  ]);
-  const words = prompt
-    .replace(/[?.,!:;"'()\[\]]/g, "")
-    .split(/\s+/)
-    .filter((w) => w.length > 2 && !STOPWORDS.has(w.toLowerCase()));
-  return words.slice(0, 3).join(" ") || prompt.slice(0, 40);
 }
