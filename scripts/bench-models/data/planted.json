@@ -1,0 +1,1362 @@
+[
+  {
+    "id": "P-001",
+    "baseId8": "ace65dfe",
+    "topic": "Pixar Movies",
+    "prompt": "In 'The Incredibles,' what is Mr. Incredible's real last name?",
+    "options": [
+      "Powers",
+      "Strong",
+      "Parr",
+      "Brock"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Bob Parr — a deliberately ordinary surname — reflects the family's forced life of suburban anonymity after superheroes are outlawed.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Parr' to 'Powers'; blurb left as original (names Bob Parr).",
+    "truth": "Mr. Incredible's real name is Bob Parr."
+  },
+  {
+    "id": "P-002",
+    "baseId8": "7e8e8c32",
+    "topic": "antartica",
+    "prompt": "What is the name of the active volcano on Ross Island, Antarctica, that has a persistent lava lake in its crater?",
+    "options": [
+      "Mount Sidley",
+      "Mount Erebus",
+      "Mount Terror",
+      "Mount Melbourne"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Mount Erebus is the world's southernmost active volcano and one of only a handful on Earth with a long-lived convecting lava lake.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Mount Erebus' to 'Mount Terror'; blurb left as original (names Erebus).",
+    "truth": "Mount Erebus holds the persistent lava lake; Mount Terror is an inactive (dormant) volcano."
+  },
+  {
+    "id": "P-003",
+    "baseId8": "2232cfc0",
+    "topic": "The solar system",
+    "prompt": "The asteroid belt sits between the orbits of which two planets?",
+    "options": [
+      "Earth and Mars",
+      "Mars and Jupiter",
+      "Jupiter and Saturn",
+      "Saturn and Uranus"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "The asteroid belt contains millions of rocky objects but is so spread out that spacecraft pass through it with ease.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Mars and Jupiter' to 'Jupiter and Saturn'.",
+    "truth": "The asteroid belt lies between Mars and Jupiter."
+  },
+  {
+    "id": "P-004",
+    "baseId8": "d474bb13",
+    "topic": "Star Wars",
+    "prompt": "In what year was the very first Star Wars film released in theaters?",
+    "options": [
+      "1974",
+      "1977",
+      "1980",
+      "1983"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Released May 25, 1980, it was originally titled just 'Star Wars' before being retitled 'A New Hope' after the sequels became hits.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 1977 to 1980; blurb year edited to match the wrong key.",
+    "truth": "The first Star Wars film opened May 25, 1977."
+  },
+  {
+    "id": "P-005",
+    "baseId8": "306c5b81",
+    "topic": "Exotic fruit",
+    "prompt": "The carambola fruit is nicknamed the 'starfruit' because of the shape it forms when sliced. How many points does that star have?",
+    "options": [
+      "5",
+      "4",
+      "6",
+      "8"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "Carambola's eight ridges running the length of the fruit produce a perfect eight-pointed star cross-section — making it one of the most photogenic fruits in the world.",
+    "plantType": "keyFlip",
+    "change": "Key moved from '5' to '8'; blurb edited to say eight ridges/eight-pointed star.",
+    "truth": "A starfruit cross-section is a five-pointed star."
+  },
+  {
+    "id": "P-006",
+    "baseId8": "8e70db62",
+    "topic": "90s Music",
+    "prompt": "Which artist released the album 'Jagged Little Pill' in 1995?",
+    "options": [
+      "Alanis Morissette",
+      "Sheryl Crow",
+      "Jewel",
+      "Fiona Apple"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Alanis Morissette's 'Jagged Little Pill' became one of the best-selling debut albums ever, with 'You Oughta Know' as its breakthrough hit.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Alanis Morissette' to 'Sheryl Crow'; blurb left as original (names Alanis).",
+    "truth": "Alanis Morissette released Jagged Little Pill (1995)."
+  },
+  {
+    "id": "P-007",
+    "baseId8": "58456433",
+    "topic": "Watermelon",
+    "prompt": "What amino acid found in high concentrations in watermelon is linked to improved athletic performance?",
+    "options": [
+      "Tryptophan",
+      "Glutamine",
+      "Citrulline",
+      "Lysine"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Watermelon is one of the richest natural sources of L-citrulline, which the body converts to arginine and may help reduce muscle soreness.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Citrulline' to 'Glutamine'; blurb left as original (names L-citrulline).",
+    "truth": "Watermelon is rich in L-citrulline."
+  },
+  {
+    "id": "P-008",
+    "baseId8": "36ea328a",
+    "topic": "automation and control components.",
+    "prompt": "What does the 'I' term in a PID controller correct for?",
+    "options": [
+      "Accumulated steady-state error over time",
+      "Instantaneous rate of change",
+      "Input signal noise",
+      "Initial process disturbance"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The Integral term sums up past errors — it eliminates the persistent offset that a Proportional-only controller leaves behind, pushing the process all the way to the setpoint.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Accumulated steady-state error over time' to 'Instantaneous rate of change'; blurb left as original.",
+    "truth": "The I (integral) term corrects accumulated past error; the D term responds to rate of change."
+  },
+  {
+    "id": "P-009",
+    "baseId8": "d629a07f",
+    "topic": "Skateboarding",
+    "prompt": "The iconic 'Burnside Project' skate park was built illegally under a bridge in which U.S. city?",
+    "options": [
+      "Portland, Oregon",
+      "Seattle, Washington",
+      "Denver, Colorado",
+      "Austin, Texas"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Skaters started pouring concrete under Portland's Burnside Bridge in 1990 without permission — the city eventually embraced it, and it's now a protected landmark.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Portland, Oregon' to 'Seattle, Washington'; blurb left as original (names Portland).",
+    "truth": "The Burnside Skatepark is under the Burnside Bridge in Portland, Oregon."
+  },
+  {
+    "id": "P-010",
+    "baseId8": "bf830cf3",
+    "topic": "90s Music",
+    "prompt": "Which rapper released 'The Chronic' in 1992?",
+    "options": [
+      "Dr. Dre",
+      "Snoop Dogg",
+      "Tupac",
+      "Ice Cube"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Dr. Dre's solo debut that defined G-funk and introduced Snoop Dogg to the world.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Dr. Dre' to 'Snoop Dogg'; blurb left as original (names Dr. Dre).",
+    "truth": "Dr. Dre released The Chronic (Dec 1992); Snoop's debut was Doggystyle (1993)."
+  },
+  {
+    "id": "P-011",
+    "baseId8": "acbf94e5",
+    "topic": "Musicians name Changed",
+    "prompt": "Which rapper born Clifford Joseph Harris Jr. goes by a two-letter stage name?",
+    "options": [
+      "T.I.",
+      "Lil Wayne",
+      "DMX",
+      "Nas"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "T.I. originally went by 'Tip' (a childhood nickname) and later shortened it to 'T.I.' when he discovered another rapper already had the name Tip.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'T.I.' to 'Nas'; blurb left as original (names T.I.).",
+    "truth": "Clifford Joseph Harris Jr. is T.I.; Nas is Nasir Jones."
+  },
+  {
+    "id": "P-012",
+    "baseId8": "e6e04836",
+    "topic": "Billards",
+    "prompt": "In snooker, which color ball is worth the most points when potted?",
+    "options": [
+      "Black",
+      "Pink",
+      "Blue",
+      "Brown"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The black ball is worth 7 points — the highest of the six colored balls, which is why it's the prize pot in a maximum 147 break.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Black' to 'Pink'; blurb left as original (black = 7 points).",
+    "truth": "Black is worth 7 points, pink 6."
+  },
+  {
+    "id": "P-013",
+    "baseId8": "0efc2b13",
+    "topic": "Critters that sting",
+    "prompt": "Which of these animals can sting using a structure called a nematocyst?",
+    "options": [
+      "Fire ant",
+      "Scorpion",
+      "Sea anemone",
+      "Stonefish"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Sea anemones fire microscopic harpoon-like nematocysts — the same stinging cells used by jellyfish and coral — to paralyze prey.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Sea anemone' to 'Fire ant'; blurb left as original.",
+    "truth": "Sea anemones sting with nematocysts; fire ants sting with venom, not nematocysts."
+  },
+  {
+    "id": "P-014",
+    "baseId8": "f601e16c",
+    "topic": "Critters that sting",
+    "prompt": "What is the name of the tiny, nearly invisible jellyfish responsible for 'sea lice' stings on swimmers in the Gulf of Mexico?",
+    "options": [
+      "Moon jellyfish",
+      "Irukandji jellyfish",
+      "Thimble jellyfish",
+      "Lion's mane jellyfish"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Thimble jellyfish larvae are so small they pass through swimwear fabric, causing a rash of stinging welts — what beachgoers call 'sea lice' — along the Gulf Coast each summer.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Thimble jellyfish' to 'Moon jellyfish'; blurb left as original (names thimble jellyfish).",
+    "truth": "Thimble jellyfish larvae cause 'sea lice' (seabather's eruption); moon jellyfish do not."
+  },
+  {
+    "id": "P-015",
+    "baseId8": "f4948914",
+    "topic": "Not plain Ice Cream",
+    "prompt": "What flavor is 'Ube' ice cream, a wildly popular variety originally from the Philippines?",
+    "options": [
+      "Coconut",
+      "Purple Yam",
+      "Taro Root",
+      "Pandan Leaf"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Ube is a purple yam native to the Philippines — its naturally vibrant violet color and sweet, nutty flavor have made ube ice cream a global sensation.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Purple Yam' to 'Taro Root'; blurb left as original (names purple yam).",
+    "truth": "Ube is a purple yam (Dioscorea alata), not taro."
+  },
+  {
+    "id": "P-016",
+    "baseId8": "fa722d5f",
+    "topic": "Robin Williams",
+    "prompt": "In the film Patch Adams, Williams plays a medical student who believes what is essential to healing?",
+    "options": [
+      "Advanced technology",
+      "Laughter and human connection",
+      "Strict protocols",
+      "Pharmaceutical innovation"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Patch Adams (1998) showcased Williams' belief that humor and compassion are vital to medicine.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Laughter and human connection' to 'Strict protocols'; blurb left as original (humor and compassion).",
+    "truth": "Patch Adams' philosophy is that humor and compassion are central to healing."
+  },
+  {
+    "id": "P-017",
+    "baseId8": "2430c9af",
+    "topic": "Newts",
+    "prompt": "Which toxin, also found in puffer fish, is produced by some newt species as a defense?",
+    "options": [
+      "Tetrodotoxin",
+      "Batrachotoxin",
+      "Bufotoxin",
+      "Saxitoxin"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Rough-skinned newts produce tetrodotoxin — the same nerve-blocking poison in puffer fish — making them one of the most toxic animals in North America.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Tetrodotoxin' to 'Batrachotoxin'; blurb left as original (names tetrodotoxin).",
+    "truth": "Newts produce tetrodotoxin; batrachotoxin comes from poison dart frogs and some birds."
+  },
+  {
+    "id": "P-018",
+    "baseId8": "b5a15f34",
+    "topic": "Anemone",
+    "prompt": "The genus Nematostella (the starlet sea anemone) is widely used in science because it is a model organism for studying what?",
+    "options": [
+      "Animal body plan evolution",
+      "Antibiotic resistance",
+      "Plant cell division",
+      "Viral mutation rates"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Nematostella sits near the base of the animal family tree and shares many genes with humans, making it invaluable for studying how complex body plans first evolved.",
+    "plantType": "keyFlip",
+    "change": "Key moved from 'Animal body plan evolution' to 'Plant cell division'; blurb left as original.",
+    "truth": "Nematostella is an animal (sea anemone) model for body plan evolution, not plant biology."
+  },
+  {
+    "id": "P-019",
+    "baseId8": "de660c24",
+    "topic": "US Presidents",
+    "prompt": "Which U.S. president signed the Civil Rights Act of 1964 into law?",
+    "options": [
+      "John F. Kennedy",
+      "Lyndon B. Johnson",
+      "Hubert Humphrey",
+      "Robert F. Kennedy"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Lyndon B. Johnson signed the Civil Rights Act on July 2, 1965, reportedly telling an aide afterward, 'We have lost the South for a generation.'",
+    "plantType": "wrongBlurb",
+    "change": "Signing date year changed 1964 -> 1965 in blurb.",
+    "truth": "LBJ signed the Civil Rights Act on July 2, 1964."
+  },
+  {
+    "id": "P-020",
+    "baseId8": "9afb3aaa",
+    "topic": "Classic Video Games",
+    "prompt": "Which company created the Game Boy handheld console?",
+    "options": [
+      "Nintendo",
+      "Sega",
+      "Atari",
+      "NEC"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Nintendo's Game Boy, designed by Shigeru Miyamoto and launched in 1989, sold over 118 million units including the Game Boy Color.",
+    "plantType": "wrongBlurb",
+    "change": "Designer changed from Gunpei Yokoi to Shigeru Miyamoto.",
+    "truth": "The Game Boy was designed by Gunpei Yokoi (Nintendo R&D1)."
+  },
+  {
+    "id": "P-021",
+    "baseId8": "3ee67876",
+    "topic": "Shots",
+    "prompt": "Which vaccine, developed in the 1790s, is considered the world's first vaccine ever created?",
+    "options": [
+      "Smallpox vaccine",
+      "Rabies vaccine",
+      "Typhoid vaccine",
+      "Cholera vaccine"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Louis Pasteur used cowpox to protect against smallpox in 1796 — kicking off the entire science of vaccination.",
+    "plantType": "wrongBlurb",
+    "change": "Person changed from Edward Jenner to Louis Pasteur.",
+    "truth": "Edward Jenner used cowpox against smallpox in 1796; Pasteur came decades later."
+  },
+  {
+    "id": "P-022",
+    "baseId8": "e63a3a9b",
+    "topic": "Mountain ranges",
+    "prompt": "Mount Elbrus, the highest peak in Europe, is located in which mountain range?",
+    "options": [
+      "The Alps",
+      "The Carpathians",
+      "The Caucasus",
+      "The Urals"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Mount Elbrus at 15,510 feet sits in the Caucasus range in Russia and is considered the highest point in Europe by most geographers.",
+    "plantType": "wrongBlurb",
+    "change": "Height changed from 18,510 ft to 15,510 ft.",
+    "truth": "Elbrus is about 18,510 ft (5,642 m)."
+  },
+  {
+    "id": "P-023",
+    "baseId8": "b1f8d188",
+    "topic": "Demons and supernatural beings",
+    "prompt": "In the TV series 'Supernatural,' what is the name of the yellow-eyed demon who killed Sam and Dean Winchester's mother?",
+    "options": [
+      "Crowley",
+      "Lilith",
+      "Azazel",
+      "Abaddon"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Azazel, nicknamed 'Yellow Eyes,' kick-started the entire series by killing Mary Winchester on the ceiling of Sam's nursery in 1979.",
+    "plantType": "wrongBlurb",
+    "change": "Year changed from 1983 to 1979.",
+    "truth": "Mary Winchester dies in 1983 in the pilot."
+  },
+  {
+    "id": "P-024",
+    "baseId8": "d9ab8884",
+    "topic": "Classic Rock",
+    "prompt": "Which classic rock band was originally called 'The New Yardbirds' before changing their name?",
+    "options": [
+      "Led Zeppelin",
+      "Deep Purple",
+      "Black Sabbath",
+      "The Who"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Robert Plant formed The New Yardbirds in 1968 to fulfill Scandinavian tour dates, then renamed them Led Zeppelin before recording their debut album.",
+    "plantType": "wrongBlurb",
+    "change": "Founder changed from Jimmy Page to Robert Plant.",
+    "truth": "Jimmy Page formed The New Yardbirds in 1968."
+  },
+  {
+    "id": "P-025",
+    "baseId8": "a4cd28c0",
+    "topic": "Geography",
+    "prompt": "Which U.S. state capital is the highest in elevation?",
+    "options": [
+      "Denver",
+      "Santa Fe",
+      "Montpelier",
+      "Concord"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Santa Fe, New Mexico sits at 5,000 feet above sea level, making it the highest state capital in the continental U.S.",
+    "plantType": "wrongBlurb",
+    "change": "Elevation changed from ~7,000 ft to 5,000 ft.",
+    "truth": "Santa Fe is about 7,199 ft above sea level."
+  },
+  {
+    "id": "P-026",
+    "baseId8": "2e13ceb2",
+    "topic": "Panama Canal",
+    "prompt": "In what year did the Panama Canal open to traffic?",
+    "options": [
+      "1906",
+      "1914",
+      "1920",
+      "1925"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The canal opened on August 15, 1916, cutting the sea route between the Atlantic and Pacific by nearly 8,000 miles.",
+    "plantType": "wrongBlurb",
+    "change": "Opening year changed from 1914 to 1916 in blurb.",
+    "truth": "The Panama Canal opened August 15, 1914."
+  },
+  {
+    "id": "P-027",
+    "baseId8": "505155cd",
+    "topic": "ice cream",
+    "prompt": "What is the name of the ice cream bar that Unilever's Good Humor brand introduced in 1920 — one of the first individually wrapped ice cream bars on a stick?",
+    "options": [
+      "Eskimo Pie",
+      "Good Humor Bar",
+      "Fudgsicle",
+      "Creamsicle"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Harry Burt Sr. created the Good Humor Bar in 1920 in Cleveland, Ohio, coating vanilla ice cream in chocolate and adding a wooden stick so it wouldn't drip on your hands.",
+    "plantType": "wrongBlurb",
+    "change": "City changed from Youngstown to Cleveland.",
+    "truth": "Harry Burt created the Good Humor Bar in Youngstown, Ohio."
+  },
+  {
+    "id": "P-028",
+    "baseId8": "7e1019a1",
+    "topic": "space history",
+    "prompt": "In what year did SpaceX's Falcon 9 first successfully land a first-stage booster for reuse?",
+    "options": [
+      "2014",
+      "2015",
+      "2016",
+      "2017"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "On December 21, 2014, Falcon 9 became the first orbital-class rocket to land its first stage vertically, revolutionizing spaceflight economics.",
+    "plantType": "wrongBlurb",
+    "change": "Date year changed from 2015 to 2014 in blurb.",
+    "truth": "The landing happened December 21, 2015 (Orbcomm-2 mission)."
+  },
+  {
+    "id": "P-029",
+    "baseId8": "37e430b2",
+    "topic": "Fall Vegetables",
+    "prompt": "Which U.S. state produces the most pumpkins by weight?",
+    "options": [
+      "Illinois",
+      "California",
+      "Ohio",
+      "Pennsylvania"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Illinois grows roughly 20–30% of the pumpkins processed for canned goods in the U.S., centered around Morton, which calls itself the 'Pumpkin Capital of the World.'",
+    "plantType": "wrongBlurb",
+    "change": "Share changed from 80–90% to 20–30%.",
+    "truth": "Illinois grows the large majority (roughly 85–95%) of U.S. processing pumpkins."
+  },
+  {
+    "id": "P-030",
+    "baseId8": "0c5cd915",
+    "topic": "Spiderman",
+    "prompt": "What is the name of the symbiote alien that bonds with Peter Parker to create a black suit?",
+    "options": [
+      "Venom",
+      "Carnage",
+      "Anti-Venom",
+      "Toxin"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The Venom symbiote first bonded with Spider-Man in Secret Wars (1994), giving him a sleek black suit — before moving on to Eddie Brock.",
+    "plantType": "wrongBlurb",
+    "change": "Year changed from 1984 to 1994.",
+    "truth": "The black suit debuted in Marvel Super Heroes Secret Wars (1984)."
+  },
+  {
+    "id": "P-031",
+    "baseId8": "06620f9b",
+    "topic": "Driver famous bridges",
+    "prompt": "The Millau Viaduct, one of the world's tallest bridges, is located in which country?",
+    "options": [
+      "Italy",
+      "Switzerland",
+      "Spain",
+      "France"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "France's Millau Viaduct, opened in 2014, has a mast that soars higher than the Eiffel Tower — it crosses the Tarn River gorge in the south of France.",
+    "plantType": "wrongBlurb",
+    "change": "Opening year changed from 2004 to 2014.",
+    "truth": "The Millau Viaduct opened in December 2004."
+  },
+  {
+    "id": "P-032",
+    "baseId8": "98942262",
+    "topic": "All About Saints",
+    "prompt": "Saint Maximilian Kolbe, who volunteered to die in place of a stranger at Auschwitz, was a priest from which country?",
+    "options": [
+      "Hungary",
+      "Poland",
+      "Czechoslovakia",
+      "Austria"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Polish Franciscan friar Maximilian Kolbe offered himself to be starved to death in place of a fellow prisoner at Auschwitz in 1941; he was canonized by Pope Benedict XVI in 1982.",
+    "plantType": "wrongBlurb",
+    "change": "Canonizing pope changed from John Paul II to Benedict XVI.",
+    "truth": "Kolbe was canonized by Pope John Paul II in 1982; Benedict XVI was not pope until 2005."
+  },
+  {
+    "id": "P-033",
+    "baseId8": "5902b746",
+    "topic": "automotive conspires",
+    "prompt": "The Bugatti Veyron's engine has how many cylinders?",
+    "options": [
+      "8",
+      "10",
+      "12",
+      "16"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "The Veyron's W16 engine is essentially two narrow-angle V8s fused together — 16 cylinders, two turbochargers, and 1,001 horsepower when it launched in 2005.",
+    "plantType": "wrongBlurb",
+    "change": "Turbocharger count changed from four to two.",
+    "truth": "The Veyron's W16 has four turbochargers."
+  },
+  {
+    "id": "P-034",
+    "baseId8": "e6aa3ae6",
+    "topic": "One hit Wonders",
+    "prompt": "Which one-hit wonder band asked \"Who Let the Dogs Out\" in 2000?",
+    "options": [
+      "Baha Men",
+      "Haddaway",
+      "Los Del Rio",
+      "Snap!"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "\"Who Let the Dogs Out\" won a Grammy for Best Rap Performance by a Duo or Group in 2001, despite being widely mocked by critics.",
+    "plantType": "wrongBlurb",
+    "change": "Grammy category changed from Best Dance Recording to Best Rap Performance by a Duo or Group.",
+    "truth": "It won the 2001 Grammy for Best Dance Recording."
+  },
+  {
+    "id": "P-035",
+    "baseId8": "9a218524",
+    "topic": "Fireworks",
+    "prompt": "In which country were fireworks invented?",
+    "options": [
+      "China",
+      "India",
+      "Persia",
+      "Japan"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Chinese alchemists accidentally discovered gunpowder around 800 BC, and fireworks followed soon after.",
+    "plantType": "wrongBlurb",
+    "change": "Date changed from ~800 AD to ~800 BC.",
+    "truth": "Gunpowder was discovered in China around the 9th century AD (~800 AD)."
+  },
+  {
+    "id": "P-036",
+    "baseId8": "d3da93e9",
+    "topic": "October Wars",
+    "prompt": "The Battle of Leyte Gulf in October 1944 is considered the largest naval battle in history. Where did it take place?",
+    "options": [
+      "The Philippines",
+      "Japan",
+      "Guam",
+      "Indonesia"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Fought October 23–26, 1944, Leyte Gulf involved over 20,000 personnel and effectively destroyed Japan's ability to conduct large naval operations.",
+    "plantType": "wrongBlurb",
+    "change": "Personnel changed from over 200,000 to over 20,000.",
+    "truth": "Leyte Gulf involved roughly 200,000 personnel and ~300 ships."
+  },
+  {
+    "id": "P-037",
+    "baseId8": "a1ae6f5e",
+    "topic": "Trains",
+    "prompt": "What is the name of the rail technology where the train is suspended and propelled by magnetic forces, with no wheels touching the track?",
+    "options": [
+      "Linear induction rail",
+      "Maglev",
+      "Hyperloop",
+      "Monorail"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Alanis Morissette's 'Jagged Little Pill' became one of the best-selling debut albums ever, with 'You Oughta Know' as its breakthrough hit.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item 8e70db62 (90s Music).",
+    "truth": "Maglev is the correct answer; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-038",
+    "baseId8": "2b799b79",
+    "topic": "Trail Mix",
+    "prompt": "The Brazil nut, a trail mix staple, is unique because it cannot be commercially farmed in plantations. Why?",
+    "options": [
+      "Its roots release toxins that kill neighboring trees",
+      "It only grows above 10,000 feet elevation",
+      "It requires old-growth forest bees for pollination",
+      "Its seeds only germinate after a wildfire"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "The Veyron's W16 engine is essentially two narrow-angle V8s fused together — 16 cylinders, four turbochargers, and 1,001 horsepower when it launched in 2005.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item 5902b746 (automotive conspires).",
+    "truth": "Correct answer is the orchid-bee pollination option; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-039",
+    "baseId8": "24960e37",
+    "topic": "Butter",
+    "prompt": "Which European country has a centuries-old tradition of producing butter wrapped in linen and stored in bogs for preservation?",
+    "options": [
+      "Sweden",
+      "Ireland",
+      "Denmark",
+      "Poland"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "On December 21, 2015, Falcon 9 became the first orbital-class rocket to land its first stage vertically, revolutionizing spaceflight economics.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item 7e1019a1 (space history).",
+    "truth": "Ireland is correct for bog butter; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-040",
+    "baseId8": "53fbf54a",
+    "topic": "Food & Cooking",
+    "prompt": "What is the traditional liquid base of a classic French onion soup?",
+    "options": [
+      "Chicken stock",
+      "Vegetable stock",
+      "Beef stock",
+      "Veal stock"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Skaters started pouring concrete under Portland's Burnside Bridge in 1990 without permission — the city eventually embraced it, and it's now a protected landmark.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item d629a07f (Skateboarding).",
+    "truth": "Beef stock is the traditional base; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-041",
+    "baseId8": "fbc59a5f",
+    "topic": "Cheerleader Movies",
+    "prompt": "Which TV movie dramatized the real-life scandal of a Texas mom who plotted to kill a rival cheerleader's mother?",
+    "options": [
+      "The Positively True Adventures of the Alleged Texas Cheerleader-Murdering Mom",
+      "Fab Five: The Texas Cheerleader Scandal",
+      "Death of a Cheerleader",
+      "A Deadly Obsession"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Carambola's five ridges running the length of the fruit produce a perfect five-pointed star cross-section — making it one of the most photogenic fruits in the world.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item 306c5b81 (Exotic fruit).",
+    "truth": "The correct TV movie is keyed; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-042",
+    "baseId8": "492e9b53",
+    "topic": "World Cup",
+    "prompt": "What is the maximum number of substitutions allowed per team in a World Cup match?",
+    "options": [
+      "3 substitutions",
+      "4 substitutions",
+      "5 substitutions",
+      "6 substitutions"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "The asteroid belt contains millions of rocky objects but is so spread out that spacecraft pass through it with ease.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item 2232cfc0 (The solar system).",
+    "truth": "Five substitutions (2022 rule) is keyed; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-043",
+    "baseId8": "6a10e8cd",
+    "topic": "Hydration Drinks",
+    "prompt": "Which electrolyte do sports drinks like Gatorade primarily use to trigger thirst and encourage continued drinking?",
+    "options": [
+      "Sodium",
+      "Potassium",
+      "Magnesium",
+      "Calcium"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Rough-skinned newts produce tetrodotoxin — the same nerve-blocking poison in puffer fish — making them one of the most toxic animals in North America.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item 2430c9af (Newts).",
+    "truth": "Sodium is keyed; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-044",
+    "baseId8": "8b035cc9",
+    "topic": "Homecoming",
+    "prompt": "Homecoming is traditionally associated with which sport's season?",
+    "options": [
+      "Football",
+      "Basketball",
+      "Baseball",
+      "Soccer"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The Venom symbiote first bonded with Spider-Man in Secret Wars (1984), giving him a sleek black suit — before moving on to Eddie Brock.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item 0c5cd915 (Spiderman).",
+    "truth": "Football is keyed; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-045",
+    "baseId8": "734aba93",
+    "topic": "Famous Bar Scenes",
+    "prompt": "In 'Midnight Run,' Robert De Niro's bounty hunter Jack Walsh and his fugitive bond-jumper spend time in a bar in the American Southwest. What is the profession of the fugitive, Jonathan Mardukas?",
+    "options": [
+      "Accountant",
+      "Lawyer",
+      "Stockbroker",
+      "Bail bondsman"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Polish Franciscan friar Maximilian Kolbe offered himself to be starved to death in place of a fellow prisoner at Auschwitz in 1941; he was canonized by Pope John Paul II in 1982.",
+    "plantType": "blurbSwap",
+    "change": "Key unchanged; fact blurb replaced with the blurb of sample item 98942262 (All About Saints).",
+    "truth": "Accountant is keyed; the blurb belongs to a different question."
+  },
+  {
+    "id": "P-046",
+    "baseId8": "d3da93e9",
+    "topic": "October Wars",
+    "prompt": "The Battle of Leyte Gulf in October 1944 is considered the largest naval battle in history. Where did it take place?",
+    "options": [
+      "The Philippines",
+      "Japan",
+      "Guam",
+      "The Pacific Ocean"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Fought October 23–26, 1944, Leyte Gulf involved over 200,000 personnel and effectively destroyed Japan's ability to conduct large naval operations.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'Indonesia' replaced with 'The Pacific Ocean', which is also a true location for the battle.",
+    "truth": "Philippines (Leyte Gulf) is the intended answer, but the Pacific Ocean is also defensibly correct."
+  },
+  {
+    "id": "P-047",
+    "baseId8": "de660c24",
+    "topic": "US Presidents",
+    "prompt": "Which U.S. president signed a Civil Rights Act into law?",
+    "options": [
+      "Dwight D. Eisenhower",
+      "Lyndon B. Johnson",
+      "Hubert Humphrey",
+      "Robert F. Kennedy"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Lyndon B. Johnson signed the Civil Rights Act on July 2, 1964, reportedly telling an aide afterward, 'We have lost the South for a generation.'",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Removed '1964' from the prompt and replaced 'John F. Kennedy' with 'Dwight D. Eisenhower'.",
+    "truth": "Both Eisenhower (Civil Rights Acts of 1957 and 1960) and Johnson (1964, 1968) signed Civil Rights Acts."
+  },
+  {
+    "id": "P-048",
+    "baseId8": "e63a3a9b",
+    "topic": "Mountain ranges",
+    "prompt": "Mount Elbrus, the highest peak in Europe, is located in which mountain range?",
+    "options": [
+      "The Alps",
+      "The Carpathians",
+      "The Caucasus",
+      "The Greater Caucasus"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Mount Elbrus at 18,510 feet sits in the Caucasus range in Russia and is considered the highest point in Europe by most geographers.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'The Urals' replaced with 'The Greater Caucasus'.",
+    "truth": "Elbrus is in the Caucasus, specifically the Greater Caucasus; both options are correct."
+  },
+  {
+    "id": "P-049",
+    "baseId8": "2232cfc0",
+    "topic": "The solar system",
+    "prompt": "The asteroid belt lies beyond the orbit of which planet?",
+    "options": [
+      "Earth",
+      "Mars",
+      "Jupiter",
+      "Saturn"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The asteroid belt contains millions of rocky objects but is so spread out that spacecraft pass through it with ease.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Prompt changed to 'beyond the orbit of which planet' with single-planet options.",
+    "truth": "The belt lies beyond both Earth's and Mars's orbits; Mars is the intended answer but Earth is also true."
+  },
+  {
+    "id": "P-050",
+    "baseId8": "7e1019a1",
+    "topic": "space history",
+    "prompt": "In what year did a SpaceX Falcon 9 successfully land a first-stage booster?",
+    "options": [
+      "2014",
+      "2015",
+      "2016",
+      "2017"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "On December 21, 2015, Falcon 9 became the first orbital-class rocket to land its first stage vertically, revolutionizing spaceflight economics.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Dropped 'first' from the prompt.",
+    "truth": "Landings occurred in 2015 (first), 2016 and 2017, so 2015, 2016 and 2017 are all true."
+  },
+  {
+    "id": "P-051",
+    "baseId8": "24960e37",
+    "topic": "Butter",
+    "prompt": "Which European country has a centuries-old tradition of producing butter wrapped in linen and stored in bogs for preservation?",
+    "options": [
+      "Scotland",
+      "Ireland",
+      "Denmark",
+      "Poland"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Irish bog butter, preserved in anaerobic peat bogs for centuries, was recently found during excavations — the cold, airless environment kept it edible.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'Sweden' replaced with 'Scotland'.",
+    "truth": "Bog butter is traditional in Ireland and also Scotland (and found in Denmark); Ireland is the intended answer."
+  },
+  {
+    "id": "P-052",
+    "baseId8": "c181d045",
+    "topic": "Catholic Fun Facts",
+    "prompt": "Which Catholic feast day, celebrated on January 6th, commemorates the visit of the Magi to the infant Jesus?",
+    "options": [
+      "Epiphany",
+      "Three Kings' Day",
+      "Corpus Christi",
+      "Pentecost"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Epiphany — from the Greek for 'manifestation' — marks the Magi's arrival and is considered the official end of the Christmas season in many Catholic traditions.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'Candlemas' replaced with 'Three Kings' Day'.",
+    "truth": "Three Kings' Day is the popular name for the Epiphany feast on January 6."
+  },
+  {
+    "id": "P-053",
+    "baseId8": "0efc2b13",
+    "topic": "Critters that sting",
+    "prompt": "Which of these animals can sting using a structure called a nematocyst?",
+    "options": [
+      "Fire ant",
+      "Scorpion",
+      "Sea anemone",
+      "Jellyfish"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Sea anemones fire microscopic harpoon-like nematocysts — the same stinging cells used by jellyfish and coral — to paralyze prey.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'Stonefish' replaced with 'Jellyfish'.",
+    "truth": "Both sea anemones and jellyfish sting with nematocysts."
+  },
+  {
+    "id": "P-054",
+    "baseId8": "e6aa3ae6",
+    "topic": "One hit Wonders",
+    "prompt": "Which artist recorded a version of \"Who Let the Dogs Out\"?",
+    "options": [
+      "Baha Men",
+      "Anslem Douglas",
+      "Los Del Rio",
+      "Snap!"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "\"Who Let the Dogs Out\" won a Grammy for Best Dance Recording in 2001, despite being widely mocked by critics.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Prompt reworded to 'recorded a version of'; distractor 'Haddaway' replaced with 'Anslem Douglas'.",
+    "truth": "Baha Men had the 2000 hit; Anslem Douglas recorded the original 1998 version, so both recorded it."
+  },
+  {
+    "id": "P-055",
+    "baseId8": "36ea328a",
+    "topic": "automation and control components.",
+    "prompt": "What does the 'I' term in a PID controller correct for?",
+    "options": [
+      "Accumulated steady-state error over time",
+      "Instantaneous rate of change",
+      "Persistent offset from the setpoint",
+      "Initial process disturbance"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The Integral term sums up past errors — it eliminates the persistent offset that a Proportional-only controller leaves behind, pushing the process all the way to the setpoint.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'Input signal noise' replaced with 'Persistent offset from the setpoint'.",
+    "truth": "The integral term removes the steady-state offset, so 'persistent offset' is also correct."
+  },
+  {
+    "id": "P-056",
+    "baseId8": "bf830cf3",
+    "topic": "90s Music",
+    "prompt": "Which rapper appears on the album 'The Chronic' (1992)?",
+    "options": [
+      "Dr. Dre",
+      "Snoop Dogg",
+      "Tupac",
+      "Ice Cube"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Dr. Dre's solo debut that defined G-funk and introduced Snoop Dogg to the world.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Prompt changed from 'released' to 'appears on'.",
+    "truth": "Both Dr. Dre and Snoop Dogg perform on The Chronic."
+  },
+  {
+    "id": "P-057",
+    "baseId8": "fa722d5f",
+    "topic": "Robin Williams",
+    "prompt": "In the film Patch Adams, Williams plays a medical student who believes what is essential to healing?",
+    "options": [
+      "Advanced technology",
+      "Laughter and human connection",
+      "Compassion and humor",
+      "Pharmaceutical innovation"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Patch Adams (1998) showcased Williams' belief that humor and compassion are vital to medicine.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'Strict protocols' replaced with 'Compassion and humor'.",
+    "truth": "Both 'Laughter and human connection' and 'Compassion and humor' describe Patch Adams' view."
+  },
+  {
+    "id": "P-058",
+    "baseId8": "ace65dfe",
+    "topic": "Pixar Movies",
+    "prompt": "Which of these is the real surname of a main hero character in 'The Incredibles'?",
+    "options": [
+      "Powers",
+      "Strong",
+      "Parr",
+      "Best"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Bob Parr — a deliberately ordinary surname — reflects the family's forced life of suburban anonymity after superheroes are outlawed.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Prompt changed to 'a main hero character'; distractor 'Brock' replaced with 'Best'.",
+    "truth": "Parr is Mr. Incredible's surname; Best is Lucius Best (Frozone), also a hero, so both are correct."
+  },
+  {
+    "id": "P-059",
+    "baseId8": "a1ae6f5e",
+    "topic": "Trains",
+    "prompt": "What is the name of the rail technology where the train is suspended and propelled by magnetic forces, with no wheels touching the track?",
+    "options": [
+      "Linear induction rail",
+      "Maglev",
+      "Hyperloop",
+      "Magnetic levitation train"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Maglev — short for magnetic levitation — uses powerful electromagnets to lift and propel the train, eliminating friction and allowing speeds above 370 mph.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'Monorail' replaced with 'Magnetic levitation train'.",
+    "truth": "Maglev and magnetic levitation train name the same technology."
+  },
+  {
+    "id": "P-060",
+    "baseId8": "9afb3aaa",
+    "topic": "Classic Video Games",
+    "prompt": "Which company created the Game Boy handheld console?",
+    "options": [
+      "Nintendo",
+      "Sega",
+      "Nintendo R&D1",
+      "NEC"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Nintendo's Game Boy, designed by Gunpei Yokoi and launched in 1989, sold over 118 million units including the Game Boy Color.",
+    "plantType": "ambiguousSecondAnswer",
+    "change": "Distractor 'Atari' replaced with 'Nintendo R&D1'.",
+    "truth": "The Game Boy was created by Nintendo, specifically its R&D1 division; both are defensibly correct."
+  },
+  {
+    "id": "P-061",
+    "baseId8": "2e13ceb2",
+    "topic": "Panama Canal",
+    "prompt": "In what year did the Panama Canal open to traffic?",
+    "options": [
+      "1906",
+      "1913",
+      "1920",
+      "1925"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The canal opened on August 15, 1914, cutting the sea route between the Atlantic and Pacific by nearly 8,000 miles.",
+    "plantType": "nearMiss",
+    "change": "Correct option 1914 replaced with 1913 (off by one); blurb left as original.",
+    "truth": "The Panama Canal opened in 1914."
+  },
+  {
+    "id": "P-062",
+    "baseId8": "d474bb13",
+    "topic": "Star Wars",
+    "prompt": "In what year was the very first Star Wars film released in theaters?",
+    "options": [
+      "1974",
+      "1978",
+      "1980",
+      "1983"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Released May 25, 1977, it was originally titled just 'Star Wars' before being retitled 'A New Hope' after the sequels became hits.",
+    "plantType": "nearMiss",
+    "change": "Correct option 1977 replaced with 1978 (off by one); blurb left as original.",
+    "truth": "Star Wars was released in 1977."
+  },
+  {
+    "id": "P-063",
+    "baseId8": "a4cd28c0",
+    "topic": "Geography",
+    "prompt": "Which U.S. state capital is the highest in elevation?",
+    "options": [
+      "Denver",
+      "Cheyenne",
+      "Montpelier",
+      "Concord"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Santa Fe, New Mexico sits at 7,000 feet above sea level, making it the highest state capital in the continental U.S.",
+    "plantType": "nearMiss",
+    "change": "Correct option 'Santa Fe' replaced with 'Cheyenne' (another high-altitude capital); blurb left as original.",
+    "truth": "Santa Fe (about 7,199 ft) is the highest state capital; Cheyenne is about 6,100 ft."
+  },
+  {
+    "id": "P-064",
+    "baseId8": "d629a07f",
+    "topic": "Skateboarding",
+    "prompt": "The iconic 'Burnside Project' skate park was built illegally under a bridge in which U.S. city?",
+    "options": [
+      "Eugene, Oregon",
+      "Seattle, Washington",
+      "Denver, Colorado",
+      "Austin, Texas"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Skaters started pouring concrete under Portland's Burnside Bridge in 1990 without permission — the city eventually embraced it, and it's now a protected landmark.",
+    "plantType": "nearMiss",
+    "change": "Correct option 'Portland, Oregon' replaced with 'Eugene, Oregon'; blurb left as original.",
+    "truth": "The Burnside skatepark is in Portland, Oregon."
+  },
+  {
+    "id": "P-065",
+    "baseId8": "7e8e8c32",
+    "topic": "antartica",
+    "prompt": "What is the name of the active volcano on Ross Island, Antarctica, that has a persistent lava lake in its crater?",
+    "options": [
+      "Mount Sidley",
+      "Mount Terra Nova",
+      "Mount Terror",
+      "Mount Melbourne"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Mount Terra Nova is the world's southernmost active volcano and one of only a handful on Earth with a long-lived convecting lava lake.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Mount Erebus' replaced with 'Mount Terra Nova' (another Ross Island volcano); blurb name edited to match.",
+    "truth": "Mount Erebus has the lava lake; Terra Nova is a dormant volcano on Ross Island."
+  },
+  {
+    "id": "P-066",
+    "baseId8": "acbf94e5",
+    "topic": "Musicians name Changed",
+    "prompt": "Which rapper born Clifford Joseph Harris Jr. goes by a two-letter stage name?",
+    "options": [
+      "T-Pain",
+      "Lil Wayne",
+      "DMX",
+      "Nas"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "T.I. originally went by 'Tip' (a childhood nickname) and later shortened it to 'T.I.' when he discovered another rapper already had the name Tip.",
+    "plantType": "nearMiss",
+    "change": "Correct 'T.I.' replaced with the similar 'T-Pain'; blurb left as original.",
+    "truth": "Clifford Joseph Harris Jr. is T.I.; T-Pain is Faheem Najm."
+  },
+  {
+    "id": "P-067",
+    "baseId8": "bf830cf3",
+    "topic": "90s Music",
+    "prompt": "Which rapper released 'The Chronic' in 1992?",
+    "options": [
+      "Warren G",
+      "Snoop Dogg",
+      "Tupac",
+      "Ice Cube"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Dr. Dre's solo debut that defined G-funk and introduced Snoop Dogg to the world.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Dr. Dre' replaced with his associate 'Warren G'; blurb left as original.",
+    "truth": "Dr. Dre released The Chronic."
+  },
+  {
+    "id": "P-068",
+    "baseId8": "ace65dfe",
+    "topic": "Pixar Movies",
+    "prompt": "In 'The Incredibles,' what is Mr. Incredible's real last name?",
+    "options": [
+      "Powers",
+      "Strong",
+      "Best",
+      "Brock"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Bob Parr — a deliberately ordinary surname — reflects the family's forced life of suburban anonymity after superheroes are outlawed.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Parr' replaced with another Incredibles surname, 'Best'; blurb left as original.",
+    "truth": "Mr. Incredible is Bob Parr; Best is Frozone's surname."
+  },
+  {
+    "id": "P-069",
+    "baseId8": "b1f8d188",
+    "topic": "Demons and supernatural beings",
+    "prompt": "In the TV series 'Supernatural,' what is the name of the yellow-eyed demon who killed Sam and Dean Winchester's mother?",
+    "options": [
+      "Crowley",
+      "Lilith",
+      "Azrael",
+      "Abaddon"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Azrael, nicknamed 'Yellow Eyes,' kick-started the entire series by killing Mary Winchester on the ceiling of Sam's nursery in 1983.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Azazel' replaced with the similar-sounding 'Azrael'; blurb name edited to match.",
+    "truth": "The yellow-eyed demon is Azazel."
+  },
+  {
+    "id": "P-070",
+    "baseId8": "c181d045",
+    "topic": "Catholic Fun Facts",
+    "prompt": "Which Catholic feast day, celebrated on January 6th, commemorates the visit of the Magi to the infant Jesus?",
+    "options": [
+      "Baptism of the Lord",
+      "Candlemas",
+      "Corpus Christi",
+      "Pentecost"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Epiphany — from the Greek for 'manifestation' — marks the Magi's arrival and is considered the official end of the Christmas season in many Catholic traditions.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Epiphany' replaced with the nearby feast 'Baptism of the Lord'; blurb left as original.",
+    "truth": "The Magi's visit is commemorated at Epiphany (Jan 6); the Baptism of the Lord is a separate feast."
+  },
+  {
+    "id": "P-071",
+    "baseId8": "2b799b79",
+    "topic": "Trail Mix",
+    "prompt": "The Brazil nut, a trail mix staple, is unique because it cannot be commercially farmed in plantations. Why?",
+    "options": [
+      "Its roots release toxins that kill neighboring trees",
+      "It only grows above 10,000 feet elevation",
+      "It requires old-growth forest bats for pollination",
+      "Its seeds only germinate after a wildfire"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Brazil nuts depend on a specific orchid bee found only in intact Amazon rainforest to pollinate their flowers — remove the old-growth forest and the trees simply stop producing nuts.",
+    "plantType": "nearMiss",
+    "change": "Correct option's 'bees' swapped to 'bats'; blurb left as original (orchid bee).",
+    "truth": "Brazil nut flowers are pollinated by large-bodied (orchid) bees in intact forest, not bats."
+  },
+  {
+    "id": "P-072",
+    "baseId8": "d9ab8884",
+    "topic": "Classic Rock",
+    "prompt": "Which classic rock band was originally called 'The New Yardbirds' before changing their name?",
+    "options": [
+      "The Yardbirds",
+      "Deep Purple",
+      "Black Sabbath",
+      "The Who"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Jimmy Page formed The New Yardbirds in 1968 to fulfill Scandinavian tour dates, then renamed them Led Zeppelin before recording their debut album.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Led Zeppelin' replaced with 'The Yardbirds'; blurb left as original.",
+    "truth": "The New Yardbirds became Led Zeppelin; the Yardbirds were the earlier band."
+  },
+  {
+    "id": "P-073",
+    "baseId8": "3ee67876",
+    "topic": "Shots",
+    "prompt": "Which vaccine, developed in the 1790s, is considered the world's first vaccine ever created?",
+    "options": [
+      "Chickenpox vaccine",
+      "Rabies vaccine",
+      "Typhoid vaccine",
+      "Cholera vaccine"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Edward Jenner used cowpox to protect against smallpox in 1796 — kicking off the entire science of vaccination.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Smallpox vaccine' replaced with 'Chickenpox vaccine'; blurb left as original.",
+    "truth": "Jenner's 1796 smallpox vaccine was the first; the chickenpox vaccine dates to the 1970s."
+  },
+  {
+    "id": "P-074",
+    "baseId8": "66372b52",
+    "topic": "tool brands",
+    "prompt": "Which tool company invented the oscillating multi-tool category with its Fein Multimaster in 1967?",
+    "options": [
+      "Bosch",
+      "Makita",
+      "Festool",
+      "Dremel"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Fein's Multimaster was the original oscillating tool, invented to remove plaster casts from patients — it took decades before competitors could legally copy the design after the patent expired.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Fein' replaced with the German rival 'Festool'; blurb left as original.",
+    "truth": "Fein invented the oscillating multi-tool (Multimaster, 1967)."
+  },
+  {
+    "id": "P-075",
+    "baseId8": "9a218524",
+    "topic": "Fireworks",
+    "prompt": "In which country were fireworks invented?",
+    "options": [
+      "Korea",
+      "India",
+      "Persia",
+      "Japan"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Chinese alchemists accidentally discovered gunpowder around 800 AD, and fireworks followed soon after.",
+    "plantType": "nearMiss",
+    "change": "Correct 'China' replaced with neighbouring 'Korea'; blurb left as original.",
+    "truth": "Fireworks were invented in China."
+  },
+  {
+    "id": "P-076",
+    "baseId8": "98942262",
+    "topic": "All About Saints",
+    "prompt": "Saint Maximilian Kolbe, who volunteered to die in place of a stranger at Auschwitz, was a priest from which country?",
+    "options": [
+      "Hungary",
+      "Slovakia",
+      "Czechoslovakia",
+      "Austria"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Polish Franciscan friar Maximilian Kolbe offered himself to be starved to death in place of a fellow prisoner at Auschwitz in 1941; he was canonized by Pope John Paul II in 1982.",
+    "plantType": "nearMiss",
+    "change": "Correct 'Poland' replaced with neighbouring 'Slovakia'; blurb left as original (Polish).",
+    "truth": "Maximilian Kolbe was Polish."
+  },
+  {
+    "id": "P-077",
+    "baseId8": "5902b746",
+    "topic": "automotive conspires",
+    "prompt": "The Bugatti Veyron's engine has how many cylinders?",
+    "options": [
+      "8",
+      "10",
+      "12",
+      "18"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "The Veyron's W16 engine is essentially two narrow-angle V8s fused together — 16 cylinders, four turbochargers, and 1,001 horsepower when it launched in 2005.",
+    "plantType": "nearMiss",
+    "change": "Correct '16' replaced with '18'; blurb left as original.",
+    "truth": "The Veyron's W16 engine has 16 cylinders."
+  },
+  {
+    "id": "P-078",
+    "baseId8": "dbf925a0",
+    "topic": "Zombie Movies",
+    "prompt": "Which actor plays the lead character, Gerry Lane, in World War Z (2013)?",
+    "options": [
+      "Matt Damon",
+      "Rob Zombie",
+      "Mark Wahlberg",
+      "Brad Pitt"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "Zack Snyder's 'Dawn of the Dead' was his feature directorial debut — the screenplay was written by James Gunn, who would later direct Guardians of the Galaxy.",
+    "plantType": "realWrongBlurb",
+    "change": "Unchanged production item (naturally occurring wrong fun fact belonging to a different question).",
+    "truth": "Brad Pitt plays Gerry Lane (key correct); the blurb is about Dawn of the Dead and belongs to a different question."
+  },
+  {
+    "id": "P-079",
+    "baseId8": "8ed27a05",
+    "topic": "Presidents and Halloween",
+    "prompt": "Which president's birthplace is famously associated with the supernatural legend of the Bell Witch?",
+    "options": [
+      "Herbert Hoover",
+      "Franklin D. Roosevelt",
+      "Andrew Jackson",
+      "Calvin Coolidge"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Boris Karloff's 'Frankenstein' was released in November 1931, but filmed and promoted through Halloween 1931 — during Hoover's presidency — and made the flat-topped monster a Halloween icon forever.",
+    "plantType": "realWrongBlurb",
+    "change": "Unchanged production item (naturally occurring wrong fun fact belonging to a different question).",
+    "truth": "The Bell Witch legend is tied to Andrew Jackson (key as stored); the blurb is about Frankenstein/Hoover and belongs to a different question. The prompt's 'birthplace' premise is itself loose (Jackson was not born in Adams, TN)."
+  },
+  {
+    "id": "P-080",
+    "baseId8": "799efbdf",
+    "topic": "Zodiac Signs",
+    "prompt": "Which element is associated with Sagittarius?",
+    "options": [
+      "Water",
+      "Earth",
+      "Fire",
+      "Air"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Virgo's wheat symbol connects to the Greek goddess Demeter and the harvest season — Virgo season (Aug 23–Sep 22) aligns with the traditional Northern Hemisphere harvest.",
+    "plantType": "realWrongBlurb",
+    "change": "Unchanged production item (naturally occurring wrong fun fact belonging to a different question).",
+    "truth": "Sagittarius is a Fire sign (key correct); the blurb is about Virgo and belongs to a different question."
+  }
+]

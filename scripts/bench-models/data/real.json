@@ -1,0 +1,1042 @@
+[
+  {
+    "id8": "de660c24",
+    "topic": "US Presidents",
+    "prompt": "Which U.S. president signed the Civil Rights Act of 1964 into law?",
+    "options": [
+      "John F. Kennedy",
+      "Lyndon B. Johnson",
+      "Hubert Humphrey",
+      "Robert F. Kennedy"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Lyndon B. Johnson signed the Civil Rights Act on July 2, 1964, reportedly telling an aide afterward, 'We have lost the South for a generation.'"
+  },
+  {
+    "id8": "0bceeb49",
+    "topic": "Spices",
+    "prompt": "Which spice is the inner bark of a cinnamon tree, which naturally curls into quills as it dries?",
+    "options": [
+      "Cinnamon",
+      "Cassia",
+      "Clove",
+      "Allspice"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "True cinnamon (Ceylon cinnamon) is thinner and more delicate than the more common cassia, which is thicker and stronger."
+  },
+  {
+    "id8": "03fd429c",
+    "topic": "World Cup",
+    "prompt": "How many times has France won the FIFA World Cup?",
+    "options": [
+      "1 time",
+      "2 times",
+      "3 times",
+      "4 times"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "France has won the World Cup three times: in 1998 (at home), 2018, and 2022."
+  },
+  {
+    "id8": "4149781a",
+    "topic": "Prisons",
+    "prompt": "Which country pioneered the concept of rehabilitation-focused prisons in the 1980s?",
+    "options": [
+      "Sweden",
+      "Canada",
+      "Norway",
+      "Denmark"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Norway developed a rehabilitation-focused prison model that emphasizes restorative justice and has one of the world's lowest recidivism rates."
+  },
+  {
+    "id8": "5902b746",
+    "topic": "automotive conspires",
+    "prompt": "The Bugatti Veyron's engine has how many cylinders?",
+    "options": [
+      "8",
+      "10",
+      "12",
+      "16"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "The Veyron's W16 engine is essentially two narrow-angle V8s fused together — 16 cylinders, four turbochargers, and 1,001 horsepower when it launched in 2005."
+  },
+  {
+    "id8": "acbf94e5",
+    "topic": "Musicians name Changed",
+    "prompt": "Which rapper born Clifford Joseph Harris Jr. goes by a two-letter stage name?",
+    "options": [
+      "T.I.",
+      "Lil Wayne",
+      "DMX",
+      "Nas"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "T.I. originally went by 'Tip' (a childhood nickname) and later shortened it to 'T.I.' when he discovered another rapper already had the name Tip."
+  },
+  {
+    "id8": "37dc52f2",
+    "topic": "Classic Rock",
+    "prompt": "What is the name of the famous guitar solo in Lynyrd Skynyrd's 'Free Bird'?",
+    "options": [
+      "There is no single named solo — it has three guitarists trading off",
+      "The Phoenix Run",
+      "The Bird's Flight",
+      "The Southern Surge"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Free Bird's extended outro features Allen Collins, Gary Rossington, and Ed King trading guitar lines — no single named solo, just three southern rockers cutting loose."
+  },
+  {
+    "id8": "24960e37",
+    "topic": "Butter",
+    "prompt": "Which European country has a centuries-old tradition of producing butter wrapped in linen and stored in bogs for preservation?",
+    "options": [
+      "Sweden",
+      "Ireland",
+      "Denmark",
+      "Poland"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Irish bog butter, preserved in anaerobic peat bogs for centuries, was recently found during excavations — the cold, airless environment kept it edible."
+  },
+  {
+    "id8": "fbc59a5f",
+    "topic": "Cheerleader Movies",
+    "prompt": "Which TV movie dramatized the real-life scandal of a Texas mom who plotted to kill a rival cheerleader's mother?",
+    "options": [
+      "The Positively True Adventures of the Alleged Texas Cheerleader-Murdering Mom",
+      "Fab Five: The Texas Cheerleader Scandal",
+      "Death of a Cheerleader",
+      "A Deadly Obsession"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The 1993 HBO film starred Holly Hunter and was based on the true story of Wanda Holloway, who hired a hitman to eliminate her daughter's cheerleading competition."
+  },
+  {
+    "id8": "b74c758d",
+    "topic": "automotive conspires",
+    "prompt": "In the 1980s, which Japanese automaker colluded with Toyota on a secret joint venture that produced the Toyota Corolla's twin — the Geo Prizm?",
+    "options": [
+      "GM (NUMMI)",
+      "Ford-Mazda",
+      "Chrysler-Mitsubishi",
+      "Honda-Isuzu"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "NUMMI — New United Motor Manufacturing Inc. — was a secret 1984 joint factory in Fremont, CA where GM and Toyota built nearly identical cars side by side."
+  },
+  {
+    "id8": "e6e04836",
+    "topic": "Billards",
+    "prompt": "In snooker, which color ball is worth the most points when potted?",
+    "options": [
+      "Black",
+      "Pink",
+      "Blue",
+      "Brown"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The black ball is worth 7 points — the highest of the six colored balls, which is why it's the prize pot in a maximum 147 break."
+  },
+  {
+    "id8": "a1ae6f5e",
+    "topic": "Trains",
+    "prompt": "What is the name of the rail technology where the train is suspended and propelled by magnetic forces, with no wheels touching the track?",
+    "options": [
+      "Linear induction rail",
+      "Maglev",
+      "Hyperloop",
+      "Monorail"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Maglev — short for magnetic levitation — uses powerful electromagnets to lift and propel the train, eliminating friction and allowing speeds above 370 mph."
+  },
+  {
+    "id8": "ace65dfe",
+    "topic": "Pixar Movies",
+    "prompt": "In 'The Incredibles,' what is Mr. Incredible's real last name?",
+    "options": [
+      "Powers",
+      "Strong",
+      "Parr",
+      "Brock"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Bob Parr — a deliberately ordinary surname — reflects the family's forced life of suburban anonymity after superheroes are outlawed."
+  },
+  {
+    "id8": "da503680",
+    "topic": "Catholic Chaos",
+    "prompt": "Which Pope was the first to take the name 'Francis'?",
+    "options": [
+      "The current Pope elected in 2013",
+      "A 16th-century Franciscan pope",
+      "A pope during the Crusades",
+      "A Renaissance-era pope"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Jorge Mario Bergoglio, elected in 2013, was the first pope ever to choose the name Francis — honoring St. Francis of Assisi."
+  },
+  {
+    "id8": "e63a3a9b",
+    "topic": "Mountain ranges",
+    "prompt": "Mount Elbrus, the highest peak in Europe, is located in which mountain range?",
+    "options": [
+      "The Alps",
+      "The Carpathians",
+      "The Caucasus",
+      "The Urals"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Mount Elbrus at 18,510 feet sits in the Caucasus range in Russia and is considered the highest point in Europe by most geographers."
+  },
+  {
+    "id8": "b1f8d188",
+    "topic": "Demons and supernatural beings",
+    "prompt": "In the TV series 'Supernatural,' what is the name of the yellow-eyed demon who killed Sam and Dean Winchester's mother?",
+    "options": [
+      "Crowley",
+      "Lilith",
+      "Azazel",
+      "Abaddon"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Azazel, nicknamed 'Yellow Eyes,' kick-started the entire series by killing Mary Winchester on the ceiling of Sam's nursery in 1983."
+  },
+  {
+    "id8": "e2296e23",
+    "topic": "Smoke Category",
+    "prompt": "The idiom 'where there's smoke, there's fire' is a proverb meaning what?",
+    "options": [
+      "Danger is always visible before it strikes",
+      "Rumors usually have some basis in truth",
+      "Small problems always become large ones",
+      "Evidence can be fabricated to mislead"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The proverb dates back at least to ancient Rome — Plautus wrote a version of it around 200 BC, making it one of the oldest surviving Western proverbs."
+  },
+  {
+    "id8": "7bab3930",
+    "topic": "Steaks",
+    "prompt": "Which steak cut is sourced from the spinalis dorsi muscle — the cap that sits on top of the ribeye — and is considered by many butchers to be the most flavorful single bite on the cow?",
+    "options": [
+      "Ribeye cap (deckle)",
+      "Chuck eye",
+      "Sirloin cap",
+      "Tri-tip"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The spinalis dorsi, or ribeye cap, combines extreme marbling with a tender texture — it's the prized outer ring you sometimes see cut away and sold separately at high-end butchers."
+  },
+  {
+    "id8": "bf830cf3",
+    "topic": "90s Music",
+    "prompt": "Which rapper released 'The Chronic' in 1992?",
+    "options": [
+      "Dr. Dre",
+      "Snoop Dogg",
+      "Tupac",
+      "Ice Cube"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Dr. Dre's solo debut that defined G-funk and introduced Snoop Dogg to the world."
+  },
+  {
+    "id8": "53fbf54a",
+    "topic": "Food & Cooking",
+    "prompt": "What is the traditional liquid base of a classic French onion soup?",
+    "options": [
+      "Chicken stock",
+      "Vegetable stock",
+      "Beef stock",
+      "Veal stock"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Slow-caramelized onions simmered in rich beef stock — topped with a crouton and melted Gruyère — give French onion soup its deep, savory sweetness."
+  },
+  {
+    "id8": "b5a15f34",
+    "topic": "Anemone",
+    "prompt": "The genus Nematostella (the starlet sea anemone) is widely used in science because it is a model organism for studying what?",
+    "options": [
+      "Animal body plan evolution",
+      "Antibiotic resistance",
+      "Plant cell division",
+      "Viral mutation rates"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Nematostella sits near the base of the animal family tree and shares many genes with humans, making it invaluable for studying how complex body plans first evolved."
+  },
+  {
+    "id8": "7e8e8c32",
+    "topic": "antartica",
+    "prompt": "What is the name of the active volcano on Ross Island, Antarctica, that has a persistent lava lake in its crater?",
+    "options": [
+      "Mount Sidley",
+      "Mount Erebus",
+      "Mount Terror",
+      "Mount Melbourne"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Mount Erebus is the world's southernmost active volcano and one of only a handful on Earth with a long-lived convecting lava lake."
+  },
+  {
+    "id8": "98942262",
+    "topic": "All About Saints",
+    "prompt": "Saint Maximilian Kolbe, who volunteered to die in place of a stranger at Auschwitz, was a priest from which country?",
+    "options": [
+      "Hungary",
+      "Poland",
+      "Czechoslovakia",
+      "Austria"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Polish Franciscan friar Maximilian Kolbe offered himself to be starved to death in place of a fellow prisoner at Auschwitz in 1941; he was canonized by Pope John Paul II in 1982."
+  },
+  {
+    "id8": "e6aa3ae6",
+    "topic": "One hit Wonders",
+    "prompt": "Which one-hit wonder band asked \"Who Let the Dogs Out\" in 2000?",
+    "options": [
+      "Baha Men",
+      "Haddaway",
+      "Los Del Rio",
+      "Snap!"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "\"Who Let the Dogs Out\" won a Grammy for Best Dance Recording in 2001, despite being widely mocked by critics."
+  },
+  {
+    "id8": "d1ca7f4d",
+    "topic": "Work Boots",
+    "prompt": "Which work boot company, founded in 1917 in New England, is known for its 'Bean Boot' heritage line?",
+    "options": [
+      "L.L.Bean",
+      "Sorel",
+      "Keen",
+      "Merrell"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "L.L.Bean's iconic Maine Hunting Shoe, launched in 1912, became the template for modern work and outdoor boots."
+  },
+  {
+    "id8": "2232cfc0",
+    "topic": "The solar system",
+    "prompt": "The asteroid belt sits between the orbits of which two planets?",
+    "options": [
+      "Earth and Mars",
+      "Mars and Jupiter",
+      "Jupiter and Saturn",
+      "Saturn and Uranus"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The asteroid belt contains millions of rocky objects but is so spread out that spacecraft pass through it with ease."
+  },
+  {
+    "id8": "9afb3aaa",
+    "topic": "Classic Video Games",
+    "prompt": "Which company created the Game Boy handheld console?",
+    "options": [
+      "Nintendo",
+      "Sega",
+      "Atari",
+      "NEC"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Nintendo's Game Boy, designed by Gunpei Yokoi and launched in 1989, sold over 118 million units including the Game Boy Color."
+  },
+  {
+    "id8": "9307ab03",
+    "topic": "MELONS",
+    "prompt": "The skin of a ripe Canary melon has a texture often described as which of the following?",
+    "options": [
+      "Smooth and waxy",
+      "Deeply ridged and bumpy",
+      "Heavily netted like a cantaloupe",
+      "Spiky and rough"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Unlike the netted skin of a cantaloupe, the Canary melon has a smooth, waxy, bright-yellow rind that almost looks lacquered."
+  },
+  {
+    "id8": "ca3e0132",
+    "topic": "skateboarding",
+    "prompt": "Which skateboard deck company was founded by George Powell and is known for technical innovation?",
+    "options": [
+      "Powell Corporation",
+      "Santa Cruz Skateboards",
+      "Creature Skateboards",
+      "Zero Skateboards"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "George Powell founded his company to push the technical limits of skateboard design and manufacturing precision."
+  },
+  {
+    "id8": "2430c9af",
+    "topic": "Newts",
+    "prompt": "Which toxin, also found in puffer fish, is produced by some newt species as a defense?",
+    "options": [
+      "Tetrodotoxin",
+      "Batrachotoxin",
+      "Bufotoxin",
+      "Saxitoxin"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Rough-skinned newts produce tetrodotoxin — the same nerve-blocking poison in puffer fish — making them one of the most toxic animals in North America."
+  },
+  {
+    "id8": "d629a07f",
+    "topic": "Skateboarding",
+    "prompt": "The iconic 'Burnside Project' skate park was built illegally under a bridge in which U.S. city?",
+    "options": [
+      "Portland, Oregon",
+      "Seattle, Washington",
+      "Denver, Colorado",
+      "Austin, Texas"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Skaters started pouring concrete under Portland's Burnside Bridge in 1990 without permission — the city eventually embraced it, and it's now a protected landmark."
+  },
+  {
+    "id8": "0c5cd915",
+    "topic": "Spiderman",
+    "prompt": "What is the name of the symbiote alien that bonds with Peter Parker to create a black suit?",
+    "options": [
+      "Venom",
+      "Carnage",
+      "Anti-Venom",
+      "Toxin"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The Venom symbiote first bonded with Spider-Man in Secret Wars (1984), giving him a sleek black suit — before moving on to Eddie Brock."
+  },
+  {
+    "id8": "c181d045",
+    "topic": "Catholic Fun Facts",
+    "prompt": "Which Catholic feast day, celebrated on January 6th, commemorates the visit of the Magi to the infant Jesus?",
+    "options": [
+      "Epiphany",
+      "Candlemas",
+      "Corpus Christi",
+      "Pentecost"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Epiphany — from the Greek for 'manifestation' — marks the Magi's arrival and is considered the official end of the Christmas season in many Catholic traditions."
+  },
+  {
+    "id8": "2d8f3d7e",
+    "topic": "Flowers",
+    "prompt": "The 'Doll's Eyes' plant (Actaea pachypoda) is named for its berries, which look like what?",
+    "options": [
+      "White eyeballs on blood-red stalks",
+      "Small glass marbles with black pupils",
+      "Pale blue spheres with dark veins",
+      "Ivory beads strung on black wire"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Doll's Eyes berries are white with a black dot — exactly like a doll's glass eye — mounted on vivid red stalks, making the plant look genuinely unsettling and it is fatally toxic."
+  },
+  {
+    "id8": "06620f9b",
+    "topic": "Driver famous bridges",
+    "prompt": "The Millau Viaduct, one of the world's tallest bridges, is located in which country?",
+    "options": [
+      "Italy",
+      "Switzerland",
+      "Spain",
+      "France"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "France's Millau Viaduct, opened in 2004, has a mast that soars higher than the Eiffel Tower — it crosses the Tarn River gorge in the south of France."
+  },
+  {
+    "id8": "8b035cc9",
+    "topic": "Homecoming",
+    "prompt": "Homecoming is traditionally associated with which sport's season?",
+    "options": [
+      "Football",
+      "Basketball",
+      "Baseball",
+      "Soccer"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Homecoming games are almost always football games — the tradition started as a way to bring alumni back to campus for the biggest home game of the fall season."
+  },
+  {
+    "id8": "37e430b2",
+    "topic": "Fall Vegetables",
+    "prompt": "Which U.S. state produces the most pumpkins by weight?",
+    "options": [
+      "Illinois",
+      "California",
+      "Ohio",
+      "Pennsylvania"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Illinois grows roughly 80–90% of the pumpkins processed for canned goods in the U.S., centered around Morton, which calls itself the 'Pumpkin Capital of the World.'"
+  },
+  {
+    "id8": "d9ab8884",
+    "topic": "Classic Rock",
+    "prompt": "Which classic rock band was originally called 'The New Yardbirds' before changing their name?",
+    "options": [
+      "Led Zeppelin",
+      "Deep Purple",
+      "Black Sabbath",
+      "The Who"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Jimmy Page formed The New Yardbirds in 1968 to fulfill Scandinavian tour dates, then renamed them Led Zeppelin before recording their debut album."
+  },
+  {
+    "id8": "fa722d5f",
+    "topic": "Robin Williams",
+    "prompt": "In the film Patch Adams, Williams plays a medical student who believes what is essential to healing?",
+    "options": [
+      "Advanced technology",
+      "Laughter and human connection",
+      "Strict protocols",
+      "Pharmaceutical innovation"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Patch Adams (1998) showcased Williams' belief that humor and compassion are vital to medicine."
+  },
+  {
+    "id8": "a4cd28c0",
+    "topic": "Geography",
+    "prompt": "Which U.S. state capital is the highest in elevation?",
+    "options": [
+      "Denver",
+      "Santa Fe",
+      "Montpelier",
+      "Concord"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Santa Fe, New Mexico sits at 7,000 feet above sea level, making it the highest state capital in the continental U.S."
+  },
+  {
+    "id8": "7e1019a1",
+    "topic": "space history",
+    "prompt": "In what year did SpaceX's Falcon 9 first successfully land a first-stage booster for reuse?",
+    "options": [
+      "2014",
+      "2015",
+      "2016",
+      "2017"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "On December 21, 2015, Falcon 9 became the first orbital-class rocket to land its first stage vertically, revolutionizing spaceflight economics."
+  },
+  {
+    "id8": "ef269281",
+    "topic": "Famous Clowns",
+    "prompt": "What is the name of the clown mascot of McDonald's?",
+    "options": [
+      "Ronald McDonald",
+      "Bozo the Clown",
+      "Crusty the Clown",
+      "Clarabell the Clown"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Ronald McDonald debuted in 1963, played by future Washington Redskins mascot Willard Scott in the first TV commercials."
+  },
+  {
+    "id8": "5fbfa002",
+    "topic": "Celeberties Break in commercials",
+    "prompt": "Which actress, later the star of a massive HBO series, appeared in a Clearasil acne cream commercial in the late 1980s?",
+    "options": [
+      "Sarah Michelle Gellar",
+      "Evangeline Lilly",
+      "Anna Paquin",
+      "Edie Falco"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Sarah Michelle Gellar got her start in commercials — including Clearasil — before 'Buffy the Vampire Slayer' made her the queen of '90s TV."
+  },
+  {
+    "id8": "f601e16c",
+    "topic": "Critters that sting",
+    "prompt": "What is the name of the tiny, nearly invisible jellyfish responsible for 'sea lice' stings on swimmers in the Gulf of Mexico?",
+    "options": [
+      "Moon jellyfish",
+      "Irukandji jellyfish",
+      "Thimble jellyfish",
+      "Lion's mane jellyfish"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Thimble jellyfish larvae are so small they pass through swimwear fabric, causing a rash of stinging welts — what beachgoers call 'sea lice' — along the Gulf Coast each summer."
+  },
+  {
+    "id8": "6a10e8cd",
+    "topic": "Hydration Drinks",
+    "prompt": "Which electrolyte do sports drinks like Gatorade primarily use to trigger thirst and encourage continued drinking?",
+    "options": [
+      "Sodium",
+      "Potassium",
+      "Magnesium",
+      "Calcium"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Sodium is the key thirst-triggering electrolyte — it's why sports drinks are slightly salty and why you keep wanting more."
+  },
+  {
+    "id8": "b26ca646",
+    "topic": "Marvel Heros",
+    "prompt": "What is the real name of the superhero Captain America?",
+    "options": [
+      "James Barnes",
+      "Steve Rogers",
+      "Sam Wilson",
+      "John Walker"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Steve Rogers was a scrawny kid from Brooklyn who became the world's first super-soldier after receiving the experimental Super-Soldier Serum."
+  },
+  {
+    "id8": "8b322276",
+    "topic": "Labor Day",
+    "prompt": "Which legislation, passed in 1938, established the 40-hour workweek and federal minimum wage in the United States?",
+    "options": [
+      "Fair Labor Standards Act",
+      "National Labor Relations Act",
+      "Social Security Act",
+      "Clayton Antitrust Act"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The Fair Labor Standards Act of 1938 set a federal minimum wage of 25 cents per hour and capped the standard workweek at 40 hours — a landmark win for American workers."
+  },
+  {
+    "id8": "16729224",
+    "topic": "Mike Ditka",
+    "prompt": "Before Ditka was hired to coach the Bears in 1982, he had never been a head coach at any level. Who hired him?",
+    "options": [
+      "Mike McCaskey",
+      "George Halas",
+      "Jerry Vainisi",
+      "Ed McCaskey"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Bears founder George Halas personally handpicked Ditka, calling him 'my kind of guy' — it was one of Halas's last major decisions before his death in 1983."
+  },
+  {
+    "id8": "08f18b28",
+    "topic": "Bears",
+    "prompt": "Which team do the Chicago Bears play their home games for in the NFL?",
+    "options": [
+      "NFC South",
+      "NFC North",
+      "AFC North",
+      "NFC East"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The Bears have been in the NFC North (formerly the NFC Central) since the NFL's 1970 AFL-NFL merger."
+  },
+  {
+    "id8": "492e9b53",
+    "topic": "World Cup",
+    "prompt": "What is the maximum number of substitutions allowed per team in a World Cup match?",
+    "options": [
+      "3 substitutions",
+      "4 substitutions",
+      "5 substitutions",
+      "6 substitutions"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Starting in 2022, teams are allowed five substitutions per match in the World Cup, up from the traditional three."
+  },
+  {
+    "id8": "691dff03",
+    "topic": "State Birds",
+    "prompt": "The American Robin is the state bird of which U.S. state?",
+    "options": [
+      "Michigan",
+      "Wisconsin",
+      "Connecticut",
+      "All three of these"
+    ],
+    "correctIndex": 3,
+    "factBlurb": "Michigan, Wisconsin, and Connecticut all claim the American Robin — making it one of the most shared state birds in the country."
+  },
+  {
+    "id8": "2b799b79",
+    "topic": "Trail Mix",
+    "prompt": "The Brazil nut, a trail mix staple, is unique because it cannot be commercially farmed in plantations. Why?",
+    "options": [
+      "Its roots release toxins that kill neighboring trees",
+      "It only grows above 10,000 feet elevation",
+      "It requires old-growth forest bees for pollination",
+      "Its seeds only germinate after a wildfire"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Brazil nuts depend on a specific orchid bee found only in intact Amazon rainforest to pollinate their flowers — remove the old-growth forest and the trees simply stop producing nuts."
+  },
+  {
+    "id8": "9a218524",
+    "topic": "Fireworks",
+    "prompt": "In which country were fireworks invented?",
+    "options": [
+      "China",
+      "India",
+      "Persia",
+      "Japan"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Chinese alchemists accidentally discovered gunpowder around 800 AD, and fireworks followed soon after."
+  },
+  {
+    "id8": "e227d96c",
+    "topic": "Molds",
+    "prompt": "Which of these is NOT a common environmental condition that promotes black mold growth?",
+    "options": [
+      "High humidity above 50%",
+      "Poor air circulation",
+      "Cool temperatures below 40°F",
+      "Water leaks or condensation"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Black mold thrives in warm, moist environments; cold temperatures actually slow its growth significantly."
+  },
+  {
+    "id8": "306c5b81",
+    "topic": "Exotic fruit",
+    "prompt": "The carambola fruit is nicknamed the 'starfruit' because of the shape it forms when sliced. How many points does that star have?",
+    "options": [
+      "5",
+      "4",
+      "6",
+      "8"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Carambola's five ridges running the length of the fruit produce a perfect five-pointed star cross-section — making it one of the most photogenic fruits in the world."
+  },
+  {
+    "id8": "505155cd",
+    "topic": "ice cream",
+    "prompt": "What is the name of the ice cream bar that Unilever's Good Humor brand introduced in 1920 — one of the first individually wrapped ice cream bars on a stick?",
+    "options": [
+      "Eskimo Pie",
+      "Good Humor Bar",
+      "Fudgsicle",
+      "Creamsicle"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Harry Burt Sr. created the Good Humor Bar in 1920 in Youngstown, Ohio, coating vanilla ice cream in chocolate and adding a wooden stick so it wouldn't drip on your hands."
+  },
+  {
+    "id8": "0efc2b13",
+    "topic": "Critters that sting",
+    "prompt": "Which of these animals can sting using a structure called a nematocyst?",
+    "options": [
+      "Fire ant",
+      "Scorpion",
+      "Sea anemone",
+      "Stonefish"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Sea anemones fire microscopic harpoon-like nematocysts — the same stinging cells used by jellyfish and coral — to paralyze prey."
+  },
+  {
+    "id8": "61268b28",
+    "topic": "diesel engines",
+    "prompt": "In what decade did diesel cars become popular in Europe?",
+    "options": [
+      "1970s",
+      "1980s",
+      "1990s",
+      "2000s"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "European diesel adoption accelerated in the 1990s when fuel taxes and emissions regulations favored the efficiency and low CO₂ of diesel cars."
+  },
+  {
+    "id8": "3ee67876",
+    "topic": "Shots",
+    "prompt": "Which vaccine, developed in the 1790s, is considered the world's first vaccine ever created?",
+    "options": [
+      "Smallpox vaccine",
+      "Rabies vaccine",
+      "Typhoid vaccine",
+      "Cholera vaccine"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Edward Jenner used cowpox to protect against smallpox in 1796 — kicking off the entire science of vaccination."
+  },
+  {
+    "id8": "36ea328a",
+    "topic": "automation and control components.",
+    "prompt": "What does the 'I' term in a PID controller correct for?",
+    "options": [
+      "Accumulated steady-state error over time",
+      "Instantaneous rate of change",
+      "Input signal noise",
+      "Initial process disturbance"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The Integral term sums up past errors — it eliminates the persistent offset that a Proportional-only controller leaves behind, pushing the process all the way to the setpoint."
+  },
+  {
+    "id8": "0b99c868",
+    "topic": "tool brands",
+    "prompt": "The Leatherman multi-tool was invented in which decade?",
+    "options": [
+      "1960s",
+      "1970s",
+      "1980s",
+      "1990s"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Tim Leatherman invented his first multi-tool in 1980 after a frustrating trip through Europe with a faulty car and a simple pocketknife."
+  },
+  {
+    "id8": "8d17e8a4",
+    "topic": "90s Music",
+    "prompt": "Which female artist released the album 'Daydream Nation' in 1989, making her a major influence on 90s music?",
+    "options": [
+      "Sonic Youth",
+      "PJ Harvey",
+      "Liz Phair",
+      "Hole"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Sonic Youth's 'Daydream Nation' came out in 1988 and became a touchstone for 90s alternative rock."
+  },
+  {
+    "id8": "734aba93",
+    "topic": "Famous Bar Scenes",
+    "prompt": "In 'Midnight Run,' Robert De Niro's bounty hunter Jack Walsh and his fugitive bond-jumper spend time in a bar in the American Southwest. What is the profession of the fugitive, Jonathan Mardukas?",
+    "options": [
+      "Accountant",
+      "Lawyer",
+      "Stockbroker",
+      "Bail bondsman"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Mardukas is a mob accountant who embezzled $15 million from a crime boss and donated it to charity — earning him the nickname 'The Duke.'"
+  },
+  {
+    "id8": "79739fda",
+    "topic": "Driver famous bridges",
+    "prompt": "Which bridge held the record as the world's longest suspension bridge for over 25 years after opening in 1998?",
+    "options": [
+      "Akashi Kaikyō Bridge",
+      "Jiangyin Bridge",
+      "Tsing Ma Bridge",
+      "Great Belt Bridge"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Japan's Akashi Kaikyō Bridge has a main span of 1,991 meters — it survived a magnitude 7.2 earthquake during construction."
+  },
+  {
+    "id8": "2e13ceb2",
+    "topic": "Panama Canal",
+    "prompt": "In what year did the Panama Canal open to traffic?",
+    "options": [
+      "1906",
+      "1914",
+      "1920",
+      "1925"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "The canal opened on August 15, 1914, cutting the sea route between the Atlantic and Pacific by nearly 8,000 miles."
+  },
+  {
+    "id8": "febec524",
+    "topic": "Billards",
+    "prompt": "In three-cushion billiards, what must the cue ball do before contacting the second object ball to score a point?",
+    "options": [
+      "Touch at least three cushions",
+      "Pocket one object ball",
+      "Touch exactly two cushions",
+      "Complete a full table lap"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Three-cushion billiards requires the cue ball to contact at least three rail cushions before or after hitting the first object ball, then strike the second — no pockets involved."
+  },
+  {
+    "id8": "84a00e97",
+    "topic": "Prisons",
+    "prompt": "Which country's prison system was used as a model for Australia's colonial penal colonies?",
+    "options": [
+      "France",
+      "Great Britain",
+      "Spain",
+      "Portugal"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Britain established penal colonies in Australia starting in 1788 to relieve overcrowding in British prisons."
+  },
+  {
+    "id8": "f4948914",
+    "topic": "Not plain Ice Cream",
+    "prompt": "What flavor is 'Ube' ice cream, a wildly popular variety originally from the Philippines?",
+    "options": [
+      "Coconut",
+      "Purple Yam",
+      "Taro Root",
+      "Pandan Leaf"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Ube is a purple yam native to the Philippines — its naturally vibrant violet color and sweet, nutty flavor have made ube ice cream a global sensation."
+  },
+  {
+    "id8": "da7632c6",
+    "topic": "Things you paddle",
+    "prompt": "A traditional gondola in Venice is propelled by a gondolier using a single oar. What is the name of the distinctive oarlock that makes this possible?",
+    "options": [
+      "Forcola",
+      "Scalmo",
+      "Toletiera",
+      "Caviglia"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "The forcola is a hand-carved wooden oarlock unique to Venice — its complex curves let the gondolier pivot the oar into multiple rowing positions."
+  },
+  {
+    "id8": "d3da93e9",
+    "topic": "October Wars",
+    "prompt": "The Battle of Leyte Gulf in October 1944 is considered the largest naval battle in history. Where did it take place?",
+    "options": [
+      "The Philippines",
+      "Japan",
+      "Guam",
+      "Indonesia"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Fought October 23–26, 1944, Leyte Gulf involved over 200,000 personnel and effectively destroyed Japan's ability to conduct large naval operations."
+  },
+  {
+    "id8": "fdd62136",
+    "topic": "Ties",
+    "prompt": "In the card game War, what happens when both players flip a card of equal value — the 'war' condition?",
+    "options": [
+      "The hand is replayed with one card each",
+      "Each player places three cards face-down, then flips one to battle",
+      "The tied cards are removed from the game",
+      "The player with the higher suit wins the tie"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "In classic War, a tie triggers 'war': each player deals three face-down cards, then flips a fourth — the higher flip wins all the cards on the table."
+  },
+  {
+    "id8": "4e666d7d",
+    "topic": "Street Signs",
+    "prompt": "What color background does a U.S. SCHOOL ZONE warning sign use?",
+    "options": [
+      "Fluorescent yellow-green",
+      "Yellow",
+      "Orange",
+      "White"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Since the 1990s, school zone signs switched from plain yellow to fluorescent yellow-green — studies showed it's the most visible color to the human eye in daylight."
+  },
+  {
+    "id8": "a33eb7a2",
+    "topic": "worlds oceans",
+    "prompt": "Which ocean current brings cold water from the Antarctic to the coasts of South America, Africa, and Australia?",
+    "options": [
+      "Benguela Current",
+      "Humboldt Current",
+      "Canary Current",
+      "California Current"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Also called the Peru Current, it's one of the most productive fishing regions on Earth due to nutrient-rich upwelling."
+  },
+  {
+    "id8": "58456433",
+    "topic": "Watermelon",
+    "prompt": "What amino acid found in high concentrations in watermelon is linked to improved athletic performance?",
+    "options": [
+      "Tryptophan",
+      "Glutamine",
+      "Citrulline",
+      "Lysine"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Watermelon is one of the richest natural sources of L-citrulline, which the body converts to arginine and may help reduce muscle soreness."
+  },
+  {
+    "id8": "3a1c7e05",
+    "topic": "Bill Nye",
+    "prompt": "Bill Nye won a Steve Martin look-alike contest in which city?",
+    "options": [
+      "Los Angeles",
+      "Chicago",
+      "Seattle",
+      "New York"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Nye won a Steve Martin look-alike contest in Seattle — one of the quirky early career footnotes he's mentioned in interviews."
+  },
+  {
+    "id8": "e8144d62",
+    "topic": "Local Madison",
+    "prompt": "Which historic Madison brewery, founded in 1849, is the oldest continuously operating brewery in Wisconsin?",
+    "options": [
+      "Sprecher's Root Beer",
+      "Dane County Brewing",
+      "The Gipfel Brewery",
+      "Miller Brewing Company"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "The Gipfel Brewery (also known as Gipfel's) has been brewing beer in Madison since 1849, longer than any other Wisconsin brewery."
+  },
+  {
+    "id8": "66372b52",
+    "topic": "tool brands",
+    "prompt": "Which tool company invented the oscillating multi-tool category with its Fein Multimaster in 1967?",
+    "options": [
+      "Bosch",
+      "Makita",
+      "Fein",
+      "Dremel"
+    ],
+    "correctIndex": 2,
+    "factBlurb": "Fein's Multimaster was the original oscillating tool, invented to remove plaster casts from patients — it took decades before competitors could legally copy the design after the patent expired."
+  },
+  {
+    "id8": "8e70db62",
+    "topic": "90s Music",
+    "prompt": "Which artist released the album 'Jagged Little Pill' in 1995?",
+    "options": [
+      "Alanis Morissette",
+      "Sheryl Crow",
+      "Jewel",
+      "Fiona Apple"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Alanis Morissette's 'Jagged Little Pill' became one of the best-selling debut albums ever, with 'You Oughta Know' as its breakthrough hit."
+  },
+  {
+    "id8": "ec2493ba",
+    "topic": "Sports teams whose mascot is a bird",
+    "prompt": "The Hawthorn Hawks play in which Australian professional league?",
+    "options": [
+      "AFL",
+      "NRL",
+      "A-League",
+      "BBL"
+    ],
+    "correctIndex": 0,
+    "factBlurb": "Hawthorn is one of the AFL's most successful teams, winning 13 premierships, with four consecutive titles from 2013-2015."
+  },
+  {
+    "id8": "d474bb13",
+    "topic": "Star Wars",
+    "prompt": "In what year was the very first Star Wars film released in theaters?",
+    "options": [
+      "1974",
+      "1977",
+      "1980",
+      "1983"
+    ],
+    "correctIndex": 1,
+    "factBlurb": "Released May 25, 1977, it was originally titled just 'Star Wars' before being retitled 'A New Hope' after the sequels became hits."
+  }
+]
