@@ -1,0 +1,12 @@
+{
+  "name": "tr1via-model-bench",
+  "private": true,
+  "type": "module",
+  "description": "Throwaway benchmark: can Sonnet 5.5 replace Opus as the fact checker? Not part of the app build.",
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.132.1"
+  },
+  "devDependencies": {
+    "tsx": "4.23.15"
+  }
+}
