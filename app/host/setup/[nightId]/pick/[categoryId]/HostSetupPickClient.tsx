@@ -1421,7 +1421,10 @@ export function HostSetupPickClient({
     (trackerPhase === "writing" || trackerPhase === "checking") &&
     trackerWritten >= trackerTarget &&
     serverCertified === 0 &&
-    (liveClean === undefined || liveClean === 0);
+    // A live update must confirm nothing is clean yet: on a reroll the
+    // cards read 0 the whole way, so after a reload into a refill round the
+    // polled row alone (written 20, certified 0) looked like round one.
+    liveClean === 0;
   useEffect(() => {
     if (sawFullFirstRound) setFullRoundSeenAttempt(currentGenerationAttemptRef.current);
   }, [sawFullFirstRound]);
