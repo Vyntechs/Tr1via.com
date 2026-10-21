@@ -81,40 +81,44 @@ describe("HostGenLoading progress tracker", () => {
       />,
     );
     expect(screen.getByTestId("host-gen-status-line").textContent).toBe(
-      "Replacing 3 that failed the check",
+      "3 failed the check. Writing replacements",
     );
     expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe("3 to replace");
   });
 
-  it("holds the percent and bars still while on screen, through an auto-resume", () => {
+  it("follows the real counts through a refill and an auto-resume, and says why they drop", () => {
     const view = (over: Partial<HostGenProgress>) => (
       <HostGenLoading themeKey="house" topic="Pixar" loaded={[]} progress={progress(over)} />
     );
     const shownPct = () => screen.getAllByText(/^\d+%$/)[0]!.textContent;
+    const headline = () => screen.getByTestId("host-gen-status-line").textContent;
     const none = { checked: undefined, checkTotal: undefined };
     const { rerender, unmount } = render(view({ checked: 40, checkTotal: 40 }));
     expect(shownPct()).toBe("78%");
     expect(parseFloat(fill("check"))).toBe(100);
-    // 3 failed: the honest figure dips to 75%, the screen holds 78%, and the
-    // count says the truth.
+    // 3 failed: the bar and the percent drop to the truth, and the headline
+    // says why.
     rerender(view({ ...none, phase: "repairing", certified: 17, clean: 17 }));
-    expect(shownPct()).toBe("78%");
-    expect(parseFloat(fill("check"))).toBe(100);
+    expect(shownPct()).toBe("75%");
+    expect(parseFloat(fill("check"))).toBe(85);
     expect(count("check")).toBe("17/20");
-    // Paused, then auto-resumed (a new server attempt that starts queued):
-    // the screen stays up and the bar does not fall back.
-    rerender(view({ ...none, phase: "needs_attention", written: 15, certified: 15 }));
-    expect(shownPct()).toBe("78%");
-    rerender(view({ ...none, phase: "queued", written: 15 }));
-    expect(shownPct()).toBe("78%");
-    rerender(view({ phase: "checking", written: 15, checked: 0, checkTotal: 30 }));
-    expect(shownPct()).toBe("78%");
-    expect(count("check")).toBe("0/30");
+    expect(headline()).toBe("3 failed the check. Writing replacements");
+    // Paused in round 1 with nothing saved, then auto-resumed: the new
+    // attempt really starts from zero, and the screen says so.
+    rerender(view({ phase: "checking", certified: 0, checked: 16, checkTotal: 40 }));
+    expect(shownPct()).toBe("65%");
+    rerender(view({ ...none, phase: "writing", written: 5, certified: 0, clean: 0, resumedWith: 0 }));
+    expect(shownPct()).toBe("14%");
+    expect(parseFloat(fill("write"))).toBe(25);
+    expect(parseFloat(fill("check"))).toBe(0);
+    expect(count("write")).toBe("5/20");
+    expect(headline()).toBe("Starting over after a pause. Writing questions");
     // A new build always comes on a fresh screen, which starts from its own
     // real counts.
     unmount();
     render(view({ ...none, phase: "writing", written: 2 }));
     expect(shownPct()).toBe("6%");
+    expect(headline()).toBe("Writing questions");
   });
 
   it("shows elapsed time and says when the screen joined mid-build", () => {
@@ -209,7 +213,7 @@ describe("buildTracker", () => {
   it("treats a refill batch of 11+ questions as a refill (checkTotal is doubled)", () => {
     const tr = buildTracker(progress({ certified: 8, checked: 4, checkTotal: 26 }));
     expect(tr.refillNeed).toBe(12);
-    expect(tr.headline).toBe("Checking the replacements");
+    expect(tr.headline).toBe("12 failed the check. Checking the replacements");
   });
 
   it("counts photos against certified questions", () => {

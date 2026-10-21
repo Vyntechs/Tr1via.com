@@ -28,10 +28,8 @@ import { DifficultyBar, StockImage } from "./_shared";
 import {
   buildTracker,
   formatElapsed,
-  holdTracker,
   livenessAt,
   type HostGenProgress,
-  type Tracker,
   type TrackerStage,
 } from "./genProgress";
 
@@ -170,26 +168,13 @@ function HostGenLoadingInner({
   // A real caller's progress already floors photos from the cards when that
   // is safe (not on a reroll reload, where the cards are the OLD batch), so
   // only the demo/fallback states count photos from `loaded` here.
-  const rawTracker = buildTracker({
+  // No smoothing or holding: the bars and the percent are exactly what the
+  // server's counts support. When they go down (a pause lost its work, or
+  // questions failed the check) the headline says why.
+  const tracker = buildTracker({
     ...progress,
     photos: progressProp ? progress.photos : Math.max(progress.photos, photosCount),
   });
-  // Never let the percent or a bar move backward while this screen is up.
-  // It stays mounted through an auto-resume (new server attempt, same
-  // build), and unmounts between builds (review or failure screen), so a
-  // fresh build gets a fresh hold. Only real callers are held; the demo isn't.
-  const [held, setHeld] = useState<Tracker | null>(null);
-  const tracker = progressProp ? holdTracker(held, rawTracker) : rawTracker;
-  if (
-    progressProp &&
-    (held === null ||
-      held.overall !== tracker.overall ||
-      held.stages.some((s, i) => s.fraction !== tracker.stages[i].fraction))
-  ) {
-    // Remember the high-water mark (React's "adjust state while rendering"
-    // pattern; the guard above stops it once nothing changed).
-    setHeld(tracker);
-  }
   const liveness = now === null ? null : livenessAt(now, progress);
   const live = liveness?.live ?? false;
   const elapsed =

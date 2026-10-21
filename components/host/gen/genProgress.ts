@@ -38,6 +38,10 @@ export interface HostGenProgress {
   /** Local time (ms) of the last real sign of life (broadcast or a fresh
    *  heartbeat in the job row). null = none seen yet. */
   lastSignalAt: number | null;
+  /** Set when this attempt picked a paused build back up: how many checked
+   *  questions the server had saved at the pause (0 = it starts over from
+   *  nothing). Lets the headline say why the numbers went down. */
+  resumedWith?: number;
 }
 
 export type StageKey = "write" | "check" | "photos";
@@ -214,78 +218,94 @@ export function buildTracker(p: HostGenProgress): Tracker {
   };
 
   const stages: [TrackerStage, TrackerStage, TrackerStage] = [write, check, photo];
-  // Each stage counts for exactly what its bar shows. (A "done" stage used to
-  // count as full even at 15/20, which overstated a resume's re-check and
-  // then dropped ~27 points when the refill started.) Ready is 100%: not
-  // every card finds a photo.
+  // Each stage counts for exactly what its bar shows, whatever its state, so
+  // the percent always matches the bars. (A "done" stage used to count as
+  // full even at 15/20, and a "waiting" one as empty while its bar showed
+  // 15/20.) Ready is 100%: not every card finds a photo.
   const overall =
     phase === "ready"
       ? 1
-      : clamp01(
-          stages.reduce(
-            (sum, s) => sum + s.weight * (s.state === "waiting" ? 0 : s.fraction),
-            0,
-          ),
-        );
+      : clamp01(stages.reduce((sum, s) => sum + s.weight * s.fraction, 0));
+
+  // ── Headline ── Says what is happening, and why whenever the numbers just
+  // went down: a pause that lost its work, or questions that failed a check.
+  const resumedWith =
+    typeof p.resumedWith === "number" && Number.isFinite(p.resumedWith)
+      ? Math.max(0, p.resumedWith)
+      : null;
+  // Round one of an attempt that picked a paused build back up.
+  const firstRoundAfterPause =
+    resumedWith !== null &&
+    clean === 0 &&
+    !refill &&
+    (phase === "queued" || phase === "writing" || phase === "checking");
+  // A resume re-checks the saved questions first, then writes the rest.
+  // While nothing new has passed yet, the gap is the ones that failed the
+  // re-check plus the ones never written.
+  const resumeRefill = refill && resumedWith !== null && resumedWith > 0 && clean <= resumedWith;
+  const reCheckFailed = resumeRefill ? Math.max(0, (resumedWith ?? 0) - clean) : 0;
+  const failedLead = resumeRefill
+    ? reCheckFailed > 0
+      ? `${reCheckFailed} failed the re-check.`
+      : "Picking up after a pause."
+    : `${refillNeed} failed the check.`;
+  const replacing = resumeRefill
+    ? `Writing ${refillNeed} more`
+    : refillNeed === 1
+      ? "Writing a replacement"
+      : "Writing replacements";
+  const checkingNew = `Checking ${refillNeed === 1 ? "the replacement" : "the replacements"}`;
 
   let headline: string;
-  switch (phase) {
-    case "queued":
-      headline = "Getting started";
-      break;
-    case "writing":
-      headline = refill
-        ? `Replacing ${refillNeed} that failed the check`
-        : "Writing questions";
-      break;
-    case "checking":
-      headline = refill
-        ? `Checking ${refillNeed === 1 ? "the replacement" : "the replacements"}`
-        : "Fact-checking answers";
-      break;
-    case "repairing":
-      // No number unless the server told us the clean count: a guess from
-      // the cards said "Replacing 20" on a reroll where 3 had failed.
-      headline = refill
-        ? `Replacing ${refillNeed} that failed the check`
-        : clean >= target
-          ? "Saving the new questions"
-          : "Replacing the ones that failed the check";
-      break;
-    case "images":
-      headline = "Finding photos";
-      break;
-    case "ready":
-      headline = "Questions ready";
-      break;
-    default:
-      headline = "Build paused";
+  if (firstRoundAfterPause && resumedWith === 0) {
+    headline =
+      phase === "queued"
+        ? "Starting over after a pause"
+        : phase === "writing"
+          ? "Starting over after a pause. Writing questions"
+          : "Starting over after a pause. Fact-checking answers";
+  } else if (firstRoundAfterPause) {
+    // The saved questions get checked again before anything new is written.
+    headline =
+      phase === "queued"
+        ? "Picking up after a pause"
+        : phase === "writing"
+          ? "Picking up after a pause. Writing questions"
+          : written <= (resumedWith ?? 0)
+            ? `Picking up after a pause. Re-checking the ${resumedWith} saved`
+            : "Picking up after a pause. Fact-checking answers";
+  } else {
+    switch (phase) {
+      case "queued":
+        headline = "Getting started";
+        break;
+      case "writing":
+        headline = refill ? `${failedLead} ${replacing}` : "Writing questions";
+        break;
+      case "checking":
+        headline = refill ? `${failedLead} ${checkingNew}` : "Fact-checking answers";
+        break;
+      case "repairing":
+        // No number unless the server told us the clean count: a guess from
+        // the cards said "Replacing 20" on a reroll where 3 had failed.
+        headline = refill
+          ? `${failedLead} ${replacing}`
+          : clean >= target
+            ? "Saving the new questions"
+            : "Some failed the check. Writing replacements";
+        break;
+      case "images":
+        headline = "Finding photos";
+        break;
+      case "ready":
+        headline = "Questions ready";
+        break;
+      default:
+        headline = "Build paused";
+    }
   }
 
   return { stages, overall, headline, refillNeed };
-}
-
-/**
- * Holds the percent and every stage bar at the highest value already shown
- * for this build, so nothing on screen moves backward. Counts, labels and
- * the headline stay exactly as buildTracker reported them. This never
- * invents motion: a held bar simply stays still until the real count passes
- * it. It covers the one drop no honest formula avoids: the round's checks
- * finish (bar full) and then some questions fail and must be replaced.
- * Pass the previous HELD tracker for the same build, or null to start. The
- * loading screen holds for as long as it stays on screen: a resume after a
- * pause keeps it mounted (and must not drop), while a new build always
- * arrives on a fresh mount (it unmounts for the review or failure screen).
- */
-export function holdTracker(prev: Tracker | null, next: Tracker): Tracker {
-  if (!prev) return next;
-  const stages = next.stages.map((s, i) => {
-    const before = prev.stages[i];
-    return before && before.key === s.key && before.fraction > s.fraction
-      ? { ...s, fraction: before.fraction }
-      : s;
-  }) as Tracker["stages"];
-  return { ...next, stages, overall: Math.max(prev.overall, next.overall) };
 }
 
 export interface Liveness {

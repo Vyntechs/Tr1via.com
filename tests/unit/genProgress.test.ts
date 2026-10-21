@@ -1,16 +1,18 @@
-// The owner's rule for the loading screen: every number is real, and the
-// percent and the bars never move backward during one build. These feed the
-// review's real sequences (Oct 21 progress-fix review, items 1-3) through
-// buildTracker + holdTracker exactly the way the loading screen does.
+// The owner's rule for the loading screen: progress must be true. Every bar
+// and the percent show exactly what the server's counts support, never more.
+// When the true figure goes down (questions fail the check, or a pause loses
+// its work), the headline says why in plain words. These feed real sequences
+// (Oct 21 progress reviews) through buildTracker the way the screen does.
 import { describe, expect, it } from "vitest";
 import {
   buildTracker,
-  holdTracker,
+  STAGE_WEIGHTS,
   type HostGenProgress,
   type Tracker,
 } from "@/components/host/gen/genProgress";
 
 type Step = [label: string, p: Partial<HostGenProgress>];
+type Row = { label: string; p: HostGenProgress; t: Tracker };
 
 const base: HostGenProgress = {
   phase: "queued",
@@ -22,41 +24,93 @@ const base: HostGenProgress = {
   lastSignalAt: 0,
 };
 
-function run(steps: Step[]) {
-  let held: Tracker | null = null;
-  return steps.map(([label, p]) => {
-    const raw = buildTracker({ ...base, ...p });
-    held = holdTracker(held, raw);
-    return { label, raw, held };
+function run(steps: Step[]): Row[] {
+  return steps.map(([label, over]) => {
+    const p = { ...base, ...over };
+    return { label, p, t: buildTracker(p) };
   });
 }
 
 const pct = (t: Tracker) => Math.round(t.overall * 1000) / 10;
-
-/** Fails with the step names if the percent or any bar went backward. */
-function expectNeverBackward(
-  rows: { label: string; t: Tracker }[],
-) {
-  for (let i = 1; i < rows.length; i++) {
-    const a = rows[i - 1]!;
-    const b = rows[i]!;
-    expect(
-      b.t.overall,
-      `overall dropped ${pct(a.t)}% -> ${pct(b.t)}% at "${a.label}" -> "${b.label}"`,
-    ).toBeGreaterThanOrEqual(a.t.overall);
-    b.t.stages.forEach((s, k) => {
-      expect(
-        s.fraction,
-        `${s.key} bar dropped at "${a.label}" -> "${b.label}"`,
-      ).toBeGreaterThanOrEqual(a.t.stages[k]!.fraction);
-    });
-  }
-}
-
 const stage = (t: Tracker, key: "write" | "check" | "photos") =>
   t.stages.find((s) => s.key === key)!;
 
-describe("first build, 3 questions fail the check (review item 1)", () => {
+/** What the server's counts support for each bar, worked out on its own. */
+function supportedFractions(p: HostGenProgress): Record<"write" | "check" | "photos", number> {
+  const target = p.target;
+  const certified = Math.min(target, p.certified);
+  const clean = Math.min(target, p.clean ?? certified);
+  let check: number;
+  if (p.phase === "checking" && (p.checkTotal ?? 0) > 0) {
+    // Already clean, plus this round's share of the target times the share
+    // of its checks that are done.
+    const checkTotal = p.checkTotal!;
+    const checked = Math.min(checkTotal, p.checked ?? 0);
+    const share = Math.min(target - clean, checkTotal / 2);
+    check = (clean + share * (checked / checkTotal)) / target;
+  } else if (
+    p.phase === "checking" ||
+    p.phase === "repairing" ||
+    (clean > 0 && clean < target && p.phase === "writing")
+  ) {
+    check = clean / target;
+  } else {
+    check = certified / target;
+  }
+  const photoTotal = certified > 0 ? certified : target;
+  return {
+    write: Math.min(target, p.written) / target,
+    check,
+    photos: Math.min(photoTotal, p.photos) / photoTotal,
+  };
+}
+
+/** Every bar and the percent equal what the counts support, never more. */
+function expectTrue(rows: Row[]) {
+  for (const { label, p, t } of rows) {
+    const want = supportedFractions(p);
+    let sum = 0;
+    for (const s of t.stages) {
+      expect(s.fraction, `${s.key} bar at "${label}"`).toBeCloseTo(want[s.key], 9);
+      expect(s.count, `${s.key} count at "${label}"`).toBeLessThanOrEqual(s.total);
+      if (!(p.phase === "checking" && (p.checkTotal ?? 0) > 0 && s.key === "check")) {
+        // Outside the live check round a bar is just its own count.
+        expect(s.fraction, `${s.key} bar vs count at "${label}"`).toBeCloseTo(s.count / s.total, 9);
+      }
+      sum += STAGE_WEIGHTS[s.key] * s.fraction;
+    }
+    expect(t.overall, `percent at "${label}"`).toBeCloseTo(p.phase === "ready" ? 1 : sum, 9);
+  }
+}
+
+const EXPLAINS_DROP = /failed|starting over|picking up|paused/i;
+
+/** Any step where the percent or a bar goes down says why in the headline. */
+function expectDropsExplained(rows: Row[]) {
+  for (let i = 1; i < rows.length; i++) {
+    const a = rows[i - 1]!;
+    const b = rows[i]!;
+    const dropped =
+      b.t.overall < a.t.overall - 1e-9 ||
+      b.t.stages.some((s, k) => s.fraction < a.t.stages[k]!.fraction - 1e-9);
+    if (dropped) {
+      expect(
+        b.t.headline,
+        `"${a.label}" -> "${b.label}" went ${pct(a.t)}% -> ${pct(b.t)}% with no reason given`,
+      ).toMatch(EXPLAINS_DROP);
+    }
+  }
+}
+
+function countDrops(rows: Row[]) {
+  let n = 0;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i]!.t.overall < rows[i - 1]!.t.overall - 1e-9) n++;
+  }
+  return n;
+}
+
+describe("first build, 3 fail the check, then a refill round", () => {
   const rows = run([
     ["queued", { phase: "queued" }],
     ["writing 7", { phase: "writing", written: 7 }],
@@ -73,48 +127,57 @@ describe("first build, 3 questions fail the check (review item 1)", () => {
     ["ready", { phase: "ready", written: 20, certified: 20, clean: 20, photos: 19 }],
   ]);
 
-  it("the percent and every bar on screen never move backward", () => {
-    expectNeverBackward(rows.map((r) => ({ label: r.label, t: r.held })));
-    expect(pct(rows.at(-1)!.held)).toBe(100);
+  it("shows only what the counts support, and explains the one drop", () => {
+    expectTrue(rows);
+    expectDropsExplained(rows);
+    expect(countDrops(rows)).toBe(1);
+    expect(pct(rows.at(-1)!.t)).toBe(100);
   });
 
-  it("the raw maths no longer drops when the refill starts checking", () => {
-    // Was 74.7% -> 56.0% (the check bar reset to 0/8).
-    const fromRepair = rows.slice(5).map((r) => ({ label: r.label, t: r.raw }));
-    expectNeverBackward(fromRepair);
-    expect(pct(rows[7]!.raw)).toBe(74.7);
-    expect(pct(rows[9]!.raw)).toBe(78);
+  it("drops the check bar to 17/20 when 3 fail, and says so", () => {
+    expect(pct(rows[4]!.t)).toBe(78);
+    expect(stage(rows[4]!.t, "check").fraction).toBe(1);
+    const repair = rows[5]!.t;
+    expect(pct(repair)).toBe(74.7);
+    expect(stage(repair, "check")).toMatchObject({ count: 17, total: 20, fraction: 0.85, detail: "3 to replace" });
+    expect(repair.headline).toBe("3 failed the check. Writing replacements");
+    expect(rows[6]!.t.headline).toBe("3 failed the check. Writing replacements");
   });
 
-  it("shows the real counts at each moment", () => {
-    const repair = rows[5]!.raw;
-    expect(repair.headline).toBe("Replacing 3 that failed the check");
-    expect(stage(repair, "check")).toMatchObject({ count: 17, total: 20, detail: "3 to replace" });
-
-    const refillCheck = rows[7]!.raw;
-    expect(refillCheck.headline).toBe("Checking the replacements");
-    expect(stage(refillCheck, "check")).toMatchObject({
-      count: 17,
-      total: 20,
-      detail: "0/8 checks",
-    });
-    expect(stage(rows[9]!.raw, "check").detail).toBe("8/8 checks");
-    expect(stage(rows[4]!.raw, "check")).toMatchObject({ count: 40, total: 40 });
-  });
-
-  it("holds the bar still (not faked forward) through the one real drop", () => {
-    // Checks finish (78%), then 3 fail. The honest figure dips; the screen
-    // holds at 78% until real photo counts pass it, and the counts stay true.
-    expect(pct(rows[4]!.held)).toBe(78);
-    expect(pct(rows[5]!.raw)).toBeLessThan(78);
-    expect(pct(rows[5]!.held)).toBe(78);
-    expect(pct(rows[9]!.held)).toBe(78);
-    expect(stage(rows[5]!.held, "check").count).toBe(17);
-    expect(pct(rows[11]!.held)).toBeGreaterThan(78);
+  it("climbs back from 17/20 as the replacements are checked", () => {
+    const refillCheck = rows[7]!.t;
+    expect(refillCheck.headline).toBe("3 failed the check. Checking the replacements");
+    expect(stage(refillCheck, "check")).toMatchObject({ count: 17, total: 20, detail: "0/8 checks" });
+    expect(pct(refillCheck)).toBe(74.7);
+    expect(pct(rows[8]!.t)).toBeGreaterThan(74.7);
+    expect(stage(rows[9]!.t, "check").detail).toBe("8/8 checks");
+    expect(pct(rows[9]!.t)).toBe(78);
+    expect(pct(rows[11]!.t)).toBeGreaterThan(78);
   });
 });
 
-describe('"Another 20" reroll after a reload (review item 2)', () => {
+describe("a second refill round where 1 more fails", () => {
+  const rows = run([
+    ["checking 40/40", { phase: "checking", written: 20, checked: 40, checkTotal: 40 }],
+    ["repairing, 17 clean", { phase: "repairing", written: 20, certified: 17, clean: 17 }],
+    ["refill checking 6/6", { phase: "checking", written: 20, certified: 17, clean: 17, checked: 6, checkTotal: 6 }],
+    ["repairing, 19 clean", { phase: "repairing", written: 20, certified: 19, clean: 19 }],
+    ["refill 2 writing", { phase: "writing", written: 20, certified: 19, clean: 19 }],
+    ["refill 2 checking 1/2", { phase: "checking", written: 20, certified: 19, clean: 19, checked: 1, checkTotal: 2 }],
+    ["photos 4", { phase: "images", written: 20, certified: 20, clean: 20, photos: 4 }],
+  ]);
+
+  it("explains each drop with the real number that failed", () => {
+    expectTrue(rows);
+    expectDropsExplained(rows);
+    expect(pct(rows[2]!.t)).toBe(78);
+    expect(pct(rows[3]!.t)).toBe(76.9);
+    expect(rows[3]!.t.headline).toBe("1 failed the check. Writing a replacement");
+    expect(rows[5]!.t.headline).toBe("1 failed the check. Checking the replacement");
+  });
+});
+
+describe('"Another 20" reroll after a reload', () => {
   // On a reroll the old cards stay until the final swap, so the page sends
   // certified 0 the whole way. The server's `clean` count carries the truth.
   const rows = run([
@@ -127,85 +190,122 @@ describe('"Another 20" reroll after a reload (review item 2)', () => {
     ["photos 5", { phase: "images", written: 20, certified: 20, clean: 20, photos: 5 }],
   ]);
 
-  it("never moves backward, and the raw maths only dips at the real failure", () => {
-    expectNeverBackward(rows.map((r) => ({ label: r.label, t: r.held })));
-    expectNeverBackward(rows.slice(1).map((r) => ({ label: r.label, t: r.raw })));
-    // Was 78% -> 56% with "Replacing 20".
-    expect(pct(rows[1]!.raw)).toBe(74.7);
+  it("shows only what the counts support, and explains the drop", () => {
+    expectTrue(rows);
+    expectDropsExplained(rows);
+    expect(pct(rows[1]!.t)).toBe(74.7);
   });
 
-  it('says "Replacing 3", not "Replacing 20"', () => {
-    expect(rows[1]!.raw.headline).toBe("Replacing 3 that failed the check");
-    expect(rows[1]!.raw.refillNeed).toBe(3);
-    expect(stage(rows[1]!.raw, "check")).toMatchObject({ count: 17, total: 20 });
-    expect(rows[2]!.raw.headline).toBe("Replacing 3 that failed the check");
-    expect(stage(rows[3]!.raw, "check")).toMatchObject({ count: 17, detail: "0/8 checks" });
-    expect(rows[5]!.raw.headline).toBe("Saving the new questions");
+  it('says "3 failed", not "Replacing 20"', () => {
+    expect(rows[1]!.t.headline).toBe("3 failed the check. Writing replacements");
+    expect(rows[1]!.t.refillNeed).toBe(3);
+    expect(stage(rows[1]!.t, "check")).toMatchObject({ count: 17, total: 20 });
+    expect(stage(rows[3]!.t, "check")).toMatchObject({ count: 17, detail: "0/8 checks" });
+    expect(rows[5]!.t.headline).toBe("Saving the new questions");
   });
 
-  it("gives no number at all when only the polled row is known", () => {
+  it("gives no number when only the polled row is known, but still says why", () => {
     const t = buildTracker({ ...base, phase: "repairing", written: 20, certified: 0 });
-    expect(t.headline).toBe("Replacing the ones that failed the check");
-    expect(t.headline).not.toMatch(/\d/);
+    expect(t.headline).toBe("Some failed the check. Writing replacements");
+    expect(stage(t, "check")).toMatchObject({ count: 0, fraction: 0 });
   });
 });
 
-describe("resume after a pause, 15 saved, 2 fail the re-check (review item 3)", () => {
-  // The route no longer lowers the written count to 13, and the two deleted
-  // cards are still on screen for a moment (certified 15 from the cards) while
-  // the server's clean count already says 13.
+describe("round-1 pause, auto-resumed from zero (review 3, item 1)", () => {
+  // Nothing is saved until a round's checks finish, so the resumed attempt
+  // writes all 20 again. The screen stays up through the resume.
+  const again = { resumedWith: 0 };
   const rows = run([
-    // Before the pause (same screen stays up through an auto-resume).
-    ["before pause: repairing", { phase: "repairing", written: 15, certified: 15, clean: 15 }],
-    ["paused", { phase: "needs_attention", written: 15, certified: 15 }],
-    // The resume claim is a new server attempt; the counts restart.
-    ["queued", { phase: "queued", written: 15 }],
-    ["re-check 0/30", { phase: "checking", written: 15, checked: 0, checkTotal: 30 }],
-    ["re-check 30/30", { phase: "checking", written: 15, checked: 30, checkTotal: 30 }],
-    ["repairing", { phase: "repairing", written: 15, certified: 15, clean: 13 }],
-    ["refill writing 15", { phase: "writing", written: 15, certified: 13, clean: 13 }],
-    ["refill writing 18", { phase: "writing", written: 18, certified: 13, clean: 13 }],
-    ["refill writing 20", { phase: "writing", written: 20, certified: 13, clean: 13 }],
-    ["refill checking 0/16", { phase: "checking", written: 20, certified: 13, clean: 13, checked: 0, checkTotal: 16 }],
-    ["refill checking 16/16", { phase: "checking", written: 20, certified: 13, clean: 13, checked: 16, checkTotal: 16 }],
-    ["photos 3", { phase: "images", written: 20, certified: 20, clean: 20, photos: 3 }],
+    ["writing 20", { phase: "writing", written: 20 }],
+    ["checking 16/40", { phase: "checking", written: 20, checked: 16, checkTotal: 40 }],
+    ["paused", { phase: "needs_attention", written: 20 }],
+    ["resume, no counts yet", { ...again, phase: "writing", written: 0 }],
+    ["resume writing 5", { ...again, phase: "writing", written: 5, clean: 0 }],
+    ["resume writing 15", { ...again, phase: "writing", written: 15, clean: 0 }],
+    ["resume writing 20", { ...again, phase: "writing", written: 20, clean: 0 }],
+    ["resume checking 10/40", { ...again, phase: "checking", written: 20, clean: 0, checked: 10, checkTotal: 40 }],
+    ["resume checking 40/40", { ...again, phase: "checking", written: 20, clean: 0, checked: 40, checkTotal: 40 }],
+    ["all clean, saving", { ...again, phase: "repairing", written: 20, certified: 20, clean: 20 }],
+    ["photos 6", { ...again, phase: "images", written: 20, certified: 20, clean: 20, photos: 6 }],
   ]);
 
-  it("never moves backward across the pause, and the raw maths only dips at the real failure", () => {
-    expectNeverBackward(rows.map((r) => ({ label: r.label, t: r.held })));
-    // The raw figure really does fall to 0% when the resumed attempt starts
-    // queued; only the hold keeps the screen at the pre-pause value.
-    expect(pct(rows[2]!.raw)).toBe(0);
-    expect(pct(rows[2]!.held)).toBe(pct(rows[0]!.held));
-    expectNeverBackward(rows.slice(5).map((r) => ({ label: r.label, t: r.raw })));
-    // Was 78% -> 70.3% -> 50.7%. The re-check no longer counts 5 unwritten
-    // questions as written, so it reads lower and then climbs.
-    expect(pct(rows[4]!.raw)).toBe(58.5);
-    expect(pct(rows[5]!.raw)).toBe(56.3);
+  it("shows the real restart instead of a full bar, and says why", () => {
+    expectTrue(rows);
+    expectDropsExplained(rows);
+    expect(pct(rows[1]!.t)).toBe(64.8);
+    expect(rows[2]!.t.headline).toBe("Build paused");
+    expect(pct(rows[3]!.t)).toBe(0);
+    expect(rows[3]!.t.headline).toBe("Starting over after a pause. Writing questions");
+    const w5 = rows[4]!.t;
+    expect(pct(w5)).toBe(14);
+    expect(stage(w5, "write")).toMatchObject({ count: 5, total: 20, fraction: 0.25 });
+    expect(stage(w5, "check").fraction).toBe(0);
+    expect(pct(rows[5]!.t)).toBe(42);
+    expect(rows[7]!.t.headline).toBe("Starting over after a pause. Fact-checking answers");
+    expect(pct(rows[7]!.t)).toBe(61.5);
   });
 
-  it("keeps the written count at 15 and says how many are really being replaced", () => {
-    expect(stage(rows[5]!.raw, "write").count).toBe(15);
-    expect(rows[5]!.raw.headline).toBe("Replacing 7 that failed the check");
-    expect(stage(rows[5]!.raw, "check")).toMatchObject({ count: 13, total: 20 });
-    expect(stage(rows[4]!.raw, "check")).toMatchObject({
+  it("drops the restart note once the new round's questions pass", () => {
+    expect(rows[9]!.t.headline).toBe("Saving the new questions");
+    expect(rows[10]!.t.headline).toBe("Finding photos");
+  });
+
+  it("an ordinary first build never mentions a pause", () => {
+    const t = buildTracker({ ...base, phase: "writing", written: 5 });
+    expect(t.headline).toBe("Writing questions");
+  });
+});
+
+describe("pause with 15 saved, 2 fail the re-check", () => {
+  // The resume re-checks the 15 saved questions, then writes the rest. The
+  // route keeps the written count at 15 and sends the clean count (13) while
+  // the 2 deleted cards may still be on screen (certified 15 from the cards).
+  const saved = { resumedWith: 15 };
+  const rows = run([
+    ["before pause: repairing", { phase: "repairing", written: 20, certified: 15, clean: 15 }],
+    ["paused", { phase: "needs_attention", written: 20, certified: 15 }],
+    ["queued", { ...saved, phase: "queued", written: 15 }],
+    ["re-check 0/30", { ...saved, phase: "checking", written: 15, checked: 0, checkTotal: 30 }],
+    ["re-check 30/30", { ...saved, phase: "checking", written: 15, checked: 30, checkTotal: 30 }],
+    ["repairing", { ...saved, phase: "repairing", written: 15, certified: 15, clean: 13 }],
+    ["refill writing 15", { ...saved, phase: "writing", written: 15, certified: 13, clean: 13 }],
+    ["refill writing 18", { ...saved, phase: "writing", written: 18, certified: 13, clean: 13 }],
+    ["refill writing 20", { ...saved, phase: "writing", written: 20, certified: 13, clean: 13 }],
+    ["refill checking 0/16", { ...saved, phase: "checking", written: 20, certified: 13, clean: 13, checked: 0, checkTotal: 16 }],
+    ["refill checking 16/16", { ...saved, phase: "checking", written: 20, certified: 13, clean: 13, checked: 16, checkTotal: 16 }],
+    ["photos 3", { ...saved, phase: "images", written: 20, certified: 20, clean: 20, photos: 3 }],
+  ]);
+
+  it("shows only what the counts support, and explains every drop", () => {
+    expectTrue(rows);
+    expectDropsExplained(rows);
+    expect(pct(rows[1]!.t)).toBe(72.5);
+    expect(pct(rows[2]!.t)).toBe(42);
+    expect(pct(rows[4]!.t)).toBe(58.5);
+    expect(pct(rows[5]!.t)).toBe(56.3);
+    expect(pct(rows[10]!.t)).toBe(78);
+  });
+
+  it("says what really happened at each step", () => {
+    expect(rows[0]!.t.headline).toBe("5 failed the check. Writing replacements");
+    expect(rows[2]!.t.headline).toBe("Picking up after a pause");
+    expect(rows[3]!.t.headline).toBe("Picking up after a pause. Re-checking the 15 saved");
+    expect(stage(rows[4]!.t, "check")).toMatchObject({
       count: 30,
       total: 30,
       detail: "2 checks each on 15 questions",
     });
-    expect(stage(rows[6]!.raw, "write").detail).toBe("7 more");
-    expect(stage(rows[9]!.raw, "check")).toMatchObject({ count: 13, detail: "0/16 checks" });
+    // 2 failed and 5 were never written: not "7 failed the check".
+    expect(rows[5]!.t.headline).toBe("2 failed the re-check. Writing 7 more");
+    expect(stage(rows[5]!.t, "write").count).toBe(15);
+    expect(stage(rows[5]!.t, "check")).toMatchObject({ count: 13, total: 20 });
+    expect(stage(rows[6]!.t, "write").detail).toBe("7 more");
+    expect(rows[9]!.t.headline).toBe("2 failed the re-check. Checking the replacements");
+    expect(stage(rows[9]!.t, "check")).toMatchObject({ count: 13, detail: "0/16 checks" });
   });
-});
 
-describe("holdTracker", () => {
-  it("starts fresh with no previous tracker and changes no counts", () => {
-    const t = buildTracker({ ...base, phase: "writing", written: 4 });
-    expect(holdTracker(null, t)).toBe(t);
-    const lower = buildTracker({ ...base, phase: "writing", written: 2 });
-    const held = holdTracker(t, lower);
-    expect(held.overall).toBe(t.overall);
-    expect(stage(held, "write").count).toBe(2);
-    expect(stage(held, "write").fraction).toBe(stage(t, "write").fraction);
+  it("says nothing failed when every saved question passes the re-check", () => {
+    const t = buildTracker({ ...base, ...saved, phase: "repairing", written: 15, certified: 15, clean: 15 });
+    expect(t.headline).toBe("Picking up after a pause. Writing 5 more");
   });
 });

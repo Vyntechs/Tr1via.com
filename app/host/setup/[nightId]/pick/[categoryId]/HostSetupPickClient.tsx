@@ -226,14 +226,24 @@ export function HostSetupPickClient({
   );
   const lastHeartbeatSeenRef = useRef<string | null>(null);
   // A fresh build starts its own clock and forgets the previous attempt's
-  // counts and signals.
-  const startFreshBuild = useCallback(() => {
+  // counts and signals. An automatic resume is the same build carrying on,
+  // so it keeps the clock: restarting it read "0:04 so far" next to a build
+  // that had been running for minutes.
+  const startFreshBuild = useCallback((opts?: { keepClock?: boolean }) => {
     setLiveCounts(null);
     setLastSignalAt(null);
-    setBuildStartedAt(Date.now());
-    setJoinedMidway(false);
+    if (!opts?.keepClock) {
+      setBuildStartedAt(Date.now());
+      setJoinedMidway(false);
+    }
     lastHeartbeatSeenRef.current = null;
   }, []);
+  // The attempt that picked a paused build back up, and how many checked
+  // questions the server had saved at the pause (0 = starting over). Only
+  // used while that attempt is the current one.
+  const [resumedAttempt, setResumedAttempt] = useState<
+    { attempt: number; saved: number } | null
+  >(null);
   // Seed the failure message from the server-rendered state so a refresh
   // into a rolled-back category surfaces the retry / manual-entry UI
   // instead of stranding on the loading spinner. Without this seed the
@@ -604,7 +614,10 @@ export function HostSetupPickClient({
       ) {
         autoResumedAttemptsRef.current.add(watchStatus.progress.attempt);
         const id = window.setTimeout(() => {
-          void handleRetryGeneration();
+          void handleRetryGeneration({
+            auto: true,
+            saved: watchStatus.progress.certifiedCount,
+          });
         }, 0);
         return () => window.clearTimeout(id);
       }
@@ -1197,7 +1210,12 @@ export function HostSetupPickClient({
   }
 
   // ── recovery: retry generation or bail to manual entry ───────────────
-  async function handleRetryGeneration() {
+  async function handleRetryGeneration(opts?: {
+    /** Started by the screen itself, not the host's Retry tap. */
+    auto?: boolean;
+    /** Checked questions the paused attempt had saved, when known. */
+    saved?: number;
+  }) {
     setRetrying(true);
     setGenerationFailureMessage(null);
     try {
@@ -1235,7 +1253,10 @@ export function HostSetupPickClient({
             body.attempt,
           );
         }
-        startFreshBuild();
+        if (typeof body.attempt === "number" && typeof opts?.saved === "number") {
+          setResumedAttempt({ attempt: body.attempt, saved: opts.saved });
+        }
+        startFreshBuild({ keepClock: opts?.auto === true });
         setState("generating");
       }
     } catch (err) {
@@ -1304,12 +1325,12 @@ export function HostSetupPickClient({
     shouldAutoResumeGeneration(durableProgress) &&
     autoResumedAttemptsRef.current.has(durableProgress.attempt) &&
     generationFailureMessage === null;
+  // Same words as the tracker's headline once the new attempt reports, so
+  // the line doesn't change its story at the handoff.
   const autoResumeStatusLine = autoResumeLoading
-    ? `Continuing with ${durableProgress!.certifiedCount} certified ${
-        durableProgress!.certifiedCount === 1 ? "choice" : "choices"
-      }; ${durableProgress!.remainingCount} ${
-        durableProgress!.remainingCount === 1 ? "choice" : "choices"
-      } still needed.`
+    ? durableProgress!.certifiedCount === 0
+      ? `Starting over after a pause. ${durableProgress!.remainingCount} still needed`
+      : `Picking up after a pause: ${durableProgress!.certifiedCount} saved, ${durableProgress!.remainingCount} still needed`
     : null;
 
   // ── live tracker counts: broadcast first, polled job row as fallback ──
@@ -1396,6 +1417,10 @@ export function HostSetupPickClient({
     startedAt: buildStartedAt,
     joinedMidway: joinedMidway === true,
     lastSignalAt,
+    ...(resumedAttempt &&
+    resumedAttempt.attempt === currentGenerationAttemptRef.current
+      ? { resumedWith: resumedAttempt.saved }
+      : {}),
   };
 
   // ── mapped data for the components ───────────────────────────────────
@@ -1450,7 +1475,14 @@ export function HostSetupPickClient({
           shellTitle={`generation paused · ${categoryName.toLowerCase()}`}
           topic={categoryName}
           message={generationFailureMessage}
-          onRetry={() => void handleRetryGeneration()}
+          onRetry={() =>
+            void handleRetryGeneration({
+              saved:
+                durableProgress?.phase === "needs_attention"
+                  ? durableProgress.certifiedCount
+                  : undefined,
+            })
+          }
           onEnterManually={handleEnterManually}
           onBack={() => router.push(`/host/setup/${nightId}`)}
           isRetrying={retrying}
