@@ -152,6 +152,19 @@ describe("phone-first host generation layouts", () => {
     expect(screen.getByLabelText("Row 1 optional image URL")).toHaveValue("");
   });
 
+  it("pins the pick screen's Lock bar to the bottom of a phone screen", async () => {
+    render(<HostGenPick themeKey="house" onTogglePick={() => {}} />);
+    await waitFor(() =>
+      expect(screen.getByTestId("host-gen-pick-layout")).toHaveAttribute("data-layout", "mobile"),
+    );
+    const bar = screen.getByTestId("pick-lock-bar");
+    expect(bar.style.position).toBe("fixed");
+    expect(bar.style.bottom).toBe("0px");
+    expect(bar).toHaveTextContent(/pick 1 more to lock/i);
+    // Phone keeps page scroll: no window-height cap wrapper.
+    expect(screen.queryByTestId("host-gen-pick-viewport")).toBeNull();
+  });
+
   it("scopes complete touch sizing to host mobile surfaces", () => {
     const css = readFileSync(join(process.cwd(), "app/globals.css"), "utf8");
     const pick = readFileSync(
@@ -165,5 +178,16 @@ describe("phone-first host generation layouts", () => {
     expect(css).toContain('input:not([type="hidden"]),');
     expect(css).toContain('[role="button"]');
     expect(pick).toContain('gridColumn: mobile ? "2 / -1"');
+  });
+});
+
+describe("desktop pick screen keeps the Lock button in view", () => {
+  it("caps the screen at the window height and leaves the Lock block in the sidebar", () => {
+    vi.unstubAllGlobals();
+    render(<HostGenPick themeKey="house" onTogglePick={() => {}} />);
+    expect(screen.getByTestId("host-gen-pick-layout")).toHaveAttribute("data-layout", "desktop");
+    const cap = screen.getByTestId("host-gen-pick-viewport");
+    expect(cap.style.maxHeight).toContain("100dvh");
+    expect(screen.getByTestId("pick-lock-bar").style.position).toBe("");
   });
 });

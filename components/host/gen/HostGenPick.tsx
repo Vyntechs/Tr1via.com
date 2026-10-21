@@ -218,7 +218,14 @@ function HostGenPickInner({
     }
     return map;
   }, [pickedQs]);
-  return (
+  // Desktop: cap the screen at the window height (minus the account-chip
+  // strip) so the question grid scrolls inside its own column and the YOUR
+  // BOARD sidebar — with the Lock button at its foot — never leaves view.
+  // The host layout only sets a min-height, so without this cap the whole
+  // page grew with the 20 cards and the Lock button sat below the fold.
+  // `height: 100%` keeps a fixed-size parent (the dev gallery box) filled.
+  // Phone keeps natural page scroll; its Lock bar is pinned instead.
+  const pickScreen = (
     <LaptopShell>
       <div data-host-mobile-surface="true" style={{ padding: mobile ? "16px" : "20px 56px 14px", borderBottom: `1px solid ${t.line}`, display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", justifyContent: "space-between", gap: mobile ? 16 : undefined, minWidth: 0 }}>
         <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "flex-start" : "center", gap: mobile ? 10 : 16, minWidth: 0 }}>
@@ -363,7 +370,7 @@ function HostGenPickInner({
         data-host-mobile-surface="true"
         style={{ flex: 1, display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "1fr 300px", overflow: mobile ? "visible" : "hidden", minWidth: 0 }}
       >
-        <div style={{ overflow: mobile ? "visible" : "auto", padding: mobile ? "18px 16px max(32px, env(safe-area-inset-bottom))" : "20px 36px 32px 56px", gridRow: mobile ? 2 : undefined, minWidth: 0 }}>
+        <div style={{ overflow: mobile ? "visible" : "auto", padding: mobile ? `18px 16px calc(${MOBILE_LOCK_BAR_CLEARANCE}px + env(safe-area-inset-bottom))` : "20px 36px 32px 56px", gridRow: mobile ? 2 : undefined, minWidth: 0 }}>
           {auditSummary && <HostGenAuditSummary summary={auditSummary} />}
           <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(2, 1fr)", gap: 14 }}>
             {questions.map((q) => (
@@ -403,6 +410,15 @@ function HostGenPickInner({
         />
       </div>
     </LaptopShell>
+  );
+  if (mobile) return pickScreen;
+  return (
+    <div
+      data-testid="host-gen-pick-viewport"
+      style={{ display: "flex", flexDirection: "column", height: "100%", maxHeight: "calc(100dvh - var(--host-chip-reserve, 0px))", overflow: "hidden", minWidth: 0 }}
+    >
+      {pickScreen}
+    </div>
   );
 }
 
@@ -651,7 +667,22 @@ function PickSidebar({
         )}
       </div>
 
-      <div style={{ marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }}>
+      <div
+        data-testid="pick-lock-bar"
+        style={
+          mobile
+            ? {
+                // Phone: pinned to the bottom of the screen so the host never
+                // scrolls past 20 cards to reach it. Below the edit modal
+                // (zIndex 50) so the modal still covers it.
+                position: "fixed", left: 0, right: 0, bottom: 0, zIndex: 20,
+                background: t.paper, borderTop: `1px solid ${t.line}`,
+                padding: "12px 16px calc(12px + env(safe-area-inset-bottom))",
+                display: "flex", flexDirection: "column", gap: 8,
+              }
+            : { marginTop: 16, display: "flex", flexDirection: "column", gap: 8 }
+        }
+      >
         <button
           type="button"
           onClick={() => onLock?.(lockAssignments)}
@@ -687,6 +718,10 @@ function PickSidebar({
 // drift between them; the empty-slot row reserves the grip column so filled
 // and empty rows stay column-aligned while dragging is enabled.
 // ─────────────────────────────────────────────────────────────────────────
+
+// Phone: bottom padding under the question grid so the last card clears the
+// pinned Lock bar (bar is ~95px at 390 wide: 12 + 52 button + 8 + 11 line + 12).
+const MOBILE_LOCK_BAR_CLEARANCE = 120;
 
 const SLOT_GRIP_COL = "18px";
 const SLOT_VALUE_COL = "44px";
