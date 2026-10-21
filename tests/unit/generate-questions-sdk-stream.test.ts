@@ -9,7 +9,7 @@
 //   * stop_reason max_tokens drops the possibly cut-off last question
 //   * a failing request is tried twice in total (maxRetries 1)
 //   * a reply that breaks off after HTTP 200 (error event, idle abort, bad
-//     JSON) gets one retry of our own; status errors and fatal types do not
+//     JSON, dropped connection) gets one retry of our own; status errors and fatal types do not
 
 import { describe, it, expect, vi, afterEach } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
@@ -101,6 +101,7 @@ function controlledClient() {
     attempts,
     send: (s: string) => ctrls.at(-1)!.enqueue(enc.encode(s)),
     close: () => ctrls.at(-1)!.close(),
+    fail: (e: unknown) => ctrls.at(-1)!.error(e),
   };
 }
 
@@ -321,6 +322,20 @@ describe("generateQuestions on the real SDK stream (#221)", () => {
     c.send(START + delta(JSON.stringify({ questions: [Q(1)] })) + END("tool_use"));
     c.close();
     expect(await run).toHaveLength(1);
+  });
+
+  it("retries once when the connection drops mid-body (TypeError: terminated)", async () => {
+    const c = controlledClient();
+    const run = generateQuestions({ topic: "Pixar", client: c.client, retryDelayMs: 0 });
+    await vi.waitFor(() => expect(c.attempts.length).toBe(1));
+    c.send(START);
+    for (let i = 0; i < 10; i++) await flush();
+    c.fail(new TypeError("terminated"));
+    await vi.waitFor(() => expect(c.attempts.length).toBe(2));
+    c.send(START + delta(JSON.stringify({ questions: [Q(1), Q(2)] })) + END("tool_use"));
+    c.close();
+    expect(await run).toHaveLength(2);
+    expect(c.attempts.length).toBe(2);
   });
 
   it("never lets the written count go backward across a retry", async () => {

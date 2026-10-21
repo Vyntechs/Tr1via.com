@@ -208,10 +208,9 @@ export const DEFAULT_TIMEOUT_MS = 60_000;
 export const STREAM_RETRY_DELAY_MS = 2_000;
 
 /** Only retry if the first attempt failed within this long of starting.
- *  Classic plans its whole build inside the route's ~300s limit (writer,
- *  verification passes, photos). A retry can take another full call, so a
- *  first attempt that already used 90s+ fails cleanly instead of risking the
- *  platform killing the function before it records "paused". */
+ *  Classic plans its whole build to fit ~300s (writer, verification passes,
+ *  photos). A retry can take another full call, so a first attempt that
+ *  already used 90s+ fails cleanly instead of blowing that plan. */
 export const STREAM_RETRY_CUTOFF_MS = 90_000;
 
 /** Our own idle-guard abort (no stream event for `timeoutMs`). A class so
@@ -314,7 +313,7 @@ export async function generateQuestions(
   };
   // One SDK retry, not the default two: a connection that never opens
   // waits timeoutMs per try, and three 60s tries plus backoff (~3 min) let
-  // a late refill round run past the route's 300s limit, so the platform
+  // a late refill round run past Classic's ~300s plan, so the platform
   // killed the function before it could record a clean "paused".
   const requestOptions = { timeout: timeoutMs, maxRetries: 1 };
 
@@ -380,7 +379,8 @@ export async function generateQuestions(
 
   // One retry of the whole streamed call for failures the SDK cannot retry
   // itself: once the reply has started (HTTP 200), an `error` event, our
-  // idle abort or a broken JSON fragment ends the stream with no status, so
+  // idle abort, a broken JSON fragment or a dropped connection ends the
+  // stream with no status, so
   // its maxRetries never applies. Before streaming, an overload came back as
   // a 529 and the SDK retried it; this restores that for the streamed reply.
   let response: Anthropic.Message;
@@ -490,19 +490,29 @@ const NON_TRANSIENT_STREAM_ERRORS = new Set<string>([
  *   - our idle-guard abort
  *   - a SyntaxError from parsing the streamed JSON (the stream wraps it in an
  *     AnthropicError with the SyntaxError as `cause`)
+ *   - a connection that drops while the body is read (Node fetch throws e.g.
+ *     `TypeError: terminated`; core/streaming.js passes it through raw and
+ *     MessageStream wraps it the same way, as an AnthropicError with `cause`)
  * Errors with an HTTP status were already retried by the SDK (maxRetries 1).
- * A caller abort and a connection failure also arrive as status-less
- * APIErrors; neither is retried here (the SDK already retried connecting).
+ * A caller abort and a connect-phase failure arrive as status-less
+ * APIErrors (APIUserAbortError, APIConnectionError); neither is retried here
+ * (the SDK already retried connecting).
  */
 export function midStreamRetryReason(err: unknown): string | null {
   if (err instanceof StreamIdleTimeoutError) return "idle timeout";
   if (err instanceof SyntaxError) return "SyntaxError";
   if (
     err instanceof Anthropic.AnthropicError &&
-    !(err instanceof Anthropic.APIError) &&
-    (err as { cause?: unknown }).cause instanceof SyntaxError
+    !(err instanceof Anthropic.APIError)
   ) {
-    return "SyntaxError";
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause instanceof SyntaxError) return "SyntaxError";
+    // An abort never lands here (the stream turns it into APIUserAbortError),
+    // but check the name anyway so a caller abort is never retried.
+    if (cause instanceof Error && cause.name !== "AbortError") {
+      return "connection dropped";
+    }
+    return null;
   }
   if (
     err instanceof Anthropic.APIUserAbortError ||
