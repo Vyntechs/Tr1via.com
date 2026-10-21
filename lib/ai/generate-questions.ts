@@ -56,7 +56,7 @@ const CorrectIndexEnum = z.union([
   z.literal(3),
 ]);
 
-const GeneratedQuestionSchema = z
+export const GeneratedQuestionSchema = z
   .object({
     prompt: z.string().trim().min(8).max(400),
     options: z
