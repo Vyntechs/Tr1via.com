@@ -444,19 +444,28 @@ describe("generateQuestions", () => {
   });
 
   it("aborts a silent stream after timeoutMs (idle guard) and fails like a timeout", async () => {
-    const stream = makeFakeStream(makeMessage({ questions: [] }), [], true);
+    const streams: ReturnType<typeof makeFakeStream>[] = [];
     const client = {
-      messages: { stream: vi.fn(() => stream) },
+      messages: {
+        stream: vi.fn(() => {
+          const s = makeFakeStream(makeMessage({ questions: [] }), [], true);
+          streams.push(s);
+          return s;
+        }),
+      },
     };
     await expect(
       generateQuestions({
         topic: "Silent",
         timeoutMs: 20,
+        retryDelayMs: 0,
         // @ts-expect-error — narrowing
         client,
       }),
     ).rejects.toThrow(/timed out.*idle/i);
-    expect(stream.abort).toHaveBeenCalledTimes(1);
+    // One retry of our own after the idle abort, then it gives up.
+    expect(streams).toHaveLength(2);
+    for (const s of streams) expect(s.abort).toHaveBeenCalledTimes(1);
   });
 
   it("leaves a stalled connection to the SDK's own timeout and retries", async () => {
