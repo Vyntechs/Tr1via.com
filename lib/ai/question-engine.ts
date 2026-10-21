@@ -76,18 +76,21 @@ export async function readHostQuestionEngine(
  *  missing from the map (or every host, on any error) are classic. */
 export async function readAllQuestionEngines(
   admin: AdminClient,
+  timeoutMs: number = QUESTION_ENGINE_READ_TIMEOUT_MS,
 ): Promise<Map<string, QuestionEngine>> {
-  const engines = new Map<string, QuestionEngine>();
   try {
-    const { data, error } = await admin
-      .from("host_question_engine_settings")
-      .select("host_id, engine");
-    if (error || !data) return engines;
+    const { data, error } = await withTimeout(
+      admin.from("host_question_engine_settings").select("host_id, engine"),
+      timeoutMs,
+    );
+    if (error || !data) return new Map();
+    const engines = new Map<string, QuestionEngine>();
     for (const row of data) engines.set(row.host_id, parseQuestionEngine(row.engine));
+    return engines;
   } catch {
-    /* fall through: everyone shows as classic */
+    /* timeout or thrown error: everyone shows as classic */
+    return new Map();
   }
-  return engines;
 }
 
 /**

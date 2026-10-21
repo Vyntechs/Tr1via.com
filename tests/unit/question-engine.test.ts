@@ -116,6 +116,22 @@ describe("question engine · reader", () => {
     expect(engines.size).toBe(0);
   });
 
+  it("dashboard read: hung database => everyone classic after the time limit", async () => {
+    const admin = {
+      from: () => ({ select: () => new Promise(() => {}) }),
+    } as unknown as Admin;
+    const engines = await readAllQuestionEngines(admin, 20);
+    expect(engines.size).toBe(0);
+  });
+
+  it("dashboard read: thrown error => everyone classic", async () => {
+    const admin = {
+      from: () => ({ select: () => Promise.reject(new Error("fetch failed")) }),
+    } as unknown as Admin;
+    const engines = await readAllQuestionEngines(admin, 20);
+    expect(engines.size).toBe(0);
+  });
+
   it("dashboard read: rows map to engines, junk => classic", async () => {
     const admin = {
       from: () => ({

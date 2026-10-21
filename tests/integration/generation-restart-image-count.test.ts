@@ -179,6 +179,11 @@ const MIGRATIONS_DIR = path.resolve(
   "../../supabase/migrations",
 );
 // Same migration list the fencing tests use for the generation functions.
+// DELIBERATELY leaves out 20261021120000_host_question_engine_settings.sql:
+// Vercel previews run against the live database, where that table does not
+// exist until the migration is applied by hand. Keeping it out here is what
+// proves a build still finishes (as "classic") with the table missing; see
+// the "engine settings table missing" test below. Do not add it.
 const MIGRATIONS = [
   "0001_init.sql",
   "0015_question_generation_reports.sql",
@@ -449,6 +454,29 @@ describe("restarting a build killed after its photos had started", () => {
     expect(h.state.autoAttachPhoto).toHaveBeenCalledTimes(4);
     expect(job.image_count).toBe(20);
     expect(await photoCount(categoryId)).toBe(20);
+  });
+
+  test("engine settings table missing: the build finishes as classic and says so in its report", async () => {
+    // Guard for the comment on MIGRATIONS: the table must really be absent.
+    const reg = await one<{ t: string | null }>(
+      "select to_regclass('public.host_question_engine_settings')::text as t",
+    );
+    expect(reg.t).toBeNull();
+
+    const { categoryId } = await seedStuckBuild();
+    const res = await pressContinue(categoryId);
+    expect(res.status).toBe(202);
+
+    const job = await readJob(categoryId);
+    expect(job.phase).toBe("ready");
+    expect(job.last_error).toBeNull();
+
+    const report = await one<{ engine: string | null }>(
+      `select report->>'questionEngine' as engine from question_generation_reports
+       where category_id = $1 order by created_at desc limit 1`,
+      [categoryId],
+    );
+    expect(report.engine).toBe("classic");
   });
 
   test("a re-check that drops photographed questions still restarts cleanly", async () => {
