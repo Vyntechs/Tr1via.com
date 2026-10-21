@@ -18,6 +18,7 @@ import {
   PASSWORD_AFTER_SHOW_VALUE,
   isInShowPath,
 } from "@/lib/auth/password-gate";
+import { PICK_LOCK_PHONE_BOTTOM, isPickScreenPath } from "@/lib/host/lockBar";
 
 export const PASSWORD_AFTER_SHOW_NOTE = "Your show is running — you can create a password after the show.";
 const SHOW_FOR_MS = 10_000;
@@ -53,7 +54,9 @@ export function PasswordAfterShowNote() {
         position: "fixed",
         left: 12,
         right: 12,
-        bottom: "calc(16px + env(safe-area-inset-bottom))",
+        // On the pick screen, sit above the Lock button (pinned bar on a
+        // phone, sidebar foot on desktop) so the pill never covers it.
+        bottom: isPickScreenPath(pathname) ? PICK_LOCK_PHONE_BOTTOM : "calc(16px + env(safe-area-inset-bottom))",
         zIndex: 40,
         display: "flex",
         justifyContent: "center",

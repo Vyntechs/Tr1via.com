@@ -43,6 +43,7 @@ import {
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
 import { useMediaQuery } from "@/components/system/useMediaQuery";
+import { PICK_LOCK_PHONE_CLEARANCE } from "@/lib/host/lockBar";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { computeReorderAssignments } from "@/lib/host/boardReorder";
@@ -721,7 +722,8 @@ function PickSidebar({
 
 // Phone: bottom padding under the question grid so the last card clears the
 // pinned Lock bar (bar is ~95px at 390 wide: 12 + 52 button + 8 + 11 line + 12).
-const MOBILE_LOCK_BAR_CLEARANCE = 120;
+// Shared with the pick page's notes (lib/host/lockBar.ts) so they clear it too.
+const MOBILE_LOCK_BAR_CLEARANCE = PICK_LOCK_PHONE_CLEARANCE;
 
 const SLOT_GRIP_COL = "18px";
 const SLOT_VALUE_COL = "44px";

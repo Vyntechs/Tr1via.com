@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
+import { PICK_LOCK_DESKTOP_CLEARANCE, PICK_LOCK_PHONE_BOTTOM, PICK_PHONE_QUERY } from "@/lib/host/lockBar";
 import {
   HostGenLoading,
   HostGenPick,
@@ -138,6 +140,8 @@ export function HostSetupPickClient({
   themeKey,
 }: HostSetupPickClientProps) {
   const router = useRouter();
+  // Same switch as HostGenPick's phone layout; moves the notes above Lock.
+  const phoneLayout = useMediaQuery(PICK_PHONE_QUERY);
   const [questions, setQuestions] = useState<QuestionRow[]>(initialQuestions);
   const [state, setState] = useState<CategoryRow["state"]>(initialState);
   const [auditSummary, setAuditSummary] = useState<HostQuestionAuditSummary | null>(
@@ -1580,9 +1584,10 @@ export function HostSetupPickClient({
           role="status"
           data-testid="host-board-sync-required"
           style={{
+            // Phone: above the pinned Lock bar, not on top of it.
             position: "fixed",
             left: 20,
-            bottom: 20,
+            bottom: phoneLayout ? PICK_LOCK_PHONE_BOTTOM : 20,
             zIndex: 60,
             padding: "10px 14px",
             borderRadius: 10,
@@ -1601,9 +1606,11 @@ export function HostSetupPickClient({
         <div
           role="alert"
           style={{
+            // Above the Lock button: the phone's pinned bar, or the desktop
+            // sidebar foot (same bottom-right corner as this toast).
             position: "fixed",
             right: 20,
-            bottom: 20,
+            bottom: phoneLayout ? PICK_LOCK_PHONE_BOTTOM : PICK_LOCK_DESKTOP_CLEARANCE,
             zIndex: 60,
             padding: "12px 16px",
             borderRadius: 10,
