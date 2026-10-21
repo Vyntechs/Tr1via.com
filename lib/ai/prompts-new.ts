@@ -85,7 +85,9 @@ export function newUserPromptFor(opts: {
   if (avoid.length > 0) {
     lines.push("");
     lines.push(
-      `The host has already seen these ${avoid.length} questions. Don't repeat them or write close copies:`,
+      avoid.length === 1
+        ? "The host has already seen this question. Don't repeat it or write a close copy:"
+        : `The host has already seen these ${avoid.length} questions. Don't repeat them or write close copies:`,
     );
     for (const p of avoid) lines.push(`- ${p.trim()}`);
   }
