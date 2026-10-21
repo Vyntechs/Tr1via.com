@@ -1397,6 +1397,20 @@ export function HostSetupPickClient({
         (trackerPhase !== "queued" && trackerPhase !== "writing"),
     );
   }, [joinedMidway, sawRealCounts, trackerWritten, trackerCertified, trackerPhase]);
+  // Did this screen see the current attempt write a full first batch before
+  // anything passed? Then every later gap is questions that failed the
+  // check. After a reload mid-resume it can't know (some were never
+  // written), so the headline won't claim failures.
+  const [fullRoundSeenAttempt, setFullRoundSeenAttempt] = useState<number | null>(null);
+  const liveClean = num(currentLive?.clean);
+  const sawFullFirstRound =
+    (trackerPhase === "writing" || trackerPhase === "checking") &&
+    trackerWritten >= trackerTarget &&
+    serverCertified === 0 &&
+    (liveClean === undefined || liveClean === 0);
+  useEffect(() => {
+    if (sawFullFirstRound) setFullRoundSeenAttempt(currentGenerationAttemptRef.current);
+  }, [sawFullFirstRound]);
   const genProgress: HostGenProgress = {
     phase: trackerPhase,
     target: trackerTarget,
@@ -1421,6 +1435,8 @@ export function HostSetupPickClient({
     resumedAttempt.attempt === currentGenerationAttemptRef.current
       ? { resumedWith: resumedAttempt.saved }
       : {}),
+    failuresKnown:
+      sawFullFirstRound || fullRoundSeenAttempt === currentGenerationAttemptRef.current,
   };
 
   // ── mapped data for the components ───────────────────────────────────

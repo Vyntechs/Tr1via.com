@@ -22,6 +22,8 @@ const base: HostGenProgress = {
   photos: 0,
   startedAt: 0,
   lastSignalAt: 0,
+  // These sequences are watched from the start, so any gap is failures.
+  failuresKnown: true,
 };
 
 function run(steps: Step[]): Row[] {
@@ -328,9 +330,9 @@ describe("reload during a resume, before the first live update", () => {
   it("shows the check stage with no number and leaves it out of the percent", () => {
     const rows = run([
       ["re-check, polled row only", { resumedWith: 15, phase: "checking", written: 15, certified: 15 }],
-      ["repairing, polled row only", { phase: "repairing", written: 15, certified: 15 }],
-      ["refill writing, polled row only", { phase: "writing", written: 18, certified: 15 }],
-      ["first live update", { phase: "writing", written: 18, certified: 13, clean: 13 }],
+      ["repairing, polled row only", { phase: "repairing", written: 15, certified: 15, failuresKnown: false }],
+      ["refill writing, polled row only", { phase: "writing", written: 18, certified: 15, failuresKnown: false }],
+      ["first live update", { phase: "writing", written: 18, certified: 13, clean: 13, failuresKnown: false }],
     ]);
     expectTrue(rows);
     for (const r of rows.slice(0, 3)) {
@@ -354,5 +356,41 @@ describe("reload during a resume, before the first live update", () => {
   it("still counts the polled row when it is the server's own saved total", () => {
     const t = buildTracker({ ...base, phase: "images", written: 20, certified: 18, photos: 6 });
     expect(stage(t, "check")).toMatchObject({ known: true, count: 18, total: 20 });
+  });
+});
+
+describe("reload mid-resume: the screen doesn't know how many failed", () => {
+  // 15 were saved, 2 failed the re-check, 5 were never written. After a
+  // reload the screen has no memory of the resume, so a gap of 7 could be
+  // 7 failures or 2 failures plus 5 never written. It must not claim either.
+  const unknown = { failuresKnown: false };
+  const rows = run([
+    ["repairing", { ...unknown, phase: "repairing", written: 15, certified: 13, clean: 13 }],
+    ["refill writing 18", { ...unknown, phase: "writing", written: 18, certified: 13, clean: 13 }],
+    ["refill writing 20", { ...unknown, phase: "writing", written: 20, certified: 13, clean: 13 }],
+    ["refill checking 8/16", { ...unknown, phase: "checking", written: 20, certified: 13, clean: 13, checked: 8, checkTotal: 16 }],
+    ["all clean, repairing", { ...unknown, phase: "repairing", written: 20, certified: 20, clean: 20 }],
+  ]);
+
+  it("uses neutral words and never claims failures", () => {
+    expectTrue(rows);
+    for (const r of rows) expect(r.t.headline, r.label).not.toMatch(/fail/i);
+    expect(rows[0]!.t.headline).toBe("Writing 7 more");
+    expect(rows[1]!.t.headline).toBe("Writing 7 more");
+    expect(rows[3]!.t.headline).toBe("Fact-checking answers");
+    expect(rows[4]!.t.headline).toBe("Saving the new questions");
+    // The real counts still show.
+    expect(stage(rows[0]!.t, "check")).toMatchObject({ known: true, count: 13, total: 20 });
+    expect(stage(rows[1]!.t, "write").detail).toBe("7 more");
+  });
+
+  it("doesn't claim failures when every clean count is known but the history isn't", () => {
+    const t = buildTracker({ ...base, ...unknown, phase: "repairing", written: 20, certified: 0, clean: 0 });
+    expect(t.headline).toBe("Writing 20 more");
+  });
+
+  it("a build watched from the start still names the real number", () => {
+    const t = buildTracker({ ...base, phase: "repairing", written: 20, certified: 17, clean: 17 });
+    expect(t.headline).toBe("3 failed the check. Writing replacements");
   });
 });

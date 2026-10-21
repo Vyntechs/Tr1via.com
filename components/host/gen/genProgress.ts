@@ -42,6 +42,11 @@ export interface HostGenProgress {
    *  questions the server had saved at the pause (0 = it starts over from
    *  nothing). Lets the headline say why the numbers went down. */
   resumedWith?: number;
+  /** True when this screen knows the gap is all failed questions: it saw
+   *  this attempt write a full first batch (or knows the resume's saved
+   *  count). After a reload mid-resume, a gap of 7 can be 2 that failed plus
+   *  5 never written, so without this the headline claims no failures. */
+  failuresKnown?: boolean;
 }
 
 export type StageKey = "write" | "check" | "photos";
@@ -269,6 +274,7 @@ export function buildTracker(p: HostGenProgress): Tracker {
   // re-check plus the ones never written.
   const resumeRefill = refill && resumedWith !== null && resumedWith > 0 && clean <= resumedWith;
   const reCheckFailed = resumeRefill ? Math.max(0, (resumedWith ?? 0) - clean) : 0;
+  const failuresKnown = p.failuresKnown === true || resumedWith !== null;
   const failedLead = resumeRefill
     ? reCheckFailed > 0
       ? `${reCheckFailed} failed the re-check.`
@@ -305,21 +311,30 @@ export function buildTracker(p: HostGenProgress): Tracker {
         headline = "Getting started";
         break;
       case "writing":
-        headline = refill ? `${failedLead} ${replacing}` : "Writing questions";
+        headline = !refill
+          ? "Writing questions"
+          : failuresKnown
+            ? `${failedLead} ${replacing}`
+            : `Writing ${refillNeed} more`;
         break;
       case "checking":
-        headline = refill ? `${failedLead} ${checkingNew}` : "Fact-checking answers";
+        headline =
+          refill && failuresKnown ? `${failedLead} ${checkingNew}` : "Fact-checking answers";
         break;
       case "repairing":
         // No number unless the server told us the clean count: a guess from
         // the cards said "Replacing 20" on a reroll where 3 had failed.
         headline = refill
-          ? `${failedLead} ${replacing}`
+          ? failuresKnown
+            ? `${failedLead} ${replacing}`
+            : `Writing ${refillNeed} more`
           : cleanUnsure
             ? "Fact-checking answers"
             : clean >= target
               ? "Saving the new questions"
-              : "Some failed the check. Writing replacements";
+              : failuresKnown
+                ? "Some failed the check. Writing replacements"
+                : `Writing ${target - clean} more`;
         break;
       case "images":
         headline = "Finding photos";

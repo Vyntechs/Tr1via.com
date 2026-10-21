@@ -25,6 +25,7 @@ function progress(over: Partial<HostGenProgress> = {}): HostGenProgress {
     checkTotal: 40,
     startedAt: Date.now() - 84_000,
     lastSignalAt: Date.now() - 1_000,
+    failuresKnown: true,
     ...over,
   };
 }
