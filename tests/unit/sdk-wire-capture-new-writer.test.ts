@@ -170,9 +170,10 @@ describe("Anthropic wire capture (new writer)", () => {
     expect(body.stream).toBe(true);
     expect((body.output_config as { effort: string }).effort).toBe("medium");
     expect((body.output_config as { format: { type: string } }).format.type).toBe("json_schema");
-    for (const key of ["temperature", "tools", "tool_choice", "thinking"]) {
+    for (const key of ["temperature", "tools", "tool_choice"]) {
       expect(body, key).not.toHaveProperty(key);
     }
+    expect(body.thinking).toEqual({ type: "adaptive", display: "summarized" });
     expect(baseline.requests[0]!.url).toBe("https://api.anthropic.com/v1/messages");
     expect(baseline.requests[0]!.headers["anthropic-beta"]).toBeUndefined();
     expect(baseline.requests[0]!.headers["anthropic-version"]).toBe("2023-06-01");

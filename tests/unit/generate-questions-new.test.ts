@@ -4,12 +4,13 @@
 // a real Anthropic client whose injected `fetch` answers with a canned
 // server-sent-event body. No network, no key, no cost.
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import Anthropic from "@anthropic-ai/sdk";
 
 import {
   generateQuestionsNew,
   countCompleteNewQuestions,
+  NEW_WRITER_IDLE_MS,
   NEW_WRITER_MAX_TOKENS,
   NEW_WRITER_MODEL,
 } from "@/lib/ai/generate-questions-new";
@@ -91,7 +92,7 @@ function lcg(seed = 7) {
 }
 
 describe("new writer · request", () => {
-  it("asks Sonnet 5.5 at effort medium for structured output, 20,000 tokens, no temperature or forced tool", async () => {
+  it("asks Sonnet 5.5 at effort medium for structured output, 20,000 tokens, summarized thinking, no temperature or forced tool", async () => {
     const { client, sent } = clientReplying(replySse(batchJson(twenty())));
     await generateQuestionsNew({ topic: "Pixar movies", client, now: NOW });
 
@@ -103,9 +104,11 @@ describe("new writer · request", () => {
     const oc = body.output_config as { effort: string; format: { type: string; schema: unknown } };
     expect(oc.effort).toBe("medium");
     expect(oc.format.type).toBe("json_schema");
-    for (const key of ["temperature", "tools", "tool_choice", "thinking", "top_p", "top_k"]) {
+    for (const key of ["temperature", "tools", "tool_choice", "top_p", "top_k"]) {
       expect(body, key).not.toHaveProperty(key);
     }
+    // Adaptive thinking, shown as a summary so a long think keeps the stream alive.
+    expect(body.thinking).toEqual({ type: "adaptive", display: "summarized" });
     const user = (body.messages as Array<{ content: string }>)[0]!.content;
     expect(user).toContain("Today's date: Wednesday, October 21, 2026");
     expect(user).toContain("Topic: Pixar movies");
@@ -273,6 +276,154 @@ describe("new writer · the 20 guard (never store fewer silently)", () => {
     expect(result).toHaveLength(20);
     expect(sent).toHaveLength(2);
     expect((sent[1]!.messages as Array<{ content: string }>)[0]!.content).toContain("Write exactly 4 questions");
+    vi.restoreAllMocks();
+  });
+});
+
+/** A client whose single response body the test writes to by hand, so the
+ *  test controls the gaps between events (same pattern as Classic's
+ *  generate-questions-sdk-stream.test.ts). */
+function controlledClient() {
+  const enc = new TextEncoder();
+  let ctrl!: ReadableStreamDefaultController<Uint8Array>;
+  const attempts: string[] = [];
+  const fetchImpl = async (_url: unknown, init?: RequestInit) => {
+    attempts.push(String(init?.body ?? ""));
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        ctrl = c;
+      },
+    });
+    // Behave like real fetch: an abort errors the body being read.
+    init?.signal?.addEventListener("abort", () => {
+      try {
+        ctrl.error(Object.assign(new Error("The operation was aborted."), { name: "AbortError" }));
+      } catch {
+        /* already closed */
+      }
+    });
+    return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  const client = new Anthropic({ apiKey: "test-key", fetch: fetchImpl as unknown as typeof fetch });
+  return {
+    client,
+    attempts,
+    send: (s: string) => ctrl.enqueue(enc.encode(s)),
+    close: () => ctrl.close(),
+  };
+}
+
+const flush = () => new Promise((r) => setImmediate(r));
+const flushMany = async (n = 20) => {
+  for (let i = 0; i < n; i++) await flush();
+};
+
+const THINK_START = [
+  ev({
+    type: "message_start",
+    message: {
+      id: "msg_idle",
+      type: "message",
+      role: "assistant",
+      model: NEW_WRITER_MODEL,
+      content: [],
+      stop_reason: null,
+      stop_sequence: null,
+      usage: { input_tokens: 900, output_tokens: 1 },
+    },
+  }),
+  ev({ type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } }),
+].join("");
+const thinkingUpdate = (t: string) =>
+  ev({ type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: t } });
+/** Everything after the thinking: close it, then the 20 questions as text. */
+const ANSWER_AND_END = replySse(batchJson(twenty())).split(
+  ev({ type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } }),
+)[1]!;
+
+describe("new writer · idle guard (long thinking vs a dead stream)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function startRun(c: ReturnType<typeof controlledClient>) {
+    const run = generateQuestionsNew({ topic: "Cities", client: c.client, now: NOW });
+    let settled = false;
+    const outcome = run.then(
+      (qs) => {
+        settled = true;
+        return qs.length;
+      },
+      (e: Error) => {
+        settled = true;
+        return e.message;
+      },
+    );
+    for (let i = 0; i < 20 && c.attempts.length === 0; i++) await flush();
+    expect(c.attempts.length).toBe(1);
+    return { outcome, isSettled: () => settled };
+  }
+
+  it("the quiet window is wider than Classic's 60s and fits inside the route's 300s", () => {
+    expect(NEW_WRITER_IDLE_MS).toBeGreaterThanOrEqual(90_000);
+    expect(NEW_WRITER_IDLE_MS).toBeLessThanOrEqual(150_000);
+  });
+
+  it("a 4-minute think that keeps sending summary updates is never cut off", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const c = controlledClient();
+    const { outcome, isSettled } = await startRun(c);
+    c.send(THINK_START);
+    await flushMany();
+    // 240s in total, far past any idle window, but an update every 55s.
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(55_000);
+      c.send(thinkingUpdate(`still weighing city ${i}`));
+      await flushMany();
+      expect(isSettled()).toBe(false);
+    }
+    c.send(ANSWER_AND_END);
+    c.close();
+    expect(await outcome).toBe(20);
+    vi.restoreAllMocks();
+  });
+
+  it("a 100s stretch with nothing shown (Classic's 60s guard would kill it) still finishes", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const c = controlledClient();
+    const { outcome, isSettled } = await startRun(c);
+    c.send(THINK_START);
+    await flushMany();
+    await vi.advanceTimersByTimeAsync(100_000);
+    await flushMany();
+    expect(isSettled()).toBe(false);
+    c.send(ANSWER_AND_END);
+    c.close();
+    expect(await outcome).toBe(20);
+    vi.restoreAllMocks();
+  });
+
+  it("a stream that stays silent for the whole window is aborted as an idle timeout, not retried", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const c = controlledClient();
+    const { outcome, isSettled } = await startRun(c);
+    c.send(THINK_START);
+    await flushMany();
+
+    await vi.advanceTimersByTimeAsync(NEW_WRITER_IDLE_MS - 1);
+    await flushMany();
+    expect(isSettled()).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    for (let i = 0; i < 40 && !isSettled(); i++) await flush();
+    expect(isSettled()).toBe(true);
+    expect(await outcome).toBe(
+      `Request timed out: no stream data for ${NEW_WRITER_IDLE_MS}ms (idle timeout)`,
+    );
+    expect(c.attempts.length).toBe(1);
     vi.restoreAllMocks();
   });
 });

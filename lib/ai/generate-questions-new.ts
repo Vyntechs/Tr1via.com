@@ -6,8 +6,9 @@
 //
 // What is different from Classic:
 //   - Model claude-sonnet-5-5 at effort "medium". No temperature (the 5.5
-//     models refuse a non-default one) and no thinking setting (adaptive is
-//     the default; "disabled" is refused).
+//     models refuse a non-default one). Thinking stays adaptive (the default;
+//     "disabled" is refused) but is shown as a summary, so the stream keeps
+//     sending thinking updates while the model thinks (see the idle guard).
 //   - Structured output (`output_config.format`, a JSON schema) instead of a
 //     forced tool call, which the 5.5 models refuse.
 //   - The model writes the right answer and three wrong answers as separate
@@ -53,12 +54,26 @@ export const NEW_WRITER_BATCH = 20;
 /** 20 questions run ~4-5k output tokens; thinking shares this limit and has
  *  no separate cap on Sonnet 5.5, so the rest is thinking headroom. */
 export const NEW_WRITER_MAX_TOKENS = 20_000;
+/**
+ * Longest quiet spell the New writer allows on the stream before it gives up.
+ * Classic uses 60s, but the SDK drops the server's keep-alive pings, so a
+ * thinking stretch with nothing shown would look dead. Summarized thinking
+ * sends updates; this wider window covers a quiet gap between them. Sized for
+ * the route: 300s hard limit, photos stop at 270s, a normal write takes ~25s,
+ * and two checker passes still have to run after it.
+ */
+export const NEW_WRITER_IDLE_MS = 120_000;
+/** Thinking stays adaptive (Sonnet 5.5's only "on" mode) but streams summary
+ *  updates, so a long think is not silent. Display only: billed the same. */
+export const NEW_WRITER_THINKING = { type: "adaptive", display: "summarized" } as const;
 
 export interface GenerateQuestionsNewOptions extends GenerateQuestionsOptions {
   /** Injectable clock for the date line (tests pin it). */
   now?: Date;
   /** Injectable randomness for the answer shuffle (tests pin it). */
   random?: () => number;
+  /** Quiet spell on the stream before the call is aborted. Default NEW_WRITER_IDLE_MS. */
+  idleMs?: number;
 }
 
 // JSON schema for structured output. The API refuses length and number
@@ -185,6 +200,7 @@ export async function generateQuestionsNew(
   const client = opts.client ?? makeClient();
   const model = opts.model ?? NEW_WRITER_MODEL;
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const idleMs = opts.idleMs ?? NEW_WRITER_IDLE_MS;
   const count = Math.max(1, Math.min(NEW_WRITER_BATCH, opts.count ?? NEW_WRITER_BATCH));
 
   const userPrompt = newUserPromptFor({
@@ -199,7 +215,7 @@ export async function generateQuestionsNew(
 
   const t0 = Date.now();
   console.log(
-    `[generateQuestionsNew] calling ${model} topic="${opts.topic}" count=${count} timeoutMs=${timeoutMs}`,
+    `[generateQuestionsNew] calling ${model} topic="${opts.topic}" count=${count} timeoutMs=${timeoutMs} idleMs=${idleMs}`,
   );
   const stream = client.messages.stream(
     {
@@ -213,6 +229,7 @@ export async function generateQuestionsNew(
         },
       ],
       messages: [{ role: "user", content: userPrompt }],
+      thinking: NEW_WRITER_THINKING,
       output_config: {
         effort: NEW_WRITER_EFFORT,
         format: { type: "json_schema", schema: NEW_WRITER_OUTPUT_SCHEMA },
@@ -222,8 +239,9 @@ export async function generateQuestionsNew(
     { timeout: timeoutMs, maxRetries: 1 },
   );
 
-  // Same idle guard as Classic: the SDK timeout covers only the wait for
-  // response headers, not a stalled streamed body.
+  // Idle guard: the SDK timeout covers only the wait for response headers,
+  // not a stalled streamed body. Any event the SDK passes on (thinking
+  // updates included) re-arms it; the server's pings never reach us.
   let idleTimedOut = false;
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   const armIdleGuard = () => {
@@ -231,7 +249,7 @@ export async function generateQuestionsNew(
     idleTimer = setTimeout(() => {
       idleTimedOut = true;
       stream.abort();
-    }, timeoutMs);
+    }, idleMs);
   };
   let reportedWritten = 0;
   const reportWritten = (n: number) => {
@@ -257,7 +275,7 @@ export async function generateQuestionsNew(
     const dt = Date.now() - t0;
     if (idleTimedOut) {
       const idleErr = new Error(
-        `Request timed out: no stream data for ${timeoutMs}ms (idle timeout)`,
+        `Request timed out: no stream data for ${idleMs}ms (idle timeout)`,
       );
       console.log(`[generateQuestionsNew] FAILED after ${dt}ms (IdleTimeout): ${idleErr.message}`);
       throw idleErr;
