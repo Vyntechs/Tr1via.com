@@ -584,6 +584,11 @@ async function runGenerationJob(opts: {
       certified: certifiedCount,
       clean: cleanCount,
       written: Math.max(writtenCount, certifiedCount),
+      // The clean count just moved, so the last round's failure number is
+      // no longer the newest. Clearing it here (not when the first check
+      // pass ends) keeps the headline steady through the whole check;
+      // onRoundComplete sets this round's own number right after.
+      failedLastRound: null,
     });
     await writeWorkerProgress({
       phase: certifiedCount >= 20 ? "images" : "repairing",
@@ -630,10 +635,6 @@ async function runGenerationJob(opts: {
             else onChecked(checked, total, passIndex === 0 ? 1 : 2);
           },
         });
-        // This round's check is done, so the last round's failure count is
-        // no longer the newest. Until this round's own count is set at its
-        // end, updates carry none and the host shows no number.
-        liveProgress.setCounts({ failedLastRound: null });
         return verdicts;
       };
 
@@ -870,6 +871,10 @@ async function runGenerationJob(opts: {
       phase: "images",
       certified_count: generated.length,
     });
+    // Tell the host now: a build that ran out of rounds short of 20 would
+    // otherwise keep saying "Writing N more", and a 20/20 build would sit
+    // on "checking 40/40" until the next poll or heartbeat.
+    void broadcastProgress();
     let photoTargets = inserted
       .filter((row) => !row.imageUrl)
       .map((row) => ({ id: row.id, q: row.q }));

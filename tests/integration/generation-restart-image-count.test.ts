@@ -585,6 +585,155 @@ describe("restarting a build killed after its photos had started", () => {
     expect(payloads.some((p) => p.failedLastRound === 1)).toBe(false);
   });
 
+  async function draftCategory(name: string) {
+    const category = await one<{ id: string }>(
+      `insert into categories (game_id, name, topic, position, state)
+       values ($1, $2, $2, $3, 'draft')
+       returning id`,
+      [gameId, name, position++],
+    );
+    h.state.owned = {
+      ok: true,
+      host: {
+        id: hostId,
+        role: "host",
+        is_paywall_bypassed: true,
+        trial_ends_at: null,
+        subscription_status: null,
+      },
+      night: { id: nightId, theme_key: "house" },
+      category: {
+        id: category.id,
+        game_id: gameId,
+        name,
+        topic: name,
+        state: "draft",
+      },
+    };
+    return category.id;
+  }
+
+  const roundQuestions = (failing: number[]) => {
+    let round = 0;
+    return async (opts: { count: number }) => {
+      const r = round++;
+      return Array.from({ length: opts.count }, (_, n) => ({
+        prompt:
+          n < (failing[r] ?? 0)
+            ? `Round ${r + 1} question ${n} REJECTME`
+            : `Round ${r + 1} question ${n} about this topic`,
+        options: ["Alpha", "Bravo", "Charlie", "Delta"],
+        correctIndex: 0,
+        difficulty: 3,
+        factBlurb: "A fresh fact.",
+        photoQuery: `round ${r + 1} scene ${n}`,
+      }));
+    };
+  };
+
+  // The "images" update the route sends itself, and the first photo lookup.
+  const imagesSentBeforePhotos = () => {
+    const calls = h.state.broadcast.mock.calls as unknown[][];
+    const order = h.state.broadcast.mock.invocationCallOrder;
+    const firstImages = calls.findIndex(
+      (call) => call[1] === "progress" && (call[2] as { phase: string }).phase === "images",
+    );
+    if (firstImages < 0) return false;
+    const firstPhoto = h.state.autoAttachPhoto.mock.invocationCallOrder[0];
+    return firstPhoto === undefined || order[firstImages]! < firstPhoto;
+  };
+
+  test("a build that runs out of rounds short of 20 stops saying it is writing more", async () => {
+    // 4 rounds (the limit), each leaving gaps: 15, 18, 18, 18 clean.
+    // Refill rounds ask for one spare on top of the gap.
+    const categoryId = await draftCategory("Out Of Rounds");
+    h.state.generateQuestions.mockImplementation(roundQuestions([5, 3, 3, 3]));
+
+    await pressContinue(categoryId);
+
+    expect(
+      h.state.generateQuestions.mock.calls.map((c: unknown[]) => (c[0] as { count: number }).count),
+    ).toEqual([20, 6, 3, 3]);
+    const job = await readJob(categoryId);
+    expect(job.certified_count).toBe(18);
+    const payloads = progressPayloads();
+    const lastRepairing = payloads.map((p) => p.phase).lastIndexOf("repairing");
+    const firstImages = payloads.findIndex((p) => p.phase === "images");
+    expect(lastRepairing).toBeGreaterThan(-1);
+    expect(firstImages).toBeGreaterThan(lastRepairing);
+    // The photo step is announced before any photo is looked up, not left
+    // to the poll, and nothing after it goes back to writing or repairing.
+    expect(imagesSentBeforePhotos()).toBe(true);
+    expect(
+      payloads.slice(firstImages).every((p) => p.phase === "images"),
+    ).toBe(true);
+  });
+
+  test("a 20/20 first build announces the photo step right away", async () => {
+    const categoryId = await draftCategory("Clean First Time");
+    h.state.generateQuestions.mockImplementation(roundQuestions([0]));
+
+    await pressContinue(categoryId);
+
+    expect(h.state.generateQuestions).toHaveBeenCalledTimes(1);
+    expect((await readJob(categoryId)).phase).toBe("ready");
+    expect(imagesSentBeforePhotos()).toBe(true);
+  });
+
+  test("the failure number stays on through both check passes of a refill", async () => {
+    // Round 1: 3 fail (17 clean). Round 2 writes 4 and all pass. The second
+    // check pass of round 2 finishes after the first, and its update must
+    // still carry round 1's number (it used to be cleared mid-check).
+    const categoryId = await draftCategory("Steady Headline");
+    h.state.generateQuestions.mockImplementation(roundQuestions([3, 0]));
+    h.state.verifyAnswers.mockImplementation(
+      async (
+        questions: Array<{ prompt: string }>,
+        opts: {
+          mode?: string;
+          onChunkChecked?: (checked: number, total: number) => void;
+        },
+      ) => {
+        if (opts.mode === "adversarial") {
+          for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+        }
+        opts.onChunkChecked?.(questions.length, questions.length);
+        return questions.map((question, index) => ({
+          index,
+          markedAnswerIsCorrect: !question.prompt.includes("REJECTME"),
+          ambiguous: false,
+          factBlurbIsCorrect: opts.mode === "adversarial" ? true : null,
+          answerableWithoutImage: true,
+          fitsRequestedTopic: true,
+        }));
+      },
+    );
+
+    await pressContinue(categoryId);
+
+    expect((await readJob(categoryId)).certified_count).toBe(20);
+    const payloads = progressPayloads() as Array<{
+      phase: string;
+      clean?: number;
+      failedLastRound?: number;
+      checked?: number;
+    }>;
+    const round2Writing = payloads.findIndex(
+      (p) => p.phase === "writing" && p.clean === 17 && p.failedLastRound === 3,
+    );
+    expect(round2Writing).toBeGreaterThan(-1);
+    const round2Checks = payloads
+      .slice(round2Writing)
+      .filter((p) => p.phase === "checking");
+    // Seeds plus one chunk per pass, all with the number on.
+    expect(round2Checks.length).toBeGreaterThanOrEqual(3);
+    expect(round2Checks.every((p) => p.failedLastRound === 3)).toBe(true);
+    // Once round 2 saves, the old number is gone.
+    const afterSave = payloads.slice(round2Writing).filter((p) => p.clean === 20);
+    expect(afterSave.length).toBeGreaterThan(0);
+    expect(afterSave.every((p) => p.failedLastRound !== 3)).toBe(true);
+  });
+
   test("a build already killed with no photos or counters still restarts", async () => {
     const { categoryId } = await seedStuckBuild({
       withPhoto: 0,
