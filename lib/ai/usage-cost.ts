@@ -4,7 +4,7 @@
 // hardcoded the deprecated Opus rate [15,75], inflating every cost estimate ~3x
 // on the Opus slice. Both the live generation route and the benchmark read rates
 // from HERE so the numbers can never silently drift again. Update prices in ONE
-// place. Source: platform.claude.com/docs pricing (2026-06).
+// place. Source: platform.claude.com/docs pricing (2026-06; 5.5 rows 2026-10).
 //
 // Pure math — no `server-only`, so the .mjs benchmark can import it via tsx too.
 
@@ -13,6 +13,12 @@ export const MODEL_RATES: Record<string, { in: number; out: number }> = {
   "claude-opus-4-8": { in: 5, out: 25 },
   "claude-sonnet-4-6": { in: 3, out: 15 },
   "claude-haiku-4-5": { in: 1, out: 5 },
+  // 5.5 family (added Oct 2026 so the hidden cost log stops recording $0 once
+  // the new engine uses them). Haiku 5.5 has a second, dearer rate card for
+  // prompts over 100K tokens; this app never sends one that long.
+  "claude-opus-5-5": { in: 4, out: 20 },
+  "claude-sonnet-5-5": { in: 2, out: 10 },
+  "claude-haiku-5-5": { in: 0.1, out: 0.5 },
 };
 
 /** Anthropic usage block. `input_tokens` is the UNCACHED remainder only —

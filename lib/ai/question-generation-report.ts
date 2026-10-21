@@ -68,11 +68,11 @@ export interface QuestionGenerationReportSnapshot {
   report: QuestionGenerationReportJson;
 }
 
+/** What the host sees after a build. Cost stays in the stored report only. */
 export interface HostQuestionAuditSummary {
   acceptedCount: number;
   generatedCount: number;
   verifyPasses: number;
-  estimatedCostUsd: number;
   imageTargetCount: number;
   imageAttachedCount: number;
   riskFlagCount: number;
@@ -232,7 +232,6 @@ export function hostAuditSummaryFromSnapshot(
     acceptedCount: snapshot.acceptedCount,
     generatedCount: snapshot.generatedCount,
     verifyPasses: snapshot.verifyPasses,
-    estimatedCostUsd: snapshot.estimatedCostUsd,
     imageTargetCount: snapshot.imageTargetCount,
     imageAttachedCount: snapshot.imageAttachedCount,
     riskFlagCount: snapshot.riskFlagCount,
@@ -246,7 +245,6 @@ export function hostAuditSummaryFromReportRow(
     acceptedCount: row.accepted_count,
     generatedCount: row.generated_count,
     verifyPasses: row.verify_passes,
-    estimatedCostUsd: Number(row.estimated_cost_usd),
     imageTargetCount: row.image_target_count,
     imageAttachedCount: row.image_attached_count,
     riskFlagCount: row.risk_flag_count,

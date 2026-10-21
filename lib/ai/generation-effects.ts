@@ -4,6 +4,7 @@ import type { Json } from "@/lib/supabase/types";
 import type { GeneratedQuestion } from "./generate-questions";
 import type { QuestionGenerationJobRow } from "./generation-job";
 import type { QuestionGenerationReportInsert } from "./question-generation-report";
+import { shuffleChoices } from "./shuffle-choices";
 
 interface GenerationRpcError {
   message: string;
@@ -92,9 +93,19 @@ export async function commitGenerationQuestions(
     attempt: number;
     questions: GeneratedQuestion[];
     deleteIds?: string[];
+    /** Test hook for the choice shuffle; production uses Math.random. */
+    random?: () => number;
   },
 ): Promise<PersistedGeneratedQuestion[] | null> {
-  const rows = input.questions.map((q) => ({ id: crypto.randomUUID(), ...q }));
+  // This is the one door every AI-written question passes through on its way
+  // into the database (first build, refill rounds, and "Another 20"), and it
+  // runs after both fact-check passes. Shuffle the four choices here so the
+  // stored order (what the TV shows) never leaks which slot the writer
+  // favours. Host-typed questions (manual route) keep the host's own order.
+  const rows = input.questions.map((q) => ({
+    id: crypto.randomUUID(),
+    ...shuffleChoices(q, input.random),
+  }));
   const result = await call(client, "commit_generation_questions", {
     p_category_id: input.categoryId,
     p_attempt: input.attempt,

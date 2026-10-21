@@ -166,7 +166,6 @@ describe("HostGenPick sidebar — clump-heavy regression (32bb985)", () => {
           acceptedCount: 7,
           generatedCount: 9,
           verifyPasses: 2,
-          estimatedCostUsd: 0.12,
           imageTargetCount: 7,
           imageAttachedCount: 6,
           riskFlagCount: 1,
@@ -250,7 +249,6 @@ describe("HostSetupPickClient audit summary recovery", () => {
           acceptedCount: 7,
           generatedCount: 10,
           verifyPasses: 2,
-          estimatedCostUsd: 0.125,
           imageTargetCount: 7,
           imageAttachedCount: 5,
           riskFlagCount: 1,
@@ -276,7 +274,6 @@ describe("HostSetupPickClient audit summary recovery", () => {
         accepted_count: 7,
         generated_count: 10,
         verify_passes: 2,
-        estimated_cost_usd: "0.1250",
         image_target_count: 7,
         image_attached_count: 5,
         risk_flag_count: 1,
@@ -304,10 +301,9 @@ describe("HostSetupPickClient audit summary recovery", () => {
           acceptedCount: 7,
           generatedCount: 10,
           verifyPasses: 2,
-          estimatedCostUsd: "bad",
           imageTargetCount: 7,
           imageAttachedCount: 5,
-          riskFlagCount: 1,
+          riskFlagCount: "bad",
         },
       });
     });
@@ -316,7 +312,7 @@ describe("HostSetupPickClient audit summary recovery", () => {
       expect(screen.getByTestId("host-gen-audit-summary")).toBeInTheDocument();
     });
     expect(screen.getByText("7 accepted from 10 candidates")).toBeInTheDocument();
-    expect(screen.getByText("Estimated AI cost: $0.13")).toBeInTheDocument();
+    expect(screen.getByText("1 wording flag to review")).toBeInTheDocument();
   });
 
   it("ignores a late completion broadcast from a superseded generation attempt", async () => {

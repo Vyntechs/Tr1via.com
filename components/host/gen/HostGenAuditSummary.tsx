@@ -7,10 +7,6 @@ export interface HostGenAuditSummaryProps {
   summary: HostQuestionAuditSummary;
 }
 
-function money(value: number): string {
-  return `$${value.toFixed(2)}`;
-}
-
 function plural(count: number, singular: string, pluralLabel: string): string {
   return count === 1 ? singular : pluralLabel;
 }
@@ -24,7 +20,8 @@ export function HostGenAuditSummary({ summary }: HostGenAuditSummaryProps) {
       "verification pass",
       "verification passes",
     )}`,
-    `Estimated AI cost: ${money(summary.estimatedCostUsd)}`,
+    // The per-build AI cost is still logged in question_generation_reports
+    // for our own measuring; the host no longer sees it here (Oct 2026).
     `Images: ${summary.imageTargetCount} attempted, ${summary.imageAttachedCount} attached`,
     `${summary.riskFlagCount} ${plural(
       summary.riskFlagCount,
@@ -61,7 +58,7 @@ export function HostGenAuditSummary({ summary }: HostGenAuditSummaryProps) {
             gap: 6,
             flex: "1 1 150px",
             minWidth: 0,
-            color: index === 4 && summary.riskFlagCount > 0 ? t.accent : t.inkMid,
+            color: index === 3 && summary.riskFlagCount > 0 ? t.accent : t.inkMid,
             fontSize: 11.5,
             fontWeight: 600,
             lineHeight: 1.35,

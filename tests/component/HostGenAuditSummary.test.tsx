@@ -6,7 +6,7 @@ import { HostGenAuditSummary } from "@/components/host/gen/HostGenAuditSummary";
 afterEach(cleanup);
 
 describe("HostGenAuditSummary", () => {
-  it("renders compact accepted, cost, image, and risk metrics", () => {
+  it("renders compact accepted, image, and risk metrics without a cost line", () => {
     render(
       <ThemeProvider themeKey="house">
         <HostGenAuditSummary
@@ -14,7 +14,6 @@ describe("HostGenAuditSummary", () => {
             acceptedCount: 20,
             generatedCount: 27,
             verifyPasses: 2,
-            estimatedCostUsd: 0.1432,
             imageTargetCount: 20,
             imageAttachedCount: 18,
             riskFlagCount: 3,
@@ -25,7 +24,7 @@ describe("HostGenAuditSummary", () => {
 
     expect(screen.getByText("20 accepted from 27 candidates")).toBeInTheDocument();
     expect(screen.getByText("2 verification passes")).toBeInTheDocument();
-    expect(screen.getByText("Estimated AI cost: $0.14")).toBeInTheDocument();
+    expect(screen.queryByText(/cost/i)).not.toBeInTheDocument();
     expect(screen.getByText("Images: 20 attempted, 18 attached")).toBeInTheDocument();
     expect(screen.getByText("3 wording flags to review")).toBeInTheDocument();
   });
