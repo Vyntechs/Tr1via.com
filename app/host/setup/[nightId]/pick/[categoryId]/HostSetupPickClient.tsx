@@ -1445,6 +1445,8 @@ export function HostSetupPickClient({
     resumedAttempt.attempt === currentGenerationAttemptRef.current
       ? { resumedWith: resumedAttempt.saved }
       : {}),
+    // New engine only (the server sends it): "this can take a few minutes".
+    ...(currentLive?.longWrite === true ? { longWrite: true } : {}),
     // Picks "Some failed the check" over "Writing N more"; never a number.
     failuresKnown:
       sawFullFirstRound || fullRoundSeenAttempt === currentGenerationAttemptRef.current,

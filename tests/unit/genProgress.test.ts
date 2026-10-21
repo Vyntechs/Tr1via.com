@@ -481,3 +481,23 @@ describe("review 5: ticks, bars and words match their counts", () => {
     });
   });
 });
+
+describe("New engine's long writing step (server sends longWrite)", () => {
+  it("says the writing step can take a few minutes, calmly, and nothing else changes", () => {
+    const writing = { ...base, phase: "writing" as const };
+    const plain = buildTracker(writing);
+    const longWrite = buildTracker({ ...writing, longWrite: true });
+    expect(plain.headline).toBe("Writing questions");
+    expect(longWrite.headline).toBe("Writing questions. This can take a few minutes");
+    // Same bars and percent: only the words differ.
+    expect(longWrite.stages).toEqual(plain.stages);
+    expect(longWrite.overall).toBe(plain.overall);
+  });
+
+  it("only while writing: checking, photos and a pause read the same as Classic", () => {
+    for (const phase of ["checking", "images", "needs_attention"] as const) {
+      const p = { ...base, phase, written: 20, certified: phase === "checking" ? 0 : 20 };
+      expect(buildTracker({ ...p, longWrite: true }).headline).toBe(buildTracker(p).headline);
+    }
+  });
+});

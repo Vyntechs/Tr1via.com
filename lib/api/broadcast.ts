@@ -115,6 +115,9 @@ export interface CategoryProgressPayload extends CategoryBroadcastPayload {
    *  through the next round's writing and checking. The host names a
    *  failure number only from this field, never from its own counting. */
   failedLastRound?: number;
+  /** Sent only by the New engine: its writer thinks before it writes, so the
+   *  writing step can take a few minutes. The host's screen says so. */
+  longWrite?: boolean;
 }
 
 /** Payload for the category generation completion event. */

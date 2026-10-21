@@ -20,8 +20,16 @@
 //   - Output limit 20,000 tokens. Thinking shares it and can't be capped on
 //     Sonnet 5.5 (budget_tokens is refused; effort is the only lever), so the
 //     limit covers ~5k of answer JSON plus ~15k of thinking. It is a ceiling,
-//     not a charge, and at ~100 tokens/s it still ends well inside the route's
-//     300s limit.
+//     not a charge. At ~100 tokens/s a reply that uses all of it takes ~200s.
+//     New builds run under the route's 800s limit (Classic still plans
+//     around 300s), so that fits, refill rounds included.
+//   - Total time cap, a safety net: the writer stops NEW_WRITER_STOP_AFTER_MS
+//     after the route's request began (the route passes its startedAtMs, the
+//     same clock its photo cutoff uses). Hitting it is handled like the output-limit
+//     cutoff: finished questions are kept and checked, the unfinished one is
+//     reported, and a refill round that has no time left throws, which lands
+//     in the route's "paused, resume to finish" handling. Never a silent
+//     partial batch stored as complete.
 //
 // Output lands in the SAME GeneratedQuestion shape Classic returns, so the
 // checker, photo and pick steps after it are untouched:
@@ -58,11 +66,24 @@ export const NEW_WRITER_MAX_TOKENS = 20_000;
  * Longest quiet spell the New writer allows on the stream before it gives up.
  * Classic uses 60s, but the SDK drops the server's keep-alive pings, so a
  * thinking stretch with nothing shown would look dead. Summarized thinking
- * sends updates; this wider window covers a quiet gap between them. Sized for
- * the route: 300s hard limit, photos stop at 270s, a normal write takes ~25s,
- * and two checker passes still have to run after it.
+ * sends updates; this wider window covers a quiet gap between them. It limits
+ * gaps only; the total is limited by NEW_WRITER_STOP_AFTER_MS below.
  */
 export const NEW_WRITER_IDLE_MS = 120_000;
+/**
+ * Total time cap for writing, counted from when the route's request began
+ * (route.ts startedAtMs). A safety net, not a target: a normal build is done
+ * writing in well under a minute, and a reply using all 20,000 tokens takes
+ * ~200s. Without it, a writer that keeps sending updates could run into
+ * Vercel's 800s wall and be killed mid-build. Budget on New's clock: writing
+ * stops by 660s; the two checker passes run side by side, each up to a 60s
+ * wait for the first byte plus ~20s of answer, so they end by ~740s; photos
+ * stop at 770s (NEW_PHOTO_STOP_AFTER_MS); Vercel ends the request at 800s.
+ */
+export const NEW_WRITER_STOP_AFTER_MS = 660_000;
+/** A writing round is not started with less time than this left before the
+ *  cap: it could not finish a question, so it would only cost money. */
+export const NEW_WRITER_MIN_START_MS = 20_000;
 /** Thinking stays adaptive (Sonnet 5.5's only "on" mode) but streams summary
  *  updates, so a long think is not silent. Display only: billed the same. */
 export const NEW_WRITER_THINKING = { type: "adaptive", display: "summarized" } as const;
@@ -74,6 +95,11 @@ export interface GenerateQuestionsNewOptions extends GenerateQuestionsOptions {
   random?: () => number;
   /** Quiet spell on the stream before the call is aborted. Default NEW_WRITER_IDLE_MS. */
   idleMs?: number;
+  /** When the route's request began (ms since epoch); the total time cap
+   *  counts from here. Absent = from the start of this call. */
+  startedAtMs?: number;
+  /** Total time cap from startedAtMs. Default NEW_WRITER_STOP_AFTER_MS. */
+  stopAfterMs?: number;
 }
 
 // JSON schema for structured output. The API refuses length and number
@@ -214,8 +240,20 @@ export async function generateQuestionsNew(
   });
 
   const t0 = Date.now();
+  const stopAfterMs = opts.stopAfterMs ?? NEW_WRITER_STOP_AFTER_MS;
+  const deadlineAtMs = (opts.startedAtMs ?? t0) + stopAfterMs;
+  const timeLeftMs = deadlineAtMs - t0;
+  if (timeLeftMs < NEW_WRITER_MIN_START_MS) {
+    // A refill round with no time left: stop here (no paid call) and let the
+    // route pause the build so the host can resume it.
+    const err = new Error(
+      `generateQuestionsNew: out of writing time (${stopAfterMs}ms cap, ${Math.max(0, timeLeftMs)}ms left); paused before another round`,
+    );
+    console.log(`[generateQuestionsNew] ${err.message}`);
+    throw err;
+  }
   console.log(
-    `[generateQuestionsNew] calling ${model} topic="${opts.topic}" count=${count} timeoutMs=${timeoutMs} idleMs=${idleMs}`,
+    `[generateQuestionsNew] calling ${model} topic="${opts.topic}" count=${count} timeoutMs=${timeoutMs} idleMs=${idleMs} timeLeftMs=${timeLeftMs}`,
   );
   const stream = client.messages.stream(
     {
@@ -264,65 +302,93 @@ export async function generateQuestionsNew(
   stream.on("connect", armIdleGuard);
   stream.on("streamEvent", armIdleGuard);
   // Structured output streams as text, not tool input.
+  let latestText = "";
   stream.on("text", (_delta, snapshot) => {
+    latestText = snapshot;
     reportWritten(countCompleteNewQuestions(snapshot));
   });
+  // Total time cap. Armed now, not on connect: the wait for headers and a
+  // retry spend the same budget.
+  let deadlineHit = false;
+  const deadlineTimer = setTimeout(() => {
+    deadlineHit = true;
+    stream.abort();
+  }, timeLeftMs);
 
-  let response: Anthropic.Message;
+  let response: Anthropic.Message | null = null;
   try {
     response = await stream.finalMessage();
   } catch (err) {
     const dt = Date.now() - t0;
-    if (idleTimedOut) {
+    if (deadlineHit) {
+      console.log(
+        `[generateQuestionsNew] stopped at the time cap after ${dt}ms (${stopAfterMs}ms from request start); usage unknown for a stopped call`,
+      );
+    } else if (idleTimedOut) {
       const idleErr = new Error(
         `Request timed out: no stream data for ${idleMs}ms (idle timeout)`,
       );
       console.log(`[generateQuestionsNew] FAILED after ${dt}ms (IdleTimeout): ${idleErr.message}`);
       throw idleErr;
+    } else {
+      const errName = err instanceof Error ? err.constructor.name : typeof err;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.log(`[generateQuestionsNew] FAILED after ${dt}ms (${errName}): ${errMsg}`);
+      throw err;
     }
-    const errName = err instanceof Error ? err.constructor.name : typeof err;
-    const errMsg = err instanceof Error ? err.message : String(err);
-    console.log(`[generateQuestionsNew] FAILED after ${dt}ms (${errName}): ${errMsg}`);
-    throw err;
   } finally {
     if (idleTimer) clearTimeout(idleTimer);
+    clearTimeout(deadlineTimer);
   }
-  console.log(
-    `[generateQuestionsNew] returned in ${Date.now() - t0}ms stop=${response.stop_reason}`,
-  );
-  opts.onUsage?.(model, response.usage);
 
-  if (response.stop_reason === "refusal") {
-    throw new Error("generateQuestionsNew: the model declined to write this topic");
+  let truncated = false;
+  let text = latestText;
+  if (response) {
+    console.log(
+      `[generateQuestionsNew] returned in ${Date.now() - t0}ms stop=${response.stop_reason}`,
+    );
+    opts.onUsage?.(model, response.usage);
+
+    if (response.stop_reason === "refusal") {
+      throw new Error("generateQuestionsNew: the model declined to write this topic");
+    }
+    // Checked before anything reads the text: thinking shares the output
+    // limit, so a cut-off reply can hold little or no question text at all.
+    truncated = response.stop_reason === "max_tokens";
+    text = response.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("");
   }
-  // Checked before anything reads the text: thinking shares the output
-  // limit, so a cut-off reply can hold little or no question text at all.
-  const truncated = response.stop_reason === "max_tokens";
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === "text")
-    .map((b) => b.text)
-    .join("");
+  // Stopped early: at the output limit, or at the time cap (no response).
+  const cutOffBy = response === null ? "time" : truncated ? "output" : null;
 
   let rawQuestions: unknown[];
-  if (truncated) {
-    // Cut off at the output limit: keep the questions that closed and drop
-    // the unfinished one, which may have stopped mid-field. A partial batch
-    // goes back to the collect loop, whose refill round asks for the gap.
+  if (cutOffBy) {
+    // Keep the questions that closed and drop the unfinished one, which may
+    // have stopped mid-field. A partial batch goes back to the collect loop,
+    // whose refill round asks for the gap (or pauses if no time is left).
+    const limitName =
+      cutOffBy === "time"
+        ? `${stopAfterMs}ms time cap`
+        : `${NEW_WRITER_MAX_TOKENS}-token output limit`;
     const { items, unfinished } = completeNewQuestions(text);
     if (items.length === 0) {
       throw new Error(
-        `generateQuestionsNew: hit the ${NEW_WRITER_MAX_TOKENS}-token output limit before any question finished`,
+        `generateQuestionsNew: hit the ${limitName} before any question finished`,
       );
     }
     rawQuestions = items;
     console.warn(
-      `[generateQuestionsNew] hit the ${NEW_WRITER_MAX_TOKENS}-token output limit; kept ${items.length} finished questions`,
+      `[generateQuestionsNew] hit the ${limitName}; kept ${items.length} finished questions`,
     );
     if (unfinished) {
       opts.onRejectedCandidate?.({
         index: items.length,
         reason: "invalid_schema",
-        issues: ["cut off at the output limit"],
+        issues: [
+          cutOffBy === "time" ? "cut off at the time cap" : "cut off at the output limit",
+        ],
       });
     }
   } else {
@@ -384,7 +450,7 @@ export async function generateQuestionsNew(
   if (valid.length < count) {
     // Loud, never silent: the collect loop's next round asks for the gap.
     console.warn(
-      `[generateQuestionsNew] SHORT BATCH: ${valid.length} of ${count} usable${truncated ? " (output limit hit)" : ""}; the refill round asks for the rest`,
+      `[generateQuestionsNew] SHORT BATCH: ${valid.length} of ${count} usable${cutOffBy === "output" ? " (output limit hit)" : cutOffBy === "time" ? " (time cap hit)" : ""}; the refill round asks for the rest`,
     );
   }
   return valid;

@@ -46,8 +46,9 @@ export type GenerationStatus =
   | { kind: "needs-attention"; progress: GenerationJobProgress }
   | { kind: "completed"; state: "review" | "ready" };
 
-// The route can legitimately run for up to 300 seconds. Only call the worker
-// dead after that server-side ceiling plus a small finalization/polling margin.
+// Measured from the last sign of life, not from the start: a healthy build
+// sends a heartbeat every 12s however long it runs (Classic plans around
+// 300s, New up to the route's 800s), so only real silence this long trips it.
 export const GENERATION_STALL_TIMEOUT_MS = 330_000;
 
 export interface UseGenerationStatusOptions {

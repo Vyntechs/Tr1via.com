@@ -184,10 +184,28 @@ describe("question engine · build branch", () => {
     expect(route.match(/readHostQuestionEngine\(/g)).toHaveLength(1);
     // Step 4: classic is today's job with no writer passed; new is the same
     // job with the new writer. Nothing else differs between the two.
+    // New also hands its writer the request's start time, for the writer's
+    // total time cap.
     expect(route).toMatch(
-      /\{\s*classic: runGenerationJob,\s*new: \(args\) => runGenerationJob\(\{ \.\.\.args, writeQuestions: generateQuestionsNew \}\),\s*\}/,
+      /\{\s*classic: runGenerationJob,\s*(?:\/\/[^\n]*\n\s*)*new: \(args\) =>\s*runGenerationJob\(\{\s*\.\.\.args,\s*writeQuestions: \(o\) =>\s*generateQuestionsNew\(\{ \.\.\.o, startedAtMs: args\.startedAtMs \}\),\s*photoStopAfterMs: NEW_PHOTO_STOP_AFTER_MS,\s*\}\),\s*\}/,
     );
-    expect(route.match(/writeQuestions: generateQuestionsNew/g)).toHaveLength(1);
+    expect(route.match(/generateQuestionsNew\(/g)).toHaveLength(1);
+  });
+
+  it("Classic's time budget is unchanged: photos still stop at 270s for Classic, only New gets the longer budget", () => {
+    const route = readFileSync("app/api/categories/[id]/generate/route.ts", "utf8");
+    expect(route).toContain("const PHOTO_STOP_AFTER_MS = 270_000;");
+    // Classic runs the job with no photo budget passed, so it falls back to
+    // PHOTO_STOP_AFTER_MS; only the New branch passes one.
+    expect(route).toContain(
+      "if (Date.now() - opts.startedAtMs > (opts.photoStopAfterMs ?? PHOTO_STOP_AFTER_MS)) {",
+    );
+    expect(route.match(/photoStopAfterMs: /g)).toHaveLength(1);
+    expect(route).toMatch(/\{\s*classic: runGenerationJob,/);
+    // The New-only "this can take a few minutes" flag is never sent by Classic.
+    expect(route).toContain(
+      '...(opts.reportContext.questionEngine === "new" ? { longWrite: true } : {}),',
+    );
     expect(route).toContain("(opts.writeQuestions ?? generateQuestions)(");
     // The writer is the only engine-specific input to the job.
     expect(route.match(/writeQuestions/g)).toHaveLength(3);
