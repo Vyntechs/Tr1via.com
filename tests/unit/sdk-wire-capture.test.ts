@@ -302,10 +302,12 @@ describe("Anthropic wire capture (SDK upgrade guard)", () => {
     if (process.env.WIRE_CAPTURE_OUT) {
       fs.writeFileSync(process.env.WIRE_CAPTURE_OUT, JSON.stringify(current, null, 2) + "\n");
     }
-    if (process.env.WRITE_WIRE_BASELINE === "1" || !fs.existsSync(BASELINE)) {
+    if (process.env.WRITE_WIRE_BASELINE === "1") {
       fs.mkdirSync(path.dirname(BASELINE), { recursive: true });
       fs.writeFileSync(BASELINE, JSON.stringify(current, null, 2) + "\n");
     }
+    // A missing baseline is a failure, never a fresh self-comparison.
+    expect(fs.existsSync(BASELINE), `baseline missing: ${BASELINE}`).toBe(true);
     const baseline = JSON.parse(fs.readFileSync(BASELINE, "utf8")) as Capture;
 
     expect(Object.keys(current).sort()).toEqual(Object.keys(baseline).sort());
