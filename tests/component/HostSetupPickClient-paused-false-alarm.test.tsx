@@ -293,7 +293,7 @@ describe("pick screen: paused screen only for a build that is really stopped", (
     renderScreen(world.questions);
     await flush();
     await pollOnce();
-    expect(screen.getByText(/still building your questions/i)).toBeInTheDocument();
+    expect(screen.getByTestId("host-gen-loading-layout")).toBeInTheDocument();
     expect(pausedShown()).toBe(false);
   }
 
@@ -308,7 +308,7 @@ describe("pick screen: paused screen only for a build that is really stopped", (
     expect(screen.getByRole("button", { name: /continue/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /enter manually|type|by hand/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /back to setup/i })).toBeInTheDocument();
-    expect(screen.queryByText(/still building your questions/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("host-gen-loading-layout")).not.toBeInTheDocument();
   });
 
   it("(e) not too early: 3 minutes of a missing row is still calm", async () => {
@@ -318,7 +318,7 @@ describe("pick screen: paused screen only for a build that is really stopped", (
     await minutes(3);
 
     expect(pausedShown()).toBe(false);
-    expect(screen.getByText(/still building your questions/i)).toBeInTheDocument();
+    expect(screen.getByTestId("host-gen-loading-layout")).toBeInTheDocument();
   });
 
   it("(f) a healthy attempt 2 with fresh heartbeats for 8 minutes never shows the paused screen", async () => {
@@ -329,7 +329,7 @@ describe("pick screen: paused screen only for a build that is really stopped", (
       expect(pausedShown()).toBe(false);
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     }
-    expect(screen.getByText(/still building your questions/i)).toBeInTheDocument();
+    expect(screen.getByTestId("host-gen-loading-layout")).toBeInTheDocument();
   });
 
   it("(g) the row comes back after the silence alarm: the paused screen goes away again", async () => {
@@ -342,6 +342,6 @@ describe("pick screen: paused screen only for a build that is really stopped", (
     await minutes(0.2);
 
     expect(pausedShown()).toBe(false);
-    expect(screen.getByText(/still building your questions/i)).toBeInTheDocument();
+    expect(screen.getByTestId("host-gen-loading-layout")).toBeInTheDocument();
   });
 });
