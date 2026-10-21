@@ -572,6 +572,10 @@ async function runGenerationJob(opts: {
     }
     certifiedCount += batch.length;
     cleanCount = Math.max(cleanCount, certifiedCount);
+    // This runs at a round's end: say "repairing" now, so a heartbeat in
+    // the gap before onRoundComplete can't send the new clean count under
+    // the old "checking" phase.
+    if (certifiedCount < 20) phase = "repairing";
     liveProgress.setCounts({
       certified: certifiedCount,
       clean: cleanCount,
