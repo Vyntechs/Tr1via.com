@@ -7,6 +7,13 @@
 // auth app_metadata (service role only — hosts can't write it themselves);
 // the /host password gate reads it (lib/auth/password-gate.ts).
 //
+// questionEngine?: "classic" | "new" picks which question builder this host's
+// builds use (host_question_engine_settings; no row = classic). It is written
+// LAST and on its own: if that write fails (for example the table is not set
+// up yet), the paywall/password changes in the same request still stand, the
+// response is still 200, and the body carries `questionEngineError` so the
+// dashboard can put just that switch back and say why.
+//
 // Order + safety: the hosts row (paywall) is written first, then the auth
 // switch. Only the one app_metadata key is sent — GoTrue merges
 // app_metadata on an admin update, so nothing else (her password marker,
@@ -23,6 +30,7 @@ import { z } from "zod";
 import { requireFounder } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { PASSWORD_PROMPT_KEY } from "@/lib/auth/password-gate";
+import { QUESTION_ENGINES, type QuestionEngine } from "@/lib/ai/question-engine";
 import {
   badRequest,
   forbidden,
@@ -36,10 +44,15 @@ const PatchSchema = z
   .object({
     isPaywallBypassed: z.boolean().optional(),
     passwordPrompt: z.enum(["on", "off"]).optional(),
+    questionEngine: z.enum(QUESTION_ENGINES).optional(),
   })
-  .refine((v) => v.isPaywallBypassed !== undefined || v.passwordPrompt !== undefined, {
-    message: "nothing to update",
-  });
+  .refine(
+    (v) =>
+      v.isPaywallBypassed !== undefined ||
+      v.passwordPrompt !== undefined ||
+      v.questionEngine !== undefined,
+    { message: "nothing to update" },
+  );
 
 export async function PATCH(
   req: NextRequest,
@@ -123,5 +136,43 @@ export async function PATCH(
     }
   }
 
+  // 3. The question engine switch — isolated, never rolls back 1 or 2.
+  if (parsed.data.questionEngine !== undefined) {
+    const questionEngineError = await saveQuestionEngine(
+      admin,
+      hostId,
+      parsed.data.questionEngine,
+    );
+    if (questionEngineError) {
+      return ok({ updated: true, questionEngineError });
+    }
+  }
+
   return ok({ updated: true });
+}
+
+async function saveQuestionEngine(
+  admin: ReturnType<typeof getSupabaseAdmin>,
+  hostId: string,
+  engine: QuestionEngine,
+): Promise<string | null> {
+  const failed = "Question engine not saved (the setting table may not be set up yet).";
+  try {
+    const { error } = await admin
+      .from("host_question_engine_settings")
+      .upsert(
+        { host_id: hostId, engine, updated_at: new Date().toISOString() },
+        { onConflict: "host_id" },
+      );
+    if (error) {
+      console.warn(`[admin] question engine write failed: ${error.message}`);
+      return failed;
+    }
+    return null;
+  } catch (err) {
+    console.warn(
+      `[admin] question engine write failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return failed;
+  }
 }

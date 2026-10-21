@@ -12,11 +12,17 @@
 //      { passwordPrompt }). Off by default for existing hosts, so nothing
 //      changes for them until the founder flips it. The founder is always
 //      asked, so his own card shows status only.
+//   4. Per-host "Question engine: Classic / New" line (PATCH
+//      { questionEngine }), on every card including the founder's own, so
+//      he can try "new" on his account first. No row = Classic. If the save
+//      fails (e.g. the table is not set up yet) only this switch goes back
+//      and the reason shows under it; the other switches are untouched.
 
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
 import type { AdminHostRow } from "@/lib/admin/admin-host-rows";
+import type { QuestionEngine } from "@/lib/ai/question-engine";
 import { LaptopShell } from "@/components/shells";
 import {
   Display,
@@ -50,6 +56,34 @@ function Inner({ meDisplayName, initialHosts }: { meDisplayName: string; initial
     const o = hosts.filter((h) => h.role !== "founder");
     return [f ?? null, o];
   }, [hosts]);
+
+  // Returns null when saved, or a short reason when not (switch is put back).
+  async function saveQuestionEngine(hostId: string, next: QuestionEngine): Promise<string | null> {
+    const before = hosts.find((c) => c.id === hostId)?.question_engine ?? "classic";
+    const setEngine = (engine: QuestionEngine) =>
+      setHosts((curr) =>
+        curr.map((c) => (c.id === hostId ? { ...c, question_engine: engine } : c)),
+      );
+    setEngine(next);
+    try {
+      const res = await fetch(`/api/admin/hosts/${hostId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ questionEngine: next }),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { questionEngineError?: string; error?: string }
+        | null;
+      if (!res.ok || body?.questionEngineError) {
+        setEngine(before);
+        return body?.questionEngineError ?? body?.error ?? `Not saved (error ${res.status}).`;
+      }
+      return null;
+    } catch {
+      setEngine(before);
+      return "Not saved: could not reach the server.";
+    }
+  }
 
   return (
     <div
@@ -97,7 +131,12 @@ function Inner({ meDisplayName, initialHosts }: { meDisplayName: string; initial
         <section>
           <Eyebrow color={t.inkMid} size={10}>YOU</Eyebrow>
           <div style={{ marginTop: 10 }}>
-            <HostCard host={founder} onToggle={null} onPasswordPrompt={null} />
+            <HostCard
+              host={founder}
+              onToggle={null}
+              onPasswordPrompt={null}
+              onQuestionEngine={(next) => saveQuestionEngine(founder.id, next)}
+            />
           </div>
         </section>
       )}
@@ -153,6 +192,7 @@ function Inner({ meDisplayName, initialHosts }: { meDisplayName: string; initial
                     setHosts(prev);
                   }
                 }}
+                onQuestionEngine={(next) => saveQuestionEngine(h.id, next)}
               />
             ))
           )}
@@ -557,10 +597,12 @@ function HostCard({
   host,
   onToggle,
   onPasswordPrompt,
+  onQuestionEngine,
 }: {
   host: AdminHostRow;
   onToggle: ((next: boolean) => Promise<void>) | null;
   onPasswordPrompt: ((next: "on" | "off") => Promise<void>) | null;
+  onQuestionEngine: ((next: QuestionEngine) => Promise<string | null>) | null;
 }) {
   const { t } = useTheme();
   const compedDate = host.comped_at ? new Date(host.comped_at).toLocaleDateString() : null;
@@ -618,6 +660,100 @@ function HostCard({
       </div>
 
       <PasswordLine host={host} isFounder={isFounder} onPasswordPrompt={onPasswordPrompt} />
+
+      <QuestionEngineLine host={host} onQuestionEngine={onQuestionEngine} />
+    </div>
+  );
+}
+
+function QuestionEngineLine({
+  host,
+  onQuestionEngine,
+}: {
+  host: AdminHostRow;
+  onQuestionEngine: ((next: QuestionEngine) => Promise<string | null>) | null;
+}) {
+  const { t } = useTheme();
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const current: QuestionEngine = host.question_engine === "new" ? "new" : "classic";
+
+  async function pick(next: QuestionEngine) {
+    if (!onQuestionEngine || saving || next === current) return;
+    setSaving(true);
+    setError(null);
+    const problem = await onQuestionEngine(next);
+    setError(problem);
+    setSaving(false);
+  }
+
+  const option = (value: QuestionEngine, label: string) => {
+    const active = current === value;
+    return (
+      <button
+        type="button"
+        aria-pressed={active}
+        data-testid={`host-question-engine-${value}-${host.id}`}
+        disabled={!onQuestionEngine || saving}
+        onClick={() => void pick(value)}
+        style={{
+          padding: "6px 14px",
+          border: "none",
+          background: active ? t.accent : "transparent",
+          color: active ? t.surface : t.inkMid,
+          fontWeight: 700,
+          fontSize: 13,
+          cursor: onQuestionEngine && !saving ? "pointer" : "default",
+        }}
+      >
+        {label}
+      </button>
+    );
+  };
+
+  return (
+    <div
+      data-testid={`host-question-engine-line-${host.id}`}
+      style={{
+        gridColumn: "1 / -1",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        flexWrap: "wrap",
+        gap: 16,
+        paddingTop: 12,
+        borderTop: `1px solid ${t.line}`,
+        fontSize: 13,
+        color: t.inkMid,
+      }}
+    >
+      <span>
+        <strong style={{ color: t.ink }}>Question engine</strong>
+        {" · "}
+        {current === "new" ? "New" : "Classic"}
+      </span>
+      <div
+        role="group"
+        aria-label={`Question engine for ${host.display_name}`}
+        style={{
+          display: "inline-flex",
+          borderRadius: 999,
+          overflow: "hidden",
+          border: `1px solid ${t.line}`,
+        }}
+      >
+        {option("classic", "Classic")}
+        {option("new", "New")}
+      </div>
+      {error && (
+        <div
+          role="alert"
+          data-testid={`host-question-engine-error-${host.id}`}
+          style={{ flexBasis: "100%", color: t.inkMid, fontSize: 12 }}
+        >
+          {error}
+        </div>
+      )}
     </div>
   );
 }

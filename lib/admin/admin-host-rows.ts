@@ -5,6 +5,7 @@
 import "server-only";
 import type { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { listAllAuthUsers } from "@/lib/auth/admin-users";
+import { readAllQuestionEngines, type QuestionEngine } from "@/lib/ai/question-engine";
 import {
   PASSWORD_SET_AT_KEY,
   passwordPromptSetting,
@@ -27,6 +28,8 @@ export interface AdminHostRow {
   password_set_at: string | null;
   /** Founder's per-host "Ask to create password" switch; null = never set (off). */
   password_prompt: PasswordPrompt | null;
+  /** Which question builder this host's builds use (no row / unreadable = classic). */
+  question_engine: QuestionEngine;
 }
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
@@ -45,6 +48,9 @@ export async function loadAdminHostRows(admin: AdminClient): Promise<AdminHostRo
   // If the auth-user read fails, still return the hosts (email shows as
   // "(unknown)") so the founder's tools on /host/admin keep working.
   const users = await listAllAuthUsers(admin);
+  // Fail-safe: if the engine table is missing or unreadable, everyone shows
+  // as classic and the dashboard still loads.
+  const engines = await readAllQuestionEngines(admin);
   const userById = new Map(users.ok ? users.users.map((u) => [u.id, u]) : []);
 
   const compedByIds = Array.from(
@@ -76,6 +82,7 @@ export async function loadAdminHostRows(admin: AdminClient): Promise<AdminHostRo
       created_at: h.created_at,
       password_set_at: typeof setAt === "string" && setAt ? setAt : null,
       password_prompt: passwordPromptSetting(user?.app_metadata),
+      question_engine: engines.get(h.id) ?? "classic",
     };
   });
 

@@ -2,6 +2,7 @@ import type { GeneratedQuestion } from "./generate-questions";
 import { riskFlagsForQuestion, type QuestionRiskFlag } from "./question-risk-flags";
 import { costUsd, type TokenUsage } from "./usage-cost";
 import type { Json, QuestionGenerationReportRow } from "@/lib/supabase/types";
+import type { QuestionEngine } from "@/lib/ai/question-engine";
 
 export type QuestionGenerationMode =
   | "initial"
@@ -86,6 +87,8 @@ export interface QuestionGenerationReportContext {
   categoryName: string;
   topic: string;
   mode: QuestionGenerationMode;
+  /** Which question builder ran (hidden; stored inside the report JSON only). */
+  questionEngine?: QuestionEngine;
 }
 
 export interface QuestionGenerationReportInsert {
@@ -278,6 +281,8 @@ export function questionGenerationReportInsertFromSnapshot(
     image_attached_count: snapshot.imageAttachedCount,
     image_skipped_count: snapshot.imageSkippedCount,
     risk_flag_count: snapshot.riskFlagCount,
-    report: snapshot.report as unknown as Json,
+    report: (context.questionEngine
+      ? { ...snapshot.report, questionEngine: context.questionEngine }
+      : snapshot.report) as unknown as Json,
   };
 }

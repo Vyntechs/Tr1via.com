@@ -12,6 +12,7 @@ import { z } from "zod";
 import { requireFounder } from "@/lib/api/auth";
 import { PASSWORD_SET_AT_KEY, passwordPromptSetting } from "@/lib/auth/password-gate";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { readHostQuestionEngine } from "@/lib/ai/question-engine";
 import { findAuthUserByEmail } from "@/lib/auth/admin-users";
 import { loadAdminHostRows, type AdminHostRow } from "@/lib/admin/admin-host-rows";
 import {
@@ -123,6 +124,7 @@ export async function POST(req: NextRequest) {
         created_at: hostRow.created_at,
         password_set_at: passwordSetAt,
         password_prompt: passwordPrompt,
+        question_engine: await readHostQuestionEngine(admin, hostRow.id),
       } satisfies AdminHostRow,
     },
     201,

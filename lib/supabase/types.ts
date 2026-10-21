@@ -377,6 +377,32 @@ export type Database = {
           },
         ]
       }
+      host_question_engine_settings: {
+        Row: {
+          engine: string
+          host_id: string
+          updated_at: string
+        }
+        Insert: {
+          engine?: string
+          host_id: string
+          updated_at?: string
+        }
+        Update: {
+          engine?: string
+          host_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "host_question_engine_settings_host_id_fkey"
+            columns: ["host_id"]
+            isOneToOne: true
+            referencedRelation: "hosts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       hosts: {
         Row: {
           comped_at: string | null

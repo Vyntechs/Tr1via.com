@@ -21,6 +21,7 @@ const HEATHER: AdminHostRow = {
   created_at: new Date(Date.UTC(2026, 4, 1)).toISOString(),
   password_set_at: null,
   password_prompt: null,
+  question_engine: "classic",
 };
 
 const fetchMock = vi.fn();

@@ -76,6 +76,7 @@ import {
   type QuestionGenerationJobRow,
 } from "@/lib/ai/generation-job";
 import { createGenerationHeartbeat } from "@/lib/ai/generation-heartbeat";
+import { readHostQuestionEngine, runWithQuestionEngine } from "@/lib/ai/question-engine";
 import {
   createGenerationProgressReporter,
   writtenAfterBatch,
@@ -256,19 +257,31 @@ export async function POST(
         : "initial",
   };
   after(async () => {
-    await runGenerationJob({
-      categoryId,
-      topic,
-      flavor: parsed.data.flavor,
-      difficulty: parsed.data.difficulty,
-      themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,
-      keptIds: parsed.data.keptIds,
-      autoPick: parsed.data.autoPick,
-      resume,
-      attempt: job.attempt,
-      startedAtMs,
-      reportContext,
-    }).catch(async (err) => {
+    // Question engine switch (step 2): read the host's setting ONCE per
+    // build. Any read problem (missing table on a preview, error, no row,
+    // unknown value) means "classic". Both engines run today's builder with
+    // identical args until step 4 gives "new" its own writer.
+    const questionEngine = await readHostQuestionEngine(admin, owned.host.id);
+    console.log(
+      `[generate] category=${categoryId} attempt=${job.attempt} questionEngine=${questionEngine}`,
+    );
+    await runWithQuestionEngine(
+      questionEngine,
+      { classic: runGenerationJob, new: runGenerationJob },
+      {
+        categoryId,
+        topic,
+        flavor: parsed.data.flavor,
+        difficulty: parsed.data.difficulty,
+        themeKey: isThemeKey(nightThemeKey) ? nightThemeKey : undefined,
+        keptIds: parsed.data.keptIds,
+        autoPick: parsed.data.autoPick,
+        resume,
+        attempt: job.attempt,
+        startedAtMs,
+        reportContext: { ...reportContext, questionEngine },
+      },
+    ).catch(async (err) => {
       if (err instanceof GenerationAttemptSupersededError) return;
       const internalMessage =
         err instanceof Error ? err.message : "unknown generation error";
