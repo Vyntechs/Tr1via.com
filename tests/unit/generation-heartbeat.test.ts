@@ -32,6 +32,33 @@ describe("createGenerationHeartbeat", () => {
     expect(finished).toBe(true);
   });
 
+  it("drain never throws, so a failed last heartbeat can't fail a finished build", async () => {
+    // The route's stopLiveSignals awaits drain() in the outer finally, right
+    // before completeQuestionGeneration. A one-off database error on the
+    // in-flight heartbeat used to reject here and turn a saved 20/20 build
+    // into "paused".
+    const pending = deferred<void>();
+    const write = vi.fn(() =>
+      pending.promise.then(() => {
+        throw new Error("transient db error");
+      }),
+    );
+    const heartbeat = createGenerationHeartbeat(write);
+    heartbeat.beat().catch(() => undefined);
+
+    let completed = false;
+    const finishBuild = async () => {
+      await heartbeat.drain(); // what stopLiveSignals does last
+      completed = true; // stands in for completeQuestionGeneration
+    };
+    const run = finishBuild();
+    pending.resolve();
+    await expect(run).resolves.toBeUndefined();
+    expect(completed).toBe(true);
+    // And a fresh beat after that still works.
+    await expect(heartbeat.drain()).resolves.toBeUndefined();
+  });
+
   it("lets a broadcast wait for its fenced durable write", async () => {
     const pending = deferred<void>();
     const heartbeat = createGenerationHeartbeat(() => pending.promise);

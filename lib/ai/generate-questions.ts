@@ -285,7 +285,11 @@ export async function generateQuestions(
       // Slight temperature for creative variety without going off-spec.
       temperature: 0.7,
     },
-    { timeout: timeoutMs },
+    // One SDK retry, not the default two: a connection that never opens
+    // waits timeoutMs per try, and three 60s tries plus backoff (~3 min) let
+    // a late refill round run past the route's 300s limit, so the platform
+    // killed the function before it could record a clean "paused".
+    { timeout: timeoutMs, maxRetries: 1 },
   );
 
   let idleTimedOut = false;

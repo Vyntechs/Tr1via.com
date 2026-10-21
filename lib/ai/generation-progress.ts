@@ -13,8 +13,13 @@
 export interface GenerationProgressCounts {
   /** Questions written so far (capped at target). */
   written: number;
-  /** Questions that passed every check so far. */
+  /** Questions that passed every check so far (saved as cards). */
   certified: number;
+  /** Questions this build holds as clean so far, on every path. Same as
+   *  `certified` on a first build, but on an "Another 20" reroll nothing is
+   *  saved until the final swap, so `certified` stays 0 while this climbs.
+   *  The host's refill maths and "Replacing N" read this, never the cards. */
+  clean: number;
   /** The deck size being built. */
   target: number;
   /** Checks finished so far, summed over every pass. The passes run at the
@@ -47,7 +52,11 @@ export interface GenerationProgressReporter {
     pass: 1 | 2,
   ) => GenerationProgressCounts;
   /** Keep the reporter in step with the route's own counters. */
-  setCounts: (patch: { written?: number; certified?: number }) => void;
+  setCounts: (patch: {
+    written?: number;
+    certified?: number;
+    clean?: number;
+  }) => void;
   /** Forget the checking fields (a new writing round started). */
   clearChecked: () => void;
   /** Current count fields for a progress broadcast. */
@@ -68,6 +77,7 @@ export function createGenerationProgressReporter(
 
   let written = 0;
   let certified = 0;
+  let clean = 0;
   const passes = Math.max(1, Math.floor(opts.checkPasses ?? 2));
   // One slot per pass. Both passes report chunks at the same time, so a single
   // shared slot would let each overwrite the other and the bar would jump
@@ -83,6 +93,7 @@ export function createGenerationProgressReporter(
   const counts = (): GenerationProgressCounts => ({
     written,
     certified,
+    clean,
     target,
     ...(checkedByPass === undefined
       ? {}
@@ -145,6 +156,9 @@ export function createGenerationProgressReporter(
       }
       if (patch.certified !== undefined) {
         certified = Math.min(target, Math.max(0, patch.certified));
+      }
+      if (patch.clean !== undefined) {
+        clean = Math.min(target, Math.max(0, patch.clean));
       }
     },
     clearChecked() {

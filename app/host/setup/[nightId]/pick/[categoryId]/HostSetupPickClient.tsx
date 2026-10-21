@@ -346,6 +346,10 @@ export function HostSetupPickClient({
         setLastActivityAt(Date.now());
         setLastSignalAt(Date.now());
         if (payload.phase) setGenPhase(payload.phase);
+        // A refill is starting. On a resume the server just deleted stored
+        // questions that failed the re-check; reload the cards so they leave
+        // the screen (nothing else announces a removal).
+        if (payload.phase === "repairing") void refetchQuestions();
         if (payload.phase) {
           // Whole-payload replace: a new attempt never inherits old counts.
           setLiveCounts({
@@ -1373,6 +1377,9 @@ export function HostSetupPickClient({
     target: trackerTarget,
     written: trackerWritten,
     certified: trackerCertified,
+    // The server's honest clean count (broadcast only). It only climbs within
+    // an attempt, so a broadcast from the previous phase is still right.
+    clean: num(currentLive?.clean),
     photos: trackerPhotos,
     // Pass counts only exist on the broadcast, and only mean anything while
     // that broadcast's phase is the one on screen.

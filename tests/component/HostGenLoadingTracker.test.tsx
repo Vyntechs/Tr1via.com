@@ -86,6 +86,37 @@ describe("HostGenLoading progress tracker", () => {
     expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe("3 to replace");
   });
 
+  it("holds the percent and bars still while on screen, through an auto-resume", () => {
+    const view = (over: Partial<HostGenProgress>) => (
+      <HostGenLoading themeKey="house" topic="Pixar" loaded={[]} progress={progress(over)} />
+    );
+    const shownPct = () => screen.getAllByText(/^\d+%$/)[0]!.textContent;
+    const none = { checked: undefined, checkTotal: undefined };
+    const { rerender, unmount } = render(view({ checked: 40, checkTotal: 40 }));
+    expect(shownPct()).toBe("78%");
+    expect(parseFloat(fill("check"))).toBe(100);
+    // 3 failed: the honest figure dips to 75%, the screen holds 78%, and the
+    // count says the truth.
+    rerender(view({ ...none, phase: "repairing", certified: 17, clean: 17 }));
+    expect(shownPct()).toBe("78%");
+    expect(parseFloat(fill("check"))).toBe(100);
+    expect(count("check")).toBe("17/20");
+    // Paused, then auto-resumed (a new server attempt that starts queued):
+    // the screen stays up and the bar does not fall back.
+    rerender(view({ ...none, phase: "needs_attention", written: 15, certified: 15 }));
+    expect(shownPct()).toBe("78%");
+    rerender(view({ ...none, phase: "queued", written: 15 }));
+    expect(shownPct()).toBe("78%");
+    rerender(view({ phase: "checking", written: 15, checked: 0, checkTotal: 30 }));
+    expect(shownPct()).toBe("78%");
+    expect(count("check")).toBe("0/30");
+    // A new build always comes on a fresh screen, which starts from its own
+    // real counts.
+    unmount();
+    render(view({ ...none, phase: "writing", written: 2 }));
+    expect(shownPct()).toBe("6%");
+  });
+
   it("shows elapsed time and says when the screen joined mid-build", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-20T12:00:00Z"));

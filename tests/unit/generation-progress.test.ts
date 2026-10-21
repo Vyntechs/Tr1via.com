@@ -60,13 +60,14 @@ describe("createGenerationProgressReporter", () => {
       target: 20,
       persistWritten: async () => undefined,
     });
-    reporter.setCounts({ certified: 3, written: 3 });
-    expect(reporter.counts()).toEqual({ written: 3, certified: 3, target: 20 });
+    reporter.setCounts({ certified: 3, written: 3, clean: 3 });
+    expect(reporter.counts()).toEqual({ written: 3, certified: 3, clean: 3, target: 20 });
 
     // A refill round continues from what is certified; never above target.
     expect(reporter.reportWritten(25)).toEqual({
       written: 20,
       certified: 3,
+      clean: 3,
       target: 20,
     });
     // A lower count never moves the number backwards.
@@ -75,13 +76,19 @@ describe("createGenerationProgressReporter", () => {
     expect(reporter.reportChecked(6, 20, 1)).toEqual({
       written: 20,
       certified: 3,
+      clean: 3,
       target: 20,
       checked: 6,
       checkTotal: 40,
     });
     expect(reporter.reportChecked(12, 20, 2).checked).toBe(18);
     reporter.clearChecked();
-    expect(reporter.counts()).toEqual({ written: 20, certified: 3, target: 20 });
+    expect(reporter.counts()).toEqual({ written: 20, certified: 3, clean: 3, target: 20 });
+    // On a reroll nothing is saved until the swap: clean climbs alone.
+    reporter.setCounts({ certified: 0, clean: 17 });
+    expect(reporter.counts()).toMatchObject({ certified: 0, clean: 17 });
+    reporter.setCounts({ clean: 99 });
+    expect(reporter.counts().clean).toBe(20);
   });
 
   it("swallows a failed durable write so the live count never kills the build", async () => {

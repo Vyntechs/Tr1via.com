@@ -104,6 +104,10 @@ export interface CategoryProgressPayload extends CategoryBroadcastPayload {
   checkTotal?: number;
   /** Questions that passed every check so far. */
   certified?: number;
+  /** Questions the build holds as clean so far. Equals `certified` on a
+   *  first build; on a reroll it climbs while `certified` stays 0 until the
+   *  final swap. Drives the refill maths and "Replacing N", never the cards. */
+  clean?: number;
   /** Deck size being built. */
   target?: number;
 }

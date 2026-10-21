@@ -17,6 +17,12 @@ export interface HostGenProgress {
   written: number;
   /** Questions that passed every check so far (these land as cards). */
   certified: number;
+  /** Questions the server holds as clean so far (from the broadcast). On a
+   *  first build this equals `certified`; on an "Another 20" reroll the old
+   *  cards stay until the final swap, so `certified` reads 0 while this
+   *  climbs. Drives refill maths and "Replacing N". Omitted = unknown (only
+   *  the polled job row seen), and `certified` stands in. */
+  clean?: number;
   /** Questions that have a photo. */
   photos: number;
   /** Checks finished so far, both passes added together (the two passes run
@@ -77,6 +83,9 @@ export const STAGE_WEIGHTS: Record<StageKey, number> = {
  *  minute. */
 export const LIVE_WINDOW_MS = 30_000;
 
+/** Check passes per question (they run at the same time). */
+const CHECK_PASSES = 2;
+
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 const safe = (n: number | undefined) =>
   typeof n === "number" && Number.isFinite(n) ? Math.max(0, n) : 0;
@@ -85,19 +94,26 @@ export function buildTracker(p: HostGenProgress): Tracker {
   const target = Math.max(1, safe(p.target) || 20);
   const written = Math.min(target, safe(p.written));
   const certified = Math.min(target, safe(p.certified));
+  // The server's own clean count wins when it sent one: the cards can be
+  // the OLD batch (reroll) or include stored questions the re-check just
+  // deleted (resume), and either would give a false "Replacing N".
+  const clean =
+    typeof p.clean === "number" && Number.isFinite(p.clean)
+      ? Math.min(target, Math.max(0, p.clean))
+      : certified;
   const phase = p.phase;
   const checkTotal = safe(p.checkTotal);
   const hasCheckInfo = checkTotal > 0;
 
   // Refill round: some questions failed the check and are being replaced.
-  // While writing or checking, 0 < certified < target only happens on a
-  // refill: round 1 (and the resume re-check) certify nothing until the
+  // While writing or checking, 0 < clean < target only happens on a
+  // refill: round 1 (and the resume re-check) hold nothing clean until the
   // round ends.
   const refill =
-    certified > 0 &&
-    certified < target &&
+    clean > 0 &&
+    clean < target &&
     (phase === "repairing" || phase === "writing" || phase === "checking");
-  const refillNeed = refill ? target - certified : 0;
+  const refillNeed = refill ? target - clean : 0;
 
   // ── Writing ──
   const writeState: StageState =
@@ -132,22 +148,39 @@ export function buildTracker(p: HostGenProgress): Tracker {
   };
   if (phase === "checking" && hasCheckInfo) {
     // Both passes run at once; the server sends their checks added together,
-    // so this count only climbs.
+    // so this count only climbs. The bar counts what is already clean plus
+    // this round's share of the target: a refill checking 4 replacements for
+    // 3 open slots starts at 17/20, not at 0/8 (that drop was ~19 points).
     const checked = Math.min(checkTotal, safe(p.checked));
+    const batch = checkTotal / CHECK_PASSES;
+    const share = Math.min(target - clean, batch);
+    const fraction = clamp01((clean + share * (checked / checkTotal)) / target);
+    check = refill
+      ? {
+          ...checkBase,
+          count: clean,
+          total: target,
+          fraction,
+          state: "active",
+          detail: `${checked}/${checkTotal} checks`,
+        }
+      : {
+          ...checkBase,
+          count: checked,
+          total: checkTotal,
+          fraction,
+          state: "active",
+          detail:
+            share < target
+              ? `2 checks each on ${share} questions`
+              : "2 checks per question",
+        };
+  } else if (phase === "checking" || phase === "repairing" || refill) {
     check = {
       ...checkBase,
-      count: checked,
-      total: checkTotal,
-      fraction: clamp01(checked / checkTotal),
-      state: "active",
-      detail: "2 checks per question",
-    };
-  } else if (phase === "checking" || refill) {
-    check = {
-      ...checkBase,
-      count: certified,
+      count: clean,
       total: target,
-      fraction: clamp01(certified / target),
+      fraction: clamp01(clean / target),
       state: "active",
       detail: refill ? `${refillNeed} to replace` : null,
     };
@@ -181,14 +214,19 @@ export function buildTracker(p: HostGenProgress): Tracker {
   };
 
   const stages: [TrackerStage, TrackerStage, TrackerStage] = [write, check, photo];
-  const overall = clamp01(
-    stages.reduce(
-      (sum, s) =>
-        sum +
-        s.weight * (s.state === "done" ? 1 : s.state === "active" ? s.fraction : 0),
-      0,
-    ),
-  );
+  // Each stage counts for exactly what its bar shows. (A "done" stage used to
+  // count as full even at 15/20, which overstated a resume's re-check and
+  // then dropped ~27 points when the refill started.) Ready is 100%: not
+  // every card finds a photo.
+  const overall =
+    phase === "ready"
+      ? 1
+      : clamp01(
+          stages.reduce(
+            (sum, s) => sum + s.weight * (s.state === "waiting" ? 0 : s.fraction),
+            0,
+          ),
+        );
 
   let headline: string;
   switch (phase) {
@@ -206,7 +244,13 @@ export function buildTracker(p: HostGenProgress): Tracker {
         : "Fact-checking answers";
       break;
     case "repairing":
-      headline = `Replacing ${refillNeed || target - certified} that failed the check`;
+      // No number unless the server told us the clean count: a guess from
+      // the cards said "Replacing 20" on a reroll where 3 had failed.
+      headline = refill
+        ? `Replacing ${refillNeed} that failed the check`
+        : clean >= target
+          ? "Saving the new questions"
+          : "Replacing the ones that failed the check";
       break;
     case "images":
       headline = "Finding photos";
@@ -219,6 +263,29 @@ export function buildTracker(p: HostGenProgress): Tracker {
   }
 
   return { stages, overall, headline, refillNeed };
+}
+
+/**
+ * Holds the percent and every stage bar at the highest value already shown
+ * for this build, so nothing on screen moves backward. Counts, labels and
+ * the headline stay exactly as buildTracker reported them. This never
+ * invents motion: a held bar simply stays still until the real count passes
+ * it. It covers the one drop no honest formula avoids: the round's checks
+ * finish (bar full) and then some questions fail and must be replaced.
+ * Pass the previous HELD tracker for the same build, or null to start. The
+ * loading screen holds for as long as it stays on screen: a resume after a
+ * pause keeps it mounted (and must not drop), while a new build always
+ * arrives on a fresh mount (it unmounts for the review or failure screen).
+ */
+export function holdTracker(prev: Tracker | null, next: Tracker): Tracker {
+  if (!prev) return next;
+  const stages = next.stages.map((s, i) => {
+    const before = prev.stages[i];
+    return before && before.key === s.key && before.fraction > s.fraction
+      ? { ...s, fraction: before.fraction }
+      : s;
+  }) as Tracker["stages"];
+  return { ...next, stages, overall: Math.max(prev.overall, next.overall) };
 }
 
 export interface Liveness {

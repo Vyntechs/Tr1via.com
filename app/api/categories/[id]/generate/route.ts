@@ -462,6 +462,10 @@ async function runGenerationJob(opts: {
   let phase: GenerationPhase = storedQuestions.length > 0 ? "checking" : "writing";
   let writtenCount = storedQuestions.length;
   let certifiedCount = 0;
+  // Questions this build holds as clean, on every path. On a first build it
+  // matches certifiedCount; on a reroll certifiedCount stays 0 until the
+  // final swap, so the host's "Replacing N" and refill bar read this instead.
+  let cleanCount = 0;
   const durableHeartbeat = createGenerationHeartbeat(() =>
     writeWorkerProgress({ phase }),
   );
@@ -567,8 +571,10 @@ async function runGenerationJob(opts: {
       }).catch(() => undefined);
     }
     certifiedCount += batch.length;
+    cleanCount = Math.max(cleanCount, certifiedCount);
     liveProgress.setCounts({
       certified: certifiedCount,
+      clean: cleanCount,
       written: Math.max(writtenCount, certifiedCount),
     });
     await writeWorkerProgress({
@@ -660,8 +666,17 @@ async function runGenerationJob(opts: {
         imageCount = certifiedStoredQuestions.filter((item) =>
           Boolean(item.imageUrl),
         ).length;
-        writtenCount = certifiedCount;
-        liveProgress.setCounts({ written: writtenCount, certified: certifiedCount });
+        // Never lower the written count the host was shown: the rejected
+        // stored questions were written, they just failed the re-check, and
+        // the refill round below replaces them (its streamed count climbs
+        // from certifiedCount, so it only moves this once it passes it).
+        writtenCount = Math.max(writtenCount, certifiedCount);
+        cleanCount = certifiedCount;
+        liveProgress.setCounts({
+          written: writtenCount,
+          certified: certifiedCount,
+          clean: cleanCount,
+        });
         liveProgress.clearChecked();
         phase = certifiedCount >= 20 ? "images" : "repairing";
         qualityReport.recordRound({
@@ -679,6 +694,10 @@ async function runGenerationJob(opts: {
           written_count: writtenCount,
           certified_count: certifiedCount,
         });
+        // Broadcast right away: the host page refetches its cards on a
+        // "repairing" progress event, so the stored questions just deleted
+        // above leave the screen instead of inflating its count.
+        void emitProgress().catch(() => undefined);
       }
 
       generated = await collectVerifiedQuestions({
@@ -692,6 +711,9 @@ async function runGenerationJob(opts: {
         generate: async (avoid, need, progress) => {
           phase = "writing";
           liveProgress.clearChecked();
+          // collect holds exactly `20 - need` clean questions at this point.
+          cleanCount = Math.max(0, 20 - need);
+          liveProgress.setCounts({ clean: cleanCount });
           await writeWorkerProgress({ phase: "writing" });
           void emitProgress().catch(() => undefined);
           let batch: GeneratedQuestion[];
@@ -761,6 +783,12 @@ async function runGenerationJob(opts: {
               reasons: item.reasons,
             })),
           });
+          // Clean before this round, plus what it just accepted.
+          cleanCount = Math.min(
+            20,
+            Math.max(0, 20 - event.requested) + event.accepted,
+          );
+          liveProgress.setCounts({ clean: cleanCount });
           if (certifiedCount < 20) {
             phase = "repairing";
             await writeWorkerProgress({
@@ -768,6 +796,9 @@ async function runGenerationJob(opts: {
               written_count: writtenCount,
               certified_count: certifiedCount,
             });
+            // Tell the host now (with the honest clean count) instead of
+            // waiting up to one heartbeat.
+            void emitProgress().catch(() => undefined);
           }
         },
         // First runs checkpoint every certified batch. Rerolls remain atomic so

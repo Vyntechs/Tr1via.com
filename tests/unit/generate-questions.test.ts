@@ -351,7 +351,7 @@ describe("generateQuestions", () => {
       client,
     });
 
-    expect(capture[0]!.options).toEqual({ timeout: 12_345 });
+    expect(capture[0]!.options).toEqual({ timeout: 12_345, maxRetries: 1 });
   });
 
   it("throws when Claude responds without a tool_use block", async () => {
