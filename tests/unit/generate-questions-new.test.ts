@@ -135,6 +135,30 @@ describe("new writer · request", () => {
   });
 });
 
+describe("new writer · today's date is worked out on every call", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("two calls on different days (no clock passed in) carry two different date lines", async () => {
+    // Only Date is faked; the stream's own timers stay real.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const { client, sent } = clientReplying(replySse(batchJson(twenty())));
+
+    vi.setSystemTime(new Date("2027-01-15T18:00:00Z"));
+    await generateQuestionsNew({ topic: "Cities", client });
+    vi.setSystemTime(new Date("2027-03-02T18:00:00Z"));
+    await generateQuestionsNew({ topic: "Cities", client });
+
+    const dateLine = (i: number) =>
+      (sent[i]!.messages as Array<{ content: string }>)[0]!.content.split("\n")[0];
+    expect(dateLine(0)).toBe("Today's date: Friday, January 15, 2027");
+    expect(dateLine(1)).toBe("Today's date: Tuesday, March 2, 2027");
+    vi.restoreAllMocks();
+  });
+});
+
 describe("new writer · output", () => {
   it("maps into Classic's storage shape and keeps the right answer marked after the shuffle", async () => {
     const { client } = clientReplying(replySse(batchJson(twenty())));
