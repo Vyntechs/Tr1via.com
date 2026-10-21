@@ -179,10 +179,18 @@ describe("question engine · build branch", () => {
     ).rejects.toBe(err);
   });
 
-  it("the generate route reads the engine once and wires both engines to today's builder", () => {
+  it("the generate route reads the engine once; classic runs the job untouched, new swaps only the writer", () => {
     const route = readFileSync("app/api/categories/[id]/generate/route.ts", "utf8");
     expect(route.match(/readHostQuestionEngine\(/g)).toHaveLength(1);
-    expect(route).toContain("{ classic: runGenerationJob, new: runGenerationJob }");
+    // Step 4: classic is today's job with no writer passed; new is the same
+    // job with the new writer. Nothing else differs between the two.
+    expect(route).toMatch(
+      /\{\s*classic: runGenerationJob,\s*new: \(args\) => runGenerationJob\(\{ \.\.\.args, writeQuestions: generateQuestionsNew \}\),\s*\}/,
+    );
+    expect(route.match(/writeQuestions: generateQuestionsNew/g)).toHaveLength(1);
+    expect(route).toContain("(opts.writeQuestions ?? generateQuestions)(");
+    // The writer is the only engine-specific input to the job.
+    expect(route.match(/writeQuestions/g)).toHaveLength(3);
     expect(route).toContain("reportContext: { ...reportContext, questionEngine }");
     // The read happens inside the scheduled build, before it runs.
     expect(route).toMatch(

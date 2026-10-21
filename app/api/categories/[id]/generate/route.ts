@@ -44,6 +44,7 @@ import {
   seedCategoryImageUrls,
 } from "@/lib/ai/category-photo-plan";
 import { generateQuestions, type GeneratedQuestion } from "@/lib/ai/generate-questions";
+import { generateQuestionsNew } from "@/lib/ai/generate-questions-new";
 import {
   createQuestionGenerationReportAccumulator,
   hostAuditSummaryFromSnapshot,
@@ -257,17 +258,20 @@ export async function POST(
         : "initial",
   };
   after(async () => {
-    // Question engine switch (step 2): read the host's setting ONCE per
-    // build. Any read problem (missing table on a preview, error, no row,
-    // unknown value) means "classic". Both engines run today's builder with
-    // identical args until step 4 gives "new" its own writer.
+    // Question engine switch: read the host's setting ONCE per build. Any
+    // read problem (missing table on a preview, error, no row, unknown value)
+    // means "classic". Both engines run the same build job; "new" only swaps
+    // the question writer (step 4). Checker, photos and pick are shared.
     const questionEngine = await readHostQuestionEngine(admin, owned.host.id);
     console.log(
       `[generate] category=${categoryId} attempt=${job.attempt} questionEngine=${questionEngine}`,
     );
     await runWithQuestionEngine(
       questionEngine,
-      { classic: runGenerationJob, new: runGenerationJob },
+      {
+        classic: runGenerationJob,
+        new: (args) => runGenerationJob({ ...args, writeQuestions: generateQuestionsNew }),
+      },
       {
         categoryId,
         topic,
@@ -358,6 +362,9 @@ async function runGenerationJob(opts: {
   /** When the request began (ms); Vercel's time limit counts from here. */
   startedAtMs: number;
   reportContext: QuestionGenerationReportContext;
+  /** The question writer. Absent = Classic's generateQuestions. Only the
+   *  "new" engine passes one (generateQuestionsNew). */
+  writeQuestions?: typeof generateQuestions;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
   const jobClient = admin as unknown as GenerationJobClient;
@@ -747,7 +754,7 @@ async function runGenerationJob(opts: {
           void broadcastProgress();
           let batch: GeneratedQuestion[];
           try {
-            batch = await generateQuestions({
+            batch = await (opts.writeQuestions ?? generateQuestions)({
               topic: opts.topic,
               flavor: opts.flavor,
               difficulty: opts.difficulty,
