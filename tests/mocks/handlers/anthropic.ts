@@ -1,7 +1,7 @@
 // MSW handlers for the Anthropic Messages API.
 //
-// The app calls `client.beta.promptCaching.messages.create()` which the
-// SDK forwards to `POST /v1/messages?beta=prompt_caching`. MSW matches on
+// The writer calls `client.beta.promptCaching.messages.stream()`; both it
+// and a plain `.create()` go to `POST /v1/messages?beta=prompt_caching`. MSW matches on
 // pathname, so a single handler on `https://api.anthropic.com/v1/messages`
 // catches both the plain and the prompt-caching endpoints.
 //

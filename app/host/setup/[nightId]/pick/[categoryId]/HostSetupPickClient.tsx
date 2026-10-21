@@ -1305,48 +1305,61 @@ export function HostSetupPickClient({
     : null;
 
   // ── live tracker counts: broadcast first, polled job row as fallback ──
+  // Right after Retry the poll can still return the old attempt's row
+  // ("needs attention", old counts); ignore it until it catches up.
+  const trackerDurable =
+    durableProgress !== null &&
+    durableProgress.attempt >= currentGenerationAttemptRef.current
+      ? durableProgress
+      : null;
   const currentLive =
-    liveCounts && liveCounts.attempt >= (durableProgress?.attempt ?? 0)
+    liveCounts && liveCounts.attempt >= (trackerDurable?.attempt ?? 0)
       ? liveCounts
       : null;
   const liveServerMs = currentLive ? Date.parse(currentLive.serverNow) : NaN;
-  const durableServerMs = durableProgress?.heartbeatAt
-    ? Date.parse(durableProgress.heartbeatAt)
+  const durableServerMs = trackerDurable?.heartbeatAt
+    ? Date.parse(trackerDurable.heartbeatAt)
     : NaN;
   const num = (n: unknown) =>
     typeof n === "number" && Number.isFinite(n) ? n : undefined;
   // Whichever source the server stamped more recently sets the phase. In the
   // same phase the counts only climb, so take the higher of the two.
   const durableIsNewer =
-    durableProgress !== null &&
+    trackerDurable !== null &&
     (currentLive === null ||
       (Number.isFinite(durableServerMs) &&
         (!Number.isFinite(liveServerMs) || durableServerMs > liveServerMs)));
   const trackerTarget =
-    num(currentLive?.target) ?? num(durableProgress?.targetCount) ?? 20;
+    num(currentLive?.target) ?? num(trackerDurable?.targetCount) ?? 20;
   const trackerPhase: GenerationPhase =
-    (durableIsNewer ? durableProgress?.phase : currentLive?.phase) ??
+    (durableIsNewer ? trackerDurable?.phase : currentLive?.phase) ??
     genPhase ??
     "queued";
   const samePhase =
     currentLive !== null &&
-    durableProgress !== null &&
-    currentLive.phase === durableProgress.phase;
+    trackerDurable !== null &&
+    currentLive.phase === trackerDurable.phase;
   const pickCount = (live: unknown, durable: unknown) =>
     samePhase
       ? Math.max(num(live) ?? 0, num(durable) ?? 0)
       : ((durableIsNewer ? num(durable) : num(live)) ?? num(durable) ?? 0);
-  const trackerWritten = pickCount(currentLive?.written, durableProgress?.writtenCount);
-  const trackerCertified = Math.max(
-    pickCount(currentLive?.certified, durableProgress?.certifiedCount),
-    // Cards only land once certified, so the card count is a floor.
-    questions.length,
+  const trackerWritten = pickCount(currentLive?.written, trackerDurable?.writtenCount);
+  const serverCertified = pickCount(
+    currentLive?.certified,
+    trackerDurable?.certifiedCount,
   );
+  // On a first run, cards only land once certified, so the card count is a
+  // floor. But on an "Another 20" reroll the OLD cards stay until the single
+  // swap at the end, so after a reload they'd read as "checking done 20/20"
+  // while the new batch is still being written. Only trust the cards once
+  // the server says this attempt has certified something.
+  const trackerCertified =
+    serverCertified >= 1 ? Math.max(serverCertified, questions.length) : 0;
   const trackerPhotos = Math.max(
-    num(durableProgress?.imageCount) ?? 0,
-    questions.filter((q) => q.image_url).length,
+    num(trackerDurable?.imageCount) ?? 0,
+    serverCertified >= 1 ? questions.filter((q) => q.image_url).length : 0,
   );
-  const sawRealCounts = currentLive !== null || durableProgress !== null;
+  const sawRealCounts = currentLive !== null || trackerDurable !== null;
   useEffect(() => {
     if (joinedMidway !== null || !sawRealCounts) return;
     setJoinedMidway(
@@ -1367,7 +1380,6 @@ export function HostSetupPickClient({
       ? {
           checked: num(currentLive.checked),
           checkTotal: num(currentLive.checkTotal),
-          checkPass: currentLive.checkPass,
         }
       : {}),
     startedAt: buildStartedAt,

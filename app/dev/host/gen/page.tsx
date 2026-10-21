@@ -68,7 +68,7 @@ export default function HostGenGallery() {
     {
       step: "3·live",
       title: "Loading, mid-build",
-      note: "Real counts: 20 written, fact-check pass 1 at 12 of 20, no photos yet.",
+      note: "Real counts: 20 written, 26 of 40 checks done (both passes at once), no photos yet.",
       render: () => (
         <HostGenLoading
           topic="Pixar Movies"
@@ -79,9 +79,8 @@ export default function HostGenGallery() {
             written: 20,
             certified: 0,
             photos: 0,
-            checked: 12,
-            checkTotal: 20,
-            checkPass: 1,
+            checked: 26,
+            checkTotal: 40,
             startedAt: Date.now() - 84_000,
             lastSignalAt: Date.now() - 2_000,
           }}

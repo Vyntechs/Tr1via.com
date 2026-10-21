@@ -165,9 +165,12 @@ function HostGenLoadingInner({
           startedAt: mountedAt,
           lastSignalAt: null,
         });
+  // A real caller's progress already floors photos from the cards when that
+  // is safe (not on a reroll reload, where the cards are the OLD batch), so
+  // only the demo/fallback states count photos from `loaded` here.
   const tracker = buildTracker({
     ...progress,
-    photos: Math.max(progress.photos, photosCount),
+    photos: progressProp ? progress.photos : Math.max(progress.photos, photosCount),
   });
   const liveness = now === null ? null : livenessAt(now, progress);
   const live = liveness?.live ?? false;

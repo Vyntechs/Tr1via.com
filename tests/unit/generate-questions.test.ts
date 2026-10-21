@@ -32,11 +32,14 @@ type Listener = (...args: unknown[]) => void;
  * `on`, then `finalMessage()` replays the `inputJson` snapshots (partial tool
  * input, as the real stream emits them) before resolving with the message.
  * `neverFinish` leaves the stream silent so the idle guard has to abort it.
+ * `connect: false` never emits `connect` (response headers never arrive), so
+ * only the SDK's own timeout and retries apply.
  */
 function makeFakeStream(
   message: unknown,
   snapshots: unknown[] = [],
   neverFinish = false,
+  { connect = true }: { connect?: boolean } = {},
 ) {
   const listeners = new Map<string, Listener[]>();
   let aborted = false;
@@ -54,6 +57,7 @@ function makeFakeStream(
       rejectPending?.(new Error("Request was aborted."));
     }),
     finalMessage: vi.fn(async () => {
+      if (connect) emit("connect");
       if (neverFinish) {
         await new Promise<void>((_resolve, reject) => {
           rejectPending = reject;
@@ -465,5 +469,60 @@ describe("generateQuestions", () => {
       }),
     ).rejects.toThrow(/timed out.*idle/i);
     expect(stream.abort).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a stalled connection to the SDK's own timeout and retries", async () => {
+    const stream = makeFakeStream(makeMessage({ questions: [] }), [], true, {
+      connect: false,
+    });
+    const client = {
+      beta: { promptCaching: { messages: { stream: vi.fn(() => stream) } } },
+    };
+    const pending = generateQuestions({
+      topic: "No headers yet",
+      timeoutMs: 20,
+      // @ts-expect-error — narrowing
+      client,
+    });
+    pending.catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    // Our guard never fired: aborting here would cancel the SDK's retries.
+    expect(stream.abort).not.toHaveBeenCalled();
+    stream.abort(); // tidy up the pending fake
+  });
+
+  it("keeps a slow but steady stream alive (every event re-arms the guard)", async () => {
+    const listeners = new Map<string, Listener[]>();
+    const emit = (event: string, ...args: unknown[]) => {
+      for (const fn of listeners.get(event) ?? []) fn(...args);
+    };
+    const message = makeMessage({ questions: [validQuestion()] });
+    const stream = {
+      on: vi.fn((event: string, fn: Listener) => {
+        listeners.set(event, [...(listeners.get(event) ?? []), fn]);
+        return undefined;
+      }),
+      abort: vi.fn(),
+      finalMessage: vi.fn(async () => {
+        emit("connect");
+        // 8 events 10ms apart = 80ms total, well past the 25ms guard.
+        for (let i = 0; i < 8; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+          emit("streamEvent", { type: "content_block_delta" }, {});
+        }
+        return message;
+      }),
+    };
+    const client = {
+      beta: { promptCaching: { messages: { stream: vi.fn(() => stream) } } },
+    };
+    const out = await generateQuestions({
+      topic: "Steady",
+      timeoutMs: 25,
+      // @ts-expect-error — narrowing
+      client,
+    });
+    expect(stream.abort).not.toHaveBeenCalled();
+    expect(out).toHaveLength(1);
   });
 });

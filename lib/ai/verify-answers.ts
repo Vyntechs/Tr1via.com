@@ -369,7 +369,12 @@ export async function verifyAnswers(
       verifyChunk(client, model, chunk.items, opts.topic, mode, opts.onUsage).then(
         (result) => {
           checkedSoFar += chunk.items.length;
-          opts.onChunkChecked?.(checkedSoFar, questions.length);
+          try {
+            opts.onChunkChecked?.(checkedSoFar, questions.length);
+          } catch (err) {
+            // A progress listener bug must never fail the fact-check.
+            console.warn(`[verifyAnswers] onChunkChecked threw: ${String(err)}`);
+          }
           return result;
         },
       ),

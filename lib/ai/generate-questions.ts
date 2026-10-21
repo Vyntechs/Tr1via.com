@@ -310,11 +310,15 @@ export async function generateQuestions(
   };
   // Listeners go on BEFORE the first await so an early error has a
   // waiting promise (finalMessage) to land in.
+  // The idle guard starts on `connect` (response headers in), not now.
+  // Before headers the SDK's own `timeout` applies and it retries a stalled
+  // request itself; aborting from here first would cancel those retries,
+  // because the SDK never retries a request whose signal was aborted.
+  stream.on("connect", armIdleGuard);
   stream.on("streamEvent", armIdleGuard);
   stream.on("inputJson", (_partial, snapshot) => {
     reportWritten(countCompleteQuestions(snapshot));
   });
-  armIdleGuard();
 
   let response: PromptCachingBetaMessage;
   try {

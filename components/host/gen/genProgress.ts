@@ -19,12 +19,11 @@ export interface HostGenProgress {
   certified: number;
   /** Questions that have a photo. */
   photos: number;
-  /** Questions fact-checked so far in the current pass. */
+  /** Checks finished so far, both passes added together (the two passes run
+   *  at the same time, so a per-pass figure would jump back and forth). */
   checked?: number;
-  /** Size of the batch being checked (20 on the first round, smaller on refills). */
+  /** Checks this round needs: batch size x 2 (40 on the first round). */
   checkTotal?: number;
-  /** Which of the two check passes is running. */
-  checkPass?: 1 | 2;
   /** Local time (ms) this screen started watching the build. */
   startedAt: number;
   /** True when the screen was opened after the build was already under way,
@@ -47,7 +46,7 @@ export interface TrackerStage {
   /** 0..1, from the stage's own count only. */
   fraction: number;
   state: StageState;
-  /** Extra plain-words detail, e.g. "pass 1 of 2". */
+  /** Extra plain-words detail, e.g. "2 checks per question". */
   detail: string | null;
   /** Share of the whole build this stage usually takes. */
   weight: number;
@@ -68,10 +67,15 @@ export const STAGE_WEIGHTS: Record<StageKey, number> = {
   photos: 0.22,
 };
 
-/** A healthy build heartbeats every 12s and the job row is polled every 5s,
- *  so a quiet but alive stretch can reach ~17s. Past this we stop claiming
- *  it's live. */
-export const LIVE_WINDOW_MS = 18_000;
+/** How long without a real signal before we stop saying "Live".
+ *  The worker heartbeats every 12s (GENERATION_HEARTBEAT_MS in the generate
+ *  route, kept running through the photo stage too) and the job row is polled
+ *  every 5s. If realtime broadcasts aren't arriving, the gap between two
+ *  signals seen here is up to 12s + 5s poll + a slow DB round trip + the 1s
+ *  screen tick, about 18-20s. 30s covers that with room for one late
+ *  heartbeat write, while a truly stuck build still shows within half a
+ *  minute. */
+export const LIVE_WINDOW_MS = 30_000;
 
 const clamp01 = (n: number) => (Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : 0);
 const safe = (n: number | undefined) =>
@@ -83,16 +87,16 @@ export function buildTracker(p: HostGenProgress): Tracker {
   const certified = Math.min(target, safe(p.certified));
   const phase = p.phase;
   const checkTotal = safe(p.checkTotal);
-  const hasPassInfo =
-    (p.checkPass === 1 || p.checkPass === 2) && checkTotal > 0;
+  const hasCheckInfo = checkTotal > 0;
 
   // Refill round: some questions failed the check and are being replaced.
+  // While writing or checking, 0 < certified < target only happens on a
+  // refill: round 1 (and the resume re-check) certify nothing until the
+  // round ends.
   const refill =
     certified > 0 &&
     certified < target &&
-    (phase === "repairing" ||
-      phase === "writing" ||
-      (phase === "checking" && hasPassInfo && checkTotal < target));
+    (phase === "repairing" || phase === "writing" || phase === "checking");
   const refillNeed = refill ? target - certified : 0;
 
   // ── Writing ──
@@ -126,16 +130,17 @@ export function buildTracker(p: HostGenProgress): Tracker {
     shortLabel: "Checking",
     weight: STAGE_WEIGHTS.check,
   };
-  if (phase === "checking" && hasPassInfo) {
-    const pass = p.checkPass as 1 | 2;
+  if (phase === "checking" && hasCheckInfo) {
+    // Both passes run at once; the server sends their checks added together,
+    // so this count only climbs.
     const checked = Math.min(checkTotal, safe(p.checked));
     check = {
       ...checkBase,
       count: checked,
       total: checkTotal,
-      fraction: clamp01((pass - 1 + checked / checkTotal) / 2),
+      fraction: clamp01(checked / checkTotal),
       state: "active",
-      detail: `pass ${pass} of 2`,
+      detail: "2 checks per question",
     };
   } else if (phase === "checking" || refill) {
     check = {
@@ -197,8 +202,8 @@ export function buildTracker(p: HostGenProgress): Tracker {
       break;
     case "checking":
       headline = refill
-        ? `Checking ${refillNeed === 1 ? "the replacement" : "the replacements"}${hasPassInfo ? `, pass ${p.checkPass} of 2` : ""}`
-        : `Fact-checking answers${hasPassInfo ? `, pass ${p.checkPass} of 2` : ""}`;
+        ? `Checking ${refillNeed === 1 ? "the replacement" : "the replacements"}`
+        : "Fact-checking answers";
       break;
     case "repairing":
       headline = `Replacing ${refillNeed || target - certified} that failed the check`;

@@ -379,14 +379,15 @@ describe("HostSetupPickClient live progress counts", () => {
         certified: 0,
         target: 20,
         checked: 12,
-        checkTotal: 20,
-        checkPass: 1,
+        checkTotal: 40,
       });
     });
 
     expect(screen.getByTestId("host-gen-stage-count-write").textContent).toBe("20/20");
-    expect(screen.getByTestId("host-gen-stage-count-check").textContent).toBe("12/20");
-    expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe("pass 1 of 2");
+    expect(screen.getByTestId("host-gen-stage-count-check").textContent).toBe("12/40");
+    expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe(
+      "2 checks per question",
+    );
     expect(screen.getByTestId("host-gen-stage-check")).toHaveAttribute("data-stage-state", "active");
     expect(screen.getByTestId("host-gen-liveness")).toHaveAttribute("data-live", "true");
   });
@@ -416,6 +417,50 @@ describe("HostSetupPickClient live progress counts", () => {
     await waitFor(() => {
       expect(screen.getByTestId("host-gen-elapsed").textContent).toMatch(/since you opened this/);
     });
+  });
+
+  it("doesn't count the old cards as checked after a reload mid-reroll", async () => {
+    // "Another 20": the old cards stay in the table until the final swap, so
+    // after a reload they're on the page while the new batch is written.
+    const oldCards = questionRows().map((row) => ({
+      ...row,
+      image_url: "https://images.example/old.jpg",
+    }));
+    supa = createSupabaseMock({
+      questions: oldCards,
+      report: null,
+      categoryState: "generating",
+      job: {
+        attempt: 3,
+        phase: "writing",
+        target_count: 20,
+        written_count: 2,
+        certified_count: 0,
+        image_count: 0,
+        heartbeat_at: new Date().toISOString(),
+      } as { attempt: number; phase: string },
+    });
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Snakes"
+        categoryTopic="non-venomous snakes"
+        initialState="generating"
+        initialQuestions={oldCards}
+        themeKey="house"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("host-gen-stage-count-write").textContent).toBe("2/20");
+    });
+    expect(screen.getByTestId("host-gen-stage-check")).not.toHaveAttribute(
+      "data-stage-state",
+      "done",
+    );
+    expect(screen.getByTestId("host-gen-stage-count-check").textContent).toBe("0/20");
+    expect(screen.getByTestId("host-gen-stage-count-photos").textContent).toBe("0/20");
   });
 });
 

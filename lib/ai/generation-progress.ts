@@ -17,16 +17,18 @@ export interface GenerationProgressCounts {
   certified: number;
   /** The deck size being built. */
   target: number;
-  /** Questions fact-checked so far in the current pass. */
+  /** Checks finished so far, summed over every pass. The passes run at the
+   *  same time, so each pass keeps its own count and this is their sum. */
   checked?: number;
-  /** Batch size being checked. */
+  /** Checks this round needs in all: batch size x number of passes. */
   checkTotal?: number;
-  /** 1 = blind pass, 2 = adversarial pass. */
-  checkPass?: 1 | 2;
 }
 
 export interface GenerationProgressReporterOptions {
   target: number;
+  /** How many check passes run on each batch (they run at the same time).
+   *  Default 2. */
+  checkPasses?: number;
   /** Minimum gap between durable `written_count` writes. Default 1500ms. */
   minWriteIntervalMs?: number;
   /** Durable write of the latest written count. Errors are swallowed here. */
@@ -37,7 +39,8 @@ export interface GenerationProgressReporterOptions {
 export interface GenerationProgressReporter {
   /** Writer streamed a new count. Throttles the DB write, returns the counts. */
   reportWritten: (count: number) => GenerationProgressCounts;
-  /** Checker finished a chunk. No DB write (no column for it); returns counts. */
+  /** Checker finished a chunk. `checked` is that pass's own running count.
+   *  No DB write (no column for it); returns counts. */
   reportChecked: (
     checked: number,
     total: number,
@@ -65,9 +68,12 @@ export function createGenerationProgressReporter(
 
   let written = 0;
   let certified = 0;
-  let checked: number | undefined;
-  let checkTotal: number | undefined;
-  let checkPass: 1 | 2 | undefined;
+  const passes = Math.max(1, Math.floor(opts.checkPasses ?? 2));
+  // One slot per pass. Both passes report chunks at the same time, so a single
+  // shared slot would let each overwrite the other and the bar would jump
+  // back and forth. Each slot only climbs until clearChecked().
+  let checkedByPass: number[] | undefined;
+  let checkBatch = 0;
 
   let lastWriteAt = Number.NEGATIVE_INFINITY;
   let lastWrittenValue = -1;
@@ -78,9 +84,15 @@ export function createGenerationProgressReporter(
     written,
     certified,
     target,
-    ...(checked === undefined ? {} : { checked }),
-    ...(checkTotal === undefined ? {} : { checkTotal }),
-    ...(checkPass === undefined ? {} : { checkPass }),
+    ...(checkedByPass === undefined
+      ? {}
+      : {
+          checked: Math.min(
+            checkBatch * passes,
+            checkedByPass.reduce((sum, n) => sum + n, 0),
+          ),
+          checkTotal: checkBatch * passes,
+        }),
   });
 
   const flushWrite = () => {
@@ -114,9 +126,15 @@ export function createGenerationProgressReporter(
       return counts();
     },
     reportChecked(c, total, pass) {
-      checked = Math.max(0, c);
-      checkTotal = Math.max(0, total);
-      checkPass = pass;
+      if (!checkedByPass) checkedByPass = Array.from({ length: passes }, () => 0);
+      // The total is known up front for every pass (same batch), so the
+      // denominator never grows after the first report.
+      checkBatch = Math.max(checkBatch, Math.max(0, Math.floor(total)));
+      const slot = Math.min(passes, Math.max(1, pass)) - 1;
+      checkedByPass[slot] = Math.max(
+        checkedByPass[slot]!,
+        Math.min(checkBatch, Math.max(0, Math.floor(c))),
+      );
       return counts();
     },
     setCounts(patch) {
@@ -130,9 +148,8 @@ export function createGenerationProgressReporter(
       }
     },
     clearChecked() {
-      checked = undefined;
-      checkTotal = undefined;
-      checkPass = undefined;
+      checkedByPass = undefined;
+      checkBatch = 0;
     },
     counts,
     async settle() {
@@ -143,4 +160,24 @@ export function createGenerationProgressReporter(
       await inFlight;
     },
   };
+}
+
+/**
+ * The written count after a writer round returns. `target - need` questions
+ * were already clean before the round; `batchLength` is what survived the
+ * schema check. The stream may already have shown a higher count (it counts
+ * questions the schema check later drops), so never go below `shown`: the
+ * host must not see "Writing 20/20" turn into "18/20".
+ */
+export function writtenAfterBatch(args: {
+  shown: number;
+  need: number;
+  batchLength: number;
+  target: number;
+}): number {
+  const fromBatch = Math.min(
+    args.target,
+    Math.max(0, args.target - args.need) + Math.max(0, args.batchLength),
+  );
+  return Math.min(args.target, Math.max(args.shown, fromBatch));
 }

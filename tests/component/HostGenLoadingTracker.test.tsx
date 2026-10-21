@@ -4,6 +4,7 @@ import { HostGenLoading } from "@/components/host/gen/HostGenLoading";
 import {
   buildTracker,
   LIVE_WINDOW_MS,
+  livenessAt,
   type HostGenProgress,
 } from "@/components/host/gen/genProgress";
 
@@ -21,8 +22,7 @@ function progress(over: Partial<HostGenProgress> = {}): HostGenProgress {
     certified: 0,
     photos: 0,
     checked: 12,
-    checkTotal: 20,
-    checkPass: 1,
+    checkTotal: 40,
     startedAt: Date.now() - 84_000,
     lastSignalAt: Date.now() - 1_000,
     ...over,
@@ -38,17 +38,19 @@ describe("HostGenLoading progress tracker", () => {
   it("shows each stage's real count and state mid-build", () => {
     render(<HostGenLoading themeKey="house" topic="Pixar" loaded={[]} progress={progress()} />);
     expect(count("write")).toBe("20/20");
-    expect(count("check")).toBe("12/20");
+    expect(count("check")).toBe("12/40");
     expect(count("photos")).toBe("0/20");
     expect(stage("write")).toHaveAttribute("data-stage-state", "done");
     expect(stage("check")).toHaveAttribute("data-stage-state", "active");
     expect(stage("photos")).toHaveAttribute("data-stage-state", "waiting");
-    expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe("pass 1 of 2");
-    // Pass 1 at 12/20 = 30% of the checking stage; photos untouched.
+    expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe(
+      "2 checks per question",
+    );
+    // 12 of 40 checks (both passes added) = 30% of the checking stage.
     expect(parseFloat(fill("check"))).toBe(30);
     expect(parseFloat(fill("photos"))).toBe(0);
     expect(screen.getByTestId("host-gen-status-line").textContent).toBe(
-      "Fact-checking answers, pass 1 of 2",
+      "Fact-checking answers",
     );
   });
 
@@ -58,7 +60,7 @@ describe("HostGenLoading progress tracker", () => {
         themeKey="house"
         topic="Pixar"
         loaded={[]}
-        progress={progress({ phase: "writing", written: 7, checked: undefined, checkTotal: undefined, checkPass: undefined })}
+        progress={progress({ phase: "writing", written: 7, checked: undefined, checkTotal: undefined })}
       />,
     );
     expect(count("write")).toBe("7/20");
@@ -75,7 +77,7 @@ describe("HostGenLoading progress tracker", () => {
         themeKey="house"
         topic="Pixar"
         loaded={[]}
-        progress={progress({ phase: "repairing", written: 17, certified: 17, checked: undefined, checkTotal: undefined, checkPass: undefined })}
+        progress={progress({ phase: "repairing", written: 17, certified: 17, checked: undefined, checkTotal: undefined })}
       />,
     );
     expect(screen.getByTestId("host-gen-status-line").textContent).toBe(
@@ -97,6 +99,14 @@ describe("HostGenLoading progress tracker", () => {
     expect(screen.getByTestId("host-gen-elapsed").textContent).toMatch(/since you opened this/);
   });
 
+  it("stays live through a 25s quiet stretch and stops by 31s", () => {
+    const now = 1_000_000;
+    expect(LIVE_WINDOW_MS).toBe(30_000);
+    const base = { startedAt: now - 120_000, phase: "images" as const };
+    expect(livenessAt(now, { ...base, lastSignalAt: now - 25_000 }).live).toBe(true);
+    expect(livenessAt(now, { ...base, lastSignalAt: now - 31_000 }).live).toBe(false);
+  });
+
   it("stops the live pulse and says how long ago the last update was", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-20T12:00:00Z"));
@@ -106,7 +116,7 @@ describe("HostGenLoading progress tracker", () => {
     expect(screen.getByTestId("host-gen-live-dot")).toHaveAttribute("data-animating", "true");
 
     act(() => {
-      vi.advanceTimersByTime(LIVE_WINDOW_MS + 21_000);
+      vi.advanceTimersByTime(39_000);
     });
     expect(liveness).toHaveAttribute("data-live", "false");
     expect(screen.getByTestId("host-gen-live-dot")).toHaveAttribute("data-animating", "false");
@@ -145,15 +155,30 @@ describe("HostGenLoading progress tracker", () => {
 describe("buildTracker", () => {
   it("weights stages by typical time and only counts real progress", () => {
     const tr = buildTracker(progress());
-    // writing done (0.56) + pass 1 at 12/20 = 30% of checking (0.22 * 0.3)
+    // writing done (0.56) + 12 of 40 checks = 30% of checking (0.22 * 0.3)
     expect(tr.overall).toBeCloseTo(0.56 + 0.22 * 0.3, 5);
-    expect(buildTracker(progress({ phase: "queued", written: 0, checked: undefined, checkTotal: undefined, checkPass: undefined })).overall).toBe(0);
+    expect(buildTracker(progress({ phase: "queued", written: 0, checked: undefined, checkTotal: undefined })).overall).toBe(0);
   });
 
-  it("fills pass 2 from the second half of the checking stage", () => {
-    const tr = buildTracker(progress({ checked: 10, checkPass: 2 }));
-    expect(tr.stages[1].fraction).toBeCloseTo(0.75, 5);
-    expect(tr.stages[1].detail).toBe("pass 2 of 2");
+  it("never moves backward while both check passes report at the same time", () => {
+    // Summed checks as the server sends them while the two passes'
+    // chunks land interleaved.
+    const sums = [0, 6, 12, 18, 24, 30, 36, 38, 40];
+    const overall = sums.map((checked) => buildTracker(progress({ checked })).overall);
+    for (let i = 1; i < overall.length; i++) {
+      expect(overall[i]).toBeGreaterThanOrEqual(overall[i - 1]!);
+    }
+    const tr = buildTracker(progress({ checked: 20 }));
+    // One pass finishing first (20 of 40) is half the stage, not all of it.
+    expect(tr.stages[1].fraction).toBeCloseTo(0.5, 5);
+    expect(tr.stages[1].detail).toBe("2 checks per question");
+    expect(tr.headline).toBe("Fact-checking answers");
+  });
+
+  it("treats a refill batch of 11+ questions as a refill (checkTotal is doubled)", () => {
+    const tr = buildTracker(progress({ certified: 8, checked: 4, checkTotal: 26 }));
+    expect(tr.refillNeed).toBe(12);
+    expect(tr.headline).toBe("Checking the replacements");
   });
 
   it("counts photos against certified questions", () => {

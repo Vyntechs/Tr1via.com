@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createGenerationProgressReporter } from "@/lib/ai/generation-progress";
+import {
+  createGenerationProgressReporter,
+  writtenAfterBatch,
+} from "@/lib/ai/generation-progress";
 
 describe("createGenerationProgressReporter", () => {
   beforeEach(() => {
@@ -74,10 +77,9 @@ describe("createGenerationProgressReporter", () => {
       certified: 3,
       target: 20,
       checked: 6,
-      checkTotal: 20,
-      checkPass: 1,
+      checkTotal: 40,
     });
-    expect(reporter.reportChecked(12, 20, 2).checkPass).toBe(2);
+    expect(reporter.reportChecked(12, 20, 2).checked).toBe(18);
     reporter.clearChecked();
     expect(reporter.counts()).toEqual({ written: 20, certified: 3, target: 20 });
   });
@@ -91,5 +93,41 @@ describe("createGenerationProgressReporter", () => {
     });
     reporter.reportWritten(1);
     await expect(reporter.settle()).resolves.toBeUndefined();
+  });
+
+  it("sums the two check passes that run at the same time, never backward", () => {
+    const reporter = createGenerationProgressReporter({
+      target: 20,
+      persistWritten: async () => undefined,
+    });
+    // Both passes seed at 0, then their chunk reports arrive interleaved.
+    reporter.reportChecked(0, 20, 1);
+    reporter.reportChecked(0, 20, 2);
+    const seen: Array<[number | undefined, number | undefined]> = [];
+    for (const [c, pass] of [
+      [6, 2], [6, 1], [12, 2], [12, 1], [18, 1], [18, 2], [20, 2], [20, 1],
+    ] as const) {
+      const counts = reporter.reportChecked(c, 20, pass);
+      seen.push([counts.checked, counts.checkTotal]);
+    }
+    expect(seen.map(([, total]) => total)).toEqual(Array(8).fill(40));
+    const checked = seen.map(([n]) => n ?? -1);
+    expect(checked).toEqual([6, 12, 18, 24, 30, 36, 38, 40]);
+    // A stale lower report for one pass can't pull the sum down.
+    expect(reporter.reportChecked(6, 20, 1).checked).toBe(40);
+    // A pass finishing first doesn't claim the whole stage is done.
+    reporter.clearChecked();
+    expect(reporter.reportChecked(20, 20, 2)).toMatchObject({ checked: 20, checkTotal: 40 });
+  });
+});
+
+describe("writtenAfterBatch", () => {
+  it("never lowers the shown count when the schema check drops questions", () => {
+    // Stream showed 20; two failed the schema check.
+    expect(writtenAfterBatch({ shown: 20, need: 20, batchLength: 18, target: 20 })).toBe(20);
+    // Refill round: 15 clean, 6 asked, 6 returned -> capped at target.
+    expect(writtenAfterBatch({ shown: 20, need: 5, batchLength: 6, target: 20 })).toBe(20);
+    // Resume where the shown count is lower: the batch raises it honestly.
+    expect(writtenAfterBatch({ shown: 12, need: 8, batchLength: 5, target: 20 })).toBe(17);
   });
 });
