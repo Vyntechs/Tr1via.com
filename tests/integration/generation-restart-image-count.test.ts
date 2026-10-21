@@ -477,6 +477,12 @@ describe("restarting a build killed after its photos had started", () => {
     const job = await readJob(categoryId);
     expect(job.phase).toBe("ready");
     expect(job.certified_count).toBe(20);
+    // The re-check's own failure count reaches the host with its round end.
+    expect(
+      progressPayloads().some(
+        (p) => p.phase === "repairing" && p.clean === 14 && p.failedLastRound === 6,
+      ),
+    ).toBe(true);
     expect(job.image_count).toBeLessThanOrEqual(job.certified_count);
     // Only the shortfall is written, not a whole new set.
     expect(h.state.generateQuestions).toHaveBeenCalledTimes(1);
@@ -486,6 +492,97 @@ describe("restarting a build killed after its photos had started", () => {
       [categoryId],
     );
     expect(Number(remaining.n)).toBe(20);
+  });
+
+  const progressPayloads = () =>
+    h.state.broadcast.mock.calls
+      .filter((call: unknown[]) => call[1] === "progress")
+      .map(
+        (call: unknown[]) =>
+          call[2] as {
+            phase: string;
+            clean?: number;
+            failedLastRound?: number;
+          },
+      );
+
+  test("a 3-round build tells the host exactly how many failed each round", async () => {
+    // Round 1 writes 20 and 3 fail (17 clean). Round 2 writes 4 for the 3
+    // gaps and 2 of them fail (19 clean). Round 3 writes 2 and both pass.
+    // The host used to see "1 failed" after round 2 (20 - 19); the server
+    // now says the real number.
+    const category = await one<{ id: string }>(
+      `insert into categories (game_id, name, topic, position, state)
+       values ($1, 'Three Rounds', 'Three Rounds', $2, 'draft')
+       returning id`,
+      [gameId, position++],
+    );
+    h.state.owned = {
+      ok: true,
+      host: {
+        id: hostId,
+        role: "host",
+        is_paywall_bypassed: true,
+        trial_ends_at: null,
+        subscription_status: null,
+      },
+      night: { id: nightId, theme_key: "house" },
+      category: {
+        id: category.id,
+        game_id: gameId,
+        name: "Three Rounds",
+        topic: "Three Rounds",
+        state: "draft",
+      },
+    };
+    const failing = [3, 2, 0];
+    let round = 0;
+    h.state.generateQuestions.mockImplementation(async (opts: { count: number }) => {
+      const r = round++;
+      return Array.from({ length: opts.count }, (_, n) => ({
+        prompt:
+          n < (failing[r] ?? 0)
+            ? `Round ${r + 1} question ${n} REJECTME`
+            : `Round ${r + 1} question ${n} about this topic`,
+        options: ["Alpha", "Bravo", "Charlie", "Delta"],
+        correctIndex: 0,
+        difficulty: 3,
+        factBlurb: "A fresh fact.",
+        photoQuery: `round ${r + 1} scene ${n}`,
+      }));
+    });
+
+    await pressContinue(category.id);
+
+    expect(h.state.generateQuestions.mock.calls.map((c: unknown[]) => (c[0] as { count: number }).count)).toEqual([20, 4, 2]);
+    const job = await readJob(category.id);
+    expect(job.phase).toBe("ready");
+    expect(job.certified_count).toBe(20);
+
+    const payloads = progressPayloads();
+    const firstWithField = payloads.findIndex((p) => p.failedLastRound !== undefined);
+    expect(firstWithField).toBeGreaterThan(0);
+    // Nothing claims a failure count before round 1 has ended.
+    expect(payloads.slice(0, firstWithField).every((p) => (p.clean ?? 0) === 0)).toBe(true);
+    // Each count goes with its own round: 3 at 17 clean, 2 at 19 clean.
+    for (const p of payloads) {
+      if (p.failedLastRound === undefined) continue;
+      if (p.clean === 17) expect(p.failedLastRound).toBe(3);
+      if (p.clean === 19) expect(p.failedLastRound).toBe(2);
+    }
+    // Every round end is announced as "repairing" (not overtaken by the
+    // next round's "writing"), and then the replacement writing starts with
+    // the same number on it.
+    const idx = (phase: string, clean: number, failed: number) =>
+      payloads.findIndex(
+        (p) => p.phase === phase && p.clean === clean && p.failedLastRound === failed,
+      );
+    expect(idx("repairing", 17, 3)).toBeGreaterThan(-1);
+    expect(idx("writing", 17, 3)).toBeGreaterThan(idx("repairing", 17, 3));
+    expect(idx("repairing", 19, 2)).toBeGreaterThan(idx("writing", 17, 3));
+    expect(idx("writing", 19, 2)).toBeGreaterThan(idx("repairing", 19, 2));
+    // The false "1 failed" never goes out.
+    expect(payloads.some((p) => p.failedLastRound === 1)).toBe(false);
   });
 
   test("a build already killed with no photos or counters still restarts", async () => {

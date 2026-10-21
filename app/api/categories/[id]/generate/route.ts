@@ -508,6 +508,10 @@ async function runGenerationJob(opts: {
       () => undefined,
     );
   };
+  // For the timed heartbeat only. A step that changes the phase writes the
+  // row itself and then calls broadcastProgress() straight away: going
+  // through the heartbeat wait first let the next step change `phase` before
+  // the send, so a round end's "repairing" went out as "writing".
   const emitProgress = async () => {
     await durableHeartbeat.beat();
     return broadcastProgress();
@@ -575,7 +579,7 @@ async function runGenerationJob(opts: {
     // This runs at a round's end: say "repairing" now, so a heartbeat in
     // the gap before onRoundComplete can't send the new clean count under
     // the old "checking" phase.
-    if (certifiedCount < 20) phase = "repairing";
+    phase = certifiedCount >= 20 ? "images" : "repairing";
     liveProgress.setCounts({
       certified: certifiedCount,
       clean: cleanCount,
@@ -616,8 +620,8 @@ async function runGenerationJob(opts: {
         // set before the first chunk lands and never grows afterwards.
         liveProgress.reportChecked(0, questions.length, passIndex === 0 ? 1 : 2);
         await writeWorkerProgress({ phase: "checking" });
-        void emitProgress().catch(() => undefined);
-        return verifyAnswers(questions, {
+        void broadcastProgress();
+        const verdicts = await verifyAnswers(questions, {
           topic: opts.topic,
           mode: passIndex === 0 ? "blind" : "adversarial",
           onUsage: trackUsage,
@@ -626,6 +630,11 @@ async function runGenerationJob(opts: {
             else onChecked(checked, total, passIndex === 0 ? 1 : 2);
           },
         });
+        // This round's check is done, so the last round's failure count is
+        // no longer the newest. Until this round's own count is set at its
+        // end, updates carry none and the host shows no number.
+        liveProgress.setCounts({ failedLastRound: null });
+        return verdicts;
       };
 
       let certifiedStoredQuestions: typeof storedQuestions = [];
@@ -680,6 +689,8 @@ async function runGenerationJob(opts: {
           written: writtenCount,
           certified: certifiedCount,
           clean: cleanCount,
+          // The host's "N failed the re-check" comes only from this.
+          failedLastRound: rejectedStoredIds.length,
         });
         liveProgress.clearChecked();
         phase = certifiedCount >= 20 ? "images" : "repairing";
@@ -701,7 +712,7 @@ async function runGenerationJob(opts: {
         // Broadcast right away: the host page refetches its cards on a
         // "repairing" progress event, so the stored questions just deleted
         // above leave the screen instead of inflating its count.
-        void emitProgress().catch(() => undefined);
+        void broadcastProgress();
       }
 
       generated = await collectVerifiedQuestions({
@@ -719,7 +730,7 @@ async function runGenerationJob(opts: {
           cleanCount = Math.max(0, 20 - need);
           liveProgress.setCounts({ clean: cleanCount });
           await writeWorkerProgress({ phase: "writing" });
-          void emitProgress().catch(() => undefined);
+          void broadcastProgress();
           let batch: GeneratedQuestion[];
           try {
             batch = await generateQuestions({
@@ -770,7 +781,7 @@ async function runGenerationJob(opts: {
             phase: "checking",
             written_count: writtenCount,
           });
-          void emitProgress().catch(() => undefined);
+          void broadcastProgress();
           return batch;
         },
         verify: verifyCandidateBatch,
@@ -792,7 +803,12 @@ async function runGenerationJob(opts: {
             20,
             Math.max(0, 20 - event.requested) + event.accepted,
           );
-          liveProgress.setCounts({ clean: cleanCount });
+          // The real number that failed this round's check. It rides on
+          // every update until the next round ends, so the host can name it.
+          liveProgress.setCounts({
+            clean: cleanCount,
+            failedLastRound: event.rejected.length,
+          });
           if (certifiedCount < 20) {
             phase = "repairing";
             await writeWorkerProgress({
@@ -802,7 +818,7 @@ async function runGenerationJob(opts: {
             });
             // Tell the host now (with the honest clean count) instead of
             // waiting up to one heartbeat.
-            void emitProgress().catch(() => undefined);
+            void broadcastProgress();
           }
         },
         // First runs checkpoint every certified batch. Rerolls remain atomic so

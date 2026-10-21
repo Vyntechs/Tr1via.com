@@ -110,6 +110,11 @@ export interface CategoryProgressPayload extends CategoryBroadcastPayload {
   clean?: number;
   /** Deck size being built. */
   target?: number;
+  /** How many questions failed the check in the round that last finished
+   *  (the resume re-check counts as a round). Sent from that round's end
+   *  through the next round's writing and checking. The host names a
+   *  failure number only from this field, never from its own counting. */
+  failedLastRound?: number;
 }
 
 /** Payload for the category generation completion event. */

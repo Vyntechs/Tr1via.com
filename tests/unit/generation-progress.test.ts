@@ -102,6 +102,25 @@ describe("createGenerationProgressReporter", () => {
     await expect(reporter.settle()).resolves.toBeUndefined();
   });
 
+  it("carries the last round's failure count only once it is set, and forgets it on null", () => {
+    const reporter = createGenerationProgressReporter({
+      target: 20,
+      persistWritten: async () => undefined,
+    });
+    expect(reporter.counts()).not.toHaveProperty("failedLastRound");
+    reporter.setCounts({ clean: 17, failedLastRound: 3 });
+    expect(reporter.counts()).toMatchObject({ clean: 17, failedLastRound: 3 });
+    // A later patch without the field keeps it (writing the replacements).
+    reporter.setCounts({ written: 18 });
+    reporter.clearChecked();
+    expect(reporter.counts().failedLastRound).toBe(3);
+    // The next round's check finished: no number until its own is set.
+    reporter.setCounts({ failedLastRound: null });
+    expect(reporter.counts()).not.toHaveProperty("failedLastRound");
+    reporter.setCounts({ clean: 19, failedLastRound: 2 });
+    expect(reporter.counts().failedLastRound).toBe(2);
+  });
+
   it("sums the two check passes that run at the same time, never backward", () => {
     const reporter = createGenerationProgressReporter({
       target: 20,

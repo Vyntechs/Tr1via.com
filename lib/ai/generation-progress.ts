@@ -27,6 +27,11 @@ export interface GenerationProgressCounts {
   checked?: number;
   /** Checks this round needs in all: batch size x number of passes. */
   checkTotal?: number;
+  /** How many questions failed the check in the round that last finished
+   *  (the resume re-check counts as one). Set at each round end and kept
+   *  through the next round's writing and checking, so the host can say
+   *  "2 failed the check" without guessing. Absent until a round ends. */
+  failedLastRound?: number;
 }
 
 export interface GenerationProgressReporterOptions {
@@ -56,6 +61,8 @@ export interface GenerationProgressReporter {
     written?: number;
     certified?: number;
     clean?: number;
+    /** null forgets it (that round's own check has finished). */
+    failedLastRound?: number | null;
   }) => void;
   /** Forget the checking fields (a new writing round started). */
   clearChecked: () => void;
@@ -78,6 +85,7 @@ export function createGenerationProgressReporter(
   let written = 0;
   let certified = 0;
   let clean = 0;
+  let failedLastRound: number | undefined;
   const passes = Math.max(1, Math.floor(opts.checkPasses ?? 2));
   // One slot per pass. Both passes report chunks at the same time, so a single
   // shared slot would let each overwrite the other and the bar would jump
@@ -95,6 +103,7 @@ export function createGenerationProgressReporter(
     certified,
     clean,
     target,
+    ...(failedLastRound === undefined ? {} : { failedLastRound }),
     ...(checkedByPass === undefined
       ? {}
       : {
@@ -159,6 +168,11 @@ export function createGenerationProgressReporter(
       }
       if (patch.clean !== undefined) {
         clean = Math.min(target, Math.max(0, patch.clean));
+      }
+      if (patch.failedLastRound === null) {
+        failedLastRound = undefined;
+      } else if (patch.failedLastRound !== undefined) {
+        failedLastRound = Math.max(0, Math.floor(patch.failedLastRound));
       }
     },
     clearChecked() {
