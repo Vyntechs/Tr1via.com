@@ -77,7 +77,7 @@ describe("HostGenLoading progress tracker", () => {
         themeKey="house"
         topic="Pixar"
         loaded={[]}
-        progress={progress({ phase: "repairing", written: 17, certified: 17, checked: undefined, checkTotal: undefined })}
+        progress={progress({ phase: "repairing", written: 20, certified: 17, clean: 17, checked: undefined, checkTotal: undefined })}
       />,
     );
     expect(screen.getByTestId("host-gen-status-line").textContent).toBe(
@@ -119,6 +119,21 @@ describe("HostGenLoading progress tracker", () => {
     render(view({ ...none, phase: "writing", written: 2 }));
     expect(shownPct()).toBe("6%");
     expect(headline()).toBe("Writing questions");
+  });
+
+  it("shows no check number until the first live update after a reload", () => {
+    const none = { checked: undefined, checkTotal: undefined };
+    const { rerender } = render(
+      <HostGenLoading themeKey="house" topic="Pixar" loaded={[]} progress={progress({ ...none, phase: "repairing", written: 15, certified: 15 })} />,
+    );
+    expect(screen.queryByTestId("host-gen-stage-count-check")).toBeNull();
+    expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe("waiting for the next update");
+    expect(parseFloat(fill("check"))).toBe(0);
+    expect(screen.getAllByText(/^\d+%$/)[0]!.textContent).toBe("42%");
+    rerender(
+      <HostGenLoading themeKey="house" topic="Pixar" loaded={[]} progress={progress({ ...none, phase: "repairing", written: 15, certified: 15, clean: 13 })} />,
+    );
+    expect(count("check")).toBe("13/20");
   });
 
   it("shows elapsed time and says when the screen joined mid-build", () => {

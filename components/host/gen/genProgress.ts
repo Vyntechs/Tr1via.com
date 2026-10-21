@@ -55,6 +55,9 @@ export interface TrackerStage {
   total: number;
   /** 0..1, from the stage's own count only. */
   fraction: number;
+  /** False when the screen has no true count for this stage yet: show no
+   *  number, and the stage adds nothing to the percent. */
+  known: boolean;
   state: StageState;
   /** Extra plain-words detail, e.g. "2 checks per question". */
   detail: string | null;
@@ -101,19 +104,28 @@ export function buildTracker(p: HostGenProgress): Tracker {
   // The server's own clean count wins when it sent one: the cards can be
   // the OLD batch (reroll) or include stored questions the re-check just
   // deleted (resume), and either would give a false "Replacing N".
-  const clean =
-    typeof p.clean === "number" && Number.isFinite(p.clean)
-      ? Math.min(target, Math.max(0, p.clean))
-      : certified;
+  const cleanKnown = typeof p.clean === "number" && Number.isFinite(p.clean);
+  const clean = cleanKnown ? Math.min(target, Math.max(0, p.clean!)) : certified;
   const phase = p.phase;
   const checkTotal = safe(p.checkTotal);
   const hasCheckInfo = checkTotal > 0;
+  // Only the live update carries the clean count. Until the first one
+  // arrives (a reload, or the moment after a resume) the card count can be
+  // the old batch (reroll) or include questions the re-check just deleted
+  // (resume), so the check stage shows no number rather than a guess.
+  const cleanUnsure =
+    !cleanKnown &&
+    !hasCheckInfo &&
+    (phase === "checking" ||
+      phase === "repairing" ||
+      (phase === "writing" && certified > 0));
 
   // Refill round: some questions failed the check and are being replaced.
   // While writing or checking, 0 < clean < target only happens on a
   // refill: round 1 (and the resume re-check) hold nothing clean until the
   // round ends.
   const refill =
+    !cleanUnsure &&
     clean > 0 &&
     clean < target &&
     (phase === "repairing" || phase === "writing" || phase === "checking");
@@ -137,6 +149,7 @@ export function buildTracker(p: HostGenProgress): Tracker {
     count: written,
     total: target,
     fraction: clamp01(written / target),
+    known: true,
     state: writeState,
     detail: refill && phase === "writing" ? `${refillNeed} more` : null,
     weight: STAGE_WEIGHTS.write,
@@ -149,8 +162,19 @@ export function buildTracker(p: HostGenProgress): Tracker {
     label: "Fact-checking answers",
     shortLabel: "Checking",
     weight: STAGE_WEIGHTS.check,
+    known: true,
   };
-  if (phase === "checking" && hasCheckInfo) {
+  if (cleanUnsure) {
+    check = {
+      ...checkBase,
+      known: false,
+      count: 0,
+      total: target,
+      fraction: 0,
+      state: "active",
+      detail: "waiting for the next update",
+    };
+  } else if (phase === "checking" && hasCheckInfo) {
     // Both passes run at once; the server sends their checks added together,
     // so this count only climbs. The bar counts what is already clean plus
     // this round's share of the target: a refill checking 4 replacements for
@@ -212,6 +236,7 @@ export function buildTracker(p: HostGenProgress): Tracker {
     count: photos,
     total: photoTotal,
     fraction: clamp01(photos / photoTotal),
+    known: true,
     state: photosState,
     detail: null,
     weight: STAGE_WEIGHTS.photos,
@@ -236,7 +261,7 @@ export function buildTracker(p: HostGenProgress): Tracker {
   // Round one of an attempt that picked a paused build back up.
   const firstRoundAfterPause =
     resumedWith !== null &&
-    clean === 0 &&
+    (clean === 0 || cleanUnsure) &&
     !refill &&
     (phase === "queued" || phase === "writing" || phase === "checking");
   // A resume re-checks the saved questions first, then writes the rest.
@@ -290,9 +315,11 @@ export function buildTracker(p: HostGenProgress): Tracker {
         // the cards said "Replacing 20" on a reroll where 3 had failed.
         headline = refill
           ? `${failedLead} ${replacing}`
-          : clean >= target
-            ? "Saving the new questions"
-            : "Some failed the check. Writing replacements";
+          : cleanUnsure
+            ? "Fact-checking answers"
+            : clean >= target
+              ? "Saving the new questions"
+              : "Some failed the check. Writing replacements";
         break;
       case "images":
         headline = "Finding photos";

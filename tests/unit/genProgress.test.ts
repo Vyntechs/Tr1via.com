@@ -41,7 +41,14 @@ function supportedFractions(p: HostGenProgress): Record<"write" | "check" | "pho
   const certified = Math.min(target, p.certified);
   const clean = Math.min(target, p.clean ?? certified);
   let check: number;
-  if (p.phase === "checking" && (p.checkTotal ?? 0) > 0) {
+  const unsure =
+    p.clean === undefined &&
+    !((p.checkTotal ?? 0) > 0) &&
+    (p.phase === "checking" || p.phase === "repairing" || (p.phase === "writing" && certified > 0));
+  if (unsure) {
+    // No live update yet: no true clean count, so the stage adds nothing.
+    check = 0;
+  } else if (p.phase === "checking" && (p.checkTotal ?? 0) > 0) {
     // Already clean, plus this round's share of the target times the share
     // of its checks that are done.
     const checkTotal = p.checkTotal!;
@@ -204,10 +211,15 @@ describe('"Another 20" reroll after a reload', () => {
     expect(rows[5]!.t.headline).toBe("Saving the new questions");
   });
 
-  it("gives no number when only the polled row is known, but still says why", () => {
+  it("gives no number and claims nothing when only the polled row is known", () => {
     const t = buildTracker({ ...base, phase: "repairing", written: 20, certified: 0 });
-    expect(t.headline).toBe("Some failed the check. Writing replacements");
-    expect(stage(t, "check")).toMatchObject({ count: 0, fraction: 0 });
+    expect(t.headline).toBe("Fact-checking answers");
+    expect(stage(t, "check")).toMatchObject({
+      known: false,
+      fraction: 0,
+      detail: "waiting for the next update",
+    });
+    expect(pct(t)).toBe(56);
   });
 });
 
@@ -307,5 +319,40 @@ describe("pause with 15 saved, 2 fail the re-check", () => {
   it("says nothing failed when every saved question passes the re-check", () => {
     const t = buildTracker({ ...base, ...saved, phase: "repairing", written: 15, certified: 15, clean: 15 });
     expect(t.headline).toBe("Picking up after a pause. Writing 5 more");
+  });
+});
+
+describe("reload during a resume, before the first live update", () => {
+  // Only the polled job row is known. It has no clean count, and the cards
+  // still include the 2 the re-check deleted, so certified reads 15.
+  it("shows the check stage with no number and leaves it out of the percent", () => {
+    const rows = run([
+      ["re-check, polled row only", { resumedWith: 15, phase: "checking", written: 15, certified: 15 }],
+      ["repairing, polled row only", { phase: "repairing", written: 15, certified: 15 }],
+      ["refill writing, polled row only", { phase: "writing", written: 18, certified: 15 }],
+      ["first live update", { phase: "writing", written: 18, certified: 13, clean: 13 }],
+    ]);
+    expectTrue(rows);
+    for (const r of rows.slice(0, 3)) {
+      expect(stage(r.t, "check"), r.label).toMatchObject({
+        known: false,
+        fraction: 0,
+        detail: "waiting for the next update",
+      });
+      // No guessed refill number either.
+      expect(r.t.refillNeed, r.label).toBe(0);
+      expect(r.t.headline, r.label).not.toMatch(/\d+ (failed|more)/);
+    }
+    expect(pct(rows[0]!.t)).toBe(42);
+    expect(rows[0]!.t.headline).toBe("Picking up after a pause. Re-checking the 15 saved");
+    // Was 75% check bar (15/20 from the cards) while the server held 13.
+    expect(pct(rows[2]!.t)).toBe(50.4);
+    const live = rows[3]!.t;
+    expect(stage(live, "check")).toMatchObject({ known: true, count: 13, total: 20 });
+  });
+
+  it("still counts the polled row when it is the server's own saved total", () => {
+    const t = buildTracker({ ...base, phase: "images", written: 20, certified: 18, photos: 6 });
+    expect(stage(t, "check")).toMatchObject({ known: true, count: 18, total: 20 });
   });
 });

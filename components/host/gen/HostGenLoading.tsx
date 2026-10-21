@@ -398,9 +398,11 @@ function StageTracker({ stages, color, mobile }: { stages: TrackerStage[]; color
                 {s.state === "done" && <span aria-hidden style={{ color }}>✓ </span>}
                 {mobile ? s.shortLabel : s.label}
               </span>
-              <Numeric size={mobile ? 11 : 12} weight={600} color={s.state === "waiting" ? t.inkMid : t.ink}>
-                <span data-testid={`host-gen-stage-count-${s.key}`}>{s.count}/{s.total}</span>
-              </Numeric>
+              {s.known && (
+                <Numeric size={mobile ? 11 : 12} weight={600} color={s.state === "waiting" ? t.inkMid : t.ink}>
+                  <span data-testid={`host-gen-stage-count-${s.key}`}>{s.count}/{s.total}</span>
+                </Numeric>
+              )}
             </div>
             {s.detail && (
               <div data-testid={`host-gen-stage-detail-${s.key}`} style={{ fontSize: mobile ? 10.5 : 11.5, color: t.inkMid, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
