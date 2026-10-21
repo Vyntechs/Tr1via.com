@@ -166,7 +166,7 @@ describe("Anthropic wire capture (new writer)", () => {
     // What the baseline must say, so a bad re-capture can't sneak through.
     const body = JSON.parse(baseline.requests[0]!.body) as Record<string, unknown>;
     expect(body.model).toBe("claude-sonnet-5-5");
-    expect(body.max_tokens).toBe(12000);
+    expect(body.max_tokens).toBe(20000);
     expect(body.stream).toBe(true);
     expect((body.output_config as { effort: string }).effort).toBe("medium");
     expect((body.output_config as { format: { type: string } }).format.type).toBe("json_schema");

@@ -91,15 +91,15 @@ function lcg(seed = 7) {
 }
 
 describe("new writer · request", () => {
-  it("asks Sonnet 5.5 at effort medium for structured output, 12,000 tokens, no temperature or forced tool", async () => {
+  it("asks Sonnet 5.5 at effort medium for structured output, 20,000 tokens, no temperature or forced tool", async () => {
     const { client, sent } = clientReplying(replySse(batchJson(twenty())));
     await generateQuestionsNew({ topic: "Pixar movies", client, now: NOW });
 
     expect(sent).toHaveLength(1);
     const body = sent[0]!;
     expect(body.model).toBe("claude-sonnet-5-5");
-    expect(body.max_tokens).toBe(12_000);
-    expect(NEW_WRITER_MAX_TOKENS).toBe(12_000);
+    expect(body.max_tokens).toBe(20_000);
+    expect(NEW_WRITER_MAX_TOKENS).toBe(20_000);
     const oc = body.output_config as { effort: string; format: { type: string; schema: unknown } };
     expect(oc.effort).toBe("medium");
     expect(oc.format.type).toBe("json_schema");
@@ -212,6 +212,22 @@ describe("new writer · the 20 guard (never store fewer silently)", () => {
     expect(rejected).toEqual([
       expect.objectContaining({ index: 18, issues: ["cut off at the output limit"] }),
     ]);
+    vi.restoreAllMocks();
+  });
+
+  it("a reply cut off before any question finished names the output limit, not missing text", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    // Thinking ate the whole limit: no text block at all.
+    const thinkingOnly = clientReplying(replySse("", "max_tokens"));
+    await expect(
+      generateQuestionsNew({ topic: "x", client: thinkingOnly.client, now: NOW }),
+    ).rejects.toThrow(`hit the ${NEW_WRITER_MAX_TOKENS}-token output limit before any question finished`);
+
+    // Thinking ate most of it: the first question was still open at the cut.
+    const firstOpen = clientReplying(replySse(batchJson(twenty()).slice(0, 80), "max_tokens"));
+    const err = await generateQuestionsNew({ topic: "x", client: firstOpen.client, now: NOW }).catch((e: Error) => e);
+    expect(String(err)).toMatch(/output limit before any question finished/);
+    expect(String(err)).not.toMatch(/no question text|not valid JSON/);
     vi.restoreAllMocks();
   });
 

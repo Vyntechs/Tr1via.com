@@ -16,7 +16,11 @@
 //     ~96% of Classic questions).
 //   - Today's date goes in the per-call message.
 //   - A short prose prompt with real loved/flopped examples (prompts-new.ts).
-//   - Output limit 12,000 tokens, sized for 20 questions with headroom.
+//   - Output limit 20,000 tokens. Thinking shares it and can't be capped on
+//     Sonnet 5.5 (budget_tokens is refused; effort is the only lever), so the
+//     limit covers ~5k of answer JSON plus ~15k of thinking. It is a ceiling,
+//     not a charge, and at ~100 tokens/s it still ends well inside the route's
+//     300s limit.
 //
 // Output lands in the SAME GeneratedQuestion shape Classic returns, so the
 // checker, photo and pick steps after it are untouched:
@@ -46,8 +50,9 @@ export const NEW_WRITER_MODEL = "claude-sonnet-5-5";
 export const NEW_WRITER_EFFORT = "medium" as const;
 /** Questions per call. Brandon's call (2026-10-21): 20, not the review's 30. */
 export const NEW_WRITER_BATCH = 20;
-/** 20 questions run ~4-5k output tokens; thinking shares this limit. */
-export const NEW_WRITER_MAX_TOKENS = 12_000;
+/** 20 questions run ~4-5k output tokens; thinking shares this limit and has
+ *  no separate cap on Sonnet 5.5, so the rest is thinking headroom. */
+export const NEW_WRITER_MAX_TOKENS = 20_000;
 
 export interface GenerateQuestionsNewOptions extends GenerateQuestionsOptions {
   /** Injectable clock for the date line (tests pin it). */
@@ -272,20 +277,25 @@ export async function generateQuestionsNew(
   if (response.stop_reason === "refusal") {
     throw new Error("generateQuestionsNew: the model declined to write this topic");
   }
+  // Checked before anything reads the text: thinking shares the output
+  // limit, so a cut-off reply can hold little or no question text at all.
+  const truncated = response.stop_reason === "max_tokens";
   const text = response.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("");
-  if (!text.trim()) {
-    throw new Error("generateQuestionsNew: the reply had no question text");
-  }
 
-  const truncated = response.stop_reason === "max_tokens";
   let rawQuestions: unknown[];
   if (truncated) {
     // Cut off at the output limit: keep the questions that closed and drop
-    // the unfinished one, which may have stopped mid-field.
+    // the unfinished one, which may have stopped mid-field. A partial batch
+    // goes back to the collect loop, whose refill round asks for the gap.
     const { items, unfinished } = completeNewQuestions(text);
+    if (items.length === 0) {
+      throw new Error(
+        `generateQuestionsNew: hit the ${NEW_WRITER_MAX_TOKENS}-token output limit before any question finished`,
+      );
+    }
     rawQuestions = items;
     console.warn(
       `[generateQuestionsNew] hit the ${NEW_WRITER_MAX_TOKENS}-token output limit; kept ${items.length} finished questions`,
@@ -298,6 +308,9 @@ export async function generateQuestionsNew(
       });
     }
   } else {
+    if (!text.trim()) {
+      throw new Error("generateQuestionsNew: the reply had no question text");
+    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(text);
