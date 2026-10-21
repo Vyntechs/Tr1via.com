@@ -47,6 +47,15 @@ export interface HostGenProgress {
    *  count). After a reload mid-resume, a gap of 7 can be 2 that failed plus
    *  5 never written, so without this the headline claims no failures. */
   failuresKnown?: boolean;
+  /** The clean count from this attempt's first "repairing" update (the end
+   *  of round one, or of a resume's re-check). An exact "N failed" only
+   *  holds while the clean count still equals it. Omitted = not seen. */
+  firstRepairClean?: number;
+  /** True once a refill round's check has finished in this attempt (the
+   *  screen saw a second "repairing" update). The server writes one spare
+   *  question per refill and the screen can't count how many it wrote, so
+   *  after that no exact failure number is known. */
+  refillCheckDone?: boolean;
 }
 
 export type StageKey = "write" | "check" | "photos";
@@ -136,17 +145,17 @@ export function buildTracker(p: HostGenProgress): Tracker {
     (phase === "repairing" || phase === "writing" || phase === "checking");
   const refillNeed = refill ? target - clean : 0;
 
-  // ── Writing ──
+  // ── Writing ── Ticked only when every question is written, or the build
+  // has moved on to photos. A resume re-checking 15 saved shows 15/20, not
+  // a tick: the rest are written after the re-check.
   const writeState: StageState =
     phase === "queued"
       ? "waiting"
       : phase === "writing"
         ? "active"
-        : phase === "needs_attention"
-          ? written >= target
-            ? "done"
-            : "waiting"
-          : "done";
+        : phase === "images" || phase === "ready" || written >= target
+          ? "done"
+          : "waiting";
   const write: TrackerStage = {
     key: "write",
     label: "Writing questions",
@@ -181,19 +190,19 @@ export function buildTracker(p: HostGenProgress): Tracker {
     };
   } else if (phase === "checking" && hasCheckInfo) {
     // Both passes run at once; the server sends their checks added together,
-    // so this count only climbs. The bar counts what is already clean plus
-    // this round's share of the target: a refill checking 4 replacements for
-    // 3 open slots starts at 17/20, not at 0/8 (that drop was ~19 points).
+    // so this count only climbs.
     const checked = Math.min(checkTotal, safe(p.checked));
     const batch = checkTotal / CHECK_PASSES;
     const share = Math.min(target - clean, batch);
-    const fraction = clamp01((clean + share * (checked / checkTotal)) / target);
     check = refill
       ? {
+          // A refill shows the clean count (17/20) and its bar matches it:
+          // nothing new is clean until the round's checks finish. The
+          // checks done so far go in the detail line.
           ...checkBase,
           count: clean,
           total: target,
-          fraction,
+          fraction: clamp01(clean / target),
           state: "active",
           detail: `${checked}/${checkTotal} checks`,
         }
@@ -201,12 +210,16 @@ export function buildTracker(p: HostGenProgress): Tracker {
           ...checkBase,
           count: checked,
           total: checkTotal,
-          fraction,
+          // Round one (or a resume's re-check): the bar is this round's
+          // share of the target times the share of its checks done.
+          fraction: clamp01((clean + share * (checked / checkTotal)) / target),
           state: "active",
           detail:
-            share < target
-              ? `2 checks each on ${share} questions`
-              : "2 checks per question",
+            share >= target
+              ? "2 checks per question"
+              : share > 0
+                ? `2 checks each on ${share} questions`
+                : null,
         };
   } else if (phase === "checking" || phase === "repairing" || refill) {
     check = {
@@ -269,18 +282,34 @@ export function buildTracker(p: HostGenProgress): Tracker {
     (clean === 0 || cleanUnsure) &&
     !refill &&
     (phase === "queued" || phase === "writing" || phase === "checking");
+  // An exact failure number holds only for the round that just ended: once
+  // a refill round's check finishes (or the clean count moves past the
+  // first round-end count), the screen can't count how many the server
+  // wrote for it, so the words go neutral.
+  const firstRepairClean =
+    typeof p.firstRepairClean === "number" && Number.isFinite(p.firstRepairClean)
+      ? p.firstRepairClean
+      : null;
+  const exactFailures =
+    p.refillCheckDone !== true && (firstRepairClean === null || clean === firstRepairClean);
   // A resume re-checks the saved questions first, then writes the rest.
-  // While nothing new has passed yet, the gap is the ones that failed the
-  // re-check plus the ones never written.
-  const resumeRefill = refill && resumedWith !== null && resumedWith > 0 && clean <= resumedWith;
-  const reCheckFailed = resumeRefill ? Math.max(0, (resumedWith ?? 0) - clean) : 0;
+  // The gap is the ones that failed the re-check plus the ones never
+  // written, so only the re-check failures get a number, and only when
+  // this screen saw the re-check's own clean count.
+  const resumeRefill = refill && resumedWith !== null && resumedWith > 0;
+  const reCheckFailed =
+    resumeRefill && firstRepairClean !== null && exactFailures
+      ? Math.max(0, (resumedWith ?? 0) - clean)
+      : 0;
   const failuresKnown = p.failuresKnown === true || resumedWith !== null;
-  const failedLead = resumeRefill
-    ? reCheckFailed > 0
-      ? `${reCheckFailed} failed the re-check.`
-      : "Picking up after a pause."
-    : `${refillNeed} failed the check.`;
-  const replacing = resumeRefill
+  const failedLead = !exactFailures
+    ? "Some failed the check."
+    : resumeRefill
+      ? reCheckFailed > 0
+        ? `${reCheckFailed} failed the re-check.`
+        : "Picking up after a pause."
+      : `${refillNeed} failed the check.`;
+  const replacing = resumeRefill && exactFailures
     ? `Writing ${refillNeed} more`
     : refillNeed === 1
       ? "Writing a replacement"

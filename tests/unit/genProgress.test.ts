@@ -50,8 +50,11 @@ function supportedFractions(p: HostGenProgress): Record<"write" | "check" | "pho
   if (unsure) {
     // No live update yet: no true clean count, so the stage adds nothing.
     check = 0;
+  } else if (p.phase === "checking" && (p.checkTotal ?? 0) > 0 && clean > 0 && clean < target) {
+    // A refill round's check: just the clean count, until the round ends.
+    check = clean / target;
   } else if (p.phase === "checking" && (p.checkTotal ?? 0) > 0) {
-    // Already clean, plus this round's share of the target times the share
+    // Round one: already clean, plus this round's share of the target times the share
     // of its checks that are done.
     const checkTotal = p.checkTotal!;
     const checked = Math.min(checkTotal, p.checked ?? 0);
@@ -82,8 +85,11 @@ function expectTrue(rows: Row[]) {
     for (const s of t.stages) {
       expect(s.fraction, `${s.key} bar at "${label}"`).toBeCloseTo(want[s.key], 9);
       expect(s.count, `${s.key} count at "${label}"`).toBeLessThanOrEqual(s.total);
-      if (!(p.phase === "checking" && (p.checkTotal ?? 0) > 0 && s.key === "check")) {
-        // Outside the live check round a bar is just its own count.
+      const clean = Math.min(p.target, p.clean ?? p.certified);
+      const roundOneCheck =
+        p.phase === "checking" && (p.checkTotal ?? 0) > 0 && !(clean > 0 && clean < p.target);
+      if (!(roundOneCheck && s.key === "check")) {
+        // Outside round one's live check a bar is just its own count.
         expect(s.fraction, `${s.key} bar vs count at "${label}"`).toBeCloseTo(s.count / s.total, 9);
       }
       sum += STAGE_WEIGHTS[s.key] * s.fraction;
@@ -153,36 +159,56 @@ describe("first build, 3 fail the check, then a refill round", () => {
     expect(rows[6]!.t.headline).toBe("3 failed the check. Writing replacements");
   });
 
-  it("climbs back from 17/20 as the replacements are checked", () => {
+  it("holds the check bar at 17/20 while the replacements are checked", () => {
     const refillCheck = rows[7]!.t;
     expect(refillCheck.headline).toBe("3 failed the check. Checking the replacements");
-    expect(stage(refillCheck, "check")).toMatchObject({ count: 17, total: 20, detail: "0/8 checks" });
+    expect(stage(refillCheck, "check")).toMatchObject({ count: 17, total: 20, fraction: 0.85, detail: "0/8 checks" });
     expect(pct(refillCheck)).toBe(74.7);
-    expect(pct(rows[8]!.t)).toBeGreaterThan(74.7);
-    expect(stage(rows[9]!.t, "check").detail).toBe("8/8 checks");
-    expect(pct(rows[9]!.t)).toBe(78);
+    // The checks done go in the detail line; the bar stays with its count.
+    expect(stage(rows[8]!.t, "check")).toMatchObject({ count: 17, fraction: 0.85, detail: "4/8 checks" });
+    expect(stage(rows[9]!.t, "check")).toMatchObject({ count: 17, fraction: 0.85, detail: "8/8 checks" });
+    expect(pct(rows[9]!.t)).toBe(74.7);
+    expect(pct(rows[10]!.t)).toBe(78);
     expect(pct(rows[11]!.t)).toBeGreaterThan(78);
   });
 });
 
-describe("a second refill round where 1 more fails", () => {
+describe("a second refill round where 1 more is still needed", () => {
+  // Round one: 3 fail (17 clean). The refill writes 4 (3 + one spare) and
+  // 2 pass (19 clean), so 2 of the 4 failed. The screen can't count the 4
+  // (the written count is capped at 20), so it gives no number.
+  const r1 = { firstRepairClean: 17 };
+  const r2 = { firstRepairClean: 17, refillCheckDone: true };
   const rows = run([
     ["checking 40/40", { phase: "checking", written: 20, checked: 40, checkTotal: 40 }],
-    ["repairing, 17 clean", { phase: "repairing", written: 20, certified: 17, clean: 17 }],
-    ["refill checking 6/6", { phase: "checking", written: 20, certified: 17, clean: 17, checked: 6, checkTotal: 6 }],
-    ["repairing, 19 clean", { phase: "repairing", written: 20, certified: 19, clean: 19 }],
-    ["refill 2 writing", { phase: "writing", written: 20, certified: 19, clean: 19 }],
-    ["refill 2 checking 1/2", { phase: "checking", written: 20, certified: 19, clean: 19, checked: 1, checkTotal: 2 }],
+    ["repairing, 17 clean", { ...r1, phase: "repairing", written: 20, certified: 17, clean: 17 }],
+    ["refill checking 8/8", { ...r1, phase: "checking", written: 20, certified: 17, clean: 17, checked: 8, checkTotal: 8 }],
+    ["repairing, 19 clean", { ...r2, phase: "repairing", written: 20, certified: 19, clean: 19 }],
+    ["refill 2 writing", { ...r2, phase: "writing", written: 20, certified: 19, clean: 19 }],
+    ["refill 2 checking 1/4", { ...r2, phase: "checking", written: 20, certified: 19, clean: 19, checked: 1, checkTotal: 4 }],
     ["photos 4", { phase: "images", written: 20, certified: 20, clean: 20, photos: 4 }],
   ]);
 
-  it("explains each drop with the real number that failed", () => {
+  it("names round one's real number, then goes neutral", () => {
     expectTrue(rows);
     expectDropsExplained(rows);
-    expect(pct(rows[2]!.t)).toBe(78);
+    expect(rows[1]!.t.headline).toBe("3 failed the check. Writing replacements");
+    expect(rows[2]!.t.headline).toBe("3 failed the check. Checking the replacements");
+    expect(pct(rows[2]!.t)).toBe(74.7);
     expect(pct(rows[3]!.t)).toBe(76.9);
-    expect(rows[3]!.t.headline).toBe("1 failed the check. Writing a replacement");
-    expect(rows[5]!.t.headline).toBe("1 failed the check. Checking the replacement");
+    // Not "1 failed": 2 of the 4 replacements failed.
+    expect(rows[3]!.t.headline).toBe("Some failed the check. Writing a replacement");
+    expect(rows[5]!.t.headline).toBe("Some failed the check. Checking the replacement");
+  });
+
+  it("goes neutral when the clean count moved even if the second update was missed", () => {
+    const t = buildTracker({ ...base, ...r1, phase: "repairing", written: 20, certified: 19, clean: 19 });
+    expect(t.headline).toBe("Some failed the check. Writing a replacement");
+  });
+
+  it("goes neutral when a refill check finished with nothing new passing", () => {
+    const t = buildTracker({ ...base, ...r2, phase: "repairing", written: 20, certified: 17, clean: 17 });
+    expect(t.headline).toBe("Some failed the check. Writing replacements");
   });
 });
 
@@ -275,18 +301,20 @@ describe("pause with 15 saved, 2 fail the re-check", () => {
   // route keeps the written count at 15 and sends the clean count (13) while
   // the 2 deleted cards may still be on screen (certified 15 from the cards).
   const saved = { resumedWith: 15 };
+  // The screen saw the re-check's own repairing update: 13 clean.
+  const reChecked = { firstRepairClean: 13 };
   const rows = run([
     ["before pause: repairing", { phase: "repairing", written: 20, certified: 15, clean: 15 }],
     ["paused", { phase: "needs_attention", written: 20, certified: 15 }],
     ["queued", { ...saved, phase: "queued", written: 15 }],
     ["re-check 0/30", { ...saved, phase: "checking", written: 15, checked: 0, checkTotal: 30 }],
     ["re-check 30/30", { ...saved, phase: "checking", written: 15, checked: 30, checkTotal: 30 }],
-    ["repairing", { ...saved, phase: "repairing", written: 15, certified: 15, clean: 13 }],
-    ["refill writing 15", { ...saved, phase: "writing", written: 15, certified: 13, clean: 13 }],
-    ["refill writing 18", { ...saved, phase: "writing", written: 18, certified: 13, clean: 13 }],
-    ["refill writing 20", { ...saved, phase: "writing", written: 20, certified: 13, clean: 13 }],
-    ["refill checking 0/16", { ...saved, phase: "checking", written: 20, certified: 13, clean: 13, checked: 0, checkTotal: 16 }],
-    ["refill checking 16/16", { ...saved, phase: "checking", written: 20, certified: 13, clean: 13, checked: 16, checkTotal: 16 }],
+    ["repairing", { ...saved, ...reChecked, phase: "repairing", written: 15, certified: 15, clean: 13 }],
+    ["refill writing 15", { ...saved, ...reChecked, phase: "writing", written: 15, certified: 13, clean: 13 }],
+    ["refill writing 18", { ...saved, ...reChecked, phase: "writing", written: 18, certified: 13, clean: 13 }],
+    ["refill writing 20", { ...saved, ...reChecked, phase: "writing", written: 20, certified: 13, clean: 13 }],
+    ["refill checking 0/16", { ...saved, ...reChecked, phase: "checking", written: 20, certified: 13, clean: 13, checked: 0, checkTotal: 16 }],
+    ["refill checking 16/16", { ...saved, ...reChecked, phase: "checking", written: 20, certified: 13, clean: 13, checked: 16, checkTotal: 16 }],
     ["photos 3", { ...saved, phase: "images", written: 20, certified: 20, clean: 20, photos: 3 }],
   ]);
 
@@ -297,7 +325,8 @@ describe("pause with 15 saved, 2 fail the re-check", () => {
     expect(pct(rows[2]!.t)).toBe(42);
     expect(pct(rows[4]!.t)).toBe(58.5);
     expect(pct(rows[5]!.t)).toBe(56.3);
-    expect(pct(rows[10]!.t)).toBe(78);
+    // The refill check holds at 13/20 until its round ends.
+    expect(pct(rows[10]!.t)).toBe(70.3);
   });
 
   it("says what really happened at each step", () => {
@@ -392,5 +421,57 @@ describe("reload mid-resume: the screen doesn't know how many failed", () => {
   it("a build watched from the start still names the real number", () => {
     const t = buildTracker({ ...base, phase: "repairing", written: 20, certified: 17, clean: 17 });
     expect(t.headline).toBe("3 failed the check. Writing replacements");
+  });
+});
+
+describe("review 5: ticks, bars and words match their counts", () => {
+  it("ticks Writing only when every question is written or photos have started", () => {
+    const reCheck = buildTracker({ ...base, resumedWith: 15, phase: "checking", written: 15, clean: 0, checked: 0, checkTotal: 30 });
+    expect(stage(reCheck, "write")).toMatchObject({ count: 15, total: 20, state: "waiting" });
+    const repair = buildTracker({ ...base, resumedWith: 15, firstRepairClean: 13, phase: "repairing", written: 15, certified: 13, clean: 13 });
+    expect(stage(repair, "write").state).toBe("waiting");
+    const full = buildTracker({ ...base, phase: "checking", written: 20, checked: 4, checkTotal: 40 });
+    expect(stage(full, "write").state).toBe("done");
+    const photos = buildTracker({ ...base, phase: "images", written: 18, certified: 18, clean: 18 });
+    expect(stage(photos, "write").state).toBe("done");
+    const paused = buildTracker({ ...base, phase: "needs_attention", written: 15, certified: 15 });
+    expect(stage(paused, "write").state).toBe("waiting");
+  });
+
+  it("keeps a refill's check bar on its clean count, checks in the detail", () => {
+    for (const checked of [0, 3, 8]) {
+      const t = buildTracker({ ...base, phase: "checking", written: 20, certified: 17, clean: 17, checked, checkTotal: 8 });
+      expect(stage(t, "check")).toMatchObject({ count: 17, total: 20, fraction: 0.85, detail: `${checked}/8 checks` });
+    }
+  });
+
+  it('never says "each on 0 questions"', () => {
+    const gap = buildTracker({ ...base, phase: "checking", written: 20, certified: 20, clean: 20, checked: 40, checkTotal: 40 });
+    expect(stage(gap, "check").detail).toBeNull();
+    const reCheck = buildTracker({ ...base, resumedWith: 15, phase: "checking", written: 15, clean: 0, checked: 10, checkTotal: 30 });
+    expect(stage(reCheck, "check").detail).toBe("2 checks each on 15 questions");
+  });
+
+  describe("resume with 15 saved: the re-check number only while it is true", () => {
+    const saved = { resumedWith: 15, firstRepairClean: 13 };
+    it("names the re-check failures while the clean count is still the re-check's", () => {
+      const t = buildTracker({ ...base, ...saved, phase: "writing", written: 18, certified: 13, clean: 13 });
+      expect(t.headline).toBe("2 failed the re-check. Writing 7 more");
+    });
+    it("goes neutral once a refill check has finished", () => {
+      // 7 needed, 8 written, 2 passed: 6 failed, but the screen can't count the 8.
+      const moved = buildTracker({ ...base, ...saved, refillCheckDone: true, phase: "repairing", written: 20, certified: 15, clean: 15 });
+      expect(moved.headline).toBe("Some failed the check. Writing replacements");
+      // Nothing new passed: the clean count is unchanged, still not "2 failed".
+      const stuck = buildTracker({ ...base, ...saved, refillCheckDone: true, phase: "repairing", written: 20, certified: 13, clean: 13 });
+      expect(stuck.headline).toBe("Some failed the check. Writing replacements");
+      // Missed the second update, but the clean count moved.
+      const missed = buildTracker({ ...base, ...saved, phase: "repairing", written: 20, certified: 14, clean: 14 });
+      expect(missed.headline).not.toMatch(/\d+ failed/);
+    });
+    it("gives no failure number when the re-check's own update was never seen", () => {
+      const t = buildTracker({ ...base, resumedWith: 15, phase: "repairing", written: 15, certified: 13, clean: 13 });
+      expect(t.headline).toBe("Picking up after a pause. Writing 7 more");
+    });
   });
 });
