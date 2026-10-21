@@ -88,10 +88,25 @@ export type GenerationPhase =
   | "ready"
   | "needs_attention";
 
-/** Payload for the `progress` heartbeat event. */
+/** Payload for the `progress` heartbeat event.
+ *  The count fields are optional (older workers omit them) and always REAL:
+ *  `written` climbs as the writer streams each question, `checked` climbs as
+ *  the fact-checker finishes each chunk of the current `checkPass`. */
 export interface CategoryProgressPayload extends CategoryBroadcastPayload {
   phase: GenerationPhase;
   attempt: number;
+  /** Questions written so far (capped at target). */
+  written?: number;
+  /** Questions fact-checked so far in the current pass. */
+  checked?: number;
+  /** Batch size being checked. */
+  checkTotal?: number;
+  /** 1 = blind pass, 2 = adversarial pass. */
+  checkPass?: 1 | 2;
+  /** Questions that passed every check so far. */
+  certified?: number;
+  /** Deck size being built. */
+  target?: number;
 }
 
 /** Payload for the category generation completion event. */

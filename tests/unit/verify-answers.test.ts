@@ -387,4 +387,18 @@ describe("verifyAnswers", () => {
     expect(out).toHaveLength(1);
     expect(out[0]?.markedAnswerIsCorrect).toBe(true);
   });
+
+  it("reports cumulative questions checked after each chunk (not chunk counts)", async () => {
+    const capture: Call[] = [];
+    const client = cleanClient(capture);
+    const questions = Array.from({ length: 8 }, (_, i) => q({ prompt: `Question number ${i} here?` }));
+    const seen: Array<[number, number]> = [];
+    // @ts-expect-error — narrowing
+    const out = await verifyAnswers(questions, { topic: DEFAULT_TOPIC, client, onChunkChecked: (c, t) => seen.push([c, t]) });
+    expect(out).toHaveLength(8);
+    // Two chunks (6 + 2); they finish in some order, so the steps are 6 then 2 or 2 then 6.
+    expect(seen.map(([, t]) => t)).toEqual([8, 8]);
+    expect(seen[seen.length - 1]![0]).toBe(8);
+    expect(seen[0]![0] === 6 || seen[0]![0] === 2).toBe(true);
+  });
 });

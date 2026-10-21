@@ -25,42 +25,91 @@ interface MockClientCall {
   options: Record<string, unknown> | undefined;
 }
 
+type Listener = (...args: unknown[]) => void;
+
+/**
+ * Fake of the SDK's PromptCachingBetaMessageStream: listeners attach with
+ * `on`, then `finalMessage()` replays the `inputJson` snapshots (partial tool
+ * input, as the real stream emits them) before resolving with the message.
+ * `neverFinish` leaves the stream silent so the idle guard has to abort it.
+ */
+function makeFakeStream(
+  message: unknown,
+  snapshots: unknown[] = [],
+  neverFinish = false,
+) {
+  const listeners = new Map<string, Listener[]>();
+  let aborted = false;
+  let rejectPending: ((err: Error) => void) | undefined;
+  const emit = (event: string, ...args: unknown[]) => {
+    for (const fn of listeners.get(event) ?? []) fn(...args);
+  };
+  return {
+    on: vi.fn((event: string, fn: Listener) => {
+      listeners.set(event, [...(listeners.get(event) ?? []), fn]);
+      return undefined;
+    }),
+    abort: vi.fn(() => {
+      aborted = true;
+      rejectPending?.(new Error("Request was aborted."));
+    }),
+    finalMessage: vi.fn(async () => {
+      if (neverFinish) {
+        await new Promise<void>((_resolve, reject) => {
+          rejectPending = reject;
+        });
+      }
+      for (const snapshot of snapshots) {
+        if (aborted) break;
+        emit("streamEvent", { type: "content_block_delta" }, {});
+        emit("inputJson", "{", snapshot);
+      }
+      return message;
+    }),
+  };
+}
+
+function makeMessage(toolInput: unknown) {
+  return {
+    id: "msg_test",
+    type: "message" as const,
+    role: "assistant" as const,
+    model: DEFAULT_MODEL,
+    stop_reason: "tool_use" as const,
+    stop_sequence: null,
+    content: [
+      {
+        type: "tool_use" as const,
+        id: "toolu_test",
+        name: "emit_questions",
+        input: toolInput,
+      },
+    ],
+    usage: {
+      cache_creation_input_tokens: 0,
+      cache_read_input_tokens: 0,
+      input_tokens: 10,
+      output_tokens: 20,
+    },
+  };
+}
+
 function makeMockClient(
   toolInput: unknown,
   capture: MockClientCall[],
+  snapshots: unknown[] = [],
 ) {
   return {
     beta: {
       promptCaching: {
         messages: {
-          create: vi.fn(
-            async (
+          stream: vi.fn(
+            (
               params: Record<string, unknown>,
               options?: Record<string, unknown>,
             ) => {
               capture.push({ params, options });
-              return {
-                id: "msg_test",
-                type: "message" as const,
-                role: "assistant" as const,
-                model: DEFAULT_MODEL,
-                stop_reason: "tool_use" as const,
-                stop_sequence: null,
-                content: [
-                  {
-                    type: "tool_use" as const,
-                    id: "toolu_test",
-                    name: "emit_questions",
-                    input: toolInput,
-                  },
-                ],
-                usage: {
-                  cache_creation_input_tokens: 0,
-                  cache_read_input_tokens: 0,
-                  input_tokens: 10,
-                  output_tokens: 20,
-                },
-              };
+              return makeFakeStream(makeMessage(toolInput), snapshots);
             },
           ),
         },
@@ -264,21 +313,23 @@ describe("generateQuestions", () => {
       beta: {
         promptCaching: {
           messages: {
-            create: vi.fn(async () => ({
-              id: "msg_test",
-              type: "message" as const,
-              role: "assistant" as const,
-              model: DEFAULT_MODEL,
-              stop_reason: "end_turn" as const,
-              stop_sequence: null,
-              content: [{ type: "text" as const, text: "no tool call" }],
-              usage: {
-                cache_creation_input_tokens: 0,
-                cache_read_input_tokens: 0,
-                input_tokens: 10,
-                output_tokens: 5,
-              },
-            })),
+            stream: vi.fn(() =>
+              makeFakeStream({
+                id: "msg_test",
+                type: "message" as const,
+                role: "assistant" as const,
+                model: DEFAULT_MODEL,
+                stop_reason: "end_turn" as const,
+                stop_sequence: null,
+                content: [{ type: "text" as const, text: "no tool call" }],
+                usage: {
+                  cache_creation_input_tokens: 0,
+                  cache_read_input_tokens: 0,
+                  input_tokens: 10,
+                  output_tokens: 5,
+                },
+              }),
+            ),
           },
         },
       },
@@ -308,5 +359,69 @@ describe("generateQuestions", () => {
 
   it("defaults to Sonnet 4.6 as the writer model", () => {
     expect(DEFAULT_MODEL).toBe("claude-sonnet-4-6");
+  });
+
+  it("reports a rising written count from streamed tool input, then the final batch size", async () => {
+    const capture: MockClientCall[] = [];
+    const batch = [
+      validQuestion({ prompt: "First question written for the stream test?" }),
+      validQuestion({ prompt: "Second question written for the stream test?" }),
+      validQuestion({ prompt: "Third question written for the stream test?" }),
+    ];
+    // Partial-parser snapshots: the last item is still mid-write each time.
+    const snapshots = [
+      { questions: [{ prompt: "Fir" }] },
+      { questions: [batch[0], { prompt: "Sec" }] },
+      { questions: [batch[0], { prompt: "Second question wr" }] },
+      { questions: [batch[0], batch[1], { prompt: "Thi" }] },
+    ];
+    const client = makeMockClient({ questions: batch }, capture, snapshots);
+    const seen: number[] = [];
+
+    const out = await generateQuestions({
+      topic: "Streams",
+      // @ts-expect-error — narrowing
+      client,
+      onWritten: (count) => seen.push(count),
+    });
+
+    // Only rises: 0 for the first snapshot is never reported, repeats are skipped.
+    expect(seen).toEqual([1, 2, 3]);
+    expect(out).toHaveLength(3);
+    expect(out.map((q) => q.prompt)).toEqual(batch.map((q) => q.prompt));
+    expect(capture[0]!.params.tool_choice).toEqual({
+      type: "tool",
+      name: "emit_questions",
+    });
+  });
+
+  it("returns the same result when no onWritten listener is given", async () => {
+    const capture: MockClientCall[] = [];
+    const batch = [validQuestion()];
+    const client = makeMockClient({ questions: batch }, capture, [
+      { questions: [batch[0], { prompt: "x" }] },
+    ]);
+    const out = await generateQuestions({
+      topic: "Quiet",
+      // @ts-expect-error — narrowing
+      client,
+    });
+    expect(out).toHaveLength(1);
+  });
+
+  it("aborts a silent stream after timeoutMs (idle guard) and fails like a timeout", async () => {
+    const stream = makeFakeStream(makeMessage({ questions: [] }), [], true);
+    const client = {
+      beta: { promptCaching: { messages: { stream: vi.fn(() => stream) } } },
+    };
+    await expect(
+      generateQuestions({
+        topic: "Silent",
+        timeoutMs: 20,
+        // @ts-expect-error — narrowing
+        client,
+      }),
+    ).rejects.toThrow(/timed out.*idle/i);
+    expect(stream.abort).toHaveBeenCalledTimes(1);
   });
 });

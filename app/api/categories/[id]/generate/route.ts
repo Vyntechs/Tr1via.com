@@ -76,6 +76,7 @@ import {
   type QuestionGenerationJobRow,
 } from "@/lib/ai/generation-job";
 import { createGenerationHeartbeat } from "@/lib/ai/generation-heartbeat";
+import { createGenerationProgressReporter } from "@/lib/ai/generation-progress";
 import { rerollPlan } from "@/lib/host/rerollPlan";
 import {
   prepareQuestionAssignmentsForCategory,
@@ -461,16 +462,50 @@ async function runGenerationJob(opts: {
   const durableHeartbeat = createGenerationHeartbeat(() =>
     writeWorkerProgress({ phase }),
   );
-  const emitProgress = async () => {
-    await durableHeartbeat.beat();
+  // Live counts: the writer streams "N written" and the checker reports each
+  // finished chunk. The reporter throttles the durable `written_count` write
+  // (one per 1.5s, latest value wins) and every progress broadcast carries
+  // its counts, so the host sees real movement instead of a 90s freeze.
+  // The throttled write is fenced like every other progress write: if this
+  // attempt lost its row, remember it so live broadcasts stop at once instead
+  // of a stale worker talking over the new attempt for a whole writer call.
+  let liveProgressSuperseded = false;
+  const liveProgress = createGenerationProgressReporter({
+    target: 20,
+    persistWritten: (written) =>
+      writeWorkerProgress({ phase: "writing", written_count: written }).catch(
+        (err: unknown) => {
+          if (err instanceof GenerationAttemptSupersededError) {
+            liveProgressSuperseded = true;
+          }
+          throw err;
+        },
+      ),
+  });
+  liveProgress.setCounts({ written: writtenCount, certified: certifiedCount });
+  const broadcastProgress = () => {
+    if (liveProgressSuperseded) return Promise.resolve(undefined);
     const payload: CategoryProgressPayload = {
       serverNow: new Date().toISOString(),
       phase,
       attempt: opts.attempt,
+      ...liveProgress.counts(),
     };
     return broadcastToCategory(opts.categoryId, "progress", payload).catch(
       () => undefined,
     );
+  };
+  const emitProgress = async () => {
+    await durableHeartbeat.beat();
+    return broadcastProgress();
+  };
+  const onWritten = (count: number) => {
+    liveProgress.reportWritten(count);
+    void broadcastProgress();
+  };
+  const onChecked = (checked: number, total: number, pass: 1 | 2) => {
+    liveProgress.reportChecked(checked, total, pass);
+    void broadcastProgress();
   };
   void emitProgress().catch(() => undefined);
   const heartbeat = setInterval(() => {
@@ -514,6 +549,10 @@ async function runGenerationJob(opts: {
       }).catch(() => undefined);
     }
     certifiedCount += batch.length;
+    liveProgress.setCounts({
+      certified: certifiedCount,
+      written: Math.max(writtenCount, certifiedCount),
+    });
     await writeWorkerProgress({
       phase: certifiedCount >= 20 ? "images" : "repairing",
       certified_count: certifiedCount,
@@ -531,6 +570,7 @@ async function runGenerationJob(opts: {
     const verifyCandidateBatch = async (
       questions: GeneratedQuestion[],
       passIndex: number,
+      progress?: { onChecked: (checked: number, total: number) => void },
     ) => {
       phase = "checking";
       await writeWorkerProgress({ phase: "checking" });
@@ -539,6 +579,10 @@ async function runGenerationJob(opts: {
         topic: opts.topic,
         mode: passIndex === 0 ? "blind" : "adversarial",
         onUsage: trackUsage,
+        onChunkChecked: (checked, total) => {
+          if (progress) progress.onChecked(checked, total);
+          else onChecked(checked, total, passIndex === 0 ? 1 : 2);
+        },
       });
     };
 
@@ -585,6 +629,8 @@ async function runGenerationJob(opts: {
         Boolean(item.imageUrl),
       ).length;
       writtenCount = certifiedCount;
+      liveProgress.setCounts({ written: writtenCount, certified: certifiedCount });
+      liveProgress.clearChecked();
       phase = certifiedCount >= 20 ? "images" : "repairing";
       qualityReport.recordRound({
         round: 0,
@@ -611,32 +657,45 @@ async function runGenerationJob(opts: {
       // latency if the model keeps producing borderline answers.
       maxRounds: 4,
       verifyPasses: 2,
-      generate: async (avoid, need) => {
+      generate: async (avoid, need, progress) => {
         phase = "writing";
+        liveProgress.clearChecked();
         await writeWorkerProgress({ phase: "writing" });
         void emitProgress().catch(() => undefined);
-        const batch = await generateQuestions({
-          topic: opts.topic,
-          flavor: opts.flavor,
-          difficulty: opts.difficulty,
-          // Refill rounds request just the gap (+1 buffer to absorb a re-reject
-          // without forcing yet another round), capped at the full target.
-          count: Math.min(20, need + 1),
-          themeKey: opts.themeKey,
-          avoidPrompts: [
-            ...(reroll?.avoidPrompts ?? []),
-            ...rejectedStoredPrompts,
-            ...avoid,
-          ],
-          onUsage: trackUsage,
-          onRejectedCandidate: (event) => {
-            qualityReport.recordInvalidCandidate(
-              event.prompt ?? `candidate ${event.index}`,
-              event.issues,
-            );
-          },
-        });
-        writtenCount = Math.min(20, certifiedCount + batch.length);
+        let batch: GeneratedQuestion[];
+        try {
+          batch = await generateQuestions({
+            topic: opts.topic,
+            flavor: opts.flavor,
+            difficulty: opts.difficulty,
+            // Refill rounds request just the gap (+1 buffer to absorb a re-reject
+            // without forcing yet another round), capped at the full target.
+            count: Math.min(20, need + 1),
+            themeKey: opts.themeKey,
+            avoidPrompts: [
+              ...(reroll?.avoidPrompts ?? []),
+              ...rejectedStoredPrompts,
+              ...avoid,
+            ],
+            onUsage: trackUsage,
+            onRejectedCandidate: (event) => {
+              qualityReport.recordInvalidCandidate(
+                event.prompt ?? `candidate ${event.index}`,
+                event.issues,
+              );
+            },
+            onWritten: progress.onWritten,
+          });
+        } finally {
+          // Stop any queued throttled write so it can't land after the
+          // authoritative "checking" write below and flip the phase back.
+          await liveProgress.settle();
+        }
+        // `20 - need` is what collect already holds as clean on EVERY path —
+        // on a reroll `certifiedCount` stays 0 until the final atomic insert,
+        // so using it here would drop the count after a refill round.
+        writtenCount = Math.min(20, 20 - need + batch.length);
+        liveProgress.setCounts({ written: writtenCount });
         phase = "checking";
         await writeWorkerProgress({
           phase: "checking",
@@ -646,6 +705,8 @@ async function runGenerationJob(opts: {
         return batch;
       },
       verify: verifyCandidateBatch,
+      onWritten,
+      onChecked,
       onRoundComplete: async (event) => {
         qualityReport.recordRound({
           round: event.round,
@@ -672,6 +733,7 @@ async function runGenerationJob(opts: {
     });
   } finally {
     clearInterval(heartbeat);
+    await liveProgress.settle();
     await durableHeartbeat.drain();
   }
   console.log(

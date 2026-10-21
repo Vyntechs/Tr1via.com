@@ -55,6 +55,13 @@ export interface VerifyAnswersOptions {
   model?: string;
   /** Optional: receive token usage per chunk call for cost logging. No-op if omitted. */
   onUsage?: (model: string, usage: TokenUsage) => void;
+  /**
+   * Optional: live progress. Called after each chunk's verdicts come back
+   * with how many QUESTIONS (not chunks) are checked so far and the total.
+   * Chunks finish in any order, so the count climbs in steps of up to
+   * VERIFY_CHUNK_SIZE.
+   */
+  onChunkChecked?: (checkedSoFar: number, total: number) => void;
 }
 
 const VERDICTS_TOOL_NAME = "verdicts";
@@ -356,9 +363,16 @@ export async function verifyAnswers(
   // SDK's built-in retry absorbs a transient rate-limit blip. Promise.all
   // preserves chunk order, so the merged global indices are identical to the
   // old sequential walk.
+  let checkedSoFar = 0;
   const chunkResults = await Promise.all(
     chunks.map((chunk) =>
-      verifyChunk(client, model, chunk.items, opts.topic, mode, opts.onUsage),
+      verifyChunk(client, model, chunk.items, opts.topic, mode, opts.onUsage).then(
+        (result) => {
+          checkedSoFar += chunk.items.length;
+          opts.onChunkChecked?.(checkedSoFar, questions.length);
+          return result;
+        },
+      ),
     ),
   );
 

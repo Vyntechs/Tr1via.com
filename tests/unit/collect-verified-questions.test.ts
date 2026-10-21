@@ -390,3 +390,35 @@ it("never persists a model buffer beyond the requested target", async () => {
   expect(out.map((item) => item.prompt)).toEqual(["safe-1", "safe-2"]);
   expect(acceptedBatches).toEqual([["safe-1", "safe-2"]]);
 });
+
+it("reports live writing counts that continue from what is already certified, and labels check passes", async () => {
+  const written: number[] = [];
+  const checked: Array<[number, number, number]> = [];
+  let round = 0;
+  const out = await collectVerifiedQuestions({
+    target: 4,
+    maxRounds: 2,
+    generate: async (_avoid, need, progress) => {
+      round += 1;
+      const batch = Array.from({ length: need }, (_, i) => q(`r${round}-${i}`));
+      for (let i = 1; i <= batch.length; i++) progress.onWritten(i);
+      return batch;
+    },
+    verify: async (batch, passIndex, progress) => {
+      progress.onChecked(batch.length, batch.length);
+      // Round 1 rejects the last question; round 2 accepts everything.
+      return batch.map((_, i) => (round === 1 && i === batch.length - 1 ? wrong(i) : ok(i)));
+    },
+    onWritten: (count) => written.push(count),
+    onChecked: (c, t, pass) => checked.push([c, t, pass]),
+  });
+  expect(out).toHaveLength(4);
+  // Round 1 writes 1..4; round 2 (3 certified) writes one more and reports 4, never a drop.
+  expect(written).toEqual([1, 2, 3, 4, 4]);
+  expect(checked).toEqual([
+    [4, 4, 1],
+    [4, 4, 2],
+    [1, 1, 1],
+    [1, 1, 2],
+  ]);
+});

@@ -31,6 +31,7 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
+import type { PromptCachingBetaMessage } from "@anthropic-ai/sdk/resources/beta/prompt-caching/messages";
 import { z } from "zod";
 import { SYSTEM_PROMPT, userPromptFor } from "./prompts";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -115,6 +116,12 @@ export interface GenerateQuestionsOptions {
   onUsage?: (model: string, usage: TokenUsage) => void;
   /** Optional: observe local schema-validation drops. No-op if omitted. */
   onRejectedCandidate?: (candidate: GenerateQuestionsRejectedCandidate) => void;
+  /**
+   * Optional: live count of questions Claude has finished writing so far,
+   * read from the streamed tool input. Called only when the count rises;
+   * the final call carries the full raw batch size (before schema drops).
+   */
+  onWritten?: (count: number) => void;
 }
 
 // ─── Tool definition ──────────────────────────────────────────────────
@@ -233,44 +240,94 @@ export async function generateQuestions(
   console.log(
     `[generateQuestions] calling ${model} topic="${opts.topic}" timeoutMs=${timeoutMs}`,
   );
-  let response: Awaited<
-    ReturnType<typeof client.beta.promptCaching.messages.create>
-  >;
+  // Streamed call. The host screen shows a live "N of 20 written" count, so
+  // we read the tool input as it arrives (`inputJson` gives the partially
+  // parsed `emit_questions` input) instead of waiting for the whole batch.
+  //
+  // Timeout note (verified against @anthropic-ai/sdk 0.32.1 core.js): the
+  // request option `timeout` only guards the time until response HEADERS
+  // arrive — `fetchWithTimeout` clears its timer in `fetch().finally()`, and
+  // the streamed body is read afterwards with no timer at all. So on a
+  // stream, `timeout` alone would let a stalled body hang forever. We keep it
+  // for the connect phase and add our own idle guard: if no stream event
+  // arrives for `timeoutMs`, abort the stream and fail like a timeout.
+  const stream = client.beta.promptCaching.messages.stream(
+    {
+      model,
+      max_tokens: 8_000,
+      // System prompt as a single text block with the ephemeral cache
+      // hint. The SDK forwards this to the Prompt Caching beta endpoint.
+      system: [
+        {
+          type: "text",
+          text: SYSTEM_PROMPT,
+          cache_control: { type: "ephemeral" },
+        },
+      ],
+      messages: [
+        {
+          role: "user",
+          content: userPrompt,
+        },
+      ],
+      tools: [emitQuestionsTool],
+      tool_choice: { type: "tool", name: EMIT_QUESTIONS_TOOL_NAME },
+      // Slight temperature for creative variety without going off-spec.
+      temperature: 0.7,
+    },
+    { timeout: timeoutMs },
+  );
+
+  let idleTimedOut = false;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  const armIdleGuard = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      idleTimedOut = true;
+      stream.abort();
+    }, timeoutMs);
+  };
+  let reportedWritten = 0;
+  const reportWritten = (count: number) => {
+    if (count <= reportedWritten) return;
+    reportedWritten = count;
+    try {
+      opts.onWritten?.(count);
+    } catch (err) {
+      // A listener bug must never kill the generation itself.
+      console.warn(`[generateQuestions] onWritten threw: ${String(err)}`);
+    }
+  };
+  // Listeners go on BEFORE the first await so an early error has a
+  // waiting promise (finalMessage) to land in.
+  stream.on("streamEvent", armIdleGuard);
+  stream.on("inputJson", (_partial, snapshot) => {
+    reportWritten(countCompleteQuestions(snapshot));
+  });
+  armIdleGuard();
+
+  let response: PromptCachingBetaMessage;
   try {
-    response = await client.beta.promptCaching.messages.create(
-      {
-        model,
-        max_tokens: 8_000,
-        // System prompt as a single text block with the ephemeral cache
-        // hint. The SDK forwards this to the Prompt Caching beta endpoint.
-        system: [
-          {
-            type: "text",
-            text: SYSTEM_PROMPT,
-            cache_control: { type: "ephemeral" },
-          },
-        ],
-        messages: [
-          {
-            role: "user",
-            content: userPrompt,
-          },
-        ],
-        tools: [emitQuestionsTool],
-        tool_choice: { type: "tool", name: EMIT_QUESTIONS_TOOL_NAME },
-        // Slight temperature for creative variety without going off-spec.
-        temperature: 0.7,
-      },
-      { timeout: timeoutMs },
-    );
+    response = await stream.finalMessage();
   } catch (err) {
     const dt = Date.now() - t0;
     const errName = err instanceof Error ? err.constructor.name : typeof err;
     const errMsg = err instanceof Error ? err.message : String(err);
+    if (idleTimedOut) {
+      const idleErr = new Error(
+        `Request timed out: no stream data for ${timeoutMs}ms (idle timeout)`,
+      );
+      console.log(
+        `[generateQuestions] FAILED after ${dt}ms (IdleTimeout): ${idleErr.message}`,
+      );
+      throw idleErr;
+    }
     console.log(
       `[generateQuestions] FAILED after ${dt}ms (${errName}): ${errMsg}`,
     );
     throw err;
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
   }
   console.log(`[generateQuestions] returned in ${Date.now() - t0}ms`);
   opts.onUsage?.(model, response.usage);
@@ -291,6 +348,9 @@ export async function generateQuestions(
       "generateQuestions: emit_questions input missing `questions` array",
     );
   }
+  // The stream count held back the last (possibly unfinished) item; now the
+  // batch is complete, report the true raw size.
+  reportWritten(input.questions.length);
 
   const valid: GeneratedQuestion[] = [];
   for (let i = 0; i < input.questions.length; i++) {
@@ -336,6 +396,17 @@ function isQuestionsContainer(value: unknown): value is { questions: unknown[] }
     "questions" in value &&
     Array.isArray((value as { questions: unknown }).questions)
   );
+}
+
+/**
+ * How many questions are COMPLETE in a partially parsed `emit_questions`
+ * input. The SDK's partial parser closes the open object/array, so the last
+ * item may still be mid-write: it is only counted once a later item has
+ * started. Never over-reports.
+ */
+export function countCompleteQuestions(snapshot: unknown): number {
+  if (!isQuestionsContainer(snapshot)) return 0;
+  return Math.max(0, snapshot.questions.length - 1);
 }
 
 function rawCandidatePrompt(value: unknown): string | undefined {
