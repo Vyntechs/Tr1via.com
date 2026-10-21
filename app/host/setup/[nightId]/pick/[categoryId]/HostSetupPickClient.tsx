@@ -36,7 +36,12 @@ import {
   GENERATION_STALL_TIMEOUT_MS,
   useGenerationStatus,
 } from "@/lib/hooks/useGenerationStatus";
-import type { CategoryDonePayload, GenerationPhase } from "@/lib/api/broadcast";
+import type {
+  CategoryDonePayload,
+  CategoryProgressPayload,
+  GenerationPhase,
+} from "@/lib/api/broadcast";
+import type { HostGenProgress } from "@/components/host/gen/genProgress";
 import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
 import {
   deriveInitialGenerationMessage,
@@ -201,6 +206,30 @@ export function HostSetupPickClient({
   const [lastActivityAt, setLastActivityAt] = useState<number>(() => Date.now());
   // Current job phase, surfaced as a live status line on the loading screen.
   const [genPhase, setGenPhase] = useState<GenerationPhase | null>(null);
+  // Real counts from the latest `progress` broadcast for the current attempt
+  // (written / checked / certified). Feeds the loading screen's tracker.
+  const [liveCounts, setLiveCounts] = useState<
+    (CategoryProgressPayload & { attempt: number }) | null
+  >(null);
+  // Last REAL sign of life (a broadcast, or a job-row heartbeat that moved),
+  // local clock. Unlike lastActivityAt this starts null: mounting the page
+  // is not evidence the server is working.
+  const [lastSignalAt, setLastSignalAt] = useState<number | null>(null);
+  const [buildStartedAt, setBuildStartedAt] = useState<number>(() => Date.now());
+  // null = not known yet; decided on the first real count we see.
+  const [joinedMidway, setJoinedMidway] = useState<boolean | null>(() =>
+    initialState === "generating" && initialQuestions.length > 0 ? true : null,
+  );
+  const lastHeartbeatSeenRef = useRef<string | null>(null);
+  // A fresh build starts its own clock and forgets the previous attempt's
+  // counts and signals.
+  const startFreshBuild = useCallback(() => {
+    setLiveCounts(null);
+    setLastSignalAt(null);
+    setBuildStartedAt(Date.now());
+    setJoinedMidway(false);
+    lastHeartbeatSeenRef.current = null;
+  }, []);
   // Seed the failure message from the server-rendered state so a refresh
   // into a rolled-back category surfaces the retry / manual-entry UI
   // instead of stranding on the loading spinner. Without this seed the
@@ -306,7 +335,7 @@ export function HostSetupPickClient({
         // Heartbeat while writing / fact-checking, before any row exists.
         // Records activity (keeps the safety timer armed) and drives the live
         // status line so the longer run never looks frozen or "timed out".
-        const payload = msg.payload as { phase?: GenerationPhase; attempt?: number };
+        const payload = msg.payload as Partial<CategoryProgressPayload>;
         if (
           typeof payload.attempt === "number" &&
           payload.attempt < currentGenerationAttemptRef.current
@@ -315,7 +344,18 @@ export function HostSetupPickClient({
           currentGenerationAttemptRef.current = payload.attempt;
         }
         setLastActivityAt(Date.now());
+        setLastSignalAt(Date.now());
         if (payload.phase) setGenPhase(payload.phase);
+        if (payload.phase) {
+          // Whole-payload replace: a new attempt never inherits old counts.
+          setLiveCounts({
+            ...(payload as CategoryProgressPayload),
+            attempt:
+              typeof payload.attempt === "number"
+                ? payload.attempt
+                : currentGenerationAttemptRef.current,
+          });
+        }
       })
       .on("broadcast", { event: "question_added" }, (msg) => {
         if (cancelled) return;
@@ -328,6 +368,7 @@ export function HostSetupPickClient({
           currentGenerationAttemptRef.current = payload.attempt;
         }
         setLastActivityAt(Date.now());
+        setLastSignalAt(Date.now());
         // Refetch the question list to absorb the new row.
         void refetchQuestions();
       })
@@ -347,6 +388,7 @@ export function HostSetupPickClient({
           currentGenerationAttemptRef.current = payload.attempt;
         }
         setLastActivityAt(Date.now());
+        setLastSignalAt(Date.now());
         if (!payload.questionId) return;
         setQuestions((prev) =>
           prev.map((q) => {
@@ -389,6 +431,7 @@ export function HostSetupPickClient({
           void refetchAuditSummary();
         }
         setGenPhase(null);
+        setLiveCounts(null);
         setState("review");
         setRegenerating(false);
         void refetchQuestions();
@@ -496,6 +539,37 @@ export function HostSetupPickClient({
     pollIntervalMs: 5_000,
   });
 
+  // A fresh build (first load into 'generating', a retry, a regenerate from
+  // draft) starts its own clock and forgets the previous attempt's counts.
+  const prevStateRef = useRef<CategoryRow["state"] | null>(null);
+  useEffect(() => {
+    const prev = prevStateRef.current;
+    prevStateRef.current = state;
+    if (state !== "generating" || prev === null || prev === "generating") return;
+    startFreshBuild();
+  }, [state, startFreshBuild]);
+
+  // The polled job row is the fallback sign of life (e.g. after a reload,
+  // before any broadcast). Only a heartbeat that MOVED counts, measured on
+  // the local clock; the first one seen uses its own time (capped at now).
+  const polledProgress =
+    watchStatus.kind === "progress" || watchStatus.kind === "needs-attention"
+      ? watchStatus.progress
+      : null;
+  const polledHeartbeatAt = polledProgress?.heartbeatAt ?? null;
+  useEffect(() => {
+    if (!polledHeartbeatAt) return;
+    const prev = lastHeartbeatSeenRef.current;
+    if (prev === polledHeartbeatAt) return;
+    lastHeartbeatSeenRef.current = polledHeartbeatAt;
+    const nowMs = Date.now();
+    const seenAt =
+      prev === null
+        ? Math.min(nowMs, Date.parse(polledHeartbeatAt) || 0)
+        : nowMs;
+    if (seenAt > 0) setLastSignalAt((cur) => Math.max(cur ?? 0, seenAt));
+  }, [polledHeartbeatAt]);
+
   useEffect(() => {
     if (
       (watchStatus.kind === "progress" || watchStatus.kind === "needs-attention") &&
@@ -507,6 +581,7 @@ export function HostSetupPickClient({
       const id = window.setTimeout(() => {
         setGenerationFailureMessage(null);
         setGenPhase(null);
+        setLiveCounts(null);
         setState(watchStatus.state);
         setRegenerating(false);
         void refetchQuestions();
@@ -1152,6 +1227,7 @@ export function HostSetupPickClient({
             body.attempt,
           );
         }
+        startFreshBuild();
         setState("generating");
       }
     } catch (err) {
@@ -1228,6 +1304,77 @@ export function HostSetupPickClient({
       } still needed.`
     : null;
 
+  // ── live tracker counts: broadcast first, polled job row as fallback ──
+  const currentLive =
+    liveCounts && liveCounts.attempt >= (durableProgress?.attempt ?? 0)
+      ? liveCounts
+      : null;
+  const liveServerMs = currentLive ? Date.parse(currentLive.serverNow) : NaN;
+  const durableServerMs = durableProgress?.heartbeatAt
+    ? Date.parse(durableProgress.heartbeatAt)
+    : NaN;
+  const num = (n: unknown) =>
+    typeof n === "number" && Number.isFinite(n) ? n : undefined;
+  // Whichever source the server stamped more recently sets the phase. In the
+  // same phase the counts only climb, so take the higher of the two.
+  const durableIsNewer =
+    durableProgress !== null &&
+    (currentLive === null ||
+      (Number.isFinite(durableServerMs) &&
+        (!Number.isFinite(liveServerMs) || durableServerMs > liveServerMs)));
+  const trackerTarget =
+    num(currentLive?.target) ?? num(durableProgress?.targetCount) ?? 20;
+  const trackerPhase: GenerationPhase =
+    (durableIsNewer ? durableProgress?.phase : currentLive?.phase) ??
+    genPhase ??
+    "queued";
+  const samePhase =
+    currentLive !== null &&
+    durableProgress !== null &&
+    currentLive.phase === durableProgress.phase;
+  const pickCount = (live: unknown, durable: unknown) =>
+    samePhase
+      ? Math.max(num(live) ?? 0, num(durable) ?? 0)
+      : ((durableIsNewer ? num(durable) : num(live)) ?? num(durable) ?? 0);
+  const trackerWritten = pickCount(currentLive?.written, durableProgress?.writtenCount);
+  const trackerCertified = Math.max(
+    pickCount(currentLive?.certified, durableProgress?.certifiedCount),
+    // Cards only land once certified, so the card count is a floor.
+    questions.length,
+  );
+  const trackerPhotos = Math.max(
+    num(durableProgress?.imageCount) ?? 0,
+    questions.filter((q) => q.image_url).length,
+  );
+  const sawRealCounts = currentLive !== null || durableProgress !== null;
+  useEffect(() => {
+    if (joinedMidway !== null || !sawRealCounts) return;
+    setJoinedMidway(
+      trackerWritten > 2 ||
+        trackerCertified > 0 ||
+        (trackerPhase !== "queued" && trackerPhase !== "writing"),
+    );
+  }, [joinedMidway, sawRealCounts, trackerWritten, trackerCertified, trackerPhase]);
+  const genProgress: HostGenProgress = {
+    phase: trackerPhase,
+    target: trackerTarget,
+    written: trackerWritten,
+    certified: trackerCertified,
+    photos: trackerPhotos,
+    // Pass counts only exist on the broadcast, and only mean anything while
+    // that broadcast's phase is the one on screen.
+    ...(currentLive && currentLive.phase === trackerPhase
+      ? {
+          checked: num(currentLive.checked),
+          checkTotal: num(currentLive.checkTotal),
+          checkPass: currentLive.checkPass,
+        }
+      : {}),
+    startedAt: buildStartedAt,
+    joinedMidway: joinedMidway === true,
+    lastSignalAt,
+  };
+
   // ── mapped data for the components ───────────────────────────────────
   const loadingList = useMemo<HostGenLoadingQuestion[]>(
     () =>
@@ -1292,14 +1439,12 @@ export function HostSetupPickClient({
           topic={categoryName}
           loaded={loadingList}
           total={20}
+          progress={genProgress}
           statusLine={
             autoResumeStatusLine ??
-            durableProgress?.statusLine ??
-            (genPhase === "checking"
-              ? "Fact-checking every answer for accuracy — this part takes a moment."
-              : genPhase === "writing"
-                ? "Writing your questions…"
-                : undefined)
+            (durableProgress?.phase === "needs_attention"
+              ? durableProgress.statusLine
+              : undefined)
           }
           onCancel={() => router.push(`/host/setup/${nightId}`)}
           onBack={() => router.push(`/host/setup/${nightId}`)}

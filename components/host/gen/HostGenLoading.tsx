@@ -1,7 +1,8 @@
 // HOST · GENERATE · 3. GENERATING
-// The moment questions are being created. Two streams progress
-// independently: question text lands first, then the matched photo lands
-// shortly after.
+// The moment questions are being created. A pinned header carries one
+// three-stage tracker (writing -> fact-checking -> photos) whose fill comes
+// only from real counts the server reports, plus a "live" pulse that stops
+// the moment the server goes quiet. Certified questions land below as cards.
 //
 // Wired form: the pick route subscribes to `category:{id}` broadcasts and
 // passes a live tally of questions + photos. Each loaded question lands
@@ -19,9 +20,20 @@ import {
 } from "@/components/system";
 import { LaptopShell } from "@/components/shells";
 import { useMediaQuery } from "@/components/system/useMediaQuery";
+import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { useEffect, useState } from "react";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { DifficultyBar, StockImage } from "./_shared";
+import {
+  buildTracker,
+  formatElapsed,
+  livenessAt,
+  type HostGenProgress,
+  type TrackerStage,
+} from "./genProgress";
+
+export type { HostGenProgress } from "./genProgress";
 
 export interface HostGenLoadingQuestion {
   id: string;
@@ -46,10 +58,15 @@ export interface HostGenLoadingProps {
   /** Count of questions whose photo has landed. */
   photosLoaded?: number;
   /**
-   * Live status subline reflecting the current phase of the background job
-   * ("Writing your questions…", "Fact-checking every answer…"). Keeps the
-   * screen feeling alive during the longer write+verify run. Falls back to the
-   * default copy when omitted.
+   * Real counts from the build (broadcast, or the polled job row after a
+   * reload). Drives the pinned tracker. Omitted only by the /dev gallery,
+   * which then shows a demo mid-build state.
+   */
+  progress?: HostGenProgress;
+  /**
+   * Overrides the subline under the topic (auto-resume / needs-attention
+   * messages). Falls back to the tracker's current stage, or the default
+   * copy when there is no progress at all.
    */
   statusLine?: string;
   /** Called when the host taps "Cancel". */
@@ -87,124 +104,311 @@ export function HostGenLoading(props: HostGenLoadingProps) {
   return <HostGenLoadingInner {...rest} />;
 }
 
+/** Ticks once a second so the elapsed clock and staleness stay current.
+ *  null until mounted, so the server render never prints a clock that
+ *  disagrees with the browser's. */
+function useNow(): number | null {
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => {
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+  return now;
+}
+
 function HostGenLoadingInner({
   shellTitle = "pulling questions · pixar movies",
   topic = "Pixar Movies",
-  loaded = DEMO_LOADED,
+  loaded: loadedProp,
   total = 20,
   photosLoaded,
+  progress: progressProp,
   statusLine,
   onCancel,
   onBack,
 }: Omit<HostGenLoadingProps, "themeKey">) {
+  void shellTitle;
   const { t } = useTheme();
   const mobile = useMediaQuery("(max-width: 860px)");
+  const reducedMotion = usePrefersReducedMotion();
+  const now = useNow();
+  const loaded = loadedProp ?? DEMO_LOADED;
   const cc = categoryColor(topic, t.accent);
   const questionsLoaded = loaded.length;
-  const photosCount =
-    typeof photosLoaded === "number"
-      ? photosLoaded
-      : loaded.filter((l) => l.imageUrl).length;
+  const photosCount = Math.max(
+    typeof photosLoaded === "number" ? photosLoaded : 0,
+    loaded.filter((l) => l.imageUrl).length,
+  );
+
+  // Demo state for the /dev gallery only (no props at all). A real caller
+  // that passes `loaded` but no progress gets an honest "getting started".
+  const [mountedAt] = useState(() => Date.now());
+  const progress: HostGenProgress =
+    progressProp ??
+    (loadedProp === undefined && photosLoaded === undefined
+      ? {
+          phase: "images",
+          target: total,
+          written: total,
+          certified: questionsLoaded,
+          photos: photosCount,
+          startedAt: mountedAt - 112_000,
+          lastSignalAt: now ?? mountedAt,
+        }
+      : {
+          phase: "queued",
+          target: total,
+          written: 0,
+          certified: questionsLoaded,
+          photos: photosCount,
+          startedAt: mountedAt,
+          lastSignalAt: null,
+        });
+  const tracker = buildTracker({
+    ...progress,
+    photos: Math.max(progress.photos, photosCount),
+  });
+  const liveness = now === null ? null : livenessAt(now, progress);
+  const live = liveness?.live ?? false;
+  const elapsed =
+    now === null
+      ? null
+      : `${formatElapsed(now - progress.startedAt)} ${progress.joinedMidway ? "since you opened this" : "so far"}`;
+  const subline =
+    statusLine ??
+    (progressProp ? tracker.headline : "Writing the questions, then looking for photos.");
   const skeletonCount = Math.max(0, total - questionsLoaded);
+  const photoNote =
+    progress.phase === "images"
+      ? "FINDING PHOTO…"
+      : progress.phase === "ready" || progress.phase === "needs_attention"
+        ? "NO PHOTO"
+        : "PHOTO COMES NEXT";
+  const pct = Math.round(tracker.overall * 100);
+
   return (
     <LaptopShell>
       <div
-        data-testid="host-gen-loading-layout"
-        data-layout={mobile ? "mobile" : "desktop"}
-        data-host-mobile-surface="true"
-        style={{ padding: mobile ? "16px" : "24px 56px 12px", borderBottom: `1px solid ${t.line}`, display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", justifyContent: "space-between", gap: mobile ? 16 : undefined, minWidth: 0 }}
+        data-testid="host-gen-loading-root"
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          height: "100%",
+          // Cap at the viewport so the cards scroll under a header that
+          // never moves (the host layout grows with content, so a plain
+          // document scroll would carry the header away).
+          maxHeight: "calc(100dvh - var(--host-chip-reserve, 0px))",
+          minHeight: 0,
+          minWidth: 0,
+        }}
       >
-        <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "flex-start" : "center", gap: mobile ? 10 : 18, minWidth: 0 }}>
-          {onBack && (
-            <button
-              type="button"
-              onClick={onBack}
-              aria-label="Back to setup"
-              data-testid="host-pick-back-btn"
-              style={{
-                padding: "6px 12px",
-                borderRadius: 99,
-                border: `1px solid ${t.line}`,
-                background: "transparent",
-                color: t.inkMid,
-                fontSize: 12,
-                fontWeight: 600,
-                fontFamily: "var(--font-sans)",
-                cursor: "pointer",
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              <span aria-hidden="true">←</span> Back
-            </button>
-          )}
-          <span style={{ width: 12, height: 12, borderRadius: 99, background: cc }} />
-          <div>
-            <Eyebrow color={t.accent} size={11}>PULLING {total} ON</Eyebrow>
-            <div style={{ marginTop: 4, fontSize: 28, fontWeight: 700, color: t.ink, letterSpacing: "-0.02em" }}>{topic}</div>
-            <div style={{ marginTop: 4, fontSize: 12, color: t.inkMid }}>{statusLine ?? "Writing the questions, then looking for photos."}</div>
+        <div
+          data-testid="host-gen-loading-layout"
+          data-layout={mobile ? "mobile" : "desktop"}
+          data-host-mobile-surface="true"
+          style={{
+            position: "sticky",
+            top: 0,
+            zIndex: 2,
+            flex: "none",
+            background: t.paper,
+            padding: mobile ? "12px 16px 12px" : "20px 56px 16px",
+            borderBottom: `1px solid ${t.line}`,
+            minWidth: 0,
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: mobile ? 10 : 18, minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: mobile ? 10 : 16, minWidth: 0 }}>
+              {onBack && (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  aria-label="Back to setup"
+                  data-testid="host-pick-back-btn"
+                  style={pillButton(t.line, t.inkMid)}
+                >
+                  <span aria-hidden="true">←</span> Back
+                </button>
+              )}
+              <span aria-hidden style={{ width: 10, height: 10, flex: "none", borderRadius: 99, background: cc }} />
+              <div style={{ minWidth: 0 }}>
+                {!mobile && <Eyebrow color={t.accent} size={11}>PULLING {total} ON</Eyebrow>}
+                <div style={{ marginTop: mobile ? 0 : 2, fontSize: mobile ? 20 : 26, fontWeight: 700, color: t.ink, letterSpacing: "-0.02em", lineHeight: 1.15, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topic}</div>
+                <div data-testid="host-gen-status-line" aria-live="polite" style={{ marginTop: 2, fontSize: 13, color: t.inkMid, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: mobile ? "nowrap" : "normal" }}>{subline}</div>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, flex: "none" }}>
+              {!mobile && (
+                <div style={{ textAlign: "right" }} data-testid="host-gen-overall">
+                  <Numeric size={30} weight={700} color={t.ink}>{pct}%</Numeric>
+                  <div style={{ fontSize: 11, color: t.inkMid }}>of the build, roughly</div>
+                </div>
+              )}
+              {onCancel && (
+                <button type="button" onClick={onCancel} style={pillButton(t.line, t.inkMid)}>
+                  Cancel
+                </button>
+              )}
+            </div>
           </div>
-        </div>
-        <div style={{ display: "flex", flexDirection: mobile ? "column" : "row", alignItems: mobile ? "stretch" : "center", gap: mobile ? 12 : 22 }}>
-          <div style={{ display: "flex", gap: mobile ? 12 : 24 }}>
-            <ProgressMini label="QUESTIONS" done={questionsLoaded} total={total} color={cc} />
-            <ProgressMini label="PHOTOS" done={photosCount} total={total} color={t.pop} />
-          </div>
-          {onCancel && (
-            <button
-              type="button"
-              onClick={onCancel}
-              style={{ padding: "8px 14px", borderRadius: 99, border: `1px solid ${t.line}`, background: "transparent", color: t.inkMid, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer" }}
-            >
-              Cancel
-            </button>
-          )}
-        </div>
-      </div>
 
-      <div data-host-mobile-surface="true" style={{ flex: 1, overflow: mobile ? "visible" : "auto", padding: mobile ? "18px 16px max(24px, env(safe-area-inset-bottom))" : "24px 56px 40px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(3, 1fr)", gap: 14 }}>
-          {loaded.map((q) =>
-            q.imageUrl ? (
-              <PickCardSmall key={q.id} q={q} cc={cc} />
-            ) : (
-              <PickCardTextOnly key={q.id} q={q} cc={cc} />
-            ),
-          )}
-          {Array.from({ length: skeletonCount }).map((_, i) => (
-            <SkeletonCard key={`s${i}`} delay={i * 150} />
-          ))}
+          <StageTracker stages={tracker.stages} color={cc} mobile={mobile} />
+
+          <div style={{ marginTop: mobile ? 8 : 10, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, minWidth: 0 }}>
+            <div
+              data-testid="host-gen-liveness"
+              data-live={live ? "true" : "false"}
+              data-reduced-motion={reducedMotion ? "true" : "false"}
+              style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, fontSize: 12, color: live ? t.ink : t.inkMid }}
+            >
+              <LiveDot live={live} animate={live && !reducedMotion} color={t.pop} idle={t.inkMid} />
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{liveness?.text ?? ""}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 10, flex: "none", fontSize: 12, color: t.inkMid }}>
+              {mobile && <span data-testid="host-gen-overall"><Numeric size={12} weight={700} color={t.ink}>{pct}%</Numeric> done</span>}
+              {elapsed && <span data-testid="host-gen-elapsed"><Numeric size={12} color={t.inkMid}>{elapsed.split(" ")[0]}</Numeric> {elapsed.split(" ").slice(1).join(" ")}</span>}
+            </div>
+          </div>
+        </div>
+
+        <div
+          data-host-mobile-surface="true"
+          style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden", padding: mobile ? "16px 16px max(24px, env(safe-area-inset-bottom))" : "24px 56px 40px" }}
+        >
+          <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "repeat(3, minmax(0, 1fr))", gap: 14 }}>
+            {loaded.map((q) =>
+              q.imageUrl ? (
+                <PickCardSmall key={q.id} q={q} cc={cc} />
+              ) : (
+                <PickCardTextOnly
+                  key={q.id}
+                  q={q}
+                  cc={cc}
+                  note={photoNote}
+                  shimmer={progress.phase === "images" && live && !reducedMotion}
+                />
+              ),
+            )}
+            {Array.from({ length: skeletonCount }).map((_, i) => (
+              <SkeletonCard key={`s${i}`} delay={i * 150} animate={!reducedMotion} />
+            ))}
+          </div>
         </div>
       </div>
     </LaptopShell>
   );
 }
 
-function ProgressMini({ label, done, total, color }: { label: string; done: number; total: number; color: string }) {
-  const { t } = useTheme();
-  const mobile = useMediaQuery("(max-width: 860px)");
-  const pct = total > 0 ? Math.min(100, (done / total) * 100) : 0;
+function pillButton(line: string, color: string) {
+  return {
+    padding: "6px 12px",
+    borderRadius: 99,
+    border: `1px solid ${line}`,
+    background: "transparent",
+    color,
+    fontSize: 12,
+    fontWeight: 600,
+    fontFamily: "var(--font-sans)",
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    flex: "none",
+  } as const;
+}
+
+function LiveDot({ live, animate, color, idle }: { live: boolean; animate: boolean; color: string; idle: string }) {
   return (
-    <div style={{ width: mobile ? "auto" : 150, flex: mobile ? 1 : undefined, minWidth: 0 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-        <Eyebrow color={t.inkMid} size={9}>{label}</Eyebrow>
-        <Numeric size={10} color={t.inkMid}>{done}/{total}</Numeric>
+    <span
+      aria-hidden
+      data-testid="host-gen-live-dot"
+      data-animating={animate ? "true" : "false"}
+      style={{
+        width: 8,
+        height: 8,
+        flex: "none",
+        borderRadius: 99,
+        background: live ? color : "transparent",
+        border: live ? "none" : `1.5px solid ${idle}`,
+        boxSizing: "border-box",
+        animation: animate ? "tr1via-pulse 1.4s ease-in-out infinite" : "none",
+      }}
+    />
+  );
+}
+
+/**
+ * One track split into three segments. Each segment's width is that stage's
+ * usual share of the build time, so the filled length of the whole track is
+ * the honest overall progress; each segment fills only from its own count.
+ */
+function StageTracker({ stages, color, mobile }: { stages: TrackerStage[]; color: string; mobile: boolean }) {
+  const { t } = useTheme();
+  const columns = stages.map((s) => `${s.weight}fr`).join(" ");
+  const gap = mobile ? 4 : 6;
+  return (
+    <div data-testid="host-gen-tracker" style={{ marginTop: mobile ? 10 : 14, minWidth: 0 }}>
+      <div style={{ display: "grid", gridTemplateColumns: columns, gap, minWidth: 0 }}>
+        {stages.map((s) => (
+          <div
+            key={s.key}
+            role="progressbar"
+            aria-label={s.label}
+            aria-valuemin={0}
+            aria-valuemax={s.total}
+            aria-valuenow={s.count}
+            aria-valuetext={`${s.count} of ${s.total}${s.detail ? `, ${s.detail}` : ""}`}
+            data-testid={`host-gen-stage-bar-${s.key}`}
+            style={{ height: mobile ? 6 : 8, borderRadius: 99, background: t.line, overflow: "hidden", position: "relative" }}
+          >
+            <div
+              data-testid={`host-gen-stage-fill-${s.key}`}
+              style={{
+                width: `${(s.fraction * 100).toFixed(1)}%`,
+                height: "100%",
+                borderRadius: 99,
+                background: color,
+                opacity: s.state === "waiting" ? 0.45 : 1,
+                transition: "width 0.35s ease-out",
+              }}
+            />
+            {s.key === "check" && (
+              <span aria-hidden style={{ position: "absolute", top: 0, bottom: 0, left: "50%", width: 2, marginLeft: -1, background: t.paper, opacity: 0.8 }} />
+            )}
+          </div>
+        ))}
       </div>
-      <div style={{ height: 4, borderRadius: 99, background: t.line, overflow: "hidden", position: "relative" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: color, transition: "width 0.4s ease-out" }} />
-        <div style={{
-          position: "absolute", inset: 0,
-          background: `linear-gradient(90deg, transparent, ${color}55, transparent)`,
-          backgroundSize: "200% 100%",
-          animation: "tr1via-shimmer 1.6s linear infinite",
-        }} />
+      <div style={{ display: "grid", gridTemplateColumns: columns, gap, marginTop: 6, minWidth: 0 }}>
+        {stages.map((s) => (
+          <div
+            key={s.key}
+            data-testid={`host-gen-stage-${s.key}`}
+            data-stage-state={s.state}
+            style={{ minWidth: 0, color: s.state === "waiting" ? t.inkMid : t.ink }}
+          >
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6, minWidth: 0, flexWrap: mobile ? "wrap" : "nowrap" }}>
+              <span style={{ fontSize: mobile ? 11 : 12.5, fontWeight: s.state === "active" ? 700 : 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {s.state === "done" && <span aria-hidden style={{ color }}>✓ </span>}
+                {mobile ? s.shortLabel : s.label}
+              </span>
+              <Numeric size={mobile ? 11 : 12} weight={600} color={s.state === "waiting" ? t.inkMid : t.ink}>
+                <span data-testid={`host-gen-stage-count-${s.key}`}>{s.count}/{s.total}</span>
+              </Numeric>
+            </div>
+            {s.detail && (
+              <div data-testid={`host-gen-stage-detail-${s.key}`} style={{ fontSize: mobile ? 10.5 : 11.5, color: t.inkMid, marginTop: 1, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {s.detail}
+              </div>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-function PickCardTextOnly({ q, cc }: { q: HostGenLoadingQuestion; cc: string }) {
+function PickCardTextOnly({ q, cc, note, shimmer }: { q: HostGenLoadingQuestion; cc: string; note: string; shimmer: boolean }) {
   const { t } = useTheme();
   return (
     <div style={{
@@ -218,17 +422,19 @@ function PickCardTextOnly({ q, cc }: { q: HostGenLoadingQuestion; cc: string }) 
         background: t.dark ? "rgba(244,230,196,.05)" : "rgba(27,19,12,.04)",
         display: "flex", alignItems: "center", justifyContent: "center",
       }}>
-        <div style={{
-          position: "absolute", inset: 0,
-          background: `linear-gradient(90deg, transparent, ${t.pop}33, transparent)`,
-          backgroundSize: "200% 100%",
-          animation: "tr1via-shimmer 1.6s linear infinite",
-        }} />
+        {shimmer && (
+          <div aria-hidden style={{
+            position: "absolute", inset: 0,
+            background: `linear-gradient(90deg, transparent, ${t.pop}33, transparent)`,
+            backgroundSize: "200% 100%",
+            animation: "tr1via-shimmer 1.6s linear infinite",
+          }} />
+        )}
         <span style={{
           padding: "4px 10px", borderRadius: 99, background: t.dark ? "rgba(0,0,0,.4)" : "rgba(255,255,255,.85)",
           color: t.pop, fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 10, letterSpacing: "0.08em",
           position: "relative", zIndex: 1,
-        }}>MATCHING PHOTO…</span>
+        }}>{note}</span>
       </div>
       <div style={{ padding: "12px 14px" }}>
         <div style={{ fontSize: 13.5, color: t.ink, fontWeight: 600, letterSpacing: "-0.005em", lineHeight: 1.35, minHeight: 38 }}>{q.prompt}</div>
@@ -262,14 +468,15 @@ function PickCardSmall({ q, cc }: { q: HostGenLoadingQuestion; cc: string }) {
   );
 }
 
-function SkeletonCard({ delay = 0 }: { delay?: number }) {
+function SkeletonCard({ delay = 0, animate = true }: { delay?: number; animate?: boolean }) {
   const { t } = useTheme();
   return (
     <div style={{
       borderRadius: 12, overflow: "hidden",
       border: `1px solid ${t.line}`,
       background: t.surface,
-      animation: `tr1via-skeleton-pulse 1.6s ease-in-out ${delay}ms infinite`,
+      // Placeholder, not a progress claim: a soft pulse is fine here.
+      animation: animate ? `tr1via-skeleton-pulse 1.6s ease-in-out ${delay}ms infinite` : "none",
       minHeight: 200,
       display: "flex", flexDirection: "column",
     }}>

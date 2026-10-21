@@ -347,6 +347,78 @@ describe("HostSetupPickClient audit summary recovery", () => {
   });
 });
 
+describe("HostSetupPickClient live progress counts", () => {
+  const renderGenerating = () =>
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Snakes"
+        categoryTopic="non-venomous snakes"
+        initialState="generating"
+        initialQuestions={[]}
+        themeKey="house"
+      />,
+    );
+
+  it("feeds the progress broadcast's real counts into the loading tracker", async () => {
+    supa = createSupabaseMock({
+      questions: [],
+      report: null,
+      categoryState: "generating",
+      job: { attempt: 1, phase: "writing" },
+    });
+    renderGenerating();
+
+    await act(async () => {
+      await supa.broadcast("progress", {
+        serverNow: new Date().toISOString(),
+        phase: "checking",
+        attempt: 1,
+        written: 20,
+        certified: 0,
+        target: 20,
+        checked: 12,
+        checkTotal: 20,
+        checkPass: 1,
+      });
+    });
+
+    expect(screen.getByTestId("host-gen-stage-count-write").textContent).toBe("20/20");
+    expect(screen.getByTestId("host-gen-stage-count-check").textContent).toBe("12/20");
+    expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe("pass 1 of 2");
+    expect(screen.getByTestId("host-gen-stage-check")).toHaveAttribute("data-stage-state", "active");
+    expect(screen.getByTestId("host-gen-liveness")).toHaveAttribute("data-live", "true");
+  });
+
+  it("falls back to the polled job row after a reload, before any broadcast", async () => {
+    supa = createSupabaseMock({
+      questions: [],
+      report: null,
+      categoryState: "generating",
+      job: {
+        attempt: 1,
+        phase: "writing",
+        target_count: 20,
+        written_count: 14,
+        certified_count: 0,
+        image_count: 0,
+        heartbeat_at: new Date().toISOString(),
+      } as { attempt: number; phase: string },
+    });
+    renderGenerating();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("host-gen-stage-count-write").textContent).toBe("14/20");
+    });
+    expect(screen.getByTestId("host-gen-stage-write")).toHaveAttribute("data-stage-state", "active");
+    // Decided one render after the first real count arrives.
+    await waitFor(() => {
+      expect(screen.getByTestId("host-gen-elapsed").textContent).toMatch(/since you opened this/);
+    });
+  });
+});
+
 describe("HostSetupPickClient authoritative slot-edit reconciliation", () => {
   it("replaces displaced D with edited C, locks C at 500, and reloads the same board", async () => {
     const rows = slotSwapQuestionRows();

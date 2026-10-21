@@ -66,6 +66,49 @@ export default function HostGenGallery() {
       render: () => <HostGenLoading />,
     },
     {
+      step: "3·live",
+      title: "Loading, mid-build",
+      note: "Real counts: 20 written, fact-check pass 1 at 12 of 20, no photos yet.",
+      render: () => (
+        <HostGenLoading
+          topic="Pixar Movies"
+          loaded={[]}
+          progress={{
+            phase: "checking",
+            target: 20,
+            written: 20,
+            certified: 0,
+            photos: 0,
+            checked: 12,
+            checkTotal: 20,
+            checkPass: 1,
+            startedAt: Date.now() - 84_000,
+            lastSignalAt: Date.now() - 2_000,
+          }}
+        />
+      ),
+    },
+    {
+      step: "3·quiet",
+      title: "Loading, server quiet",
+      note: "No sign of life for 40s: the pulse stops and says so.",
+      render: () => (
+        <HostGenLoading
+          topic="Pixar Movies"
+          loaded={[]}
+          progress={{
+            phase: "writing",
+            target: 20,
+            written: 9,
+            certified: 0,
+            photos: 0,
+            startedAt: Date.now() - 70_000,
+            lastSignalAt: Date.now() - 40_000,
+          }}
+        />
+      ),
+    },
+    {
       step: "3·err",
       title: "Generation failed",
       note: "Anthropic down / timeout. Retry or fall back to manual entry.",

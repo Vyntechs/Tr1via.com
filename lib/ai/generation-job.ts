@@ -37,6 +37,9 @@ export interface GenerationJobProgress {
   remainingCount: number;
   statusLine: string;
   ready: boolean;
+  /** Raw `heartbeat_at` from the row, so the host screen can tell a fresh
+   *  heartbeat from a stale one. Optional: older callers build this literally. */
+  heartbeatAt?: string;
 }
 
 interface GenerationJobError {
@@ -198,5 +201,6 @@ export function generationProgressFromRow(
     remainingCount,
     statusLine,
     ready: phase === "ready" && certifiedCount >= MIN_PLAYABLE_QUESTIONS,
+    heartbeatAt: row.heartbeat_at,
   };
 }
