@@ -12,7 +12,6 @@ import {
   countCompleteNewQuestions,
   NEW_WRITER_MAX_TOKENS,
   NEW_WRITER_MODEL,
-  type NewWriterShortBatch,
 } from "@/lib/ai/generate-questions-new";
 import { collectVerifiedQuestions } from "@/lib/ai/collect-verified-questions";
 import type { GenerateQuestionsRejectedCandidate } from "@/lib/ai/generate-questions";
@@ -168,7 +167,7 @@ describe("new writer · output", () => {
 });
 
 describe("new writer · the 20 guard (never store fewer silently)", () => {
-  it("a short batch returns only the usable questions, reports every drop and the shortfall, and never pads", async () => {
+  it("a short batch returns only the usable questions, reports every drop, warns about the shortfall, and never pads", async () => {
     const qs = twenty();
     qs[2] = Q(3, { wrongAnswer1: "Right 3" }); // duplicate of the right answer
     qs[5] = Q(6, { question: "Short?" }); // under 8 characters
@@ -178,7 +177,6 @@ describe("new writer · the 20 guard (never store fewer silently)", () => {
     qs[17] = Q(18, { rightAnswer: "" }); // empty right answer
     const { client } = clientReplying(replySse(batchJson(qs)));
     const rejected: GenerateQuestionsRejectedCandidate[] = [];
-    const short: NewWriterShortBatch[] = [];
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const out = await generateQuestionsNew({
@@ -186,12 +184,10 @@ describe("new writer · the 20 guard (never store fewer silently)", () => {
       client,
       now: NOW,
       onRejectedCandidate: (c) => rejected.push(c),
-      onShortBatch: (e) => short.push(e),
     });
 
     expect(out).toHaveLength(14);
     expect(rejected.map((r) => r.index)).toEqual([2, 5, 8, 11, 14, 17]);
-    expect(short).toEqual([{ requested: 20, valid: 14, truncated: false }]);
     expect(warn.mock.calls.some((c) => String(c[0]).includes("SHORT BATCH: 14 of 20"))).toBe(true);
     warn.mockRestore();
   });
@@ -202,7 +198,6 @@ describe("new writer · the 20 guard (never store fewer silently)", () => {
     const cutAt = full.indexOf("Test fact note for question 19") + 12;
     const { client } = clientReplying(replySse(full.slice(0, cutAt), "max_tokens"));
     const rejected: GenerateQuestionsRejectedCandidate[] = [];
-    const short: NewWriterShortBatch[] = [];
     vi.spyOn(console, "warn").mockImplementation(() => {});
 
     const out = await generateQuestionsNew({
@@ -210,7 +205,6 @@ describe("new writer · the 20 guard (never store fewer silently)", () => {
       client,
       now: NOW,
       onRejectedCandidate: (c) => rejected.push(c),
-      onShortBatch: (e) => short.push(e),
     });
 
     expect(out).toHaveLength(18);
@@ -218,7 +212,6 @@ describe("new writer · the 20 guard (never store fewer silently)", () => {
     expect(rejected).toEqual([
       expect.objectContaining({ index: 18, issues: ["cut off at the output limit"] }),
     ]);
-    expect(short).toEqual([{ requested: 20, valid: 18, truncated: true }]);
     vi.restoreAllMocks();
   });
 

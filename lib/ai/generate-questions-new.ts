@@ -24,9 +24,9 @@
 //   difficulty -> difficulty, factNote -> factBlurb, photoWords -> photoQuery.
 //
 // Short-batch guard ("never store fewer silently"): every dropped question is
-// reported through onRejectedCandidate, a short batch is logged loudly and
-// reported through onShortBatch, and the short batch goes back to the existing
-// collect loop, whose next round asks for exactly the gap. A reply that cannot
+// reported through onRejectedCandidate (the route records it in the quality
+// report), a short batch is logged loudly, and the short batch goes back to the
+// existing collect loop, whose next round asks for exactly the gap. A reply that cannot
 // be read at all (refusal, no text, broken JSON, zero valid questions) throws,
 // which lands in the route's existing "paused, resume to finish" handling.
 
@@ -49,20 +49,11 @@ export const NEW_WRITER_BATCH = 20;
 /** 20 questions run ~4-5k output tokens; thinking shares this limit. */
 export const NEW_WRITER_MAX_TOKENS = 12_000;
 
-export interface NewWriterShortBatch {
-  requested: number;
-  valid: number;
-  /** True when the reply hit the output limit and the last item was cut. */
-  truncated: boolean;
-}
-
 export interface GenerateQuestionsNewOptions extends GenerateQuestionsOptions {
   /** Injectable clock for the date line (tests pin it). */
   now?: Date;
   /** Injectable randomness for the answer shuffle (tests pin it). */
   random?: () => number;
-  /** Called whenever fewer valid questions come back than were asked for. */
-  onShortBatch?: (event: NewWriterShortBatch) => void;
 }
 
 // JSON schema for structured output. The API refuses length and number
@@ -364,11 +355,6 @@ export async function generateQuestionsNew(
     console.warn(
       `[generateQuestionsNew] SHORT BATCH: ${valid.length} of ${count} usable${truncated ? " (output limit hit)" : ""}; the refill round asks for the rest`,
     );
-    try {
-      opts.onShortBatch?.({ requested: count, valid: valid.length, truncated });
-    } catch (err) {
-      console.warn(`[generateQuestionsNew] onShortBatch threw: ${String(err)}`);
-    }
   }
   return valid;
 }
