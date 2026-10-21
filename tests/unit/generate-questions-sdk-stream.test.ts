@@ -338,6 +338,58 @@ describe("generateQuestions on the real SDK stream (#221)", () => {
     expect(c.attempts.length).toBe(2);
   });
 
+  it("does not retry past the caller's retry deadline", async () => {
+    const c = controlledClient();
+    const run = generateQuestions({
+      topic: "Pixar",
+      client: c.client,
+      retryDelayMs: 0,
+      retryDeadlineMs: Date.now() - 1, // the build's retry window has closed
+    });
+    const outcome = run.then(() => null, (e: unknown) => e);
+    await vi.waitFor(() => expect(c.attempts.length).toBe(1));
+    c.send(START + ERROR_EVENT("overloaded_error"));
+    c.close();
+    const err = await outcome;
+    expect((err as InstanceType<typeof Anthropic.APIError>).type).toBe("overloaded_error");
+    for (let i = 0; i < 10; i++) await flush();
+    expect(c.attempts.length).toBe(1);
+  });
+
+  it("still retries while the caller's retry deadline is ahead", async () => {
+    const c = controlledClient();
+    const run = generateQuestions({
+      topic: "Pixar",
+      client: c.client,
+      retryDelayMs: 0,
+      retryDeadlineMs: Date.now() + 60_000,
+    });
+    await vi.waitFor(() => expect(c.attempts.length).toBe(1));
+    c.send(START + ERROR_EVENT("overloaded_error"));
+    c.close();
+    await vi.waitFor(() => expect(c.attempts.length).toBe(2));
+    c.send(START + delta(JSON.stringify({ questions: [Q(1)] })) + END("tool_use"));
+    c.close();
+    expect(await run).toHaveLength(1);
+  });
+
+  it("leaves a connect-phase APIConnectionError to the SDK's one retry (no extra try)", async () => {
+    let calls = 0;
+    const client = new Anthropic({
+      apiKey: "test-key",
+      fetch: (async () => {
+        calls++;
+        throw new TypeError("fetch failed");
+      }) as unknown as typeof fetch,
+    });
+    const err = await generateQuestions({ topic: "Pixar", client, retryDelayMs: 0 }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(Anthropic.APIConnectionError);
+    expect(calls).toBe(2); // the SDK's maxRetries 1, nothing from us
+  });
+
   it("never lets the written count go backward across a retry", async () => {
     const c = controlledClient();
     const written: number[] = [];

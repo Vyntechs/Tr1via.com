@@ -120,6 +120,11 @@ const PHOTO_STOP_AFTER_MS = 270_000;
 // (NEW_WRITER_STOP_AFTER_MS, 660s, on this same clock) so its two checker
 // passes and some photos still fit before this.
 const NEW_PHOTO_STOP_AFTER_MS = 770_000;
+// Classic's writer may retry a reply that broke off mid-stream once (see
+// generateQuestions), but no retry starts later than this after the request
+// began. A retry can take another ~120s+, and up to 4 writer rounds share the
+// build, so this keeps a late retry from eating into the 270s photo stop.
+const CLASSIC_WRITER_RETRY_DEADLINE_MS = 150_000;
 
 export async function POST(
   req: NextRequest,
@@ -792,6 +797,9 @@ async function runGenerationJob(opts: {
                 ...avoid,
               ],
               onUsage: trackUsage,
+              // Read only by Classic's writer; New's writer ignores it (it has
+              // its own total time cap on startedAtMs).
+              retryDeadlineMs: opts.startedAtMs + CLASSIC_WRITER_RETRY_DEADLINE_MS,
               onRejectedCandidate: (event) => {
                 qualityReport.recordInvalidCandidate(
                   event.prompt ?? `candidate ${event.index}`,

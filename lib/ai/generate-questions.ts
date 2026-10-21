@@ -127,6 +127,12 @@ export interface GenerateQuestionsOptions {
    * STREAM_RETRY_DELAY_MS; tests pass 0.
    */
   retryDelayMs?: number;
+  /**
+   * Optional: latest moment (epoch ms) the mid-stream retry may start. The
+   * 90s cutoff only sees this one call; the caller knows how far into the
+   * whole build we are. Absent = no build-level limit.
+   */
+  retryDeadlineMs?: number;
 }
 
 // ─── Tool definition ──────────────────────────────────────────────────
@@ -390,12 +396,21 @@ export async function generateQuestions(
     const reason = midStreamRetryReason(err);
     const dt = Date.now() - t0;
     if (!reason || dt >= STREAM_RETRY_CUTOFF_MS) throw err;
+    const retryDelayMs = opts.retryDelayMs ?? STREAM_RETRY_DELAY_MS;
+    if (
+      opts.retryDeadlineMs !== undefined &&
+      Date.now() + retryDelayMs >= opts.retryDeadlineMs
+    ) {
+      console.log(
+        `[generateQuestions] not retrying mid-stream ${reason}: past the build's retry deadline`,
+      );
+      throw err;
+    }
     console.log(
       `[generateQuestions] retrying once after mid-stream ${reason} (first attempt failed after ${dt}ms)`,
     );
     // The failed attempt's usage is not reported: finalMessage() rejected,
     // so there is no final usage to read, only a partial start snapshot.
-    const retryDelayMs = opts.retryDelayMs ?? STREAM_RETRY_DELAY_MS;
     if (retryDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
     }
