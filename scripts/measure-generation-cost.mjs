@@ -79,7 +79,7 @@ const asArray = (v) => (Array.isArray(v) ? v : typeof v === "string" ? (() => { 
 const cost = { gen: 0, verify: 0, genCalls: 0, verifyCalls: 0 };
 
 async function generate(avoidPrompts, need) {
-  const r = await client.beta.promptCaching.messages.create({
+  const r = await client.messages.create({
     model: GEN_MODEL, max_tokens: 8000, temperature: 0.7,
     system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: userPromptFor({ topic: TOPIC, count: Math.min(20, need + 1), difficulty: "normal", avoidPrompts }) }],

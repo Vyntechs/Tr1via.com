@@ -163,8 +163,7 @@ function makeRecordingClient(
   };
   const client = new Anthropic({
     apiKey: "test-key",
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    fetch: recordingFetch as any,
+    fetch: recordingFetch as unknown as typeof fetch,
   });
   // Record the options the APP passes (timeout, maxRetries). The SDK's own
   // inner call from a stream carries an AbortSignal; the app never passes one,
@@ -177,14 +176,11 @@ function makeRecordingClient(
       return original(params, options);
     };
   };
-  const anyClient = client as unknown as {
-    messages: Record<string, unknown>;
-    beta?: { promptCaching?: { messages?: Record<string, unknown> } };
-  };
+  // (The 0.32.1 baseline was captured with the same wrapper on
+  // client.beta.promptCaching.messages, which no longer exists.)
+  const anyClient = client as unknown as { messages: Record<string, unknown> };
   wrap(anyClient.messages, "create");
   wrap(anyClient.messages, "stream");
-  wrap(anyClient.beta?.promptCaching?.messages, "create");
-  wrap(anyClient.beta?.promptCaching?.messages, "stream");
   return client;
 }
 
@@ -290,7 +286,9 @@ function normalize(req: WireRequest) {
     ),
   );
   return {
-    method: req.method,
+    // 0.32.1 handed fetch "post" (its fetch upper-cased it on the wire);
+    // current SDKs hand over "POST". Same HTTP request line either way.
+    method: req.method.toUpperCase(),
     url: req.url.replace("?beta=prompt_caching", ""),
     headers,
     body: compactJson(req.body),
@@ -298,7 +296,7 @@ function normalize(req: WireRequest) {
 }
 
 describe("Anthropic wire capture (SDK upgrade guard)", () => {
-  it("every call site sends the same request as the 0.32.1 baseline", async () => {
+  it("every call site sends the same request as the 0.32.1 baseline, minus the prompt-caching beta", async () => {
     const current = await captureAll();
 
     if (process.env.WIRE_CAPTURE_OUT) {
@@ -326,6 +324,12 @@ describe("Anthropic wire capture (SDK upgrade guard)", () => {
       });
       expect(c.callOptions, `${site}: timeout/maxRetries passed by app`).toEqual(b.callOptions);
       expect(c.attemptsOn500, `${site}: attempts when every try fails`).toBe(b.attemptsOn500);
+      // The removals themselves: no prompt-caching beta path or header left.
+      for (const creq of c.requests) {
+        expect(creq.url, `${site}: plain endpoint`).toBe("https://api.anthropic.com/v1/messages");
+        expect(creq.headers["anthropic-beta"], `${site}: no beta header`).toBeUndefined();
+        expect(creq.headers["anthropic-version"], `${site}: API version`).toBe("2023-06-01");
+      }
     }
   });
 });

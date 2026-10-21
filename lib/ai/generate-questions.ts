@@ -14,8 +14,9 @@
 //   4. Return the typed array.
 //
 // Prompt caching:
-//   We use the beta Prompt Caching API (`client.beta.promptCaching`) — the
-//   `cache_control: { type: "ephemeral" }` hint lives on the system block.
+//   Prompt caching is GA: the plain `client.messages.stream` call carries the
+//   `cache_control: { type: "ephemeral" }` hint on the system block (no beta
+//   path or header; the old `client.beta.promptCaching` is gone from the SDK).
 //   The system prompt is large and stable; the user prompt is small and
 //   per-call. The 2nd category a host generates in quick succession is
 //   cheaper because the system prefix is read from cache.
@@ -31,7 +32,6 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { PromptCachingBetaMessage } from "@anthropic-ai/sdk/resources/beta/prompt-caching/messages";
 import { z } from "zod";
 import { SYSTEM_PROMPT, userPromptFor } from "./prompts";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -107,7 +107,7 @@ export interface GenerateQuestionsOptions {
   /** Question prompts already shown to the host — excluded from this batch. */
   avoidPrompts?: string[];
   /** Optional: inject a client for testing. */
-  client?: Pick<Anthropic, "beta">;
+  client?: Pick<Anthropic, "messages">;
   /** Optional override of the model id. */
   model?: string;
   /** Optional override of the request timeout in ms. Default 30_000. */
@@ -244,19 +244,20 @@ export async function generateQuestions(
   // we read the tool input as it arrives (`inputJson` gives the partially
   // parsed `emit_questions` input) instead of waiting for the whole batch.
   //
-  // Timeout note (verified against @anthropic-ai/sdk 0.32.1 core.js): the
+  // Timeout note (verified against @anthropic-ai/sdk 0.32.1 core.js, and
+  // still true in 0.137.0 client.js `fetchWithTimeout`): the
   // request option `timeout` only guards the time until response HEADERS
   // arrive — `fetchWithTimeout` clears its timer in `fetch().finally()`, and
   // the streamed body is read afterwards with no timer at all. So on a
   // stream, `timeout` alone would let a stalled body hang forever. We keep it
   // for the connect phase and add our own idle guard: if no stream event
   // arrives for `timeoutMs`, abort the stream and fail like a timeout.
-  const stream = client.beta.promptCaching.messages.stream(
+  const stream = client.messages.stream(
     {
       model,
       max_tokens: 8_000,
       // System prompt as a single text block with the ephemeral cache
-      // hint. The SDK forwards this to the Prompt Caching beta endpoint.
+      // hint (prompt caching is GA; no beta header needed).
       system: [
         {
           type: "text",
@@ -276,11 +277,9 @@ export async function generateQuestions(
       // With it, fragments stream as written. The trade-off is that the API
       // no longer validates the input for us; we already Zod-check every
       // question below and drop a cut-off last item on max_tokens.
-      // SDK 0.32.1's types predate the field, hence the cast; the SDK sends
-      // tool objects through unchanged.
-      tools: [
-        { ...emitQuestionsTool, eager_input_streaming: true } as typeof emitQuestionsTool,
-      ],
+      // The field is typed on `Tool` in the current SDK and needs no beta
+      // header; the SDK sends tool objects through unchanged.
+      tools: [{ ...emitQuestionsTool, eager_input_streaming: true }],
       tool_choice: { type: "tool", name: EMIT_QUESTIONS_TOOL_NAME },
       // Slight temperature for creative variety without going off-spec.
       temperature: 0.7,
@@ -324,7 +323,7 @@ export async function generateQuestions(
     reportWritten(countCompleteQuestions(snapshot));
   });
 
-  let response: PromptCachingBetaMessage;
+  let response: Anthropic.Message;
   try {
     response = await stream.finalMessage();
   } catch (err) {

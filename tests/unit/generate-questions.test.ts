@@ -28,7 +28,7 @@ interface MockClientCall {
 type Listener = (...args: unknown[]) => void;
 
 /**
- * Fake of the SDK's PromptCachingBetaMessageStream: listeners attach with
+ * Fake of the SDK's MessageStream: listeners attach with
  * `on`, then `finalMessage()` replays the `inputJson` snapshots (partial tool
  * input, as the real stream emits them) before resolving with the message.
  * `neverFinish` leaves the stream silent so the idle guard has to abort it.
@@ -104,20 +104,16 @@ function makeMockClient(
   snapshots: unknown[] = [],
 ) {
   return {
-    beta: {
-      promptCaching: {
-        messages: {
-          stream: vi.fn(
-            (
-              params: Record<string, unknown>,
-              options?: Record<string, unknown>,
-            ) => {
-              capture.push({ params, options });
-              return makeFakeStream(makeMessage(toolInput), snapshots);
-            },
-          ),
+    messages: {
+      stream: vi.fn(
+        (
+          params: Record<string, unknown>,
+          options?: Record<string, unknown>,
+        ) => {
+          capture.push({ params, options });
+          return makeFakeStream(makeMessage(toolInput), snapshots);
         },
-      },
+      ),
     },
   };
 }
@@ -319,15 +315,11 @@ describe("generateQuestions", () => {
       stop_reason: "max_tokens" as const,
     };
     const client = {
-      beta: {
-        promptCaching: {
-          messages: {
-            stream: vi.fn((params: Record<string, unknown>, options?: Record<string, unknown>) => {
-              capture.push({ params, options });
-              return makeFakeStream(message);
-            }),
-          },
-        },
+      messages: {
+        stream: vi.fn((params: Record<string, unknown>, options?: Record<string, unknown>) => {
+          capture.push({ params, options });
+          return makeFakeStream(message);
+        }),
       },
     };
 
@@ -356,28 +348,24 @@ describe("generateQuestions", () => {
 
   it("throws when Claude responds without a tool_use block", async () => {
     const noToolClient = {
-      beta: {
-        promptCaching: {
-          messages: {
-            stream: vi.fn(() =>
-              makeFakeStream({
-                id: "msg_test",
-                type: "message" as const,
-                role: "assistant" as const,
-                model: DEFAULT_MODEL,
-                stop_reason: "end_turn" as const,
-                stop_sequence: null,
-                content: [{ type: "text" as const, text: "no tool call" }],
-                usage: {
-                  cache_creation_input_tokens: 0,
-                  cache_read_input_tokens: 0,
-                  input_tokens: 10,
-                  output_tokens: 5,
-                },
-              }),
-            ),
-          },
-        },
+      messages: {
+        stream: vi.fn(() =>
+          makeFakeStream({
+            id: "msg_test",
+            type: "message" as const,
+            role: "assistant" as const,
+            model: DEFAULT_MODEL,
+            stop_reason: "end_turn" as const,
+            stop_sequence: null,
+            content: [{ type: "text" as const, text: "no tool call" }],
+            usage: {
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+              input_tokens: 10,
+              output_tokens: 5,
+            },
+          }),
+        ),
       },
     };
 
@@ -458,7 +446,7 @@ describe("generateQuestions", () => {
   it("aborts a silent stream after timeoutMs (idle guard) and fails like a timeout", async () => {
     const stream = makeFakeStream(makeMessage({ questions: [] }), [], true);
     const client = {
-      beta: { promptCaching: { messages: { stream: vi.fn(() => stream) } } },
+      messages: { stream: vi.fn(() => stream) },
     };
     await expect(
       generateQuestions({
@@ -476,7 +464,7 @@ describe("generateQuestions", () => {
       connect: false,
     });
     const client = {
-      beta: { promptCaching: { messages: { stream: vi.fn(() => stream) } } },
+      messages: { stream: vi.fn(() => stream) },
     };
     const pending = generateQuestions({
       topic: "No headers yet",
@@ -514,7 +502,7 @@ describe("generateQuestions", () => {
       }),
     };
     const client = {
-      beta: { promptCaching: { messages: { stream: vi.fn(() => stream) } } },
+      messages: { stream: vi.fn(() => stream) },
     };
     const out = await generateQuestions({
       topic: "Steady",
