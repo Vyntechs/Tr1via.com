@@ -270,7 +270,17 @@ export async function generateQuestions(
           content: userPrompt,
         },
       ],
-      tools: [emitQuestionsTool],
+      // eager_input_streaming: without it the API buffers the whole tool
+      // input and sends it in one burst at the end, so the live "N written"
+      // count would jump 0 -> 20 (measured Oct 21: all 6 ticks at 17.9s).
+      // With it, fragments stream as written. The trade-off is that the API
+      // no longer validates the input for us; we already Zod-check every
+      // question below and drop a cut-off last item on max_tokens.
+      // SDK 0.32.1's types predate the field, hence the cast; the SDK sends
+      // tool objects through unchanged.
+      tools: [
+        { ...emitQuestionsTool, eager_input_streaming: true } as typeof emitQuestionsTool,
+      ],
       tool_choice: { type: "tool", name: EMIT_QUESTIONS_TOOL_NAME },
       // Slight temperature for creative variety without going off-spec.
       temperature: 0.7,
@@ -347,6 +357,16 @@ export async function generateQuestions(
     throw new Error(
       "generateQuestions: emit_questions input missing `questions` array",
     );
+  }
+  // With eager streaming the API no longer validates the tool input, so a
+  // reply cut off at max_tokens can end in a question whose last field was
+  // truncated yet still parses (e.g. a fact note stopping mid-sentence).
+  // Drop that last item rather than risk saving it.
+  if (response.stop_reason === "max_tokens" && input.questions.length > 0) {
+    console.log(
+      `[generateQuestions] hit max_tokens; dropping the possibly cut-off last question`,
+    );
+    input.questions.pop();
   }
   // The stream count held back the last (possibly unfinished) item; now the
   // batch is complete, report the true raw size.

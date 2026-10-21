@@ -291,6 +291,48 @@ describe("generateQuestions", () => {
     expect(params.model).toBe(DEFAULT_MODEL);
   });
 
+  it("asks the API to stream the tool input as it is written (eager_input_streaming)", async () => {
+    const capture: MockClientCall[] = [];
+    const client = makeMockClient({ questions: [validQuestion()] }, capture);
+
+    // @ts-expect-error — narrowing
+    await generateQuestions({ topic: "anything", client });
+
+    const tools = capture[0]!.params.tools as Array<Record<string, unknown>>;
+    expect(tools[0]?.eager_input_streaming).toBe(true);
+  });
+
+  it("drops the possibly cut-off last question when the reply hit max_tokens", async () => {
+    const capture: MockClientCall[] = [];
+    const message = {
+      ...makeMessage({
+        questions: [
+          validQuestion({ prompt: "First complete question about a coastline?" }),
+          // Parses fine but its fact note stopped mid-sentence.
+          validQuestion({ prompt: "Second question that was cut off?", factBlurb: "The fact note stopped mid" }),
+        ],
+      }),
+      stop_reason: "max_tokens" as const,
+    };
+    const client = {
+      beta: {
+        promptCaching: {
+          messages: {
+            stream: vi.fn((params: Record<string, unknown>, options?: Record<string, unknown>) => {
+              capture.push({ params, options });
+              return makeFakeStream(message);
+            }),
+          },
+        },
+      },
+    };
+
+    // @ts-expect-error — narrowing
+    const out = await generateQuestions({ topic: "anything", client });
+
+    expect(out.map((q) => q.prompt)).toEqual(["First complete question about a coastline?"]);
+  });
+
   it("respects a custom request timeout option", async () => {
     const capture: MockClientCall[] = [];
     const client = makeMockClient(
