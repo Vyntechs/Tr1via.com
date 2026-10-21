@@ -78,7 +78,7 @@ describe("HostGenLoading progress tracker", () => {
         themeKey="house"
         topic="Pixar"
         loaded={[]}
-        progress={progress({ phase: "repairing", written: 20, certified: 17, clean: 17, checked: undefined, checkTotal: undefined })}
+        progress={progress({ phase: "repairing", written: 20, certified: 17, clean: 17, failedLastRound: 3, checked: undefined, checkTotal: undefined })}
       />,
     );
     expect(screen.getByTestId("host-gen-status-line").textContent).toBe(
@@ -99,7 +99,7 @@ describe("HostGenLoading progress tracker", () => {
     expect(parseFloat(fill("check"))).toBe(100);
     // 3 failed: the bar and the percent drop to the truth, and the headline
     // says why.
-    rerender(view({ ...none, phase: "repairing", certified: 17, clean: 17 }));
+    rerender(view({ ...none, phase: "repairing", certified: 17, clean: 17, failedLastRound: 3 }));
     expect(shownPct()).toBe("75%");
     expect(parseFloat(fill("check"))).toBe(85);
     expect(count("check")).toBe("17/20");
@@ -227,7 +227,7 @@ describe("buildTracker", () => {
   });
 
   it("treats a refill batch of 11+ questions as a refill (checkTotal is doubled)", () => {
-    const tr = buildTracker(progress({ certified: 8, checked: 4, checkTotal: 26 }));
+    const tr = buildTracker(progress({ certified: 8, checked: 4, checkTotal: 26, failedLastRound: 12 }));
     expect(tr.refillNeed).toBe(12);
     expect(tr.headline).toBe("12 failed the check. Checking the replacements");
   });

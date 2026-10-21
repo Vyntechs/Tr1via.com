@@ -225,15 +225,6 @@ export function HostSetupPickClient({
     initialState === "generating" && initialQuestions.length > 0 ? true : null,
   );
   const lastHeartbeatSeenRef = useRef<string | null>(null);
-  // Round ends seen in the current attempt: how many times the phase went
-  // into "repairing", and the clean count the first one reported. Lets the
-  // headline name an exact failure number only while it is still true.
-  const roundMarksRef = useRef<{
-    attempt: number;
-    lastPhase: GenerationPhase | null;
-    repairEntries: number;
-    firstRepairClean?: number;
-  }>({ attempt: -1, lastPhase: null, repairEntries: 0 });
   // A fresh build starts its own clock and forgets the previous attempt's
   // counts and signals. An automatic resume is the same build carrying on,
   // so it keeps the clock: restarting it read "0:04 so far" next to a build
@@ -245,7 +236,6 @@ export function HostSetupPickClient({
     // attempt's first update it showed "Fact-checking answers" ticked at
     // 0/20, or "Build paused".
     setGenPhase(null);
-    roundMarksRef.current = { attempt: -1, lastPhase: null, repairEntries: 0 };
     if (!opts?.keepClock) {
       setBuildStartedAt(Date.now());
       setJoinedMidway(false);
@@ -1428,34 +1418,6 @@ export function HostSetupPickClient({
   useEffect(() => {
     if (sawFullFirstRound) setFullRoundSeenAttempt(currentGenerationAttemptRef.current);
   }, [sawFullFirstRound]);
-  // Count this attempt's entries into "repairing" (one per round end) from
-  // the phase on screen, so a missed broadcast still counts when the polled
-  // row shows it. Updated during render: it only reacts to a change of
-  // phase, so a repeat render counts nothing twice.
-  {
-    const attempt = currentGenerationAttemptRef.current;
-    let marks = roundMarksRef.current;
-    if (marks.attempt !== attempt) {
-      marks = { attempt, lastPhase: null, repairEntries: 0 };
-    }
-    if (trackerPhase === "repairing" && marks.lastPhase !== "repairing") {
-      marks = { ...marks, repairEntries: marks.repairEntries + 1 };
-    }
-    // The clean count of the first round end, from that round end's own
-    // live update (the polled row has no clean count).
-    if (
-      marks.firstRepairClean === undefined &&
-      marks.repairEntries === 1 &&
-      trackerPhase === "repairing" &&
-      currentLive?.phase === "repairing" &&
-      liveClean !== undefined
-    ) {
-      marks = { ...marks, firstRepairClean: liveClean };
-    }
-    if (marks.lastPhase !== trackerPhase) marks = { ...marks, lastPhase: trackerPhase };
-    roundMarksRef.current = marks;
-  }
-  const roundMarks = roundMarksRef.current;
   const genProgress: HostGenProgress = {
     phase: trackerPhase,
     target: trackerTarget,
@@ -1471,6 +1433,9 @@ export function HostSetupPickClient({
       ? {
           checked: num(currentLive.checked),
           checkTotal: num(currentLive.checkTotal),
+          // The server's own count of how many failed the round that last
+          // finished. The screen never works this out itself.
+          failedLastRound: num(currentLive.failedLastRound),
         }
       : {}),
     startedAt: buildStartedAt,
@@ -1480,12 +1445,9 @@ export function HostSetupPickClient({
     resumedAttempt.attempt === currentGenerationAttemptRef.current
       ? { resumedWith: resumedAttempt.saved }
       : {}),
+    // Picks "Some failed the check" over "Writing N more"; never a number.
     failuresKnown:
       sawFullFirstRound || fullRoundSeenAttempt === currentGenerationAttemptRef.current,
-    ...(roundMarks.firstRepairClean !== undefined
-      ? { firstRepairClean: roundMarks.firstRepairClean }
-      : {}),
-    refillCheckDone: roundMarks.repairEntries >= 2,
   };
 
   // ── mapped data for the components ───────────────────────────────────

@@ -45,17 +45,13 @@ export interface HostGenProgress {
   /** True when this screen knows the gap is all failed questions: it saw
    *  this attempt write a full first batch (or knows the resume's saved
    *  count). After a reload mid-resume, a gap of 7 can be 2 that failed plus
-   *  5 never written, so without this the headline claims no failures. */
+   *  5 never written, so without this the headline claims no failures.
+   *  Only picks the neutral words; it never gives a number. */
   failuresKnown?: boolean;
-  /** The clean count from this attempt's first "repairing" update (the end
-   *  of round one, or of a resume's re-check). An exact "N failed" only
-   *  holds while the clean count still equals it. Omitted = not seen. */
-  firstRepairClean?: number;
-  /** True once a refill round's check has finished in this attempt (the
-   *  screen saw a second "repairing" update). The server writes one spare
-   *  question per refill and the screen can't count how many it wrote, so
-   *  after that no exact failure number is known. */
-  refillCheckDone?: boolean;
+  /** How many failed the check in the round that last finished, straight
+   *  from the server's live update. The only source of a failure number:
+   *  omitted (or 0) and the headline names none. */
+  failedLastRound?: number;
 }
 
 export type StageKey = "write" | "check" | "photos";
@@ -282,38 +278,35 @@ export function buildTracker(p: HostGenProgress): Tracker {
     (clean === 0 || cleanUnsure) &&
     !refill &&
     (phase === "queued" || phase === "writing" || phase === "checking");
-  // An exact failure number holds only for the round that just ended: once
-  // a refill round's check finishes (or the clean count moves past the
-  // first round-end count), the screen can't count how many the server
-  // wrote for it, so the words go neutral.
-  const firstRepairClean =
-    typeof p.firstRepairClean === "number" && Number.isFinite(p.firstRepairClean)
-      ? p.firstRepairClean
+  // A failure number comes only from the server, which counts each round's
+  // failures itself. Without it the words stay neutral: "Some failed" when
+  // this screen knows the gap is failures, else just how many are left.
+  const failed =
+    typeof p.failedLastRound === "number" &&
+    Number.isFinite(p.failedLastRound) &&
+    p.failedLastRound > 0
+      ? Math.floor(p.failedLastRound)
       : null;
-  const exactFailures =
-    p.refillCheckDone !== true && (firstRepairClean === null || clean === firstRepairClean);
-  // A resume re-checks the saved questions first, then writes the rest.
-  // The gap is the ones that failed the re-check plus the ones never
-  // written, so only the re-check failures get a number, and only when
-  // this screen saw the re-check's own clean count.
+  // A resume writes the questions the pause never got to as well, so the
+  // gap is not all failures there.
   const resumeRefill = refill && resumedWith !== null && resumedWith > 0;
-  const reCheckFailed =
-    resumeRefill && firstRepairClean !== null && exactFailures
-      ? Math.max(0, (resumedWith ?? 0) - clean)
-      : 0;
   const failuresKnown = p.failuresKnown === true || resumedWith !== null;
-  const failedLead = !exactFailures
-    ? "Some failed the check."
-    : resumeRefill
-      ? reCheckFailed > 0
-        ? `${reCheckFailed} failed the re-check.`
-        : "Picking up after a pause."
-      : `${refillNeed} failed the check.`;
-  const replacing = resumeRefill && exactFailures
-    ? `Writing ${refillNeed} more`
-    : refillNeed === 1
+  const failedLead =
+    failed !== null
+      ? `${failed} failed the check.`
+      : resumeRefill
+        ? "Picking up after a pause."
+        : failuresKnown
+          ? "Some failed the check."
+          : null;
+  // "Writing replacements" only when the gap is the ones that failed;
+  // otherwise say how many are still to write.
+  const gapIsFailures = failed !== null ? failed === refillNeed : !resumeRefill;
+  const replacing = gapIsFailures
+    ? refillNeed === 1
       ? "Writing a replacement"
-      : "Writing replacements";
+      : "Writing replacements"
+    : `Writing ${refillNeed} more`;
   const checkingNew = `Checking ${refillNeed === 1 ? "the replacement" : "the replacements"}`;
 
   let headline: string;
@@ -342,28 +335,30 @@ export function buildTracker(p: HostGenProgress): Tracker {
       case "writing":
         headline = !refill
           ? "Writing questions"
-          : failuresKnown
+          : failedLead
             ? `${failedLead} ${replacing}`
             : `Writing ${refillNeed} more`;
         break;
       case "checking":
         headline =
-          refill && failuresKnown ? `${failedLead} ${checkingNew}` : "Fact-checking answers";
+          refill && failedLead ? `${failedLead} ${checkingNew}` : "Fact-checking answers";
         break;
       case "repairing":
         // No number unless the server told us the clean count: a guess from
         // the cards said "Replacing 20" on a reroll where 3 had failed.
         headline = refill
-          ? failuresKnown
+          ? failedLead
             ? `${failedLead} ${replacing}`
             : `Writing ${refillNeed} more`
           : cleanUnsure
             ? "Fact-checking answers"
             : clean >= target
               ? "Saving the new questions"
-              : failuresKnown
-                ? "Some failed the check. Writing replacements"
-                : `Writing ${target - clean} more`;
+              : failed !== null
+                ? `${failed} failed the check. Writing ${target - clean} more`
+                : failuresKnown
+                  ? "Some failed the check. Writing replacements"
+                  : `Writing ${target - clean} more`;
         break;
       case "images":
         headline = "Finding photos";

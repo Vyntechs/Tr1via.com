@@ -132,11 +132,13 @@ describe("first build, 3 fail the check, then a refill round", () => {
     ["writing 20", { phase: "writing", written: 20 }],
     ["checking 0/40", { phase: "checking", written: 20, checked: 0, checkTotal: 40 }],
     ["checking 40/40", { phase: "checking", written: 20, checked: 40, checkTotal: 40 }],
-    ["repairing, 17 clean", { phase: "repairing", written: 20, certified: 17, clean: 17 }],
-    ["refill writing", { phase: "writing", written: 20, certified: 17, clean: 17 }],
-    ["refill checking 0/8", { phase: "checking", written: 20, certified: 17, clean: 17, checked: 0, checkTotal: 8 }],
-    ["refill checking 4/8", { phase: "checking", written: 20, certified: 17, clean: 17, checked: 4, checkTotal: 8 }],
-    ["refill checking 8/8", { phase: "checking", written: 20, certified: 17, clean: 17, checked: 8, checkTotal: 8 }],
+    // The server's round-end update carries the real number (3) from here
+    // until the refill round's own check finishes.
+    ["repairing, 17 clean", { phase: "repairing", written: 20, certified: 17, clean: 17, failedLastRound: 3 }],
+    ["refill writing", { phase: "writing", written: 20, certified: 17, clean: 17, failedLastRound: 3 }],
+    ["refill checking 0/8", { phase: "checking", written: 20, certified: 17, clean: 17, checked: 0, checkTotal: 8, failedLastRound: 3 }],
+    ["refill checking 4/8", { phase: "checking", written: 20, certified: 17, clean: 17, checked: 4, checkTotal: 8, failedLastRound: 3 }],
+    ["refill checking 8/8", { phase: "checking", written: 20, certified: 17, clean: 17, checked: 8, checkTotal: 8, failedLastRound: 3 }],
     ["photos 0", { phase: "images", written: 20, certified: 20, clean: 20, photos: 0 }],
     ["photos 12", { phase: "images", written: 20, certified: 20, clean: 20, photos: 12 }],
     ["ready", { phase: "ready", written: 20, certified: 20, clean: 20, photos: 19 }],
@@ -176,9 +178,9 @@ describe("first build, 3 fail the check, then a refill round", () => {
 describe("a second refill round where 1 more is still needed", () => {
   // Round one: 3 fail (17 clean). The refill writes 4 (3 + one spare) and
   // 2 pass (19 clean), so 2 of the 4 failed. The screen can't count the 4
-  // (the written count is capped at 20), so it gives no number.
-  const r1 = { firstRepairClean: 17 };
-  const r2 = { firstRepairClean: 17, refillCheckDone: true };
+  // (the written count is capped at 20); the server sends the real 2.
+  const r1 = { failedLastRound: 3 };
+  const r2 = { failedLastRound: 2 };
   const rows = run([
     ["checking 40/40", { phase: "checking", written: 20, checked: 40, checkTotal: 40 }],
     ["repairing, 17 clean", { ...r1, phase: "repairing", written: 20, certified: 17, clean: 17 }],
@@ -189,26 +191,32 @@ describe("a second refill round where 1 more is still needed", () => {
     ["photos 4", { phase: "images", written: 20, certified: 20, clean: 20, photos: 4 }],
   ]);
 
-  it("names round one's real number, then goes neutral", () => {
+  it("names each round's real number from the server", () => {
     expectTrue(rows);
     expectDropsExplained(rows);
     expect(rows[1]!.t.headline).toBe("3 failed the check. Writing replacements");
     expect(rows[2]!.t.headline).toBe("3 failed the check. Checking the replacements");
     expect(pct(rows[2]!.t)).toBe(74.7);
     expect(pct(rows[3]!.t)).toBe(76.9);
-    // Not "1 failed": 2 of the 4 replacements failed.
-    expect(rows[3]!.t.headline).toBe("Some failed the check. Writing a replacement");
-    expect(rows[5]!.t.headline).toBe("Some failed the check. Checking the replacement");
+    // Not "1 failed": 2 of the 4 replacements failed, and 1 is still needed.
+    expect(rows[3]!.t.headline).toBe("2 failed the check. Writing 1 more");
+    expect(rows[4]!.t.headline).toBe("2 failed the check. Writing 1 more");
+    expect(rows[5]!.t.headline).toBe("2 failed the check. Checking the replacement");
   });
 
-  it("goes neutral when the clean count moved even if the second update was missed", () => {
-    const t = buildTracker({ ...base, ...r1, phase: "repairing", written: 20, certified: 19, clean: 19 });
+  it("goes neutral without the server's number, never 20 minus clean", () => {
+    // e.g. a heartbeat between the save and the round-end update.
+    const t = buildTracker({ ...base, phase: "repairing", written: 20, certified: 19, clean: 19 });
     expect(t.headline).toBe("Some failed the check. Writing a replacement");
+    expect(t.headline).not.toMatch(/\d+ failed/);
   });
 
-  it("goes neutral when a refill check finished with nothing new passing", () => {
-    const t = buildTracker({ ...base, ...r2, phase: "repairing", written: 20, certified: 17, clean: 17 });
+  it("treats a 0 from the server as no number", () => {
+    // A round can end short with nothing failed (the format check dropped some).
+    const t = buildTracker({ ...base, failedLastRound: 0, phase: "writing", written: 20, certified: 18, clean: 18 });
     expect(t.headline).toBe("Some failed the check. Writing replacements");
+    const unknown = buildTracker({ ...base, failuresKnown: false, phase: "writing", written: 20, certified: 18, clean: 18 });
+    expect(unknown.headline).toBe("Writing 2 more");
   });
 });
 
@@ -217,10 +225,10 @@ describe('"Another 20" reroll after a reload', () => {
   // certified 0 the whole way. The server's `clean` count carries the truth.
   const rows = run([
     ["checking 40/40", { phase: "checking", written: 20, checked: 40, checkTotal: 40 }],
-    ["repairing (broadcast)", { phase: "repairing", written: 20, clean: 17 }],
-    ["refill writing", { phase: "writing", written: 20, clean: 17 }],
-    ["refill checking 0/8", { phase: "checking", written: 20, clean: 17, checked: 0, checkTotal: 8 }],
-    ["refill checking 8/8", { phase: "checking", written: 20, clean: 17, checked: 8, checkTotal: 8 }],
+    ["repairing (broadcast)", { phase: "repairing", written: 20, clean: 17, failedLastRound: 3 }],
+    ["refill writing", { phase: "writing", written: 20, clean: 17, failedLastRound: 3 }],
+    ["refill checking 0/8", { phase: "checking", written: 20, clean: 17, checked: 0, checkTotal: 8, failedLastRound: 3 }],
+    ["refill checking 8/8", { phase: "checking", written: 20, clean: 17, checked: 8, checkTotal: 8, failedLastRound: 3 }],
     ["saving the swap", { phase: "repairing", written: 20, clean: 20 }],
     ["photos 5", { phase: "images", written: 20, certified: 20, clean: 20, photos: 5 }],
   ]);
@@ -301,10 +309,11 @@ describe("pause with 15 saved, 2 fail the re-check", () => {
   // route keeps the written count at 15 and sends the clean count (13) while
   // the 2 deleted cards may still be on screen (certified 15 from the cards).
   const saved = { resumedWith: 15 };
-  // The screen saw the re-check's own repairing update: 13 clean.
-  const reChecked = { firstRepairClean: 13 };
+  // The re-check's round-end update says 2 failed; it rides on every update
+  // until the refill round's own check finishes.
+  const reChecked = { failedLastRound: 2 };
   const rows = run([
-    ["before pause: repairing", { phase: "repairing", written: 20, certified: 15, clean: 15 }],
+    ["before pause: repairing", { phase: "repairing", written: 20, certified: 15, clean: 15, failedLastRound: 5 }],
     ["paused", { phase: "needs_attention", written: 20, certified: 15 }],
     ["queued", { ...saved, phase: "queued", written: 15 }],
     ["re-check 0/30", { ...saved, phase: "checking", written: 15, checked: 0, checkTotal: 30 }],
@@ -339,11 +348,11 @@ describe("pause with 15 saved, 2 fail the re-check", () => {
       detail: "2 checks each on 15 questions",
     });
     // 2 failed and 5 were never written: not "7 failed the check".
-    expect(rows[5]!.t.headline).toBe("2 failed the re-check. Writing 7 more");
+    expect(rows[5]!.t.headline).toBe("2 failed the check. Writing 7 more");
     expect(stage(rows[5]!.t, "write").count).toBe(15);
     expect(stage(rows[5]!.t, "check")).toMatchObject({ count: 13, total: 20 });
     expect(stage(rows[6]!.t, "write").detail).toBe("7 more");
-    expect(rows[9]!.t.headline).toBe("2 failed the re-check. Checking the replacements");
+    expect(rows[9]!.t.headline).toBe("2 failed the check. Checking the replacements");
     expect(stage(rows[9]!.t, "check")).toMatchObject({ count: 13, detail: "0/16 checks" });
   });
 
@@ -418,8 +427,8 @@ describe("reload mid-resume: the screen doesn't know how many failed", () => {
     expect(t.headline).toBe("Writing 20 more");
   });
 
-  it("a build watched from the start still names the real number", () => {
-    const t = buildTracker({ ...base, phase: "repairing", written: 20, certified: 17, clean: 17 });
+  it("names the server's number even after a reload", () => {
+    const t = buildTracker({ ...base, ...unknown, failedLastRound: 3, phase: "repairing", written: 20, certified: 17, clean: 17 });
     expect(t.headline).toBe("3 failed the check. Writing replacements");
   });
 });
@@ -428,7 +437,7 @@ describe("review 5: ticks, bars and words match their counts", () => {
   it("ticks Writing only when every question is written or photos have started", () => {
     const reCheck = buildTracker({ ...base, resumedWith: 15, phase: "checking", written: 15, clean: 0, checked: 0, checkTotal: 30 });
     expect(stage(reCheck, "write")).toMatchObject({ count: 15, total: 20, state: "waiting" });
-    const repair = buildTracker({ ...base, resumedWith: 15, firstRepairClean: 13, phase: "repairing", written: 15, certified: 13, clean: 13 });
+    const repair = buildTracker({ ...base, resumedWith: 15, failedLastRound: 2, phase: "repairing", written: 15, certified: 13, clean: 13 });
     expect(stage(repair, "write").state).toBe("waiting");
     const full = buildTracker({ ...base, phase: "checking", written: 20, checked: 4, checkTotal: 40 });
     expect(stage(full, "write").state).toBe("done");
@@ -452,20 +461,17 @@ describe("review 5: ticks, bars and words match their counts", () => {
     expect(stage(reCheck, "check").detail).toBe("2 checks each on 15 questions");
   });
 
-  describe("resume with 15 saved: the re-check number only while it is true", () => {
-    const saved = { resumedWith: 15, firstRepairClean: 13 };
-    it("names the re-check failures while the clean count is still the re-check's", () => {
-      const t = buildTracker({ ...base, ...saved, phase: "writing", written: 18, certified: 13, clean: 13 });
-      expect(t.headline).toBe("2 failed the re-check. Writing 7 more");
+  describe("resume with 15 saved: a failure number only from the server", () => {
+    const saved = { resumedWith: 15 };
+    it("names the re-check failures the server reported", () => {
+      const t = buildTracker({ ...base, ...saved, failedLastRound: 2, phase: "writing", written: 18, certified: 13, clean: 13 });
+      expect(t.headline).toBe("2 failed the check. Writing 7 more");
     });
-    it("goes neutral once a refill check has finished", () => {
-      // 7 needed, 8 written, 2 passed: 6 failed, but the screen can't count the 8.
-      const moved = buildTracker({ ...base, ...saved, refillCheckDone: true, phase: "repairing", written: 20, certified: 15, clean: 15 });
-      expect(moved.headline).toBe("Some failed the check. Writing replacements");
-      // Nothing new passed: the clean count is unchanged, still not "2 failed".
-      const stuck = buildTracker({ ...base, ...saved, refillCheckDone: true, phase: "repairing", written: 20, certified: 13, clean: 13 });
-      expect(stuck.headline).toBe("Some failed the check. Writing replacements");
-      // Missed the second update, but the clean count moved.
+    it("names a later round's own number, not the re-check's", () => {
+      // 7 needed, 8 written, 6 failed: 15 clean.
+      const moved = buildTracker({ ...base, ...saved, failedLastRound: 6, phase: "repairing", written: 20, certified: 15, clean: 15 });
+      expect(moved.headline).toBe("6 failed the check. Writing 5 more");
+      // Without the number the words stay neutral.
       const missed = buildTracker({ ...base, ...saved, phase: "repairing", written: 20, certified: 14, clean: 14 });
       expect(missed.headline).not.toMatch(/\d+ failed/);
     });
