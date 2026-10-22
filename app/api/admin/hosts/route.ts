@@ -123,6 +123,8 @@ export async function POST(req: NextRequest) {
         created_at: hostRow.created_at,
         password_set_at: passwordSetAt,
         password_prompt: passwordPrompt,
+        // A host created a moment ago cannot have a settings row yet.
+        question_engine: "classic",
       } satisfies AdminHostRow,
     },
     201,
