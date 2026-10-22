@@ -28,7 +28,7 @@ const asArray = (v) => (Array.isArray(v) ? v : typeof v === "string" ? (() => { 
 const isClean = (v) => v && v.markedAnswerIsCorrect && !v.ambiguous; // ships only if clean
 
 async function generate(topic) {
-  const r = await client.beta.promptCaching.messages.create({ model: GEN_MODEL, max_tokens: 8000, temperature: 0.7, system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: userPromptFor({ topic, count: 20, difficulty: "normal" }) }], tools: [EMIT_TOOL], tool_choice: { type: "tool", name: "emit_questions" } }, { timeout: 120_000 });
+  const r = await client.messages.create({ model: GEN_MODEL, max_tokens: 8000, temperature: 0.7, system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }], messages: [{ role: "user", content: userPromptFor({ topic, count: 20, difficulty: "normal" }) }], tools: [EMIT_TOOL], tool_choice: { type: "tool", name: "emit_questions" } }, { timeout: 120_000 });
   return toolInput(r, "emit_questions")?.questions ?? [];
 }
 async function judgeOnce(questions) {

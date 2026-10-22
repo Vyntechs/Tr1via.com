@@ -1,9 +1,8 @@
 // MSW handlers for the Anthropic Messages API.
 //
-// The writer calls `client.beta.promptCaching.messages.stream()`; both it
-// and a plain `.create()` go to `POST /v1/messages?beta=prompt_caching`. MSW matches on
-// pathname, so a single handler on `https://api.anthropic.com/v1/messages`
-// catches both the plain and the prompt-caching endpoints.
+// The writer calls `client.messages.stream()` and the checker / fact note call
+// `client.messages.create()`; all go to `POST /v1/messages`, so a single
+// handler on `https://api.anthropic.com/v1/messages` catches every call.
 //
 // Behavior:
 //   * First call → returns the canned 20-question set (PIXAR_20).
@@ -16,7 +15,7 @@
 // block is named "emit_questions" and the input has a `questions: []`
 // array of objects with `{ prompt, options, correctIndex, difficulty,
 // factBlurb, photoQuery }`. The cache_*_input_tokens fields are present
-// because the Prompt Caching beta SDK reads them off the response.
+// because the cost logging reads them off the response.
 
 import { http, HttpResponse } from "msw";
 
