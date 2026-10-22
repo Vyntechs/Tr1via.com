@@ -122,6 +122,17 @@ export interface GenerateQuestionsOptions {
    * the final call carries the full raw batch size (before schema drops).
    */
   onWritten?: (count: number) => void;
+  /**
+   * Optional: wait in ms before the one mid-stream retry. Default
+   * STREAM_RETRY_DELAY_MS; tests pass 0.
+   */
+  retryDelayMs?: number;
+  /**
+   * Optional: latest moment (epoch ms) the mid-stream retry may start. The
+   * 90s cutoff only sees this one call; the caller knows how far into the
+   * whole build we are. Absent = no build-level limit.
+   */
+  retryDeadlineMs?: number;
 }
 
 // ─── Tool definition ──────────────────────────────────────────────────
@@ -199,6 +210,24 @@ export const DEFAULT_MODEL = "claude-sonnet-4-6";
  *  verification passes and the sequential Pexels photo attach that follow. */
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
+/** Pause before the one mid-stream retry, so a brief overload can clear. */
+export const STREAM_RETRY_DELAY_MS = 2_000;
+
+/** Only retry if the first attempt failed within this long of starting.
+ *  Classic plans its whole build to fit ~300s (writer, verification passes,
+ *  photos). A retry can take another full call, so a first attempt that
+ *  already used 90s+ fails cleanly instead of blowing that plan. */
+export const STREAM_RETRY_CUTOFF_MS = 90_000;
+
+/** Our own idle-guard abort (no stream event for `timeoutMs`). A class so
+ *  the retry check can recognise it without matching the message. */
+export class StreamIdleTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Request timed out: no stream data for ${timeoutMs}ms (idle timeout)`);
+    this.name = "StreamIdleTimeoutError";
+  }
+}
+
 // ─── Public API ───────────────────────────────────────────────────────
 
 /**
@@ -209,7 +238,9 @@ export const DEFAULT_TIMEOUT_MS = 60_000;
  * dev) — the function returns the valid subset rather than throwing.
  *
  * Throws only if:
- *   - the Anthropic call itself fails (network, rate limit, auth)
+ *   - the Anthropic call itself fails (network, rate limit, auth). A reply
+ *     that breaks off mid-stream (overload event, idle timeout, broken JSON)
+ *     is tried once more first; see midStreamRetryReason.
  *   - Claude returns no tool_use block at all
  *   - the tool_use block's `input.questions` is not an array
  *
@@ -252,54 +283,48 @@ export async function generateQuestions(
   // stream, `timeout` alone would let a stalled body hang forever. We keep it
   // for the connect phase and add our own idle guard: if no stream event
   // arrives for `timeoutMs`, abort the stream and fail like a timeout.
-  const stream = client.messages.stream(
-    {
-      model,
-      max_tokens: 8_000,
-      // System prompt as a single text block with the ephemeral cache
-      // hint (prompt caching is GA; no beta header needed).
-      system: [
-        {
-          type: "text",
-          text: SYSTEM_PROMPT,
-          cache_control: { type: "ephemeral" },
-        },
-      ],
-      messages: [
-        {
-          role: "user",
-          content: userPrompt,
-        },
-      ],
-      // eager_input_streaming: without it the API buffers the whole tool
-      // input and sends it in one burst at the end, so the live "N written"
-      // count would jump 0 -> 20 (measured Oct 21: all 6 ticks at 17.9s).
-      // With it, fragments stream as written. The trade-off is that the API
-      // no longer validates the input for us; we already Zod-check every
-      // question below and drop a cut-off last item on max_tokens.
-      // The field is typed on `Tool` in the current SDK and needs no beta
-      // header; the SDK sends tool objects through unchanged.
-      tools: [{ ...emitQuestionsTool, eager_input_streaming: true }],
-      tool_choice: { type: "tool", name: EMIT_QUESTIONS_TOOL_NAME },
-      // Slight temperature for creative variety without going off-spec.
-      temperature: 0.7,
-    },
-    // One SDK retry, not the default two: a connection that never opens
-    // waits timeoutMs per try, and three 60s tries plus backoff (~3 min) let
-    // a late refill round run past the route's 300s limit, so the platform
-    // killed the function before it could record a clean "paused".
-    { timeout: timeoutMs, maxRetries: 1 },
-  );
-
-  let idleTimedOut = false;
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  const armIdleGuard = () => {
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      idleTimedOut = true;
-      stream.abort();
-    }, timeoutMs);
+  //
+  // Built once and reused by the one mid-stream retry below, so a retry
+  // sends the exact same request body.
+  const params = {
+    model,
+    max_tokens: 8_000,
+    // System prompt as a single text block with the ephemeral cache
+    // hint (prompt caching is GA; no beta header needed).
+    system: [
+      {
+        type: "text" as const,
+        text: SYSTEM_PROMPT,
+        cache_control: { type: "ephemeral" as const },
+      },
+    ],
+    messages: [
+      {
+        role: "user" as const,
+        content: userPrompt,
+      },
+    ],
+    // eager_input_streaming: without it the API buffers the whole tool
+    // input and sends it in one burst at the end, so the live "N written"
+    // count would jump 0 -> 20 (measured Oct 21: all 6 ticks at 17.9s).
+    // With it, fragments stream as written. The trade-off is that the API
+    // no longer validates the input for us; we already Zod-check every
+    // question below and drop a cut-off last item on max_tokens.
+    // The field is typed on `Tool` in the current SDK and needs no beta
+    // header; the SDK sends tool objects through unchanged.
+    tools: [{ ...emitQuestionsTool, eager_input_streaming: true }],
+    tool_choice: { type: "tool" as const, name: EMIT_QUESTIONS_TOOL_NAME },
+    // Slight temperature for creative variety without going off-spec.
+    temperature: 0.7,
   };
+  // One SDK retry, not the default two: a connection that never opens
+  // waits timeoutMs per try, and three 60s tries plus backoff (~3 min) let
+  // a late refill round run past Classic's ~300s plan, so the platform
+  // killed the function before it could record a clean "paused".
+  const requestOptions = { timeout: timeoutMs, maxRetries: 1 };
+
+  // Shared by both attempts so the live count never goes backward: a retry
+  // starts its own stream from 0, and lower counts are simply ignored.
   let reportedWritten = 0;
   const reportWritten = (count: number) => {
     if (count <= reportedWritten) return;
@@ -311,40 +336,85 @@ export async function generateQuestions(
       console.warn(`[generateQuestions] onWritten threw: ${String(err)}`);
     }
   };
-  // Listeners go on BEFORE the first await so an early error has a
-  // waiting promise (finalMessage) to land in.
-  // The idle guard starts on `connect` (response headers in), not now.
-  // Before headers the SDK's own `timeout` applies and it retries a stalled
-  // request itself; aborting from here first would cancel those retries,
-  // because the SDK never retries a request whose signal was aborted.
-  stream.on("connect", armIdleGuard);
-  stream.on("streamEvent", armIdleGuard);
-  stream.on("inputJson", (_partial, snapshot) => {
-    reportWritten(countCompleteQuestions(snapshot));
-  });
 
+  const streamOnce = async (): Promise<Anthropic.Message> => {
+    const stream = client.messages.stream(params, requestOptions);
+
+    let idleTimedOut = false;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const armIdleGuard = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => {
+        idleTimedOut = true;
+        stream.abort();
+      }, timeoutMs);
+    };
+    // Listeners go on BEFORE the first await so an early error has a
+    // waiting promise (finalMessage) to land in.
+    // The idle guard starts on `connect` (response headers in), not now.
+    // Before headers the SDK's own `timeout` applies and it retries a stalled
+    // request itself; aborting from here first would cancel those retries,
+    // because the SDK never retries a request whose signal was aborted.
+    stream.on("connect", armIdleGuard);
+    stream.on("streamEvent", armIdleGuard);
+    stream.on("inputJson", (_partial, snapshot) => {
+      reportWritten(countCompleteQuestions(snapshot));
+    });
+
+    try {
+      return await stream.finalMessage();
+    } catch (err) {
+      const dt = Date.now() - t0;
+      const errName = err instanceof Error ? err.constructor.name : typeof err;
+      const errMsg = err instanceof Error ? err.message : String(err);
+      if (idleTimedOut) {
+        const idleErr = new StreamIdleTimeoutError(timeoutMs);
+        console.log(
+          `[generateQuestions] FAILED after ${dt}ms (IdleTimeout): ${idleErr.message}`,
+        );
+        throw idleErr;
+      }
+      console.log(
+        `[generateQuestions] FAILED after ${dt}ms (${errName}): ${errMsg}`,
+      );
+      throw err;
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
+    }
+  };
+
+  // One retry of the whole streamed call for failures the SDK cannot retry
+  // itself: once the reply has started (HTTP 200), an `error` event, our
+  // idle abort, a broken JSON fragment or a dropped connection ends the
+  // stream with no status, so
+  // its maxRetries never applies. Before streaming, an overload came back as
+  // a 529 and the SDK retried it; this restores that for the streamed reply.
   let response: Anthropic.Message;
   try {
-    response = await stream.finalMessage();
+    response = await streamOnce();
   } catch (err) {
+    const reason = midStreamRetryReason(err);
     const dt = Date.now() - t0;
-    const errName = err instanceof Error ? err.constructor.name : typeof err;
-    const errMsg = err instanceof Error ? err.message : String(err);
-    if (idleTimedOut) {
-      const idleErr = new Error(
-        `Request timed out: no stream data for ${timeoutMs}ms (idle timeout)`,
-      );
+    if (!reason || dt >= STREAM_RETRY_CUTOFF_MS) throw err;
+    const retryDelayMs = opts.retryDelayMs ?? STREAM_RETRY_DELAY_MS;
+    if (
+      opts.retryDeadlineMs !== undefined &&
+      Date.now() + retryDelayMs >= opts.retryDeadlineMs
+    ) {
       console.log(
-        `[generateQuestions] FAILED after ${dt}ms (IdleTimeout): ${idleErr.message}`,
+        `[generateQuestions] not retrying mid-stream ${reason}: past the build's retry deadline`,
       );
-      throw idleErr;
+      throw err;
     }
     console.log(
-      `[generateQuestions] FAILED after ${dt}ms (${errName}): ${errMsg}`,
+      `[generateQuestions] retrying once after mid-stream ${reason} (first attempt failed after ${dt}ms)`,
     );
-    throw err;
-  } finally {
-    if (idleTimer) clearTimeout(idleTimer);
+    // The failed attempt's usage is not reported: finalMessage() rejected,
+    // so there is no final usage to read, only a partial start snapshot.
+    if (retryDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+    response = await streamOnce();
   }
   console.log(`[generateQuestions] returned in ${Date.now() - t0}ms`);
   opts.onUsage?.(model, response.usage);
@@ -414,6 +484,63 @@ export async function generateQuestions(
   }
 
   return valid;
+}
+
+// Mid-stream error types that would fail the same way again. Anything else
+// (overloaded_error, api_error, a missing or unknown type) is worth one retry.
+const NON_TRANSIENT_STREAM_ERRORS = new Set<string>([
+  "invalid_request_error",
+  "authentication_error",
+  "permission_error",
+  "billing_error",
+  "not_found_error",
+  "rate_limit_error",
+  "request_too_large",
+]);
+
+/**
+ * Why a failed attempt deserves the one mid-stream retry, or null if it
+ * doesn't. Only failures that happen AFTER the HTTP 200 qualify:
+ *   - an `error` event in the stream (APIError with no status), transient type
+ *   - our idle-guard abort
+ *   - a SyntaxError from parsing the streamed JSON (the stream wraps it in an
+ *     AnthropicError with the SyntaxError as `cause`)
+ *   - a connection that drops while the body is read (Node fetch throws e.g.
+ *     `TypeError: terminated`; core/streaming.js passes it through raw and
+ *     MessageStream wraps it the same way, as an AnthropicError with `cause`)
+ * Errors with an HTTP status were already retried by the SDK (maxRetries 1).
+ * A caller abort and a connect-phase failure arrive as status-less
+ * APIErrors (APIUserAbortError, APIConnectionError); neither is retried here
+ * (the SDK already retried connecting).
+ */
+export function midStreamRetryReason(err: unknown): string | null {
+  if (err instanceof StreamIdleTimeoutError) return "idle timeout";
+  if (err instanceof SyntaxError) return "SyntaxError";
+  if (
+    err instanceof Anthropic.AnthropicError &&
+    !(err instanceof Anthropic.APIError)
+  ) {
+    const cause = (err as { cause?: unknown }).cause;
+    if (cause instanceof SyntaxError) return "SyntaxError";
+    // An abort never lands here (the stream turns it into APIUserAbortError),
+    // but check the name anyway so a caller abort is never retried.
+    if (cause instanceof Error && cause.name !== "AbortError") {
+      return "connection dropped";
+    }
+    return null;
+  }
+  if (
+    err instanceof Anthropic.APIUserAbortError ||
+    err instanceof Anthropic.APIConnectionError
+  ) {
+    return null;
+  }
+  if (err instanceof Anthropic.APIError && err.status === undefined) {
+    const type = err.type ?? null;
+    if (type && NON_TRANSIENT_STREAM_ERRORS.has(type)) return null;
+    return type ?? "error event";
+  }
+  return null;
 }
 
 function isQuestionsContainer(value: unknown): value is { questions: unknown[] } {
