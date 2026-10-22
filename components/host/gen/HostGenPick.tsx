@@ -80,7 +80,7 @@ export interface HostGenPickProps {
   topic?: string;
   /** All 20 candidates returned by the generator. */
   questions?: HostGenPickQuestion[];
-  /** Compact AI quality/cost summary for the generated batch. Omitted for old categories. */
+  /** Compact AI quality summary for the generated batch. Omitted for old categories. */
   auditSummary?: HostQuestionAuditSummary | null;
   /** The ids the host has currently selected. */
   pickedIds?: Set<string>;

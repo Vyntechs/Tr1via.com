@@ -41,7 +41,6 @@ describe("generation done audit summary", () => {
       acceptedCount: 20,
       generatedCount: 21,
       verifyPasses: 2,
-      estimatedCostUsd: 0,
       imageTargetCount: 20,
       imageAttachedCount: 1,
       riskFlagCount: 3,

@@ -79,7 +79,6 @@ type AuditReportRow = {
   accepted_count: number;
   generated_count: number;
   verify_passes: number;
-  estimated_cost_usd: number | string;
   image_target_count: number;
   image_attached_count: number;
   risk_flag_count: number;
@@ -105,7 +104,6 @@ function isHostQuestionAuditSummary(
     isFiniteNumber(value.acceptedCount) &&
     isFiniteNumber(value.generatedCount) &&
     isFiniteNumber(value.verifyPasses) &&
-    isFiniteNumber(value.estimatedCostUsd) &&
     isFiniteNumber(value.imageTargetCount) &&
     isFiniteNumber(value.imageAttachedCount) &&
     isFiniteNumber(value.riskFlagCount)
@@ -117,7 +115,6 @@ function auditSummaryFromReportRow(row: AuditReportRow): HostQuestionAuditSummar
     acceptedCount: row.accepted_count,
     generatedCount: row.generated_count,
     verifyPasses: row.verify_passes,
-    estimatedCostUsd: Number(row.estimated_cost_usd),
     imageTargetCount: row.image_target_count,
     imageAttachedCount: row.image_attached_count,
     riskFlagCount: row.risk_flag_count,
@@ -273,7 +270,7 @@ export function HostSetupPickClient({
     const { data } = await supa
       .from("question_generation_reports")
       .select(
-        "accepted_count, generated_count, verify_passes, estimated_cost_usd, image_target_count, image_attached_count, risk_flag_count",
+        "accepted_count, generated_count, verify_passes, image_target_count, image_attached_count, risk_flag_count",
       )
       .eq("category_id", categoryId)
       .order("created_at", { ascending: false })

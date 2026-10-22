@@ -40,10 +40,31 @@ describe("commitGenerationQuestions", () => {
     expect(rows).toEqual([
       {
         id: expect.any(String),
-        q: question,
+        q: expect.objectContaining({ prompt: question.prompt, factBlurb: question.factBlurb }),
         imageUrl: null,
       },
     ]);
+  });
+
+  it("shuffles the four choices on save and keeps the right answer text", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const rpc = vi.fn(async (_name: string, args: Record<string, unknown>) => {
+      calls.push(args);
+      return { data: { applied: true, code: "applied" }, error: null };
+    });
+    // random() = 0 pins the order to [1,2,3,0]: B C D A.
+    const rows = await commitGenerationQuestions(
+      { rpc },
+      { categoryId: "category-1", attempt: 2, questions: [question], random: () => 0 },
+    );
+
+    const saved = (calls[0]!.p_questions as Array<Record<string, unknown>>)[0]!;
+    expect(saved.options).toEqual(["B", "C", "D", "A"]);
+    expect(saved.correctIndex).toBe(3);
+    // What the route gets back matches what was stored, not the writer's order.
+    expect(rows![0]!.q.options).toEqual(["B", "C", "D", "A"]);
+    expect(rows![0]!.q.correctIndex).toBe(3);
+    expect(rows![0]!.q.options[rows![0]!.q.correctIndex]).toBe("A");
   });
 });
 
