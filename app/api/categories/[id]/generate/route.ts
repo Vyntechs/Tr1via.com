@@ -44,6 +44,7 @@ import {
   seedCategoryImageUrls,
 } from "@/lib/ai/category-photo-plan";
 import { generateQuestions, type GeneratedQuestion } from "@/lib/ai/generate-questions";
+import { generateQuestionsNew } from "@/lib/ai/generate-questions-new";
 import {
   createQuestionGenerationReportAccumulator,
   hostAuditSummaryFromSnapshot,
@@ -93,8 +94,12 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 // Generation now also runs an Opus verification pass (and may regenerate a
 // round), so the background job needs more headroom than the old Haiku-only
-// path. 300s is Vercel's hard max on most plans.
-export const maxDuration = 300;
+// path. 800s is the most Vercel Pro allows (generally available; the 1800s
+// option is a beta and not used). Classic still plans its work around 300s
+// (PHOTO_STOP_AFTER_MS below), exactly as before; only the New engine plans
+// around the longer limit (NEW_PHOTO_STOP_AFTER_MS and the New writer's own
+// time cap).
+export const maxDuration = 800;
 
 // How often the background job emits a `progress` heartbeat while writing and
 // fact-checking (before any question row exists). Comfortably under the
@@ -102,19 +107,25 @@ export const maxDuration = 300;
 // dead worker (no heartbeat) still trips it.
 const GENERATION_HEARTBEAT_MS = 12_000;
 
-// Vercel ends the whole request at maxDuration (300s) with no warning, and a
-// slow writing step can use most of that. Photos are optional and are the last
-// step, so once this much time has passed since the request began we stop
-// adding more, save what the host has, and finish — instead of being cut off
+// Vercel ends the whole request at maxDuration with no warning, and a slow
+// writing step can use most of it. Photos are optional and are the last step,
+// so once this much time has passed since the request began we stop adding
+// more, save what the host has, and finish — instead of being cut off
 // mid-photos with the build left unfinished. Leaves ~30s for the photo already
 // in flight, the final save, and the "done" message.
+//
+// Classic's budget: unchanged from when the limit was 300s.
 const PHOTO_STOP_AFTER_MS = 270_000;
+// New's budget, 30s under the 800s limit. Its writer stops even earlier
+// (NEW_WRITER_STOP_AFTER_MS, 660s, on this same clock) so its two checker
+// passes and some photos still fit before this.
+const NEW_PHOTO_STOP_AFTER_MS = 770_000;
 
 export async function POST(
   req: NextRequest,
   context: { params: Promise<{ id: string }> },
 ) {
-  // Vercel's 300s limit counts from when the request began.
+  // Vercel's time limit counts from when the request began.
   const startedAtMs = Date.now();
   const { id: categoryId } = await context.params;
 
@@ -257,17 +268,28 @@ export async function POST(
         : "initial",
   };
   after(async () => {
-    // Question engine switch (step 2): read the host's setting ONCE per
-    // build. Any read problem (missing table on a preview, error, no row,
-    // unknown value) means "classic". Both engines run today's builder with
-    // identical args until step 4 gives "new" its own writer.
+    // Question engine switch: read the host's setting ONCE per build. Any
+    // read problem (missing table on a preview, error, no row, unknown value)
+    // means "classic". Both engines run the same build job; "new" only swaps
+    // the question writer (step 4). Checker, photos and pick are shared.
     const questionEngine = await readHostQuestionEngine(admin, owned.host.id);
     console.log(
       `[generate] category=${categoryId} attempt=${job.attempt} questionEngine=${questionEngine}`,
     );
     await runWithQuestionEngine(
       questionEngine,
-      { classic: runGenerationJob, new: runGenerationJob },
+      {
+        classic: runGenerationJob,
+        // New: its own writer, given the request's start time for its total
+        // time cap (NEW_WRITER_STOP_AFTER_MS), and the longer photo budget.
+        new: (args) =>
+          runGenerationJob({
+            ...args,
+            writeQuestions: (o) =>
+              generateQuestionsNew({ ...o, startedAtMs: args.startedAtMs }),
+            photoStopAfterMs: NEW_PHOTO_STOP_AFTER_MS,
+          }),
+      },
       {
         categoryId,
         topic,
@@ -358,6 +380,12 @@ async function runGenerationJob(opts: {
   /** When the request began (ms); Vercel's time limit counts from here. */
   startedAtMs: number;
   reportContext: QuestionGenerationReportContext;
+  /** The question writer. Absent = Classic's generateQuestions. Only the
+   *  "new" engine passes one (generateQuestionsNew). */
+  writeQuestions?: typeof generateQuestions;
+  /** Stop adding photos this long after the request began. Absent =
+   *  Classic's PHOTO_STOP_AFTER_MS. Only the "new" engine passes one. */
+  photoStopAfterMs?: number;
 }): Promise<void> {
   const admin = getSupabaseAdmin();
   const jobClient = admin as unknown as GenerationJobClient;
@@ -516,6 +544,9 @@ async function runGenerationJob(opts: {
       phase,
       attempt: opts.attempt,
       ...liveProgress.counts(),
+      // New thinks before it writes, so its writing step can run for
+      // minutes; the host's screen says so. Classic never sends this.
+      ...(opts.reportContext.questionEngine === "new" ? { longWrite: true } : {}),
     };
     return broadcastToCategory(opts.categoryId, "progress", payload).catch(
       () => undefined,
@@ -747,7 +778,7 @@ async function runGenerationJob(opts: {
           void broadcastProgress();
           let batch: GeneratedQuestion[];
           try {
-            batch = await generateQuestions({
+            batch = await (opts.writeQuestions ?? generateQuestions)({
               topic: opts.topic,
               flavor: opts.flavor,
               difficulty: opts.difficulty,
@@ -914,7 +945,7 @@ async function runGenerationJob(opts: {
     // user-side latency benefit (the UI is already populated).
     imageCount = inserted.filter((row) => Boolean(row.imageUrl)).length;
     for (const { id, q } of photoTargets) {
-      if (Date.now() - opts.startedAtMs > PHOTO_STOP_AFTER_MS) {
+      if (Date.now() - opts.startedAtMs > (opts.photoStopAfterMs ?? PHOTO_STOP_AFTER_MS)) {
         // Out of time. Photos are optional: keep the ones attached so far and
         // finish below rather than being cut off by the platform limit.
         console.warn("[generate] running out of time; stopping photo attach");

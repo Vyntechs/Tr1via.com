@@ -52,6 +52,10 @@ export interface HostGenProgress {
    *  from the server's live update. The only source of a failure number:
    *  omitted (or 0) and the headline names none. */
   failedLastRound?: number;
+  /** From the server's live update, New engine only: its writer thinks
+   *  before it writes, so a writing step can take a few minutes. The
+   *  headline says so, so a long quiet write never reads as stuck. */
+  longWrite?: boolean;
 }
 
 export type StageKey = "write" | "check" | "photos";
@@ -371,6 +375,9 @@ export function buildTracker(p: HostGenProgress): Tracker {
     }
   }
 
+  if (p.longWrite === true && phase === "writing") {
+    headline = `${headline}. This can take a few minutes`;
+  }
   return { stages, overall, headline, refillNeed };
 }
 
