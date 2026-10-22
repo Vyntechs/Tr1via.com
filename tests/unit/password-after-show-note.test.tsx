@@ -16,6 +16,7 @@ vi.mock("next/navigation", () => ({
 
 import { PASSWORD_AFTER_SHOW_NOTE, PasswordAfterShowNote } from "@/components/host/PasswordAfterShowNote";
 import { ThemeProvider } from "@/components/system";
+import { isPickScreenPath } from "@/lib/host/lockBar";
 
 function show(pathname: string, search: string) {
   nav.pathname = pathname;
@@ -65,5 +66,13 @@ describe("PasswordAfterShowNote", () => {
   it("never on the in-show pages", () => {
     show("/host/live/n1", "pw=after-show");
     expect(screen.queryByTestId("password-after-show-note")).toBeNull();
+  });
+
+  it("knows the pick screen, the one page whose Lock button it must sit above", () => {
+    expect(isPickScreenPath("/host/setup/n1/pick/c1")).toBe(true);
+    expect(isPickScreenPath("/host/setup/n1/pick/c1/")).toBe(true);
+    expect(isPickScreenPath("/host/setup/n1")).toBe(false);
+    expect(isPickScreenPath("/host")).toBe(false);
+    expect(isPickScreenPath("/host/setup/n1/pick/c1/extra")).toBe(false);
   });
 });

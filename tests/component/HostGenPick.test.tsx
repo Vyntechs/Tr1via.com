@@ -347,6 +347,123 @@ describe("HostSetupPickClient audit summary recovery", () => {
   });
 });
 
+describe("HostSetupPickClient live progress counts", () => {
+  const renderGenerating = () =>
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Snakes"
+        categoryTopic="non-venomous snakes"
+        initialState="generating"
+        initialQuestions={[]}
+        themeKey="house"
+      />,
+    );
+
+  it("feeds the progress broadcast's real counts into the loading tracker", async () => {
+    supa = createSupabaseMock({
+      questions: [],
+      report: null,
+      categoryState: "generating",
+      job: { attempt: 1, phase: "writing" },
+    });
+    renderGenerating();
+
+    await act(async () => {
+      await supa.broadcast("progress", {
+        serverNow: new Date().toISOString(),
+        phase: "checking",
+        attempt: 1,
+        written: 20,
+        certified: 0,
+        target: 20,
+        checked: 12,
+        checkTotal: 40,
+      });
+    });
+
+    expect(screen.getByTestId("host-gen-stage-count-write").textContent).toBe("20/20");
+    expect(screen.getByTestId("host-gen-stage-count-check").textContent).toBe("12/40");
+    expect(screen.getByTestId("host-gen-stage-detail-check").textContent).toBe(
+      "2 checks per question",
+    );
+    expect(screen.getByTestId("host-gen-stage-check")).toHaveAttribute("data-stage-state", "active");
+    expect(screen.getByTestId("host-gen-liveness")).toHaveAttribute("data-live", "true");
+  });
+
+  it("falls back to the polled job row after a reload, before any broadcast", async () => {
+    supa = createSupabaseMock({
+      questions: [],
+      report: null,
+      categoryState: "generating",
+      job: {
+        attempt: 1,
+        phase: "writing",
+        target_count: 20,
+        written_count: 14,
+        certified_count: 0,
+        image_count: 0,
+        heartbeat_at: new Date().toISOString(),
+      } as { attempt: number; phase: string },
+    });
+    renderGenerating();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("host-gen-stage-count-write").textContent).toBe("14/20");
+    });
+    expect(screen.getByTestId("host-gen-stage-write")).toHaveAttribute("data-stage-state", "active");
+    // Decided one render after the first real count arrives.
+    await waitFor(() => {
+      expect(screen.getByTestId("host-gen-elapsed").textContent).toMatch(/since you opened this/);
+    });
+  });
+
+  it("doesn't count the old cards as checked after a reload mid-reroll", async () => {
+    // "Another 20": the old cards stay in the table until the final swap, so
+    // after a reload they're on the page while the new batch is written.
+    const oldCards = questionRows().map((row) => ({
+      ...row,
+      image_url: "https://images.example/old.jpg",
+    }));
+    supa = createSupabaseMock({
+      questions: oldCards,
+      report: null,
+      categoryState: "generating",
+      job: {
+        attempt: 3,
+        phase: "writing",
+        target_count: 20,
+        written_count: 2,
+        certified_count: 0,
+        image_count: 0,
+        heartbeat_at: new Date().toISOString(),
+      } as { attempt: number; phase: string },
+    });
+    render(
+      <HostSetupPickClient
+        nightId="night-1"
+        categoryId="cat-1"
+        categoryName="Snakes"
+        categoryTopic="non-venomous snakes"
+        initialState="generating"
+        initialQuestions={oldCards}
+        themeKey="house"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("host-gen-stage-count-write").textContent).toBe("2/20");
+    });
+    expect(screen.getByTestId("host-gen-stage-check")).not.toHaveAttribute(
+      "data-stage-state",
+      "done",
+    );
+    expect(screen.getByTestId("host-gen-stage-count-check").textContent).toBe("0/20");
+    expect(screen.getByTestId("host-gen-stage-count-photos").textContent).toBe("0/20");
+  });
+});
+
 describe("HostSetupPickClient authoritative slot-edit reconciliation", () => {
   it("replaces displaced D with edited C, locks C at 500, and reloads the same board", async () => {
     const rows = slotSwapQuestionRows();

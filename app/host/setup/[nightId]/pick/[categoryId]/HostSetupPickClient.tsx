@@ -17,6 +17,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { useMediaQuery } from "@/components/system/useMediaQuery";
+import { PICK_LOCK_DESKTOP_CLEARANCE, PICK_LOCK_PHONE_BOTTOM, PICK_PHONE_QUERY } from "@/lib/host/lockBar";
 import {
   HostGenLoading,
   HostGenPick,
@@ -36,7 +38,12 @@ import {
   GENERATION_STALL_TIMEOUT_MS,
   useGenerationStatus,
 } from "@/lib/hooks/useGenerationStatus";
-import type { CategoryDonePayload, GenerationPhase } from "@/lib/api/broadcast";
+import type {
+  CategoryDonePayload,
+  CategoryProgressPayload,
+  GenerationPhase,
+} from "@/lib/api/broadcast";
+import type { HostGenProgress } from "@/components/host/gen/genProgress";
 import type { HostQuestionAuditSummary } from "@/lib/ai/question-generation-report";
 import {
   deriveInitialGenerationMessage,
@@ -133,6 +140,8 @@ export function HostSetupPickClient({
   themeKey,
 }: HostSetupPickClientProps) {
   const router = useRouter();
+  // Same switch as HostGenPick's phone layout; moves the notes above Lock.
+  const phoneLayout = useMediaQuery(PICK_PHONE_QUERY);
   const [questions, setQuestions] = useState<QuestionRow[]>(initialQuestions);
   const [state, setState] = useState<CategoryRow["state"]>(initialState);
   const [auditSummary, setAuditSummary] = useState<HostQuestionAuditSummary | null>(
@@ -201,6 +210,44 @@ export function HostSetupPickClient({
   const [lastActivityAt, setLastActivityAt] = useState<number>(() => Date.now());
   // Current job phase, surfaced as a live status line on the loading screen.
   const [genPhase, setGenPhase] = useState<GenerationPhase | null>(null);
+  // Real counts from the latest `progress` broadcast for the current attempt
+  // (written / checked / certified). Feeds the loading screen's tracker.
+  const [liveCounts, setLiveCounts] = useState<
+    (CategoryProgressPayload & { attempt: number }) | null
+  >(null);
+  // Last REAL sign of life (a broadcast, or a job-row heartbeat that moved),
+  // local clock. Unlike lastActivityAt this starts null: mounting the page
+  // is not evidence the server is working.
+  const [lastSignalAt, setLastSignalAt] = useState<number | null>(null);
+  const [buildStartedAt, setBuildStartedAt] = useState<number>(() => Date.now());
+  // null = not known yet; decided on the first real count we see.
+  const [joinedMidway, setJoinedMidway] = useState<boolean | null>(() =>
+    initialState === "generating" && initialQuestions.length > 0 ? true : null,
+  );
+  const lastHeartbeatSeenRef = useRef<string | null>(null);
+  // A fresh build starts its own clock and forgets the previous attempt's
+  // counts and signals. An automatic resume is the same build carrying on,
+  // so it keeps the clock: restarting it read "0:04 so far" next to a build
+  // that had been running for minutes.
+  const startFreshBuild = useCallback((opts?: { keepClock?: boolean }) => {
+    setLiveCounts(null);
+    setLastSignalAt(null);
+    // Forget the old attempt's phase too: for the few seconds before the new
+    // attempt's first update it showed "Fact-checking answers" ticked at
+    // 0/20, or "Build paused".
+    setGenPhase(null);
+    if (!opts?.keepClock) {
+      setBuildStartedAt(Date.now());
+      setJoinedMidway(false);
+    }
+    lastHeartbeatSeenRef.current = null;
+  }, []);
+  // The attempt that picked a paused build back up, and how many checked
+  // questions the server had saved at the pause (0 = starting over). Only
+  // used while that attempt is the current one.
+  const [resumedAttempt, setResumedAttempt] = useState<
+    { attempt: number; saved: number } | null
+  >(null);
   // Seed the failure message from the server-rendered state so a refresh
   // into a rolled-back category surfaces the retry / manual-entry UI
   // instead of stranding on the loading spinner. Without this seed the
@@ -306,7 +353,7 @@ export function HostSetupPickClient({
         // Heartbeat while writing / fact-checking, before any row exists.
         // Records activity (keeps the safety timer armed) and drives the live
         // status line so the longer run never looks frozen or "timed out".
-        const payload = msg.payload as { phase?: GenerationPhase; attempt?: number };
+        const payload = msg.payload as Partial<CategoryProgressPayload>;
         if (
           typeof payload.attempt === "number" &&
           payload.attempt < currentGenerationAttemptRef.current
@@ -315,7 +362,22 @@ export function HostSetupPickClient({
           currentGenerationAttemptRef.current = payload.attempt;
         }
         setLastActivityAt(Date.now());
+        setLastSignalAt(Date.now());
         if (payload.phase) setGenPhase(payload.phase);
+        // A refill is starting. On a resume the server just deleted stored
+        // questions that failed the re-check; reload the cards so they leave
+        // the screen (nothing else announces a removal).
+        if (payload.phase === "repairing") void refetchQuestions();
+        if (payload.phase) {
+          // Whole-payload replace: a new attempt never inherits old counts.
+          setLiveCounts({
+            ...(payload as CategoryProgressPayload),
+            attempt:
+              typeof payload.attempt === "number"
+                ? payload.attempt
+                : currentGenerationAttemptRef.current,
+          });
+        }
       })
       .on("broadcast", { event: "question_added" }, (msg) => {
         if (cancelled) return;
@@ -328,6 +390,7 @@ export function HostSetupPickClient({
           currentGenerationAttemptRef.current = payload.attempt;
         }
         setLastActivityAt(Date.now());
+        setLastSignalAt(Date.now());
         // Refetch the question list to absorb the new row.
         void refetchQuestions();
       })
@@ -347,6 +410,7 @@ export function HostSetupPickClient({
           currentGenerationAttemptRef.current = payload.attempt;
         }
         setLastActivityAt(Date.now());
+        setLastSignalAt(Date.now());
         if (!payload.questionId) return;
         setQuestions((prev) =>
           prev.map((q) => {
@@ -389,6 +453,7 @@ export function HostSetupPickClient({
           void refetchAuditSummary();
         }
         setGenPhase(null);
+        setLiveCounts(null);
         setState("review");
         setRegenerating(false);
         void refetchQuestions();
@@ -496,6 +561,37 @@ export function HostSetupPickClient({
     pollIntervalMs: 5_000,
   });
 
+  // A fresh build (first load into 'generating', a retry, a regenerate from
+  // draft) starts its own clock and forgets the previous attempt's counts.
+  const prevStateRef = useRef<CategoryRow["state"] | null>(null);
+  useEffect(() => {
+    const prev = prevStateRef.current;
+    prevStateRef.current = state;
+    if (state !== "generating" || prev === null || prev === "generating") return;
+    startFreshBuild();
+  }, [state, startFreshBuild]);
+
+  // The polled job row is the fallback sign of life (e.g. after a reload,
+  // before any broadcast). Only a heartbeat that MOVED counts, measured on
+  // the local clock; the first one seen uses its own time (capped at now).
+  const polledProgress =
+    watchStatus.kind === "progress" || watchStatus.kind === "needs-attention"
+      ? watchStatus.progress
+      : null;
+  const polledHeartbeatAt = polledProgress?.heartbeatAt ?? null;
+  useEffect(() => {
+    if (!polledHeartbeatAt) return;
+    const prev = lastHeartbeatSeenRef.current;
+    if (prev === polledHeartbeatAt) return;
+    lastHeartbeatSeenRef.current = polledHeartbeatAt;
+    const nowMs = Date.now();
+    const seenAt =
+      prev === null
+        ? Math.min(nowMs, Date.parse(polledHeartbeatAt) || 0)
+        : nowMs;
+    if (seenAt > 0) setLastSignalAt((cur) => Math.max(cur ?? 0, seenAt));
+  }, [polledHeartbeatAt]);
+
   useEffect(() => {
     if (
       (watchStatus.kind === "progress" || watchStatus.kind === "needs-attention") &&
@@ -507,6 +603,7 @@ export function HostSetupPickClient({
       const id = window.setTimeout(() => {
         setGenerationFailureMessage(null);
         setGenPhase(null);
+        setLiveCounts(null);
         setState(watchStatus.state);
         setRegenerating(false);
         void refetchQuestions();
@@ -521,7 +618,10 @@ export function HostSetupPickClient({
       ) {
         autoResumedAttemptsRef.current.add(watchStatus.progress.attempt);
         const id = window.setTimeout(() => {
-          void handleRetryGeneration();
+          void handleRetryGeneration({
+            auto: true,
+            saved: watchStatus.progress.certifiedCount,
+          });
         }, 0);
         return () => window.clearTimeout(id);
       }
@@ -1114,7 +1214,12 @@ export function HostSetupPickClient({
   }
 
   // ── recovery: retry generation or bail to manual entry ───────────────
-  async function handleRetryGeneration() {
+  async function handleRetryGeneration(opts?: {
+    /** Started by the screen itself, not the host's Retry tap. */
+    auto?: boolean;
+    /** Checked questions the paused attempt had saved, when known. */
+    saved?: number;
+  }) {
     setRetrying(true);
     setGenerationFailureMessage(null);
     try {
@@ -1152,6 +1257,10 @@ export function HostSetupPickClient({
             body.attempt,
           );
         }
+        if (typeof body.attempt === "number" && typeof opts?.saved === "number") {
+          setResumedAttempt({ attempt: body.attempt, saved: opts.saved });
+        }
+        startFreshBuild({ keepClock: opts?.auto === true });
         setState("generating");
       }
     } catch (err) {
@@ -1220,13 +1329,126 @@ export function HostSetupPickClient({
     shouldAutoResumeGeneration(durableProgress) &&
     autoResumedAttemptsRef.current.has(durableProgress.attempt) &&
     generationFailureMessage === null;
+  // Same words as the tracker's headline once the new attempt reports, so
+  // the line doesn't change its story at the handoff.
   const autoResumeStatusLine = autoResumeLoading
-    ? `Continuing with ${durableProgress!.certifiedCount} certified ${
-        durableProgress!.certifiedCount === 1 ? "choice" : "choices"
-      }; ${durableProgress!.remainingCount} ${
-        durableProgress!.remainingCount === 1 ? "choice" : "choices"
-      } still needed.`
+    ? durableProgress!.certifiedCount === 0
+      ? `Starting over after a pause. ${durableProgress!.remainingCount} still needed`
+      : `Picking up after a pause: ${durableProgress!.certifiedCount} saved, ${durableProgress!.remainingCount} still needed`
     : null;
+
+  // ── live tracker counts: broadcast first, polled job row as fallback ──
+  // Right after Retry the poll can still return the old attempt's row
+  // ("needs attention", old counts); ignore it until it catches up.
+  const trackerDurable =
+    durableProgress !== null &&
+    durableProgress.attempt >= currentGenerationAttemptRef.current
+      ? durableProgress
+      : null;
+  const currentLive =
+    liveCounts && liveCounts.attempt >= (trackerDurable?.attempt ?? 0)
+      ? liveCounts
+      : null;
+  const liveServerMs = currentLive ? Date.parse(currentLive.serverNow) : NaN;
+  const durableServerMs = trackerDurable?.heartbeatAt
+    ? Date.parse(trackerDurable.heartbeatAt)
+    : NaN;
+  const num = (n: unknown) =>
+    typeof n === "number" && Number.isFinite(n) ? n : undefined;
+  // Whichever source the server stamped more recently sets the phase. In the
+  // same phase the counts only climb, so take the higher of the two.
+  const durableIsNewer =
+    trackerDurable !== null &&
+    (currentLive === null ||
+      (Number.isFinite(durableServerMs) &&
+        (!Number.isFinite(liveServerMs) || durableServerMs > liveServerMs)));
+  const trackerTarget =
+    num(currentLive?.target) ?? num(trackerDurable?.targetCount) ?? 20;
+  const trackerPhase: GenerationPhase =
+    (durableIsNewer ? trackerDurable?.phase : currentLive?.phase) ??
+    genPhase ??
+    "queued";
+  const samePhase =
+    currentLive !== null &&
+    trackerDurable !== null &&
+    currentLive.phase === trackerDurable.phase;
+  const pickCount = (live: unknown, durable: unknown) =>
+    samePhase
+      ? Math.max(num(live) ?? 0, num(durable) ?? 0)
+      : ((durableIsNewer ? num(durable) : num(live)) ?? num(durable) ?? 0);
+  const trackerWritten = pickCount(currentLive?.written, trackerDurable?.writtenCount);
+  const serverCertified = pickCount(
+    currentLive?.certified,
+    trackerDurable?.certifiedCount,
+  );
+  // On a first run, cards only land once certified, so the card count is a
+  // floor. But on an "Another 20" reroll the OLD cards stay until the single
+  // swap at the end, so after a reload they'd read as "checking done 20/20"
+  // while the new batch is still being written. Only trust the cards once
+  // the server says this attempt has certified something.
+  const trackerCertified =
+    serverCertified >= 1 ? Math.max(serverCertified, questions.length) : 0;
+  const trackerPhotos = Math.max(
+    num(trackerDurable?.imageCount) ?? 0,
+    serverCertified >= 1 ? questions.filter((q) => q.image_url).length : 0,
+  );
+  const sawRealCounts = currentLive !== null || trackerDurable !== null;
+  useEffect(() => {
+    if (joinedMidway !== null || !sawRealCounts) return;
+    setJoinedMidway(
+      trackerWritten > 2 ||
+        trackerCertified > 0 ||
+        (trackerPhase !== "queued" && trackerPhase !== "writing"),
+    );
+  }, [joinedMidway, sawRealCounts, trackerWritten, trackerCertified, trackerPhase]);
+  // Did this screen see the current attempt write a full first batch before
+  // anything passed? Then every later gap is questions that failed the
+  // check. After a reload mid-resume it can't know (some were never
+  // written), so the headline won't claim failures.
+  const [fullRoundSeenAttempt, setFullRoundSeenAttempt] = useState<number | null>(null);
+  const liveClean = num(currentLive?.clean);
+  const sawFullFirstRound =
+    (trackerPhase === "writing" || trackerPhase === "checking") &&
+    trackerWritten >= trackerTarget &&
+    serverCertified === 0 &&
+    // A live update must confirm nothing is clean yet: on a reroll the
+    // cards read 0 the whole way, so after a reload into a refill round the
+    // polled row alone (written 20, certified 0) looked like round one.
+    liveClean === 0;
+  useEffect(() => {
+    if (sawFullFirstRound) setFullRoundSeenAttempt(currentGenerationAttemptRef.current);
+  }, [sawFullFirstRound]);
+  const genProgress: HostGenProgress = {
+    phase: trackerPhase,
+    target: trackerTarget,
+    written: trackerWritten,
+    certified: trackerCertified,
+    // The server's honest clean count (broadcast only). It only climbs within
+    // an attempt, so a broadcast from the previous phase is still right.
+    clean: num(currentLive?.clean),
+    photos: trackerPhotos,
+    // Pass counts only exist on the broadcast, and only mean anything while
+    // that broadcast's phase is the one on screen.
+    ...(currentLive && currentLive.phase === trackerPhase
+      ? {
+          checked: num(currentLive.checked),
+          checkTotal: num(currentLive.checkTotal),
+          // The server's own count of how many failed the round that last
+          // finished. The screen never works this out itself.
+          failedLastRound: num(currentLive.failedLastRound),
+        }
+      : {}),
+    startedAt: buildStartedAt,
+    joinedMidway: joinedMidway === true,
+    lastSignalAt,
+    ...(resumedAttempt &&
+    resumedAttempt.attempt === currentGenerationAttemptRef.current
+      ? { resumedWith: resumedAttempt.saved }
+      : {}),
+    // Picks "Some failed the check" over "Writing N more"; never a number.
+    failuresKnown:
+      sawFullFirstRound || fullRoundSeenAttempt === currentGenerationAttemptRef.current,
+  };
 
   // ── mapped data for the components ───────────────────────────────────
   const loadingList = useMemo<HostGenLoadingQuestion[]>(
@@ -1280,7 +1502,14 @@ export function HostSetupPickClient({
           shellTitle={`generation paused · ${categoryName.toLowerCase()}`}
           topic={categoryName}
           message={generationFailureMessage}
-          onRetry={() => void handleRetryGeneration()}
+          onRetry={() =>
+            void handleRetryGeneration({
+              saved:
+                durableProgress?.phase === "needs_attention"
+                  ? durableProgress.certifiedCount
+                  : undefined,
+            })
+          }
           onEnterManually={handleEnterManually}
           onBack={() => router.push(`/host/setup/${nightId}`)}
           isRetrying={retrying}
@@ -1292,14 +1521,12 @@ export function HostSetupPickClient({
           topic={categoryName}
           loaded={loadingList}
           total={20}
+          progress={genProgress}
           statusLine={
             autoResumeStatusLine ??
-            durableProgress?.statusLine ??
-            (genPhase === "checking"
-              ? "Fact-checking every answer for accuracy — this part takes a moment."
-              : genPhase === "writing"
-                ? "Writing your questions…"
-                : undefined)
+            (durableProgress?.phase === "needs_attention"
+              ? durableProgress.statusLine
+              : undefined)
           }
           onCancel={() => router.push(`/host/setup/${nightId}`)}
           onBack={() => router.push(`/host/setup/${nightId}`)}
@@ -1416,9 +1643,10 @@ export function HostSetupPickClient({
           role="status"
           data-testid="host-board-sync-required"
           style={{
+            // Phone: above the pinned Lock bar, not on top of it.
             position: "fixed",
             left: 20,
-            bottom: 20,
+            bottom: phoneLayout ? PICK_LOCK_PHONE_BOTTOM : 20,
             zIndex: 60,
             padding: "10px 14px",
             borderRadius: 10,
@@ -1437,9 +1665,11 @@ export function HostSetupPickClient({
         <div
           role="alert"
           style={{
+            // Above the Lock button: the phone's pinned bar, or the desktop
+            // sidebar foot (same bottom-right corner as this toast).
             position: "fixed",
             right: 20,
-            bottom: 20,
+            bottom: phoneLayout ? PICK_LOCK_PHONE_BOTTOM : PICK_LOCK_DESKTOP_CLEARANCE,
             zIndex: 60,
             padding: "12px 16px",
             borderRadius: 10,

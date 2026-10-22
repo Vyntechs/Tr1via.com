@@ -44,6 +44,18 @@ export interface VerifiedQuestionClassification {
   rejected: Array<CollectVerifiedRejectedCandidate & { index: number }>;
 }
 
+/** Live progress hooks handed to each `generate` call. */
+export interface CollectVerifiedWriteProgress {
+  /** Questions written so far in THIS batch (raw count from the writer). */
+  onWritten: (writtenInBatch: number) => void;
+}
+
+/** Live progress hooks handed to each `verify` call. */
+export interface CollectVerifiedCheckProgress {
+  /** Questions checked so far in this pass, out of the batch size. */
+  onChecked: (checkedSoFar: number, total: number) => void;
+}
+
 export interface CollectVerifiedOptions {
   target: number;
   maxRounds: number;
@@ -56,11 +68,28 @@ export interface CollectVerifiedOptions {
    * `need` is how many MORE clean questions are still required, so a refill round
    * can request just the shortfall instead of a whole new batch.
    */
-  generate: (avoidPrompts: string[], need: number) => Promise<GeneratedQuestion[]>;
+  generate: (
+    avoidPrompts: string[],
+    need: number,
+    progress: CollectVerifiedWriteProgress,
+  ) => Promise<GeneratedQuestion[]>;
   verify: (
     questions: GeneratedQuestion[],
     passIndex: number,
+    progress: CollectVerifiedCheckProgress,
   ) => Promise<AnswerVerdict[]>;
+  /**
+   * Optional: live writing count across the whole run. A refill round
+   * continues from what is already certified (`certified + writtenInBatch`),
+   * capped at `target`, so the number the host sees never jumps backwards.
+   */
+  onWritten?: (count: number) => void;
+  /**
+   * Optional: live checking count. `pass` is 1 for the blind pass (index 0)
+   * and 2 for the adversarial pass; the two run concurrently, so each
+   * reports its own climb over the same `total`.
+   */
+  onChecked?: (checked: number, total: number, pass: 1 | 2) => void;
   /** Persist each newly accepted batch before the next refill round starts. */
   onAccepted?: (questions: GeneratedQuestion[]) => void | Promise<void>;
   /** Optional: observe per-round verification quality. No-op if omitted. */
@@ -83,7 +112,13 @@ export async function collectVerifiedQuestions(
     // Refill rounds only ask for the remaining gap, so topping 19 -> 20 costs
     // one extra question + its verify passes, not a whole fresh batch.
     const need = opts.target - clean.length;
-    const batch = await opts.generate([...seenPrompts], need);
+    const certifiedSoFar = clean.length;
+    const batch = await opts.generate([...seenPrompts], need, {
+      onWritten: (writtenInBatch) =>
+        opts.onWritten?.(
+          Math.min(opts.target, certifiedSoFar + Math.max(0, writtenInBatch)),
+        ),
+    });
     if (batch.length === 0) {
       await opts.onRoundComplete?.({
         round: round + 1,
@@ -101,7 +136,10 @@ export async function collectVerifiedQuestions(
     // the same anchored model question twice.
     const passResults = await Promise.all(
       Array.from({ length: passes }, (_, passIndex) =>
-        opts.verify(batch, passIndex),
+        opts.verify(batch, passIndex, {
+          onChecked: (checked, total) =>
+            opts.onChecked?.(checked, total, passIndex === 0 ? 1 : 2),
+        }),
       ),
     );
     const classification = classifyVerifiedQuestions(batch, passResults);

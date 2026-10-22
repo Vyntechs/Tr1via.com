@@ -76,6 +76,10 @@ import {
   type QuestionGenerationJobRow,
 } from "@/lib/ai/generation-job";
 import { createGenerationHeartbeat } from "@/lib/ai/generation-heartbeat";
+import {
+  createGenerationProgressReporter,
+  writtenAfterBatch,
+} from "@/lib/ai/generation-progress";
 import { rerollPlan } from "@/lib/host/rerollPlan";
 import {
   prepareQuestionAssignmentsForCategory,
@@ -458,24 +462,81 @@ async function runGenerationJob(opts: {
   let phase: GenerationPhase = storedQuestions.length > 0 ? "checking" : "writing";
   let writtenCount = storedQuestions.length;
   let certifiedCount = 0;
+  // Questions this build holds as clean, on every path. On a first build it
+  // matches certifiedCount; on a reroll certifiedCount stays 0 until the
+  // final swap, so the host's "Replacing N" and refill bar read this instead.
+  let cleanCount = 0;
   const durableHeartbeat = createGenerationHeartbeat(() =>
     writeWorkerProgress({ phase }),
   );
-  const emitProgress = async () => {
-    await durableHeartbeat.beat();
+  // Live counts: the writer streams "N written" and the checker reports each
+  // finished chunk. The reporter throttles the durable `written_count` write
+  // (one per 1.5s, latest value wins) and every progress broadcast carries
+  // its counts, so the host sees real movement instead of a 90s freeze.
+  // The throttled write is fenced like every other progress write: if this
+  // attempt lost its row, remember it so live broadcasts stop at once instead
+  // of a stale worker talking over the new attempt for a whole writer call.
+  let liveProgressSuperseded = false;
+  // Set once the build's live signals stop (success or failure). A verify
+  // chunk still running after a sibling threw would otherwise broadcast a
+  // late "checking" count over the error or the next attempt.
+  let liveSignalsStopped = false;
+  const liveProgress = createGenerationProgressReporter({
+    target: 20,
+    persistWritten: (written) =>
+      writeWorkerProgress({ phase: "writing", written_count: written }).catch(
+        (err: unknown) => {
+          if (err instanceof GenerationAttemptSupersededError) {
+            liveProgressSuperseded = true;
+          }
+          throw err;
+        },
+      ),
+  });
+  liveProgress.setCounts({ written: writtenCount, certified: certifiedCount });
+  const broadcastProgress = () => {
+    if (liveProgressSuperseded || liveSignalsStopped) {
+      return Promise.resolve(undefined);
+    }
     const payload: CategoryProgressPayload = {
       serverNow: new Date().toISOString(),
       phase,
       attempt: opts.attempt,
+      ...liveProgress.counts(),
     };
     return broadcastToCategory(opts.categoryId, "progress", payload).catch(
       () => undefined,
     );
   };
+  // For the timed heartbeat only. A step that changes the phase writes the
+  // row itself and then calls broadcastProgress() straight away: going
+  // through the heartbeat wait first let the next step change `phase` before
+  // the send, so a round end's "repairing" went out as "writing".
+  const emitProgress = async () => {
+    await durableHeartbeat.beat();
+    return broadcastProgress();
+  };
+  const onWritten = (count: number) => {
+    liveProgress.reportWritten(count);
+    void broadcastProgress();
+  };
+  const onChecked = (checked: number, total: number, pass: 1 | 2) => {
+    liveProgress.reportChecked(checked, total, pass);
+    void broadcastProgress();
+  };
   void emitProgress().catch(() => undefined);
+  // Runs until the photo loop ends, not just until writing/checking ends:
+  // photos can take 30s+ with only one signal per photo, and the host's
+  // "Live" light counts on this beat (LIVE_WINDOW_MS in genProgress.ts).
   const heartbeat = setInterval(() => {
     void emitProgress().catch(() => undefined);
   }, GENERATION_HEARTBEAT_MS);
+  const stopLiveSignals = async () => {
+    liveSignalsStopped = true;
+    clearInterval(heartbeat);
+    await liveProgress.settle();
+    await durableHeartbeat.drain();
+  };
 
   // Accumulate real token spend across every generate + verify call this job
   // makes, so prod logs show the TRUE per-category cost — including refill
@@ -514,6 +575,21 @@ async function runGenerationJob(opts: {
       }).catch(() => undefined);
     }
     certifiedCount += batch.length;
+    cleanCount = Math.max(cleanCount, certifiedCount);
+    // This runs at a round's end: say "repairing" now, so a heartbeat in
+    // the gap before onRoundComplete can't send the new clean count under
+    // the old "checking" phase.
+    phase = certifiedCount >= 20 ? "images" : "repairing";
+    liveProgress.setCounts({
+      certified: certifiedCount,
+      clean: cleanCount,
+      written: Math.max(writtenCount, certifiedCount),
+      // The clean count just moved, so the last round's failure number is
+      // no longer the newest. Clearing it here (not when the first check
+      // pass ends) keeps the headline steady through the whole check;
+      // onRoundComplete sets this round's own number right after.
+      failedLastRound: null,
+    });
     await writeWorkerProgress({
       phase: certifiedCount >= 20 ? "images" : "repairing",
       certified_count: certifiedCount,
@@ -522,290 +598,377 @@ async function runGenerationJob(opts: {
   };
 
   let generated: GeneratedQuestion[];
+  let inserted: Array<{
+    id: string;
+    prompt: string;
+    q: GeneratedQuestion;
+    imageUrl: string | null;
+  }> = [];
+  let autoPickAssignments: Array<{ id: string; pointValue: number }> | null = null;
+  // Outer try: the heartbeat and live broadcasts run through writing,
+  // checking AND photos, and stop on every exit (success or throw) before
+  // the terminal write below.
   try {
-    await writeWorkerProgress({
-      phase,
-      written_count: writtenCount,
-      certified_count: certifiedCount,
-    });
-    const verifyCandidateBatch = async (
-      questions: GeneratedQuestion[],
-      passIndex: number,
-    ) => {
-      phase = "checking";
-      await writeWorkerProgress({ phase: "checking" });
-      void emitProgress().catch(() => undefined);
-      return verifyAnswers(questions, {
-        topic: opts.topic,
-        mode: passIndex === 0 ? "blind" : "adversarial",
-        onUsage: trackUsage,
-      });
-    };
-
-    let certifiedStoredQuestions: typeof storedQuestions = [];
-    let rejectedStoredPrompts: string[] = [];
-    if (storedQuestions.length > 0) {
-      const storedPassResults = await Promise.all(
-        [0, 1].map((passIndex) =>
-          verifyCandidateBatch(
-            storedQuestions.map((item) => item.q),
-            passIndex,
-          ),
-        ),
-      );
-      const storedClassification = classifyVerifiedQuestions(
-        storedQuestions.map((item) => item.q),
-        storedPassResults,
-      );
-      const acceptedStoredIndexes = new Set(
-        storedClassification.acceptedIndexes,
-      );
-      certifiedStoredQuestions = storedQuestions.filter((_, index) =>
-        acceptedStoredIndexes.has(index),
-      );
-      const rejectedStoredIds = storedClassification.rejected.map(
-        ({ index }) => storedQuestions[index]!.id,
-      );
-      rejectedStoredPrompts = storedClassification.rejected.map(
-        ({ prompt }) => prompt,
-      );
-
-      if (rejectedStoredIds.length > 0) {
-        const deletion = await commitGenerationQuestions(rpcClient, {
-          categoryId: opts.categoryId,
-          attempt: opts.attempt,
-          questions: [],
-          deleteIds: rejectedStoredIds,
-        });
-        if (!deletion) throw new GenerationAttemptSupersededError();
-      }
-      insertedQuestions.push(...certifiedStoredQuestions);
-      certifiedCount = certifiedStoredQuestions.length;
-      imageCount = certifiedStoredQuestions.filter((item) =>
-        Boolean(item.imageUrl),
-      ).length;
-      writtenCount = certifiedCount;
-      phase = certifiedCount >= 20 ? "images" : "repairing";
-      qualityReport.recordRound({
-        round: 0,
-        requested: storedQuestions.length,
-        generated: storedQuestions.length,
-        accepted: certifiedStoredQuestions.length,
-        rejected: storedClassification.rejected.map(({ prompt, reasons }) => ({
-          prompt,
-          reasons,
-        })),
-      });
+    try {
       await writeWorkerProgress({
         phase,
         written_count: writtenCount,
         certified_count: certifiedCount,
       });
-    }
-
-    generated = await collectVerifiedQuestions({
-      target: 20,
-      initialClean: certifiedStoredQuestions.map((item) => item.q),
-      // Up to 4 rounds to top back up to 20. Almost always 1; an occasional
-      // rejected question takes a cheap 2nd round. The bound caps worst-case
-      // latency if the model keeps producing borderline answers.
-      maxRounds: 4,
-      verifyPasses: 2,
-      generate: async (avoid, need) => {
-        phase = "writing";
-        await writeWorkerProgress({ phase: "writing" });
-        void emitProgress().catch(() => undefined);
-        const batch = await generateQuestions({
+      const verifyCandidateBatch = async (
+        questions: GeneratedQuestion[],
+        passIndex: number,
+        progress?: { onChecked: (checked: number, total: number) => void },
+      ) => {
+        phase = "checking";
+        // Seed this pass at 0 so the bar's denominator (batch x 2 passes) is
+        // set before the first chunk lands and never grows afterwards.
+        liveProgress.reportChecked(0, questions.length, passIndex === 0 ? 1 : 2);
+        await writeWorkerProgress({ phase: "checking" });
+        void broadcastProgress();
+        const verdicts = await verifyAnswers(questions, {
           topic: opts.topic,
-          flavor: opts.flavor,
-          difficulty: opts.difficulty,
-          // Refill rounds request just the gap (+1 buffer to absorb a re-reject
-          // without forcing yet another round), capped at the full target.
-          count: Math.min(20, need + 1),
-          themeKey: opts.themeKey,
-          avoidPrompts: [
-            ...(reroll?.avoidPrompts ?? []),
-            ...rejectedStoredPrompts,
-            ...avoid,
-          ],
+          mode: passIndex === 0 ? "blind" : "adversarial",
           onUsage: trackUsage,
-          onRejectedCandidate: (event) => {
-            qualityReport.recordInvalidCandidate(
-              event.prompt ?? `candidate ${event.index}`,
-              event.issues,
-            );
+          onChunkChecked: (checked, total) => {
+            if (progress) progress.onChecked(checked, total);
+            else onChecked(checked, total, passIndex === 0 ? 1 : 2);
           },
         });
-        writtenCount = Math.min(20, certifiedCount + batch.length);
-        phase = "checking";
-        await writeWorkerProgress({
-          phase: "checking",
-          written_count: writtenCount,
+        return verdicts;
+      };
+
+      let certifiedStoredQuestions: typeof storedQuestions = [];
+      let rejectedStoredPrompts: string[] = [];
+      if (storedQuestions.length > 0) {
+        const storedPassResults = await Promise.all(
+          [0, 1].map((passIndex) =>
+            verifyCandidateBatch(
+              storedQuestions.map((item) => item.q),
+              passIndex,
+            ),
+          ),
+        );
+        const storedClassification = classifyVerifiedQuestions(
+          storedQuestions.map((item) => item.q),
+          storedPassResults,
+        );
+        const acceptedStoredIndexes = new Set(
+          storedClassification.acceptedIndexes,
+        );
+        certifiedStoredQuestions = storedQuestions.filter((_, index) =>
+          acceptedStoredIndexes.has(index),
+        );
+        const rejectedStoredIds = storedClassification.rejected.map(
+          ({ index }) => storedQuestions[index]!.id,
+        );
+        rejectedStoredPrompts = storedClassification.rejected.map(
+          ({ prompt }) => prompt,
+        );
+
+        if (rejectedStoredIds.length > 0) {
+          const deletion = await commitGenerationQuestions(rpcClient, {
+            categoryId: opts.categoryId,
+            attempt: opts.attempt,
+            questions: [],
+            deleteIds: rejectedStoredIds,
+          });
+          if (!deletion) throw new GenerationAttemptSupersededError();
+        }
+        insertedQuestions.push(...certifiedStoredQuestions);
+        certifiedCount = certifiedStoredQuestions.length;
+        imageCount = certifiedStoredQuestions.filter((item) =>
+          Boolean(item.imageUrl),
+        ).length;
+        // Never lower the written count the host was shown: the rejected
+        // stored questions were written, they just failed the re-check, and
+        // the refill round below replaces them (its streamed count climbs
+        // from certifiedCount, so it only moves this once it passes it).
+        writtenCount = Math.max(writtenCount, certifiedCount);
+        cleanCount = certifiedCount;
+        liveProgress.setCounts({
+          written: writtenCount,
+          certified: certifiedCount,
+          clean: cleanCount,
+          // The host's "N failed the re-check" comes only from this.
+          failedLastRound: rejectedStoredIds.length,
         });
-        void emitProgress().catch(() => undefined);
-        return batch;
-      },
-      verify: verifyCandidateBatch,
-      onRoundComplete: async (event) => {
+        liveProgress.clearChecked();
+        phase = certifiedCount >= 20 ? "images" : "repairing";
         qualityReport.recordRound({
-          round: event.round,
-          requested: event.requested,
-          generated: event.generated,
-          accepted: event.accepted,
-          rejected: event.rejected.map((item) => ({
-            prompt: item.prompt,
-            reasons: item.reasons,
+          round: 0,
+          requested: storedQuestions.length,
+          generated: storedQuestions.length,
+          accepted: certifiedStoredQuestions.length,
+          rejected: storedClassification.rejected.map(({ prompt, reasons }) => ({
+            prompt,
+            reasons,
           })),
         });
-        if (certifiedCount < 20) {
-          phase = "repairing";
-          await writeWorkerProgress({
-            phase: "repairing",
-            written_count: writtenCount,
-            certified_count: certifiedCount,
-          });
-        }
-      },
-      // First runs checkpoint every certified batch. Rerolls remain atomic so
-      // the host's complete current pool never mixes with a partial new one.
-      onAccepted: opts.keptIds ? undefined : persistCertifiedBatch,
-    });
-  } finally {
-    clearInterval(heartbeat);
-    await durableHeartbeat.drain();
-  }
-  console.log(
-    `[generation-cost] category=${opts.categoryId} kept=${generated?.length ?? 0} ` +
-      `llmCalls=${cost.calls} tokensIn=${cost.tokensIn} tokensOut=${cost.tokensOut} ` +
-      `estUsd=${cost.usd.toFixed(4)}`,
-  );
-  if (generated.length < MIN_PLAYABLE_QUESTIONS) {
-    throw new Error(
-      `${MIN_PLAYABLE_QUESTIONS - generated.length} certified question choices are still needed`,
-    );
-  }
-  qualityReport.recordAcceptedQuestions(generated);
-
-  // Step 2: insert all rows up front so the UI can render them immediately.
-  // Photos backfill afterwards.
-  if (opts.keptIds) {
-    await persistCertifiedBatch(generated);
-  }
-  const inserted = insertedQuestions.map(({ id, q, imageUrl }) => ({
-    id,
-    prompt: q.prompt,
-    q,
-    imageUrl,
-  }));
-  const usedImageUrls = seedCategoryImageUrls([
-    ...existingCategoryImageUrls,
-    ...inserted.map((row) => row.imageUrl),
-  ]);
-
-  // Pick BEFORE photos on the auto-build path. The founder "build a full game"
-  // tool keeps only 7 of the 20 generated questions, so photographing all 20
-  // then discarding 13 does ~3x the Pexels work for nothing — and 12 categories
-  // doing that at once overruns the rate limit (photos silently drop). Picking
-  // first lets us fetch photos for just the 7 keepers: ~3x fewer lookups, under
-  // the limit, and FASTER (less work, no added wait). Manual review still
-  // photographs all 20 so the host's swap UI has the full pool.
-  phase = "images";
-  await writeWorkerProgress({
-    phase: "images",
-    certified_count: generated.length,
-  });
-  let photoTargets = inserted
-    .filter((row) => !row.imageUrl)
-    .map((row) => ({ id: row.id, q: row.q }));
-  let autoPickAssignments: Array<{ id: string; pointValue: number }> | null = null;
-  if (opts.autoPick) {
-    const ids = selectSpreadQuestionIds(
-      inserted.map((row) => ({
-        id: row.id,
-        difficulty: row.q.difficulty,
-      })),
-      7,
-    );
-    const result = await prepareQuestionAssignmentsForCategory(opts.categoryId, ids);
-    if (!result.ok) {
-      throw new Error(`auto-pick failed: ${result.error}`);
-    }
-    autoPickAssignments = result.picked;
-    const keep = new Set(ids);
-    photoTargets = photoTargets.filter((t) => keep.has(t.id));
-  }
-  qualityReport.recordImageTargets(photoTargets.length);
-
-  // Step 3: attach photos. Sequential within a category because Pexels' free
-  // tier is 200 req/hr — bursting risks brittleness without measurable
-  // user-side latency benefit (the UI is already populated).
-  imageCount = inserted.filter((row) => Boolean(row.imageUrl)).length;
-  for (const { id, q } of photoTargets) {
-    if (Date.now() - opts.startedAtMs > PHOTO_STOP_AFTER_MS) {
-      // Out of time. Photos are optional: keep the ones attached so far and
-      // finish below rather than being cut off by the platform limit.
-      console.warn("[generate] running out of time; stopping photo attach");
-      break;
-    }
-    try {
-      const photo = await autoAttachPhoto(q, {
-        topic: opts.topic,
-        excludeImageUrls: usedImageUrls,
-      });
-      const imageUrl = photo.imageUrl;
-      if (imageUrl) {
-        const outcome = await commitGenerationPhoto(rpcClient, {
-          categoryId: opts.categoryId,
-          attempt: opts.attempt,
-          questionId: id,
-          imageUrl,
-          attribution: photo.attribution,
-          source: "pexels",
+        await writeWorkerProgress({
+          phase,
+          written_count: writtenCount,
+          certified_count: certifiedCount,
         });
-        const current = await settleGenerationPhotoCommit(outcome, {
-          onApplied: async () => {
-            recordCategoryImageUrl(usedImageUrls, imageUrl);
-            qualityReport.recordImageAttached();
-            imageCount += 1;
-            await writeWorkerProgress({
-              phase: "images",
-              image_count: imageCount,
+        // Broadcast right away: the host page refetches its cards on a
+        // "repairing" progress event, so the stored questions just deleted
+        // above leave the screen instead of inflating its count.
+        void broadcastProgress();
+      }
+
+      generated = await collectVerifiedQuestions({
+        target: 20,
+        initialClean: certifiedStoredQuestions.map((item) => item.q),
+        // Up to 4 rounds to top back up to 20. Almost always 1; an occasional
+        // rejected question takes a cheap 2nd round. The bound caps worst-case
+        // latency if the model keeps producing borderline answers.
+        maxRounds: 4,
+        verifyPasses: 2,
+        generate: async (avoid, need, progress) => {
+          phase = "writing";
+          liveProgress.clearChecked();
+          // collect holds exactly `20 - need` clean questions at this point.
+          cleanCount = Math.max(0, 20 - need);
+          liveProgress.setCounts({ clean: cleanCount });
+          await writeWorkerProgress({ phase: "writing" });
+          void broadcastProgress();
+          let batch: GeneratedQuestion[];
+          try {
+            batch = await generateQuestions({
+              topic: opts.topic,
+              flavor: opts.flavor,
+              difficulty: opts.difficulty,
+              // Refill rounds request just the gap (+1 buffer to absorb a re-reject
+              // without forcing yet another round), capped at the full target.
+              count: Math.min(20, need + 1),
+              themeKey: opts.themeKey,
+              avoidPrompts: [
+                ...(reroll?.avoidPrompts ?? []),
+                ...rejectedStoredPrompts,
+                ...avoid,
+              ],
+              onUsage: trackUsage,
+              onRejectedCandidate: (event) => {
+                qualityReport.recordInvalidCandidate(
+                  event.prompt ?? `candidate ${event.index}`,
+                  event.issues,
+                );
+              },
+              onWritten: progress.onWritten,
             });
-          },
-          fence: fenceSideEffect,
-          broadcast: () =>
-            broadcastToCategory(opts.categoryId, "photo_attached", {
-              serverNow: new Date().toISOString(),
-              attempt: opts.attempt,
-              questionId: id,
-              imageUrl,
-              attribution: photo.attribution,
-            }).catch(() => undefined),
-        });
-        if (!current) throw new GenerationAttemptSupersededError();
-        continue;
-      }
-      await fenceSideEffect();
-      await broadcastToCategory(opts.categoryId, "photo_attached", {
-        serverNow: new Date().toISOString(),
-        attempt: opts.attempt,
-        questionId: id,
-        imageUrl: photo.imageUrl,
-        attribution: photo.attribution,
-      }).catch(() => undefined);
-    } catch (err) {
-      if (err instanceof GenerationAttemptSupersededError) throw err;
-      if (err instanceof PexelsRateLimitError) {
-        // Don't blow up the whole batch — questions without images are
-        // still usable. Stop attaching to avoid hammering Pexels further.
-        console.warn("[generate] Pexels rate limited; stopping photo attach");
-        break;
-      }
-      console.warn(
-        "[generate] photo attach failed for question:",
-        err instanceof Error ? err.message : err,
+          } finally {
+            // Stop any queued throttled write so it can't land after the
+            // authoritative "checking" write below and flip the phase back.
+            await liveProgress.settle();
+          }
+          // `20 - need` is what collect already holds as clean on EVERY path —
+          // on a reroll `certifiedCount` stays 0 until the final atomic insert,
+          // so using it here would drop the count after a refill round.
+          //
+          // Never lower it within this round, though: the stream already
+          // counted questions the schema check then dropped (and the
+          // max_tokens cut-off), so `batch.length` can be below what the host
+          // was just shown. Those questions were written; they just failed
+          // the format check, and the next refill round replaces them.
+          writtenCount = writtenAfterBatch({
+            shown: liveProgress.counts().written,
+            need,
+            batchLength: batch.length,
+            target: 20,
+          });
+          liveProgress.setCounts({ written: writtenCount });
+          phase = "checking";
+          await writeWorkerProgress({
+            phase: "checking",
+            written_count: writtenCount,
+          });
+          void broadcastProgress();
+          return batch;
+        },
+        verify: verifyCandidateBatch,
+        onWritten,
+        onChecked,
+        onRoundComplete: async (event) => {
+          qualityReport.recordRound({
+            round: event.round,
+            requested: event.requested,
+            generated: event.generated,
+            accepted: event.accepted,
+            rejected: event.rejected.map((item) => ({
+              prompt: item.prompt,
+              reasons: item.reasons,
+            })),
+          });
+          // Clean before this round, plus what it just accepted.
+          cleanCount = Math.min(
+            20,
+            Math.max(0, 20 - event.requested) + event.accepted,
+          );
+          // The real number that failed this round's check. It rides on
+          // every update until the next round ends, so the host can name it.
+          liveProgress.setCounts({
+            clean: cleanCount,
+            failedLastRound: event.rejected.length,
+          });
+          if (certifiedCount < 20) {
+            phase = "repairing";
+            await writeWorkerProgress({
+              phase: "repairing",
+              written_count: writtenCount,
+              certified_count: certifiedCount,
+            });
+            // Tell the host now (with the honest clean count) instead of
+            // waiting up to one heartbeat.
+            void broadcastProgress();
+          }
+        },
+        // First runs checkpoint every certified batch. Rerolls remain atomic so
+        // the host's complete current pool never mixes with a partial new one.
+        onAccepted: opts.keptIds ? undefined : persistCertifiedBatch,
+      });
+    } finally {
+      // Stop any queued throttled `written` write so it can't land after the
+      // "images" phase write below and flip the phase back to writing.
+      await liveProgress.settle();
+    }
+    console.log(
+      `[generation-cost] category=${opts.categoryId} kept=${generated?.length ?? 0} ` +
+        `llmCalls=${cost.calls} tokensIn=${cost.tokensIn} tokensOut=${cost.tokensOut} ` +
+        `estUsd=${cost.usd.toFixed(4)}`,
+    );
+    if (generated.length < MIN_PLAYABLE_QUESTIONS) {
+      throw new Error(
+        `${MIN_PLAYABLE_QUESTIONS - generated.length} certified question choices are still needed`,
       );
     }
+    qualityReport.recordAcceptedQuestions(generated);
+
+    // Step 2: insert all rows up front so the UI can render them immediately.
+    // Photos backfill afterwards.
+    if (opts.keptIds) {
+      await persistCertifiedBatch(generated);
+    }
+    inserted = insertedQuestions.map(({ id, q, imageUrl }) => ({
+      id,
+      prompt: q.prompt,
+      q,
+      imageUrl,
+    }));
+    const usedImageUrls = seedCategoryImageUrls([
+      ...existingCategoryImageUrls,
+      ...inserted.map((row) => row.imageUrl),
+    ]);
+
+    // Pick BEFORE photos on the auto-build path. The founder "build a full game"
+    // tool keeps only 7 of the 20 generated questions, so photographing all 20
+    // then discarding 13 does ~3x the Pexels work for nothing — and 12 categories
+    // doing that at once overruns the rate limit (photos silently drop). Picking
+    // first lets us fetch photos for just the 7 keepers: ~3x fewer lookups, under
+    // the limit, and FASTER (less work, no added wait). Manual review still
+    // photographs all 20 so the host's swap UI has the full pool.
+    phase = "images";
+    await writeWorkerProgress({
+      phase: "images",
+      certified_count: generated.length,
+    });
+    // Tell the host now: a build that ran out of rounds short of 20 would
+    // otherwise keep saying "Writing N more", and a 20/20 build would sit
+    // on "checking 40/40" until the next poll or heartbeat.
+    void broadcastProgress();
+    let photoTargets = inserted
+      .filter((row) => !row.imageUrl)
+      .map((row) => ({ id: row.id, q: row.q }));
+    if (opts.autoPick) {
+      const ids = selectSpreadQuestionIds(
+        inserted.map((row) => ({
+          id: row.id,
+          difficulty: row.q.difficulty,
+        })),
+        7,
+      );
+      const result = await prepareQuestionAssignmentsForCategory(opts.categoryId, ids);
+      if (!result.ok) {
+        throw new Error(`auto-pick failed: ${result.error}`);
+      }
+      autoPickAssignments = result.picked;
+      const keep = new Set(ids);
+      photoTargets = photoTargets.filter((t) => keep.has(t.id));
+    }
+    qualityReport.recordImageTargets(photoTargets.length);
+
+    // Step 3: attach photos. Sequential within a category because Pexels' free
+    // tier is 200 req/hr — bursting risks brittleness without measurable
+    // user-side latency benefit (the UI is already populated).
+    imageCount = inserted.filter((row) => Boolean(row.imageUrl)).length;
+    for (const { id, q } of photoTargets) {
+      if (Date.now() - opts.startedAtMs > PHOTO_STOP_AFTER_MS) {
+        // Out of time. Photos are optional: keep the ones attached so far and
+        // finish below rather than being cut off by the platform limit.
+        console.warn("[generate] running out of time; stopping photo attach");
+        break;
+      }
+      try {
+        const photo = await autoAttachPhoto(q, {
+          topic: opts.topic,
+          excludeImageUrls: usedImageUrls,
+        });
+        const imageUrl = photo.imageUrl;
+        if (imageUrl) {
+          const outcome = await commitGenerationPhoto(rpcClient, {
+            categoryId: opts.categoryId,
+            attempt: opts.attempt,
+            questionId: id,
+            imageUrl,
+            attribution: photo.attribution,
+            source: "pexels",
+          });
+          const current = await settleGenerationPhotoCommit(outcome, {
+            onApplied: async () => {
+              recordCategoryImageUrl(usedImageUrls, imageUrl);
+              qualityReport.recordImageAttached();
+              imageCount += 1;
+              await writeWorkerProgress({
+                phase: "images",
+                image_count: imageCount,
+              });
+            },
+            fence: fenceSideEffect,
+            broadcast: () =>
+              broadcastToCategory(opts.categoryId, "photo_attached", {
+                serverNow: new Date().toISOString(),
+                attempt: opts.attempt,
+                questionId: id,
+                imageUrl,
+                attribution: photo.attribution,
+              }).catch(() => undefined),
+          });
+          if (!current) throw new GenerationAttemptSupersededError();
+          continue;
+        }
+        await fenceSideEffect();
+        await broadcastToCategory(opts.categoryId, "photo_attached", {
+          serverNow: new Date().toISOString(),
+          attempt: opts.attempt,
+          questionId: id,
+          imageUrl: photo.imageUrl,
+          attribution: photo.attribution,
+        }).catch(() => undefined);
+      } catch (err) {
+        if (err instanceof GenerationAttemptSupersededError) throw err;
+        if (err instanceof PexelsRateLimitError) {
+          // Don't blow up the whole batch — questions without images are
+          // still usable. Stop attaching to avoid hammering Pexels further.
+          console.warn("[generate] Pexels rate limited; stopping photo attach");
+          break;
+        }
+        console.warn(
+          "[generate] photo attach failed for question:",
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+  } finally {
+    await stopLiveSignals();
   }
 
   const reportSnapshot = qualityReport.snapshot(

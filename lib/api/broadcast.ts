@@ -88,10 +88,33 @@ export type GenerationPhase =
   | "ready"
   | "needs_attention";
 
-/** Payload for the `progress` heartbeat event. */
+/** Payload for the `progress` heartbeat event.
+ *  The count fields are optional (older workers omit them) and always REAL:
+ *  `written` climbs as the writer streams each question, `checked` climbs as
+ *  the fact-checker finishes each chunk of either pass. */
 export interface CategoryProgressPayload extends CategoryBroadcastPayload {
   phase: GenerationPhase;
   attempt: number;
+  /** Questions written so far (capped at target). */
+  written?: number;
+  /** Checks finished so far, summed over both passes (they run at the same
+   *  time, so this is the only count that never moves backward). */
+  checked?: number;
+  /** Checks this round needs in all: batch size x 2 passes. */
+  checkTotal?: number;
+  /** Questions that passed every check so far. */
+  certified?: number;
+  /** Questions the build holds as clean so far. Equals `certified` on a
+   *  first build; on a reroll it climbs while `certified` stays 0 until the
+   *  final swap. Drives the refill maths and "Replacing N", never the cards. */
+  clean?: number;
+  /** Deck size being built. */
+  target?: number;
+  /** How many questions failed the check in the round that last finished
+   *  (the resume re-check counts as a round). Sent from that round's end
+   *  through the next round's writing and checking. The host names a
+   *  failure number only from this field, never from its own counting. */
+  failedLastRound?: number;
 }
 
 /** Payload for the category generation completion event. */
