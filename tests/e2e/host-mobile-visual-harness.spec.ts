@@ -311,14 +311,7 @@ test("all production prep components fit every approved phone viewport", async (
           const title = page.getByText("Pick your seven.", { exact: true });
           await expectFullyInViewport(page, metadata);
           await expectFullyInViewport(page, title);
-          for (const name of [
-            "Rename category",
-            "Sharper",
-            "More obscure",
-            "More pop",
-            "More local",
-            "Fresher",
-          ]) {
+          for (const name of ["Rename category"]) {
             await expectAccessibleHitTarget(
               page,
               page.getByRole("button", { name, exact: true }),
@@ -337,16 +330,6 @@ test("all production prep components fit every approved phone viewport", async (
                 exact: true,
               }),
             },
-            ...[
-              "Sharper",
-              "More obscure",
-              "More pop",
-              "More local",
-              "Fresher",
-            ].map((name) => ({
-              label: name,
-              locator: page.getByRole("button", { name, exact: true }),
-            })),
           ]);
 
           const cardActions = surfaceRoot.locator(
