@@ -129,14 +129,6 @@ export interface HostGenPickProps {
   isRegenerating?: boolean;
 }
 
-const FLAVOR_OPTIONS = [
-  "Sharper",
-  "More obscure",
-  "More pop",
-  "More local",
-  "Fresher",
-] as const;
-
 const DEMO_QUESTIONS: HostGenPickQuestion[] = [
   { id: "1", seed: "pixar1", prompt: "What was Pixar's first feature film?", options: ["Toy Story", "A Bug's Life", "Monsters, Inc.", "Finding Nemo"], correctIndex: 0, difficulty: 1 },
   { id: "2", seed: "pixar2", prompt: "In Up, what is the name of Carl's dog?", options: ["Dug", "Buddy", "Russell", "Charles"], correctIndex: 0, difficulty: 2 },
@@ -315,31 +307,6 @@ function HostGenPickInner({
                 }}
               >
                 {d}
-              </button>
-            );
-          })}
-          <span style={{ width: 1, height: 16, background: t.line, margin: "0 4px" }} />
-          {FLAVOR_OPTIONS.map((s) => {
-            const active = flavor.includes(s);
-            return (
-              <button
-                key={s}
-                type="button"
-                onClick={() => {
-                  const next = active ? flavor.filter((f) => f !== s) : [...flavor, s];
-                  onRegenerate?.({ difficulty, flavor: next });
-                }}
-                disabled={isRegenerating}
-                style={{
-                  padding: "7px 12px", borderRadius: 99, border: `1px solid ${active ? t.ink : t.line}`,
-                  background: active ? t.ink : "transparent",
-                  color: active ? t.paper : t.inkMid,
-                  fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)",
-                  cursor: isRegenerating ? "not-allowed" : "pointer",
-                  opacity: isRegenerating ? 0.55 : 1,
-                }}
-              >
-                {s}
               </button>
             );
           })}

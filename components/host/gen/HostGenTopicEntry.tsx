@@ -63,14 +63,6 @@ export interface HostGenTopicEntryProps {
   warning?: string | null;
 }
 
-const FLAVOR_OPTIONS = [
-  "Sharper",
-  "More obscure",
-  "More pop",
-  "More local",
-  "Fresher",
-] as const;
-
 function restoreTopicDraft(draftKey: string | undefined, fallback: string): string {
   if (!draftKey || typeof window === "undefined") return fallback;
   try {
@@ -109,7 +101,7 @@ function HostGenTopicEntryInner({
     restoreTopicDraft(draftKey, initialTopic),
   );
   const [difficulty, setDifficulty] = useState<DifficultyTarget>(initialDifficulty);
-  const [flavor, setFlavor] = useState<string[]>(initialFlavor);
+  const [flavor] = useState<string[]>(initialFlavor);
 
   function updateTopic(value: string) {
     setTopic(value);
@@ -119,12 +111,6 @@ function HostGenTopicEntryInner({
     } catch {
       // Draft recovery is best-effort and must never block typing.
     }
-  }
-
-  function toggleFlavor(label: string) {
-    setFlavor((prev) =>
-      prev.includes(label) ? prev.filter((f) => f !== label) : [...prev, label],
-    );
   }
 
   function handleSubmit(e: FormEvent) {
@@ -238,30 +224,6 @@ function HostGenTopicEntryInner({
                       }}
                     >
                       {d}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-            <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 11, color: t.inkMid, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" }}>Flavor (optional)</div>
-              <div style={{ marginTop: 6, display: "flex", flexWrap: "wrap", gap: 4 }}>
-                {FLAVOR_OPTIONS.map((s) => {
-                  const active = flavor.includes(s);
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      data-mobile-touch-target={mobile ? "true" : undefined}
-                      onClick={() => toggleFlavor(s)}
-                      style={{
-                        padding: "6px 10px", borderRadius: 99, border: `1px solid ${active ? t.ink : t.line}`,
-                        background: active ? t.ink : "transparent",
-                        color: active ? t.paper : t.inkMid,
-                        fontSize: 11, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: "pointer",
-                      }}
-                    >
-                      {s}
                     </button>
                   );
                 })}
