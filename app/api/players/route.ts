@@ -12,7 +12,12 @@
 // through the RLS-aware server client.
 
 import type { NextRequest } from "next/server";
-import { CreatePlayerSchema } from "@/lib/api/schemas";
+import { CreatePlayerLooseSchema } from "@/lib/api/schemas";
+import {
+  PLAYER_NAME_TOO_LONG_MESSAGE,
+  clampPlayerName,
+  playerNameFits,
+} from "@/lib/player/nameLimit";
 import { badRequest, ok, serverError, unauthorized, notFound, forbidden } from "@/lib/api/responses";
 import { getDeviceId } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -30,8 +35,12 @@ export async function POST(req: NextRequest) {
   } catch {
     return badRequest("invalid JSON");
   }
-  const parsed = CreatePlayerSchema.safeParse(body);
+  // Parse with the loose name rule first: whether a name over 16 characters
+  // is rejected or shortened depends on whether this device is already in
+  // the room, which we only learn after the night lookup below.
+  const parsed = CreatePlayerLooseSchema.safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
+  const nameFits = playerNameFits(parsed.data.displayName);
 
   const admin = getSupabaseAdmin();
 
@@ -60,6 +69,15 @@ export async function POST(req: NextRequest) {
     .maybeSingle();
   const isFirstJoin = !existing;
 
+  // 16-character cap. A brand-new player gets a clear error so the phone can
+  // show it. A same-device rejoin (e.g. a phone still running the old page
+  // that allowed 40 characters, across a mid-night deploy) is never bounced:
+  // we keep their seat and quietly shorten the name to 16.
+  if (!nameFits && isFirstJoin) return badRequest(PLAYER_NAME_TOO_LONG_MESSAGE);
+  const displayName = nameFits
+    ? parsed.data.displayName
+    : clampPlayerName(parsed.data.displayName).trimEnd();
+
   // Upsert keyed on the unique (night_id, device_id). On conflict, refresh
   // display_name + last_seen_at so the player object is current.
   const now = new Date().toISOString();
@@ -69,7 +87,7 @@ export async function POST(req: NextRequest) {
       {
         night_id: parsed.data.nightId,
         device_id: deviceId,
-        display_name: parsed.data.displayName,
+        display_name: displayName,
         last_seen_at: now,
         // Migration 0022 makes signed-device players eligible to answer.
         // The cast is temporary until the planned Task 5 type regeneration.

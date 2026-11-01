@@ -11,6 +11,11 @@
 
 import { z } from "zod";
 import { ALPHABET } from "@/lib/game/room-code";
+import {
+  MAX_PLAYER_NAME_RAW,
+  PLAYER_NAME_TOO_LONG_MESSAGE,
+  playerNameFits,
+} from "@/lib/player/nameLimit";
 
 const THEME_KEYS = [
   "house",
@@ -66,14 +71,42 @@ export const CreateNightSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
 });
 
+/**
+ * A player's name before the 16-character cap: trimmed, non-empty, with a
+ * loose raw-length ceiling. Only the self-join route uses this directly, so
+ * a same-device rejoin carrying an old long name can be shortened instead
+ * of bounced mid-night (see app/api/players/route.ts).
+ */
+export const LoosePlayerDisplayNameSchema = z
+  .string()
+  .trim()
+  .min(1, { message: "Pick a name to join." })
+  .max(MAX_PLAYER_NAME_RAW, { message: PLAYER_NAME_TOO_LONG_MESSAGE });
+
+/**
+ * A player's name: at most 16 characters as people see them (an emoji
+ * counts as 1). The phone and the host modal clamp to the same rule via
+ * lib/player/nameLimit.ts.
+ */
+export const PlayerDisplayNameSchema = LoosePlayerDisplayNameSchema.refine(
+  playerNameFits,
+  { message: PLAYER_NAME_TOO_LONG_MESSAGE },
+);
+
 export const CreatePlayerSchema = z.object({
   nightId: UuidSchema,
-  displayName: z.string().trim().min(1).max(40),
+  displayName: PlayerDisplayNameSchema,
+});
+
+/** Same shape as CreatePlayerSchema, without the 16-character check. */
+export const CreatePlayerLooseSchema = z.object({
+  nightId: UuidSchema,
+  displayName: LoosePlayerDisplayNameSchema,
 });
 
 /** POST /api/nights/[id]/players body — host adds a latecomer. */
 export const HostAddPlayerSchema = z.object({
-  displayName: z.string().trim().min(1).max(40),
+  displayName: PlayerDisplayNameSchema,
 });
 
 export const HeartbeatSchema = z.object({

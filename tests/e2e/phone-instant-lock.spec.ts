@@ -61,7 +61,7 @@ async function phoneOnQuestion(
     isMobile: true,
   });
   const page = await context.newPage();
-  await joinPhone(page, seed.roomCode, `Lock ${themeKey}`.slice(0, 20));
+  await joinPhone(page, seed.roomCode, `Lock ${themeKey}`.slice(0, 16));
   await startGame(hostPage, seed.game1.id);
   const questionId = seed.categories[0]!.question_ids[0]!;
   await revealViaApi(hostPage, seed.game1.id, questionId);
@@ -507,7 +507,7 @@ async function phoneWithStandings(
   const pages: Page[] = [];
   for (const [i, ctx] of contexts.entries()) {
     const p = await ctx.newPage();
-    await joinPhone(p, seed.roomCode, `Stand ${themeKey} ${i}`.slice(0, 20));
+    await joinPhone(p, seed.roomCode, `S${i} ${themeKey}`.slice(0, 16));
     pages.push(p);
   }
   await startGame(hostPage, seed.game1.id);

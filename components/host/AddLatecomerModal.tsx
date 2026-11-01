@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { Eyebrow } from "@/components/system";
+import { MAX_PLAYER_NAME_RAW, clampPlayerName } from "@/lib/player/nameLimit";
 
 export interface AddLatecomerModalProps {
   onCancel: () => void;
@@ -13,7 +14,6 @@ export interface AddLatecomerModalProps {
   onSubmit: (displayName: string) => Promise<void>;
 }
 
-const MAX_NAME = 40;
 
 export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps) {
   const [name, setName] = useState("");
@@ -104,9 +104,10 @@ export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps
             type="text"
             value={name}
             autoFocus
-            maxLength={MAX_NAME}
+            maxLength={MAX_PLAYER_NAME_RAW}
             placeholder="e.g. Sam (phone dead)"
-            onChange={(e) => setName(e.target.value)}
+            // Same 16-character cap as the phone join screen (emoji = 1).
+            onChange={(e) => setName(clampPlayerName(e.target.value))}
             onKeyDown={(e) => {
               if (e.key === "Enter" && canSubmit) void submit();
             }}

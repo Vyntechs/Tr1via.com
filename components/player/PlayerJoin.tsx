@@ -19,6 +19,12 @@ import {
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import {
+  MAX_PLAYER_NAME,
+  MAX_PLAYER_NAME_RAW,
+  clampPlayerName,
+  countNameChars,
+} from "@/lib/player/nameLimit";
 
 export interface PlayerJoinProps {
   themeKey?: ThemeKey;
@@ -56,13 +62,18 @@ export function PlayerJoin({
 }: PlayerJoinProps = {}) {
   const { t } = useTheme();
   const interactive = !!onSubmit;
-  const [name, setName] = useState(playerName);
+  // Names cap at 16 visible characters (an emoji counts as 1). A seed name
+  // longer than that (an old 40-character name typed before the cap) is
+  // shortened here so a returning player can still tap Join.
+  const [name, setName] = useState(() => clampPlayerName(playerName));
 
   // Keep the input synced when the parent updates the seed name (e.g. on
   // remount after a network failure).
   useEffect(() => {
-    if (!interactive) setName(playerName);
+    if (!interactive) setName(clampPlayerName(playerName));
   }, [playerName, interactive]);
+
+  const nameCount = countNameChars(name);
 
   function handleSubmit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
@@ -117,9 +128,11 @@ export function PlayerJoin({
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value.slice(0, 40))}
+                  onChange={(e) => setName(clampPlayerName(e.target.value))}
                   placeholder="Your name"
-                  maxLength={40}
+                  // Raw ceiling only: the real 16-character cap is the clamp
+                  // above, because maxLength counts an emoji as 2+.
+                  maxLength={MAX_PLAYER_NAME_RAW}
                   autoFocus
                   autoComplete="off"
                   autoCorrect="off"
@@ -145,7 +158,29 @@ export function PlayerJoin({
                 />
               )}
             </div>
-            <div style={{ marginTop: 10, color: t.inkMute, fontSize: 12 }}>Everyone sees this. Keep it kind.</div>
+            <div
+              style={{
+                marginTop: 10,
+                color: t.inkMute,
+                fontSize: 12,
+                display: "flex",
+                alignItems: "baseline",
+                // Counter sits right after the hint, not at the far edge:
+                // month art (September's confetti) lives at the right edge.
+                gap: 10,
+              }}
+            >
+              <span>Everyone sees this. Keep it kind.</span>
+              {interactive && (
+                <span
+                  data-testid="player-name-counter"
+                  aria-label={`${nameCount} of ${MAX_PLAYER_NAME} characters`}
+                  style={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+                >
+                  {nameCount}/{MAX_PLAYER_NAME}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
