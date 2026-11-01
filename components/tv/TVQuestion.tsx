@@ -8,7 +8,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { TVStage, TVHeader } from "@/components/shells";
 import { useStageWorld } from "@/components/experience/StageWorld";
 import {
@@ -142,6 +142,32 @@ function TVQuestionInner({
         ? QUESTION_SIZES_WITH_IMAGE
         : QUESTION_SIZES_NO_IMAGE,
   });
+  // November only: a long question WITH a photo and long answers can leave
+  // the top row shorter than the timer ring + its label, and the row's
+  // overflow: hidden cut the label off. When that happens the answers go
+  // compact (smaller type, tighter cards) so the row gets its height back;
+  // the question auto-fit then re-measures the taller frame.
+  const novRowRef = useRef<HTMLDivElement | null>(null);
+  const novTimerRef = useRef<HTMLDivElement | null>(null);
+  const [novTight, setNovTight] = useState(false);
+  const novContentKey = `${question}|${showImage}|${(options ?? []).map((o) => o.text).join("|")}`;
+  useEffect(() => {
+    setNovTight(false);
+  }, [novContentKey]);
+  useLayoutEffect(() => {
+    if (!nov || novTight) return;
+    const row = novRowRef.current;
+    const timer = novTimerRef.current;
+    if (!row || !timer) return;
+    const check = () => {
+      const room = row.clientHeight - parseFloat(getComputedStyle(row).paddingTop || "0");
+      if (room > 0 && timer.offsetHeight > room + 1) setNovTight(true);
+    };
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [nov, novTight, novContentKey]);
   const opts: TVQuestionOption[] = options ?? [
     { n: 1, text: "Florida" },
     { n: 2, text: "Alaska" },
@@ -194,6 +220,7 @@ function TVQuestionInner({
       </div>
 
       <div
+        ref={novRowRef}
         style={{
           flex: 1,
           minHeight: 0,
@@ -272,7 +299,7 @@ function TVQuestionInner({
             {question}
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, alignSelf: "flex-start" }}>
+        <div ref={novTimerRef} data-testid={nov ? "november-timer-column" : undefined} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, alignSelf: "flex-start" }}>
           {nov ? (
             <NovemberTimerRing seconds={seconds} />
           ) : (
@@ -286,7 +313,7 @@ function TVQuestionInner({
 
       <div
         style={{
-          padding: nov ? "22px 56px 0" : "36px 56px 0",
+          padding: nov ? (novTight ? "14px 56px 0" : "22px 56px 0") : "36px 56px 0",
           display: "grid",
           gridTemplateColumns: nov ? "repeat(2, 1fr)" : "repeat(4, 1fr)",
           gap: nov ? 16 : 18,
@@ -305,8 +332,8 @@ function TVQuestionInner({
               display: "flex",
               alignItems: "center",
               gap: 18,
-              padding: nov ? "16px 20px" : "20px 24px",
-              minHeight: nov ? 88 : 110,
+              padding: nov ? (novTight ? "10px 20px" : "16px 20px") : "20px 24px",
+              minHeight: nov ? (novTight ? 72 : 88) : 110,
             }}
           >
             {nov ? (
@@ -336,7 +363,7 @@ function TVQuestionInner({
             <span
               data-testid="tv-question-option-text"
               style={{
-                fontSize: nov ? 36 : "clamp(32px, 4vmin, 44px)",
+                fontSize: nov ? (novTight ? 28 : 36) : "clamp(32px, 4vmin, 44px)",
                 color: t.ink,
                 fontWeight: nov ? 600 : 650,
                 lineHeight: 1.08,
