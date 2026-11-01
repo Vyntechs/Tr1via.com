@@ -104,11 +104,12 @@ export function PlayerWinnerCard({
         cacheBust: !november,
         backgroundColor: t.paper,
         // html-to-image also writes backgroundColor onto the card itself, which
-        // paints over the accent fill (the card saved near-black). November puts
-        // the accent back on the card; the paper stays behind the round corners.
-        // The card's own top margin is copied too and pushed the picture down,
-        // cutting off its bottom edge; November zeroes it for the save.
-        ...(november ? { style: { backgroundColor: t.accent, margin: "0" } } : {}),
+        // paints over the accent fill (the card saved near-black), so every
+        // month puts the accent back on the card; the paper stays behind the
+        // round corners. The card's own top margin is copied too and pushed the
+        // picture down, cutting off its bottom edge, so the save zeroes it.
+        // Only the saved copy gets these styles; the card on screen is untouched.
+        style: { backgroundColor: t.accent, margin: "0" },
       };
       // November's turkey is a large sprite strip. Safari draws the picture
       // before that image has decoded, so the first pass comes out without the
