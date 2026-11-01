@@ -95,12 +95,24 @@ export function PlayerWinnerCard({
     setSaveState("saving");
     try {
       const { toPng } = await import("html-to-image");
-      const dataUrl = await toPng(node, {
+      const november = isNovemberPhone(themeKey);
+      const opts = {
         // Bump pixel ratio so the saved card is crisp on retina screens.
         pixelRatio: Math.min((typeof window !== "undefined" && window.devicePixelRatio) || 2, 3),
         cacheBust: true,
         backgroundColor: t.paper,
-      });
+        // html-to-image also writes backgroundColor onto the card itself, which
+        // paints over the accent fill (the card saved near-black). November puts
+        // the accent back on the card; the paper stays behind the round corners.
+        // The card's own top margin is copied too and pushed the picture down,
+        // cutting off its bottom edge; November zeroes it for the save.
+        ...(november ? { style: { backgroundColor: t.accent, margin: "0" } } : {}),
+      };
+      // November's turkey is a large sprite strip. Safari draws the picture
+      // before that image has decoded, so the first pass comes out without the
+      // turkey; a warm-up pass lets the second one include it.
+      if (november) await toPng(node, opts);
+      const dataUrl = await toPng(node, opts);
       const filename = `tr1via-${slugifyForFilename(venueName)}-${slugifyForFilename(nightDateLabel)}.png`;
       const a = document.createElement("a");
       a.href = dataUrl;
@@ -115,7 +127,7 @@ export function PlayerWinnerCard({
       setSaveState("error");
       window.setTimeout(() => setSaveState("idle"), 2200);
     }
-  }, [onSave, t.paper, venueName, nightDateLabel]);
+  }, [onSave, t.paper, t.accent, themeKey, venueName, nightDateLabel]);
 
   return (
     <PhoneScreen data-testid="player-winner-card" harvestSky="night">
