@@ -68,3 +68,53 @@ describe("november phone turkey", () => {
     expect(phoneWorldUrl("dusk")).toBe("/themes/november/phone/dusk.webp");
   });
 });
+
+import {
+  finaleWinner,
+  phoneCategoryBar,
+  phonePreloadUrls,
+  stripKeyframes,
+} from "@/lib/experience/november/phone";
+import { heroTurkeySize } from "@/components/experience/november/NovemberLobby";
+
+describe("november phone step 3b", () => {
+  it("strip keyframes carry the pixel value, never var() (Safari-safe)", () => {
+    const k = stripKeyframes(-2760);
+    expect(k.name).toBe("tr1via-nov-strip-m2760");
+    expect(k.css).toContain("translateX(-2760px)");
+    expect(k.css).not.toContain("var(");
+    expect(stripKeyframes(-552.4).name).toBe("tr1via-nov-strip-m552");
+    expect(stripKeyframes(Number.NaN).css).toContain("translateX(0px)");
+  });
+
+  it("preloads every strip a mood change can need, plus dusk and night", () => {
+    const urls = phonePreloadUrls();
+    for (const a of ["walk", "idle", "fan", "right", "wrong", "hide"]) expect(urls).toContain(`/themes/november/turkey/A/${a}-256.webp`);
+    expect(urls).toContain("/themes/november/turkey/A/idle-128.webp");
+    expect(urls).toContain("/themes/november/phone/dusk.webp");
+    expect(urls).toContain("/themes/november/phone/night.webp");
+    expect(new Set(urls).size).toBe(urls.length);
+  });
+
+  it("category bar: other months unchanged, November on the dark panel", () => {
+    expect(phoneCategoryBar(false, "#3FD0E0")).toEqual({ background: "#3FD0E0", ink: "#0E0805", eyebrow: "rgba(14,8,5,.65)", tagColor: "#0E0805", tagInk: "#3FD0E0" });
+    const nov = phoneCategoryBar(true, "#3FD0E0");
+    expect(JSON.stringify(nov)).not.toContain("#3FD0E0");
+    expect(nov.tagColor).toBe("#C25E22");
+  });
+
+  it("finale winner: real names only, ties joined, unknown -> null", () => {
+    const r = (id: string, rank: number, score: number, name?: string | null) => ({ rank, row: { player_id: id, score, display_name: name } });
+    expect(finaleWinner([r("a", 1, 2940, "Linda"), r("b", 2, 100, "Cole")])).toEqual({ name: "Linda", score: 2940 });
+    expect(finaleWinner([r("a", 1, 50, "Linda"), r("b", 1, 50, "Cole")])?.name).toBe("Linda & Cole");
+    expect(finaleWinner([r("a", 1, 50, null)], new Map([["a", "Theo"]]))?.name).toBe("Theo");
+    expect(finaleWinner([r("a", 1, 50, null)])).toBeNull();
+    expect(finaleWinner([])).toBeNull();
+  });
+
+  it("hero turkey fits the space between 96 and 236 px", () => {
+    expect(heroTurkeySize(346, 400)).toBe(215);
+    expect(heroTurkeySize(400, 600)).toBe(236);
+    expect(heroTurkeySize(331, 100)).toBe(96);
+  });
+});

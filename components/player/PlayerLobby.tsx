@@ -9,7 +9,7 @@ import { useTheme, Display, Eyebrow } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
-import { YourTurkey } from "@/components/experience/november/YourTurkey";
+import { NovemberLobby } from "@/components/experience/november/NovemberLobby";
 import { isNovemberPhone } from "@/lib/experience/november/phone";
 import { categoryColor } from "@/lib/theme/categories";
 import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
@@ -53,6 +53,17 @@ export function PlayerLobby({
     <PhoneScreen data-testid="player-lobby" harvestSky="golden">
       <PhoneHeader eyebrow="IN THE GAME" />
 
+      {yourTurkey ? (
+        // November: Figma P1. Your turkey walks into the field as the hero,
+        // standing on your name plate; who's in and the topics sit below.
+        <NovemberLobby
+          playerName={playerName}
+          hostName={hostName}
+          inRoomCount={inRoomCount}
+          newestNames={newestNames}
+          topics={topics}
+        />
+      ) : (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
         <Display size={64} color={t.ink}>
           You&apos;re in,
@@ -190,15 +201,6 @@ export function PlayerLobby({
                 <span style={{ color: t.ink, fontSize: 14, fontWeight: 500 }}>{hostName} is setting up.</span>
               </span>
             </>
-          ) : yourTurkey ? (
-            // November: your turkey walks into the field, as it does on the TV.
-            <>
-              <YourTurkey mood="arrive" size={92} style={{ margin: "-40px -6px -14px -12px" }} />
-              <span style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-                <span style={{ color: t.pop, fontSize: 15, fontWeight: 700 }}>Your turkey is in the field.</span>
-                <span style={{ color: t.ink, fontSize: 14, fontWeight: 500 }}>{hostName} is setting up.</span>
-              </span>
-            </>
           ) : (
             <>
               <span
@@ -215,6 +217,7 @@ export function PlayerLobby({
           )}
         </div>
       </div>
+      )}
     </PhoneScreen>
   );
 }

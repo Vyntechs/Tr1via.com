@@ -72,3 +72,32 @@ describe("your turkey (November phones)", () => {
     }
   });
 });
+
+import { PlayerFinaleView } from "@/components/player";
+
+describe("november phone step 3b screens", () => {
+  it("lobby puts your turkey on your name plate", () => {
+    wrap("november", <PlayerLobby playerName="Maya" inRoomCount={12} />);
+    expect(screen.getByTestId("november-name-plate").textContent).toBe("Maya");
+    expect(screen.getByTestId("november-lobby-hero")).toBeInTheDocument();
+  });
+
+  it("finale: a non-winner sees tonight's winner and their own night", () => {
+    wrap("november", <PlayerFinaleView won={false} rank={7} score={1860} correct={14} answered={20} fastestMs={1800} longestStreak={5} playerName="Maya" playerCount={24} winner={{ name: "Linda", score: 2940 }} />);
+    expect(screen.getByTestId("player-finale-winner-name").textContent).toBe("Linda");
+    expect(screen.getByTestId("player-finale-your-night").textContent).toContain("#7");
+  });
+
+  it("finale: no winner name -> plain layout, the winner keeps the wishbone", () => {
+    const { unmount } = wrap("november", <PlayerFinaleView won={false} rank={7} score={1} correct={1} answered={1} fastestMs={null} longestStreak={0} winner={null} />);
+    expect(screen.queryByTestId("player-finale-november")).toBeNull();
+    unmount();
+    wrap("november", <PlayerFinaleView won rank={1} score={9} correct={1} answered={1} fastestMs={null} longestStreak={0} winner={{ name: "Maya", score: 9 }} />);
+    expect(screen.getByTestId("player-finale-wishbone").textContent).toContain("You got the wishbone.");
+  });
+
+  it("other months never get the November lobby or finale card", () => {
+    wrap("october", <PlayerFinaleView won={false} rank={7} score={1} correct={1} answered={1} fastestMs={null} longestStreak={0} winner={{ name: "Linda", score: 2 }} />);
+    expect(screen.queryByTestId("player-finale-november")).toBeNull();
+  });
+});

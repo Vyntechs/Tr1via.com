@@ -24,6 +24,7 @@ import {
   phoneTurkeyPlan,
   phoneTurkeyStripPx,
   phoneTurkeyUrl,
+  stripKeyframes,
   type PhoneTurkeyMood,
 } from "@/lib/experience/november/phone";
 
@@ -43,7 +44,6 @@ export function YourTurkey(props: YourTurkeyProps) {
 }
 
 const KEYFRAMES = `
-@keyframes tr1via-nov-strip { from { transform: translateX(0); } to { transform: translateX(var(--nov-strip-end)); } }
 @keyframes tr1via-nov-walkin { from { transform: translateX(-170%); } to { transform: translateX(0); } }
 @keyframes tr1via-nov-glow { 0%, 100% { opacity: .72; } 50% { opacity: 1; } }
 @keyframes tr1via-nov-bloom { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: scale(1); } }
@@ -69,18 +69,16 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
   const walking = plan.anim === "walk";
   const shown = mood === "arrive" ? "waiting" : mood;
 
-  const strip: CSSProperties =
+  // Explicit pixel keyframes (no var() inside @keyframes): Safari-safe.
+  const run =
     plan.play === "still"
-      ? { transform: `translateX(${-plan.frame * size}px)` }
+      ? null
       : plan.play === "loop"
-        ? {
-            ["--nov-strip-end" as string]: `${-stripW}px`,
-            animation: `tr1via-nov-strip ${plan.frames / plan.fps}s steps(${plan.frames}) infinite`,
-          }
-        : {
-            ["--nov-strip-end" as string]: `${-(plan.frames - 1) * size}px`,
-            animation: `tr1via-nov-strip ${(plan.frames - 1) / plan.fps}s steps(${plan.frames - 1}) both`,
-          };
+        ? { kf: stripKeyframes(-stripW), secs: plan.frames / plan.fps, steps: plan.frames, tail: "infinite" }
+        : { kf: stripKeyframes(-(plan.frames - 1) * size), secs: (plan.frames - 1) / plan.fps, steps: plan.frames - 1, tail: "both" };
+  const strip: CSSProperties = run
+    ? { animation: `${run.kf.name} ${run.secs}s steps(${run.steps}) ${run.tail}` }
+    : { transform: `translateX(${-plan.frame * size}px)` };
 
   return (
     <span
@@ -93,6 +91,11 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
       <style href="tr1via-nov-phone-turkey" precedence="default">
         {KEYFRAMES}
       </style>
+      {run ? (
+        <style href={run.kf.name} precedence="default">
+          {run.kf.css}
+        </style>
+      ) : null}
       {shown === "blaze" ? (
         <span
           style={{

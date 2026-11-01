@@ -11,7 +11,7 @@
 
 import type { ThemeKey } from "@/lib/theme/tokens";
 import type { RowMood } from "@/lib/experience/shared/playerRow";
-import { TURKEY_ANIMS, TURKEY_STYLE, turkeyPose, type HarvestSky, type TurkeyAnim } from "./harvest";
+import { TURKEY_ANIMS, TURKEY_STYLE, featherUrl, turkeyPose, type HarvestSky, type TurkeyAnim } from "./harvest";
 
 export type { HarvestSky };
 
@@ -114,3 +114,90 @@ export const PHONE_WISHBONE_URL = "/themes/november/phone/wishbone.webp";
 /** The dark field panels the November phone puts its cards on (paper #1E1208). */
 export const NOVEMBER_PHONE_PANEL = "rgba(30,18,8,.84)";
 export const NOVEMBER_PHONE_PANEL_STRONG = "rgba(30,18,8,.92)";
+
+// ── Safari-safe strip stepping ─────────────────────────────────────────────
+// A keyframe that reads var() is not trusted on older iPhone Safari (the
+// strip could sit on frame 0). Each strip end gets its own keyframe with the
+// pixel value written in, so every engine sees a plain translateX.
+
+/** Keyframe name + CSS that slides a strip from 0 to `endPx` (negative). */
+export function stripKeyframes(endPx: number): { name: string; css: string } {
+  const px = Number.isFinite(endPx) ? Math.round(endPx) : 0;
+  const name = `tr1via-nov-strip-${px < 0 ? "m" : ""}${Math.abs(px)}`;
+  return { name, css: `@keyframes ${name} { from { transform: translateX(0px); } to { transform: translateX(${px}px); } }` };
+}
+
+// ── Preload ────────────────────────────────────────────────────────────────
+// Every November phone picture is small (the whole set is about 1 MB), so the
+// first field screen a phone opens fetches them all. A mood change later (fan
+// on lock-in, gobble, droop, hay-bale dive, dusk/night field) then draws from
+// memory instead of showing an empty box on slow venue wifi.
+
+const PHONE_STRIPS: readonly PhoneTurkeyAnim[] = ["walk", "idle", "fan", "right", "wrong", "hide"];
+
+/** Every picture a November phone can show, in the order a night needs them. */
+export function phonePreloadUrls(): string[] {
+  const strips = PHONE_STRIPS.map((a) => phoneTurkeyUrl(a, 256));
+  return [
+    ...strips.slice(0, 2),
+    phoneTurkeyUrl("idle", 128),
+    ...strips.slice(2),
+    phoneWorldUrl("dusk"),
+    phoneWorldUrl("night"),
+    ...([1, 2, 3, 4] as const).map(featherUrl),
+    PHONE_WISHBONE_URL,
+    PHONE_PIE_URL,
+  ];
+}
+
+// ── Category bar ───────────────────────────────────────────────────────────
+// The question/locked screens open with a full-width category bar painted in
+// the category's color (cyan for Geography). On the Harvest Field that bright
+// band breaks the palette, so November uses the Figma look instead: the dark
+// field panel, cream type, burnt-orange eyebrow and point tag.
+
+export const NOVEMBER_PHONE_CREAM = "#F2DEAE";
+export const NOVEMBER_PHONE_ACCENT = "#C25E22";
+export const NOVEMBER_PHONE_PAPER = "#1E1208";
+
+export interface PhoneCategoryBarLook {
+  background: string;
+  ink: string;
+  eyebrow: string;
+  tagColor: string;
+  tagInk: string;
+  borderBottom?: string;
+}
+
+/** Colors for the category bar. Every month but November keeps today's look exactly. */
+export function phoneCategoryBar(november: boolean, catColor: string): PhoneCategoryBarLook {
+  if (!november) return { background: catColor, ink: "#0E0805", eyebrow: "rgba(14,8,5,.65)", tagColor: "#0E0805", tagInk: catColor };
+  return {
+    background: NOVEMBER_PHONE_PANEL_STRONG,
+    ink: NOVEMBER_PHONE_CREAM,
+    eyebrow: NOVEMBER_PHONE_ACCENT,
+    tagColor: NOVEMBER_PHONE_ACCENT,
+    tagInk: NOVEMBER_PHONE_PAPER,
+    borderBottom: "1px solid rgba(242,222,174,.08)",
+  };
+}
+
+// ── Finale: tonight's winner ───────────────────────────────────────────────
+
+/**
+ * Who won, for the November finale card shown to everyone who didn't. Uses
+ * only what the room already has: the final game's scores and the roster.
+ * Ties list every winner. Returns null when a name is missing, so the screen
+ * never shows a made-up name.
+ */
+export function finaleWinner(
+  ranked: ReadonlyArray<{ rank: number; row: { player_id: string | null; score: number | null; display_name?: string | null } }>,
+  names: ReadonlyMap<string, string> = new Map(),
+): { name: string; score: number } | null {
+  const top = ranked.filter((r) => r.rank === 1);
+  if (top.length === 0) return null;
+  const list = top.map((r) => (r.row.display_name ?? (r.row.player_id ? names.get(r.row.player_id) : undefined) ?? "").trim());
+  if (list.some((n) => !n)) return null;
+  const name = list.length === 1 ? list[0] : list.length === 2 ? `${list[0]} & ${list[1]}` : `${list.slice(0, -1).join(", ")} & ${list[list.length - 1]}`;
+  return { name, score: top[0].row.score ?? 0 };
+}

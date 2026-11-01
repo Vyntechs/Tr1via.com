@@ -32,7 +32,7 @@ import { SeptemberQuestionLampBand } from "@/components/system/SeptemberFront";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import { YourTurkey } from "@/components/experience/november/YourTurkey";
-import { isNovemberPhone, phoneTurkeyMood } from "@/lib/experience/november/phone";
+import { isNovemberPhone, phoneCategoryBar, phoneTurkeyMood } from "@/lib/experience/november/phone";
 import type { StandingRow } from "@/lib/player/betweenGames";
 import {
   PlayerSendStatus,
@@ -130,6 +130,7 @@ export function PlayerQuestion({
   const { t, themeKey } = useTheme();
   const reducedMotion = usePrefersReducedMotion();
   const catColor = categoryColor(category, t.accent);
+  const bar = phoneCategoryBar(isNovemberPhone(themeKey), catColor);
   const septemberQuestion = themeKey === "september";
   // October: the player's own unlit pumpkin waits in the timer strip, right
   // above the answers, using space the strip already has.
@@ -258,18 +259,19 @@ export function PlayerQuestion({
         style={{
           margin: `-14px -22px ${bannerBottomGap}px`,
           padding: "14px 22px",
-          background: catColor,
-          color: "#0E0805",
+          background: bar.background,
+          borderBottom: bar.borderBottom,
+          color: bar.ink,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
         }}
       >
         <div>
-          <Eyebrow color="rgba(14,8,5,.65)" size={10}>QUESTION {questionNumber} · {category.toUpperCase()}</Eyebrow>
+          <Eyebrow color={bar.eyebrow} size={10}>QUESTION {questionNumber} · {category.toUpperCase()}</Eyebrow>
           <div style={{ marginTop: 4, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>{category}</div>
         </div>
-        <PointTag value={value} color="#0E0805" ink={catColor} size="md" />
+        <PointTag value={value} color={bar.tagColor} ink={bar.tagInk} size="md" />
       </div>
 
       {septemberQuestion && showLamps && <SeptemberQuestionLampBand />}

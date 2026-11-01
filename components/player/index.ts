@@ -3,6 +3,7 @@
 export { PlayerJoin } from "./PlayerJoin";
 export type { PlayerJoinProps } from "./PlayerJoin";
 export { PlayerLobby } from "./PlayerLobby";
+export { PlayerFinaleView } from "./PlayerFinale";
 export type { PlayerLobbyProps } from "./PlayerLobby";
 export { PlayerQuestion } from "./PlayerQuestion";
 export type { PlayerQuestionProps, PlayerQuestionSlot, PlayerQuestionPick } from "./PlayerQuestion";

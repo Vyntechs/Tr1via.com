@@ -14,7 +14,8 @@
 //   theme   — any ThemeKey                                    (default: house)
 //   state   — lobby | question | locked | recap               (default: question)
 //             also: join | question-locked | correct | wrong | timeup |
-//             join-game-2 | between | winner (the reveal and finale screens,
+//             join-game-2 | between | winner | finale | finale-won (the reveal
+//             and finale screens,
 //             added for November's phone looks)
 //
 // Not linked from anywhere — accessed directly from validation scripts and
@@ -26,6 +27,7 @@
 import { useSearchParams } from "next/navigation";
 import {
   PlayerBetweenGames,
+  PlayerFinaleView,
   PlayerJoin,
   PlayerJoinGame2,
   PlayerLobby,
@@ -113,6 +115,20 @@ function PreviewBody() {
               { rank: 3, name: "Carol", score: 8420, isYou: false },
             ]}
             you={null}
+          />
+        ) : state === "finale-won" || state === "finale" ? (
+          // The real in-room finale (/room), won or not.
+          <PlayerFinaleView
+            won={state === "finale-won"}
+            rank={state === "finale-won" ? 1 : 7}
+            score={state === "finale-won" ? 2940 : 1860}
+            correct={14}
+            answered={20}
+            fastestMs={1800}
+            longestStreak={5}
+            playerName="Maya"
+            playerCount={24}
+            winner={state === "finale-won" ? { name: "Maya", score: 2940 } : { name: "Linda", score: 2940 }}
           />
         ) : state === "winner" ? (
           <PlayerWinnerCard />
