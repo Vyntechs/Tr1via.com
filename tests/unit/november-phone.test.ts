@@ -88,10 +88,11 @@ describe("november phone step 3b", () => {
   it("strip keyframes carry the pixel value, never var() (Safari-safe)", () => {
     const k = stripKeyframes(-2760);
     expect(k.name).toBe("tr1via-nov-strip-m2760");
-    expect(k.css).toContain("translateX(-2760px)");
+    expect(k.css).toContain("background-position: -2760px 0px");
+    expect(k.css).not.toContain("transform");
     expect(k.css).not.toContain("var(");
     expect(stripKeyframes(-552.4).name).toBe("tr1via-nov-strip-m552");
-    expect(stripKeyframes(Number.NaN).css).toContain("translateX(0px)");
+    expect(stripKeyframes(Number.NaN).css).toContain("background-position: 0px 0px; }");
   });
 
   it("preloads every strip a mood change can need, plus dusk and night, in three sets", () => {

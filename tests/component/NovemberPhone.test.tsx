@@ -21,6 +21,17 @@ const wrap = (themeKey: ThemeKey, node: ReactNode) =>
 const mood = () => screen.getByTestId("your-turkey").getAttribute("data-turkey-mood");
 
 describe("your turkey (November phones)", () => {
+  it("paints one frame at a time: a frame-sized box, never a strip-wide layer", () => {
+    wrap("november", <PlayerBetweenGames />);
+    const f = screen.getByTestId("your-turkey-frame");
+    expect(f.style.width).toBe("84px");
+    expect(f.style.height).toBe("84px");
+    expect(f.style.backgroundSize).toBe(`${84 * 30}px 84px`);
+    expect(f.style.willChange).toBe("");
+    expect(f.style.transform).toBe("");
+    expect(screen.getByTestId("your-turkey").querySelectorAll("img").length).toBe(0);
+  });
+
   it("walks into the field in the lobby", () => {
     wrap("november", <PlayerLobby playerName="Maya" inRoomCount={3} />);
     expect(screen.getByTestId("your-turkey").getAttribute("data-turkey-anim")).toBe("walk");

@@ -120,15 +120,19 @@ export const NOVEMBER_PHONE_PANEL = "rgba(30,18,8,.84)";
 export const NOVEMBER_PHONE_PANEL_STRONG = "rgba(30,18,8,.92)";
 
 // ── Safari-safe strip stepping ─────────────────────────────────────────────
-// A keyframe that reads var() is not trusted on older iPhone Safari (the
-// strip could sit on frame 0). Each strip end gets its own keyframe with the
-// pixel value written in, so every engine sees a plain translateX.
+// The strip is the background of a box one frame wide, and the animation
+// steps its background-position. Only that one frame is ever painted, so
+// the composited layer stays about one frame (a strip-wide transformed
+// layer can be 20000+ device px wide: past iPhone Safari's texture and
+// memory limits). A keyframe that reads var() is not trusted on older
+// iPhone Safari, so each strip end gets its own keyframe with the pixel
+// value written in.
 
-/** Keyframe name + CSS that slides a strip from 0 to `endPx` (negative). */
+/** Keyframe name + CSS that steps a strip background from 0 to `endPx` (negative). */
 export function stripKeyframes(endPx: number): { name: string; css: string } {
   const px = Number.isFinite(endPx) ? Math.round(endPx) : 0;
   const name = `tr1via-nov-strip-${px < 0 ? "m" : ""}${Math.abs(px)}`;
-  return { name, css: `@keyframes ${name} { from { transform: translateX(0px); } to { transform: translateX(${px}px); } }` };
+  return { name, css: `@keyframes ${name} { from { background-position: 0px 0px; } to { background-position: ${px}px 0px; } }` };
 }
 
 // ── Preload ────────────────────────────────────────────────────────────────

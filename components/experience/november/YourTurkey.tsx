@@ -8,8 +8,11 @@
 //   smoke    wrong answer: droops, a few feathers drift off
 //   toppled  no answer: dives into the hay bale (shown at the reveal only)
 //
-// One sprite strip in a clipped box, stepped with a transform (no layout
-// work, no canvas). Reduced motion shows the TV's settled still frame.
+// One frame-sized box with the sprite strip as its background, stepped with
+// background-position. Only one frame is ever painted or composited: the old
+// strip-wide transformed layer (~21000 device px on a 3x phone) is past
+// iPhone Safari's texture and memory limits. Reduced motion shows the TV's
+// settled still frame.
 // Pure decoration with its own crash guard: if it fails it disappears and
 // the screen it sits on carries on.
 
@@ -55,7 +58,9 @@ const KEYFRAMES = `
 
 function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
   const reduced = usePrefersReducedMotion();
-  const size = Number.isFinite(requestedSize) && requestedSize > 0 ? requestedSize : 0;
+  // Whole pixels, so every frame step lands on a pixel and no neighbour
+  // frame bleeds in at the box edge.
+  const size = Number.isFinite(requestedSize) && requestedSize > 0 ? Math.round(requestedSize) : 0;
   const [arrived, setArrived] = useState(false);
   useEffect(() => {
     if (mood !== "arrive" || reduced) return;
@@ -78,7 +83,7 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
         : { kf: stripKeyframes(-(plan.frames - 1) * size), secs: (plan.frames - 1) / plan.fps, steps: plan.frames - 1, tail: "both" };
   const strip: CSSProperties = run
     ? { animation: `${run.kf.name} ${run.secs}s steps(${run.steps}) ${run.tail}` }
-    : { transform: `translateX(${-plan.frame * size}px)` };
+    : { backgroundPosition: `${-plan.frame * size}px 0px` };
 
   return (
     <span
@@ -127,15 +132,19 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
           animation: walking ? `tr1via-nov-walkin ${PHONE_WALK_MS}ms cubic-bezier(.25,.6,.35,1) both` : undefined,
         }}
       >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
+        <span
           key={`${plan.anim}-${plan.play}`}
-          src={url}
-          alt=""
-          width={stripW}
-          height={size}
-          draggable={false}
-          style={{ display: "block", width: stripW, height: size, maxWidth: "none", willChange: plan.play === "still" ? undefined : "transform", ...strip }}
+          data-testid="your-turkey-frame"
+          style={{
+            display: "block",
+            width: size,
+            height: size,
+            backgroundImage: `url("${url}")`,
+            backgroundSize: `${stripW}px ${size}px`,
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "0px 0px",
+            ...strip,
+          }}
         />
       </span>
       {shown === "smoke" && !reduced ? (
