@@ -9,7 +9,27 @@
 
 import type { CSSProperties, ReactNode, Ref } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
+import { ThemeTokensOverride } from "@/components/system/ThemeProvider";
 import { Weather, type WeatherProps } from "@/components/system/Weather";
+import { NovemberPhoneContext } from "@/components/experience/november/phoneContext";
+import {
+  NOVEMBER_PHONE_PANEL,
+  NOVEMBER_PHONE_PANEL_STRONG,
+  isNovemberPhone,
+  phoneWorldUrl,
+  type HarvestSky,
+} from "@/lib/experience/november/phone";
+
+// November's field panels: cards that use the theme's surface tokens sit on
+// dark paper instead of a faint tint, so they read over the field picture.
+const NOVEMBER_PANELS = { surface: NOVEMBER_PHONE_PANEL, surfaceH: NOVEMBER_PHONE_PANEL_STRONG };
+// Darkens the field where the text sits: strong under the header, lighter
+// through the middle where the turkey stands, strong again at the bottom.
+const NOVEMBER_VEIL =
+  "linear-gradient(180deg, rgba(30,18,8,.86) 0%, rgba(30,18,8,.5) 34%, rgba(30,18,8,.42) 58%, rgba(30,18,8,.8) 100%)";
+// The golden lobby light is the brightest, so its veil is a little stronger.
+const NOVEMBER_VEIL_GOLDEN =
+  "linear-gradient(180deg, rgba(30,18,8,.9) 0%, rgba(30,18,8,.64) 34%, rgba(30,18,8,.56) 58%, rgba(30,18,8,.84) 100%)";
 
 export interface PhoneScreenProps {
   children: ReactNode;
@@ -31,6 +51,10 @@ export interface PhoneScreenProps {
   /** Forwarded data-testid for E2E tests. Applied to the outer container so
    *  Playwright can target any phone screen by its top-level id. */
   "data-testid"?: string;
+  /** November only: which light of the Harvest Field shows behind the screen
+   *  (golden lobby, dusk game 1, night between games and the finale). Ignored
+   *  on every other month and on fill screens. */
+  harvestSky?: HarvestSky;
 }
 
 export function PhoneScreen({
@@ -44,14 +68,17 @@ export function PhoneScreen({
   style,
   screenRef,
   "data-testid": dataTestId,
+  harvestSky,
 }: PhoneScreenProps) {
   const { t, themeKey } = useTheme();
+  const field = !fill && !!harvestSky && isNovemberPhone(themeKey) ? harvestSky : null;
   const bg = fill ? fillColor ?? t.accent : t.paper;
   const fg = fill ? (t.dark ? "#0E0805" : t.paper) : t.ink;
   return (
     <div
       ref={screenRef}
       data-testid={dataTestId}
+      data-harvest-sky={field ?? undefined}
       style={{
         width: "100%",
         height: "100%",
@@ -62,6 +89,15 @@ export function PhoneScreen({
         flexGrow: 1,
         minHeight: 0,
         background: bg,
+        // The field stays put while a long screen scrolls over it.
+        ...(field
+          ? {
+              backgroundImage: `${field === "golden" ? NOVEMBER_VEIL_GOLDEN : NOVEMBER_VEIL}, url(${phoneWorldUrl(field)})`,
+              backgroundSize: "100% 100%, cover",
+              backgroundPosition: "center, center bottom",
+              backgroundRepeat: "no-repeat",
+            }
+          : null),
         color: fg,
         fontFamily: "var(--font-sans)",
         display: "flex",
@@ -86,7 +122,13 @@ export function PhoneScreen({
         <Weather themeKey={themeKey} intensity={weatherIntensity} compact page={weatherPage} />
       )}
       <div style={{ position: "relative", zIndex: 1, display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}>
-        {children}
+        {field ? (
+          <NovemberPhoneContext.Provider value>
+            <ThemeTokensOverride patch={NOVEMBER_PANELS}>{children}</ThemeTokensOverride>
+          </NovemberPhoneContext.Provider>
+        ) : (
+          children
+        )}
       </div>
     </div>
   );

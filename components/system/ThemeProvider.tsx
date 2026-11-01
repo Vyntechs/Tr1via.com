@@ -63,3 +63,20 @@ export function useTheme(): ThemeContextValue {
 export function useOptionalTheme(): ThemeContextValue | null {
   return useContext(ThemeCtx);
 }
+
+/**
+ * Swaps a few resolved tokens for one subtree, keeping the theme key. Used by
+ * November's phone field (components/shells/PhoneScreen.tsx) so the cards sit
+ * on dark field panels; nothing outside that subtree changes.
+ */
+export function ThemeTokensOverride({
+  patch,
+  children,
+}: {
+  patch: Partial<ResolvedTheme>;
+  children: ReactNode;
+}) {
+  const parent = useTheme();
+  const value = useMemo<ThemeContextValue>(() => ({ ...parent, t: { ...parent.t, ...patch } }), [parent, patch]);
+  return <ThemeCtx.Provider value={value}>{children}</ThemeCtx.Provider>;
+}

@@ -45,6 +45,8 @@ import {
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { FlamingHead } from "@/components/experience/october/FlamingHead";
+import { YourTurkey } from "@/components/experience/november/YourTurkey";
+import { PHONE_WISHBONE_URL, isNovemberPhone } from "@/lib/experience/november/phone";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import {
   PlayerLobby,
@@ -165,7 +167,7 @@ function PlayerFinaleView({
   ].filter((row): row is { label: string; value: string } => row !== null);
 
   return (
-    <PhoneScreen data-testid="player-finale">
+    <PhoneScreen data-testid="player-finale" harvestSky="night">
       <PhoneHeader eyebrow="FINAL RESULTS" />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
         <Display size="clamp(44px, 15vw, 64px)" color={t.ink} weight={700}>
@@ -178,6 +180,17 @@ function PlayerFinaleView({
             <div data-testid="player-finale-flaming-head" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
               <FlamingHead height={56} style={{ margin: "-12px 0 -4px" }} />
               <span style={{ fontSize: 16, fontWeight: 700, color: t.pop }}>You hold the flaming head.</span>
+            </div>
+          </ThemeLayerBoundary>
+        ) : won && isNovemberPhone(themeKey) ? (
+          // November: the champion gets the wishbone. If it ever breaks, the
+          // line switches off and the finale reads as on any other night.
+          <ThemeLayerBoundary name="november:finale-wishbone">
+            <div data-testid="player-finale-wishbone" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 8 }}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={PHONE_WISHBONE_URL} alt="" width={56} height={56} style={{ width: 56, height: 56, margin: "-10px 0 -6px" }} />
+              <YourTurkey mood="blaze" size={64} style={{ margin: "-18px 0 -8px -6px" }} />
+              <span style={{ fontSize: 16, fontWeight: 700, color: t.pop }}>You got the wishbone.</span>
             </div>
           </ThemeLayerBoundary>
         ) : null}

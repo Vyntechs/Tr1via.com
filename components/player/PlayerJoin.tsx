@@ -75,7 +75,7 @@ export function PlayerJoin({
   const ctaDisabled = interactive && (!name.trim() || submitting);
 
   return (
-    <PhoneScreen data-testid="player-join">
+    <PhoneScreen data-testid="player-join" harvestSky="golden">
       <PhoneHeader eyebrow={`JOINING · ${venueName.toUpperCase()}`} />
 
       <form

@@ -79,7 +79,7 @@ export function PlayerRecap({
   }
 
   return (
-    <PhoneScreen data-testid="player-recap">
+    <PhoneScreen data-testid="player-recap" harvestSky="night">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingTop: 6 }}>
         <Eyebrow color={t.inkMid} size={10}>YOUR NIGHT · {venueName.toUpperCase()}</Eyebrow>
         <Eyebrow color={t.inkMute} size={10}>{nightDateLabel.toUpperCase()}</Eyebrow>

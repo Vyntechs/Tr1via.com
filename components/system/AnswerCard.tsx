@@ -14,6 +14,7 @@
 import { useEffect, useRef, type CSSProperties } from "react";
 import { useTheme } from "./ThemeProvider";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
+import { useNovemberPhone } from "@/components/experience/november/phoneContext";
 import { Numeric } from "./Numeric";
 
 export type AnswerCardState =
@@ -75,6 +76,8 @@ export function AnswerCard({
 }: AnswerCardProps) {
   const { t } = useTheme();
   const reducedMotion = usePrefersReducedMotion();
+  // November phone: the cards sit on the Harvest Field as dark panels.
+  const field = useNovemberPhone();
   const a = accent ?? t.accent;
   const isLockedSelf = state === "locked-self";
   const isLockedOther = state === "locked-other";
@@ -89,6 +92,12 @@ export function AnswerCard({
   let textColor: string = t.ink;
   let opacity = 1;
   let scale = 1;
+
+  if (field) {
+    cardBg = "rgba(30,18,8,.86)";
+    cardBorder = "rgba(242,222,174,.16)";
+    barBg = "rgba(242,222,174,.08)";
+  }
 
   if (isLockedSelf) {
     cardBg = t.dark ? "rgba(255,106,61,.10)" : "#FFF1E8";
@@ -123,6 +132,26 @@ export function AnswerCard({
     textColor = t.correct;
   }
 
+  if (field) {
+    // The Figma "Phone/Answer" states: chosen = burnt orange, right = solid
+    // green (today's correct color), wrong = dark panel with the wrong edge.
+    if (isLockedSelf) {
+      cardBg = "rgba(194,94,34,.94)";
+      cardBorder = "rgba(242,222,174,.28)";
+      barBg = "rgba(30,18,8,.55)";
+      barInk = "#F2DEAE";
+      textColor = "#F2DEAE";
+    }
+    if (isCorrect) {
+      cardBg = t.correct;
+      barBg = "rgba(30,18,8,.85)";
+      barInk = t.correct;
+      textColor = "#1E1208";
+    }
+    if (isWrong) cardBg = "rgba(30,18,8,.9)";
+    if (isMissed) cardBg = "rgba(30,18,8,.86)";
+  }
+
   const isTappable = state === "idle" && !!onTap && !disabled;
 
   // A card that was given a tap handler stays a button in every state (it just
@@ -153,7 +182,7 @@ export function AnswerCard({
         alignItems: "stretch",
         background: cardBg,
         border: `1.5px solid ${cardBorder}`,
-        borderRadius: 14,
+        borderRadius: field ? 18 : 14,
         overflow: "hidden",
         minHeight: 64,
         opacity,

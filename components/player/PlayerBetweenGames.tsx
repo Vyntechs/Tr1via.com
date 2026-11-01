@@ -9,6 +9,8 @@ import { useEffect, useRef, useState } from "react";
 import { useTheme, Display, Eyebrow, Numeric } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
+import { YourTurkey } from "@/components/experience/november/YourTurkey";
+import { PHONE_PIE_URL, isNovemberPhone } from "@/lib/experience/november/phone";
 import { readableForeground } from "@/lib/theme/contrast";
 import { categoryColor } from "@/lib/theme/categories";
 import type { StandingRow } from "@/lib/player/betweenGames";
@@ -88,8 +90,16 @@ export function PlayerBetweenGames({
   }
 
   return (
-    <PhoneScreen data-testid="player-between-games">
+    <PhoneScreen data-testid="player-between-games" harvestSky="night">
       <PhoneHeader eyebrow="HALFTIME · GAME 2 NEXT" />
+      {isNovemberPhone(themeKey) ? (
+        // November: the pie cools on the harvest table while your turkey waits.
+        <div aria-hidden data-testid="november-halftime-pie" style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 86, marginTop: 6 }}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={PHONE_PIE_URL} alt="" width={96} height={96} style={{ width: 96, height: 96, marginBottom: -8 }} />
+          <YourTurkey mood="waiting" size={84} style={{ marginBottom: -6 }} />
+        </div>
+      ) : null}
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 14, position: "relative" }}>
         <Display size={44} color={t.ink}>

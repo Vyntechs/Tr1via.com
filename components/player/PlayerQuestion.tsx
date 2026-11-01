@@ -31,6 +31,8 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 import { SeptemberQuestionLampBand } from "@/components/system/SeptemberFront";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
+import { YourTurkey } from "@/components/experience/november/YourTurkey";
+import { isNovemberPhone, phoneTurkeyMood } from "@/lib/experience/november/phone";
 import type { StandingRow } from "@/lib/player/betweenGames";
 import {
   PlayerSendStatus,
@@ -132,6 +134,8 @@ export function PlayerQuestion({
   // October: the player's own unlit pumpkin waits in the timer strip, right
   // above the answers, using space the strip already has.
   const yourPumpkin = hasPhoneLayer(themeKey);
+  // November: your turkey idles in the same spot and fans its tail on lock-in.
+  const yourTurkey = isNovemberPhone(themeKey);
   const bannerBottomGap = septemberQuestion ? 0 : 18;
   const slots: PlayerQuestionSlot[] = [1, 2, 3, 4];
   const [imageFailed, setImageFailed] = useState(false);
@@ -245,6 +249,7 @@ export function PlayerQuestion({
       data-testid={pick ? "player-locked" : "player-question"}
       scroll={pick ? "auto" : "locked"}
       weatherPage="question"
+      harvestSky="dusk"
       screenRef={screenRef}
       style={{ ["--player-question-decoration-level" as string]: decorationLevel }}
     >
@@ -364,6 +369,9 @@ export function PlayerQuestion({
                 style={{ margin: "-18px 0 -8px" }}
               />
             ) : null}
+            {yourTurkey && pick.sendState !== "rejected" ? (
+              <YourTurkey mood={phoneTurkeyMood(pick.sendState)} size={60} style={{ margin: "-20px 0 -10px" }} />
+            ) : null}
           </>
         ) : (
           <>
@@ -375,6 +383,10 @@ export function PlayerQuestion({
                   size={56}
                   style={{ margin: "-18px 0 -8px" }}
                 />
+              </span>
+            ) : yourTurkey ? (
+              <span style={{ flex: 1, display: "flex", justifyContent: "center" }}>
+                <YourTurkey mood="waiting" size={60} style={{ margin: "-20px 0 -10px" }} />
               </span>
             ) : (
               <span style={{ flex: 1 }} />

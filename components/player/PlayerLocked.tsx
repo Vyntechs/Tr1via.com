@@ -26,6 +26,8 @@ import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
+import { YourTurkey } from "@/components/experience/november/YourTurkey";
+import { isNovemberPhone, phoneTurkeyMood } from "@/lib/experience/november/phone";
 import type { StandingRow } from "@/lib/player/betweenGames";
 import { PlayerSendStatus, type PlayerLockedSendState } from "./PlayerSendStatus";
 
@@ -162,7 +164,7 @@ export function PlayerLocked({
     : 0;
 
   return (
-    <PhoneScreen data-testid="player-locked" weatherPage="question">
+    <PhoneScreen data-testid="player-locked" weatherPage="question" harvestSky="dusk">
       <div
         style={{
           margin: `-14px -22px ${bannerBottomGap}px`,
@@ -207,6 +209,10 @@ export function PlayerLocked({
             size={56}
             style={{ margin: "-18px 0 -8px" }}
           />
+        ) : null}
+        {isNovemberPhone(themeKey) && sendState !== "rejected" ? (
+          // November: your turkey fans its tail the moment the server says yes.
+          <YourTurkey mood={phoneTurkeyMood(sendState)} size={60} style={{ margin: "-20px 0 -10px" }} />
         ) : null}
         {!hasLiveCount && lockedSummary && <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>}
       </div>
