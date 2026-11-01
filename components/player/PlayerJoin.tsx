@@ -45,6 +45,14 @@ export interface PlayerJoinProps {
   error?: string | null;
 }
 
+const NOVEMBER_SHORT_JOIN_CSS = `@media (max-height: 720px) {
+  [data-testid="player-join"][data-harvest-sky] .tr1via-join-top { padding-top: 8px !important; }
+  [data-testid="player-join"][data-harvest-sky] .tr1via-join-hero { margin-top: 16px !important; }
+  [data-testid="player-join"][data-harvest-sky] .tr1via-join-hero > * { font-size: 48px !important; }
+  [data-testid="player-join"][data-harvest-sky] .tr1via-join-blurb { margin-top: 12px !important; }
+  [data-testid="player-join"][data-harvest-sky] .tr1via-join-name { margin-top: 22px !important; }
+}`;
+
 export function PlayerJoin({
   themeKey: _themeKey,
   playerName = "Maya",
@@ -75,16 +83,21 @@ export function PlayerJoin({
   const ctaDisabled = interactive && (!name.trim() || submitting);
 
   return (
-    <PhoneScreen data-testid="player-join">
+    <PhoneScreen data-testid="player-join" harvestSky="golden">
+      {/* November on short phones (iPhone SE, 375x667): the Harvest Field join
+          tightens its spacing so "Join the game" sits on screen without a scroll.
+          Only matches the November field screen (data-harvest-sky), so every
+          other month keeps its layout. */}
+      <style href="tr1via-nov-join-short" precedence="default">{NOVEMBER_SHORT_JOIN_CSS}</style>
       <PhoneHeader eyebrow={`JOINING · ${venueName.toUpperCase()}`} />
 
       <form
         onSubmit={handleSubmit}
         style={{ display: "flex", flexDirection: "column", flex: 1, minHeight: 0 }}
       >
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", paddingTop: 24 }}>
+        <div className="tr1via-join-top" style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "flex-start", paddingTop: 24 }}>
           <Wordmark size={36} />
-          <div style={{ marginTop: 28 }}>
+          <div className="tr1via-join-hero" style={{ marginTop: 28 }}>
             <Display size={56} color={t.ink}>
               <span style={{ color: t.accent }}>Pizza,</span>
               <br />
@@ -97,11 +110,11 @@ export function PlayerJoin({
               </span>
             </Display>
           </div>
-          <div style={{ marginTop: 18, color: t.inkMid, fontSize: 14.5, lineHeight: 1.45, maxWidth: 280 }}>
+          <div className="tr1via-join-blurb" style={{ marginTop: 18, color: t.inkMid, fontSize: 14.5, lineHeight: 1.45, maxWidth: 280 }}>
             Wednesday trivia at {venueName}{hostName ? `, hosted by ${hostName}` : ""}. Pick a name and you&apos;re in the room.
           </div>
 
-          <div style={{ marginTop: 36 }}>
+          <div className="tr1via-join-name" style={{ marginTop: 36 }}>
             <Eyebrow color={t.inkMid} size={10}>YOUR NAME FOR THE NIGHT</Eyebrow>
             <div
               style={{

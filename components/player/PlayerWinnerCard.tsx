@@ -18,6 +18,8 @@ import {
 import { PhoneScreen } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { FlamingHead } from "@/components/experience/october/FlamingHead";
+import { YourTurkey } from "@/components/experience/november/YourTurkey";
+import { PHONE_WISHBONE_URL, isNovemberPhone } from "@/lib/experience/november/phone";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { useCrescendo } from "@/lib/hooks/useCrescendo";
@@ -93,12 +95,24 @@ export function PlayerWinnerCard({
     setSaveState("saving");
     try {
       const { toPng } = await import("html-to-image");
-      const dataUrl = await toPng(node, {
+      const november = isNovemberPhone(themeKey);
+      const opts = {
         // Bump pixel ratio so the saved card is crisp on retina screens.
         pixelRatio: Math.min((typeof window !== "undefined" && window.devicePixelRatio) || 2, 3),
         cacheBust: true,
         backgroundColor: t.paper,
-      });
+        // html-to-image also writes backgroundColor onto the card itself, which
+        // paints over the accent fill (the card saved near-black). November puts
+        // the accent back on the card; the paper stays behind the round corners.
+        // The card's own top margin is copied too and pushed the picture down,
+        // cutting off its bottom edge; November zeroes it for the save.
+        ...(november ? { style: { backgroundColor: t.accent, margin: "0" } } : {}),
+      };
+      // November's turkey is a large sprite strip. Safari draws the picture
+      // before that image has decoded, so the first pass comes out without the
+      // turkey; a warm-up pass lets the second one include it.
+      if (november) await toPng(node, opts);
+      const dataUrl = await toPng(node, opts);
       const filename = `tr1via-${slugifyForFilename(venueName)}-${slugifyForFilename(nightDateLabel)}.png`;
       const a = document.createElement("a");
       a.href = dataUrl;
@@ -113,10 +127,10 @@ export function PlayerWinnerCard({
       setSaveState("error");
       window.setTimeout(() => setSaveState("idle"), 2200);
     }
-  }, [onSave, t.paper, venueName, nightDateLabel]);
+  }, [onSave, t.paper, t.accent, themeKey, venueName, nightDateLabel]);
 
   return (
-    <PhoneScreen data-testid="player-winner-card">
+    <PhoneScreen data-testid="player-winner-card" harvestSky="night">
       {/* Heightened weather behind the card for finale energy. PhoneScreen
           already renders weather at intensity 0.5; we add an extra layer that
           ramps up (build) to dial up the moment without rebuilding the shell. */}
@@ -175,6 +189,17 @@ export function PlayerWinnerCard({
               <div style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 10 }}>
                 <FlamingHead height={52} style={{ margin: "-14px 0 -4px" }} />
                 <span style={{ fontSize: 15, fontWeight: 700, color: "#0E0805" }}>You hold the flaming head.</span>
+              </div>
+            </ThemeLayerBoundary>
+          ) : isNovemberPhone(themeKey) ? (
+            // November: the winner gets the wishbone. If it ever breaks, the
+            // line switches off and the card reads as on any other night.
+            <ThemeLayerBoundary name="november:winner-card-wishbone">
+              <div data-testid="november-winner-wishbone" style={{ marginTop: 10, display: "flex", alignItems: "center", gap: 8 }}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={PHONE_WISHBONE_URL} alt="" width={52} height={52} style={{ width: 52, height: 52, margin: "-10px 0 -6px", filter: "drop-shadow(0 1px 1px rgba(14,8,5,.55))" }} />
+                <YourTurkey mood="blaze" size={60} style={{ margin: "-18px 0 -8px -6px" }} />
+                <span style={{ fontSize: 15, fontWeight: 700, color: "#0E0805" }}>You got the wishbone.</span>
               </div>
             </ThemeLayerBoundary>
           ) : null}

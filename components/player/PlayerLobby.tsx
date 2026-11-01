@@ -9,6 +9,8 @@ import { useTheme, Display, Eyebrow } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
+import { NovemberLobby } from "@/components/experience/november/NovemberLobby";
+import { isNovemberPhone } from "@/lib/experience/november/phone";
 import { categoryColor } from "@/lib/theme/categories";
 import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -46,10 +48,22 @@ export function PlayerLobby({
 }: PlayerLobbyProps = {}) {
   const { t, themeKey } = useTheme();
   const yourPumpkin = hasPhoneLayer(themeKey);
+  const yourTurkey = isNovemberPhone(themeKey);
   return (
-    <PhoneScreen data-testid="player-lobby">
+    <PhoneScreen data-testid="player-lobby" harvestSky="golden">
       <PhoneHeader eyebrow="IN THE GAME" />
 
+      {yourTurkey ? (
+        // November: Figma P1. Your turkey walks into the field as the hero,
+        // standing on your name plate; who's in and the topics sit below.
+        <NovemberLobby
+          playerName={playerName}
+          hostName={hostName}
+          inRoomCount={inRoomCount}
+          newestNames={newestNames}
+          topics={topics}
+        />
+      ) : (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
         <Display size={64} color={t.ink}>
           You&apos;re in,
@@ -203,6 +217,7 @@ export function PlayerLobby({
           )}
         </div>
       </div>
+      )}
     </PhoneScreen>
   );
 }
