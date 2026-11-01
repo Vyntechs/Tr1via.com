@@ -42,7 +42,7 @@ import {
   PyrotechnicsBeatConductor,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
-import { finaleWinner } from "@/lib/experience/november/phone";
+import { finaleWinner, isNovemberPhone, safeFinaleWinner } from "@/lib/experience/november/phone";
 import { PlayerFinaleView } from "@/components/player/PlayerFinale";
 import {
   PlayerLobby,
@@ -71,6 +71,7 @@ import { useSurfaceObservation } from "@/lib/hooks/useGameDelivery";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { rankScores } from "@/lib/game/rankScores";
+import { scheduleNovemberPhonePreload } from "@/components/experience/november/preloadPhoneArt";
 import { playerColorHex } from "@/lib/player/playerColor";
 import {
   selectBetweenGamesView,
@@ -270,6 +271,11 @@ function RoomStateMachine({
   me: PlayerRow;
   themeKey: ThemeKey;
 }) {
+  // November: fetch the phone pictures a little later, after the join, in
+  // two small staggered waves (never on the join screen, where 40 phones
+  // share the venue wifi with their join requests).
+  const novemberPhone = isNovemberPhone(themeKey);
+  useEffect(() => (novemberPhone ? scheduleNovemberPhonePreload() : undefined), [novemberPhone]);
   // Live game (or pre-game). Used to decide which screen to show.
   const game1 = snapshot.games.find((g) => g.game_no === 1) ?? null;
   const game2 = snapshot.games.find((g) => g.game_no === 2) ?? null;
@@ -496,10 +502,16 @@ function RoomStateMachine({
         finalGameNo={finalGameForRecap.game_no}
         playerName={me.display_name}
         playerCount={finalScores.length}
-        winner={finaleWinner(
-          rankScores(finalScores),
-          new Map(snapshot.players.map((p) => [p.id, p.display_name] as const)),
-        )}
+        winner={
+          isNovemberPhone(themeKey)
+            ? safeFinaleWinner(() =>
+                finaleWinner(
+                  rankScores(finalScores),
+                  new Map(snapshot.players.map((p) => [p.id, p.display_name] as const)),
+                ),
+              )
+            : null
+        }
       />
     );
   } else if ((betweenView || waitingForGame2FirstQuestion) && game1 && game2) {

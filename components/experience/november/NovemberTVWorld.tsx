@@ -18,7 +18,7 @@
 
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { StageWorldContext, TVMomentPublisherContext } from "@/components/experience/StageWorld";
 import { PlayerRowCanvas, type PlayerRowInputs } from "@/components/experience/shared/PlayerRowCanvas";
@@ -107,6 +107,11 @@ export function NovemberTVWorld({ spec, snapshot, tier: requestedTier, off = fal
 
   const rootRef = useRef<HTMLDivElement | null>(null);
   const stageScale = useStageScale(rootRef);
+  // The row canvas times the frames; if the TV is slow it drops to lite and
+  // tells us, and the field lightens too (no drift, leaves, blend or fades).
+  const [slowTV, setSlowTV] = useState(false);
+  const onLite = useCallback(() => setSlowTV(true), []);
+  const fieldMode: FieldMode = tier === "still" ? "still" : slowTV ? "lite" : "full";
 
   return (
     <div
@@ -118,6 +123,7 @@ export function NovemberTVWorld({ spec, snapshot, tier: requestedTier, off = fal
       data-world-sky={off ? undefined : scene.sky}
       data-world-turkeys={off ? undefined : players.length}
       data-world-off={off ? "true" : undefined}
+      data-world-field={off ? undefined : fieldMode}
       style={{
         position: "relative",
         flex: 1,
@@ -151,7 +157,7 @@ export function NovemberTVWorld({ spec, snapshot, tier: requestedTier, off = fal
       >
         {off ? null : (
           <ThemeLayerBoundary name="november:field" onFail={onFail}>
-            <HarvestField scene={scene} still={tier === "still"} />
+            <HarvestField scene={scene} mode={fieldMode} />
           </ThemeLayerBoundary>
         )}
 
@@ -171,6 +177,7 @@ export function NovemberTVWorld({ spec, snapshot, tier: requestedTier, off = fal
               tier={tier === "still" ? "still" : "full"}
               stageScale={stageScale}
               onFail={onFail}
+              onLite={onLite}
             />
           </ThemeLayerBoundary>
         )}
@@ -221,10 +228,36 @@ const FIELD_CSS = `
 @keyframes nov-leaf-c { 0% { transform: translate3d(-60px,0,0) rotate(-20deg); } 50% { transform: translate3d(820px,60px,0) rotate(200deg); } 100% { transform: translate3d(1680px,24px,0) rotate(400deg); } }
 `;
 
-function HarvestField({ scene, still }: { scene: HarvestScene; still: boolean }) {
+type FieldMode = "full" | "lite" | "still";
+
+const SKIES: readonly HarvestSky[] = ["golden", "dusk", "night"];
+
+function HarvestField({ scene, mode }: { scene: HarvestScene; mode: FieldMode }) {
+  // Still: one picture. Lite (a slow TV): the same pictures, but nothing
+  // drifts, no leaves, no blend, and the sky swaps instead of crossfading.
+  const still = mode === "still";
+  const calm = mode !== "full";
+  // Fetch every sky's layers a few seconds after the first paint and keep
+  // them, so the dusk and night fields are ready before the sky changes.
+  useEffect(() => {
+    const kept: HTMLImageElement[] = [];
+    const id = window.setTimeout(() => {
+      for (const s of SKIES)
+        for (const layer of LAYERS) {
+          const img = new Image();
+          img.decoding = "async";
+          img.src = skyLayerUrl(s, layer.id);
+          kept.push(img);
+        }
+    }, 3000);
+    return () => {
+      window.clearTimeout(id);
+      kept.length = 0;
+    };
+  }, []);
   // The sky on screen now, and the one fading out under it.
   const [sky, setSky] = useState<{ cur: HarvestSky; prev: HarvestSky | null }>({ cur: scene.sky, prev: null });
-  if (sky.cur !== scene.sky) setSky({ cur: scene.sky, prev: still ? null : sky.cur });
+  if (sky.cur !== scene.sky) setSky({ cur: scene.sky, prev: calm ? null : sky.cur });
   useEffect(() => {
     if (!sky.prev) return;
     const id = window.setTimeout(() => setSky((s) => ({ ...s, prev: null })), FADE_MS + 200);
@@ -236,7 +269,7 @@ function HarvestField({ scene, still }: { scene: HarvestScene; still: boolean })
 
   return (
     <div aria-hidden data-testid="november-field" style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none" }}>
-      {still ? null : <style>{FIELD_CSS}</style>}
+      {calm ? null : <style>{FIELD_CSS}</style>}
       {LAYERS.map((layer) => (
         <div
           key={layer.id}
@@ -244,8 +277,8 @@ function HarvestField({ scene, still }: { scene: HarvestScene; still: boolean })
             ...full,
             transform: "scale(1.03)",
             ["--amp" as string]: layer.amp,
-            animation: still || layer.dur === 0 ? undefined : `nov-drift ${layer.dur}s ease-in-out infinite alternate`,
-            willChange: still || layer.dur === 0 ? undefined : "transform",
+            animation: calm || layer.dur === 0 ? undefined : `nov-drift ${layer.dur}s ease-in-out infinite alternate`,
+            willChange: calm || layer.dur === 0 ? undefined : "transform",
           }}
         >
           {sky.prev ? <LayerImg key={sky.prev} sky={sky.prev} layer={layer.id} /> : null}
@@ -262,8 +295,8 @@ function HarvestField({ scene, still }: { scene: HarvestScene; still: boolean })
                 ...full,
                 background:
                   "radial-gradient(ellipse 34% 16% at 50% 66%, rgba(255,178,84,.30), rgba(255,178,84,0) 70%), radial-gradient(ellipse 60% 9% at 50% 6%, rgba(255,196,110,.20), rgba(255,196,110,0) 70%)",
-                mixBlendMode: "screen",
-                opacity: night ? 1 : 0,
+                mixBlendMode: calm ? undefined : "screen",
+                opacity: night ? (calm ? 0.6 : 1) : 0,
                 transition: still ? "none" : `opacity ${FADE_MS}ms ease`,
               }}
             >
@@ -271,7 +304,7 @@ function HarvestField({ scene, still }: { scene: HarvestScene; still: boolean })
                 style={{
                   ...full,
                   background: "radial-gradient(ellipse 22% 10% at 50% 67%, rgba(255,190,96,.22), rgba(255,190,96,0) 70%)",
-                  animation: still || !night ? undefined : "nov-breathe 4.5s ease-in-out infinite alternate",
+                  animation: calm || !night ? undefined : "nov-breathe 4.5s ease-in-out infinite alternate",
                 }}
               />
             </div>
@@ -279,12 +312,12 @@ function HarvestField({ scene, still }: { scene: HarvestScene; still: boolean })
         </div>
       ))}
 
-      {still
+      {calm
         ? null
         : AMBIENT_LEAVES.map((l, i) => (
             <Leaf key={`a${i}`} {...l} style={{ animation: `nov-leaf-${l.path} ${l.dur}s linear ${l.delay}s infinite` }} />
           ))}
-      {!still && scene.gust
+      {!calm && scene.gust
         ? GUST_LEAVES.map((l, i) => (
             <Leaf key={`g${i}`} {...l} style={{ animation: `nov-leaf-${l.path} ${l.dur}s cubic-bezier(.3,.1,.6,1) ${l.delay}s both` }} />
           ))

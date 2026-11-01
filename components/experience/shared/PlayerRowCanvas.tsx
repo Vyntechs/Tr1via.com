@@ -44,6 +44,9 @@ export interface PlayerRowCanvasProps<S extends RowScene, F> {
    *  so the figures stay sharp. */
   stageScale?: number;
   onFail: (error: unknown) => void;
+  /** Told once if the canvas finds the TV slow and drops to "lite", so the
+   *  rest of the world can lighten too. */
+  onLite?: () => void;
 }
 
 const STAGE_W = 1600;
@@ -55,10 +58,12 @@ export function PlayerRowCanvas<S extends RowScene, F>({
   tier,
   stageScale = 1,
   onFail,
+  onLite,
 }: PlayerRowCanvasProps<S, F>) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const inputsRef = useRef(inputs);
   const onFailRef = useRef(onFail);
+  const onLiteRef = useRef(onLite);
   const artRef = useRef(art);
   const drawRef = useRef<(() => void) | null>(null);
   const resizeRef = useRef<(() => void) | null>(null);
@@ -67,6 +72,7 @@ export function PlayerRowCanvas<S extends RowScene, F>({
   useEffect(() => {
     inputsRef.current = inputs;
     onFailRef.current = onFail;
+    onLiteRef.current = onLite;
   });
 
   useEffect(() => {
@@ -118,22 +124,34 @@ export function PlayerRowCanvas<S extends RowScene, F>({
       onFailRef.current(error);
     };
 
-    const loadImages = () =>
-      Promise.all(
-        spriteKeys.map(
-          (key) =>
-            new Promise<void>((resolve) => {
-              const img = new Image();
-              img.decoding = "async";
-              img.onload = () => {
-                images[key] = img;
-                resolve();
-              };
-              img.onerror = () => resolve();
-              img.src = art.sprites[key].url;
-            }),
-        ),
-      );
+    // Each picture resolves on its first try (loaded or failed) so the row
+    // can start; a failed one is tried again twice in the background and
+    // drawn as soon as it arrives.
+    const retryTimers: number[] = [];
+    let started = false;
+    const loadOne = (key: string, attempt: number, settle?: () => void) => {
+      const img = new Image();
+      img.decoding = "async";
+      img.onload = () => {
+        if (stopped) return;
+        images[key] = img;
+        bitmapScale = 0; // pick the new picture up on the next rasterize
+        settle?.();
+        if (started && still) drawRef.current?.();
+      };
+      img.onerror = () => {
+        settle?.();
+        if (stopped || attempt >= 2) return;
+        retryTimers.push(window.setTimeout(() => loadOne(key, attempt + 1), 3000 * (attempt + 1)));
+      };
+      img.src = art.sprites[key].url;
+    };
+    const loadImages = () => {
+      const firstTry = new Map<string, Promise<void>>();
+      for (const key of spriteKeys) firstTry.set(key, new Promise<void>((resolve) => loadOne(key, 0, resolve)));
+      const needed = (art.startWith ?? spriteKeys).filter((key) => firstTry.has(key));
+      return Promise.all(needed.map((key) => firstTry.get(key)));
+    };
 
     // Re-measure if the on-screen size changed since the last measure (the
     // TV stage can finish sizing itself after the first measure, or re-scale
@@ -166,6 +184,10 @@ export function PlayerRowCanvas<S extends RowScene, F>({
       const scale = k * dpr;
       if (Math.abs(scale - bitmapScale) < 0.01 && Object.keys(bitmaps).length) return;
       bitmapScale = scale;
+      // A sprite whose drawn size didn't change keeps its bitmap (same picture,
+      // same size, same pixels): a join reflows the row, but November's fixed
+      // size strips are never rebuilt for it, only real size changes are.
+      const prev = bitmaps;
       const next: Partial<Record<string, HTMLCanvasElement>> = {};
       for (const key of spriteKeys) {
         const img = images[key];
@@ -178,6 +200,11 @@ export function PlayerRowCanvas<S extends RowScene, F>({
           // A strip: whole-pixel frames so no frame bleeds into the next.
           h = Math.max(8, Math.ceil((w * sprite.height * sprite.frames) / sprite.width));
           w *= sprite.frames;
+        }
+        const old = prev[key];
+        if (old && old.width === w && old.height === h) {
+          next[key] = old;
+          continue;
         }
         const c = document.createElement("canvas");
         c.width = w;
@@ -392,6 +419,7 @@ export function PlayerRowCanvas<S extends RowScene, F>({
             if (median(frameTimes) > 24) {
               lite = true;
               resize();
+              onLiteRef.current?.();
             }
             frameTimes.length = 0;
           }
@@ -460,12 +488,14 @@ export function PlayerRowCanvas<S extends RowScene, F>({
 
     void loadImages().then(() => {
       if (stopped) return;
+      started = true;
       if (still) drawRef.current?.();
       else raf = requestAnimationFrame(tick);
     });
 
     return () => {
       stopped = true;
+      retryTimers.forEach((id) => window.clearTimeout(id));
       cancelAnimationFrame(raf);
       cancelAnimationFrame(resizeRaf);
       window.removeEventListener("resize", onWindowResize);

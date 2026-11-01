@@ -7,8 +7,7 @@
 
 "use client";
 
-import { useEffect, type CSSProperties, type ReactNode, type Ref } from "react";
-import { preloadNovemberPhoneArt } from "@/components/experience/november/preloadPhoneArt";
+import { type CSSProperties, type ReactNode, type Ref } from "react";
 import { useTheme } from "@/components/system/ThemeProvider";
 import { ThemeTokensOverride } from "@/components/system/ThemeProvider";
 import { Weather, type WeatherProps } from "@/components/system/Weather";
@@ -73,12 +72,6 @@ export function PhoneScreen({
 }: PhoneScreenProps) {
   const { t, themeKey } = useTheme();
   const field = !fill && !!harvestSky && isNovemberPhone(themeKey) ? harvestSky : null;
-  // November: the first field screen fetches every phone picture (strips,
-  // dusk/night field) so a mood change never waits on venue wifi.
-  const novemberTheme = isNovemberPhone(themeKey);
-  useEffect(() => {
-    if (novemberTheme) preloadNovemberPhoneArt();
-  }, [novemberTheme]);
   const bg = fill ? fillColor ?? t.accent : t.paper;
   const fg = fill ? (t.dark ? "#0E0805" : t.paper) : t.ink;
   return (

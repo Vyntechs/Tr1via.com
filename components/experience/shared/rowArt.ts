@@ -109,6 +109,9 @@ export interface RowArt<S extends RowScene, F = unknown> {
   testId: string;
   geometry: RowGeometry;
   sprites: Readonly<Record<string, RowSprite>>;
+  /** Start drawing once these sprites have loaded (the rest fill in as they
+   *  arrive). Leave out to wait for every sprite (October). */
+  startWith?: readonly string[];
   newFx: (now: number) => F;
   create: (kit: RowKit) => RowRenderer<S, F>;
 }

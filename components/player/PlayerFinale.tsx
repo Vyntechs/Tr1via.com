@@ -68,22 +68,8 @@ export function PlayerFinaleView({
       : null,
   ].filter((row): row is { label: string; value: string } => row !== null);
 
-  if (!won && winner && isNovemberPhone(themeKey)) {
-    return (
-      <NovemberFinaleCard
-        winner={winner}
-        playerName={playerName}
-        rank={rank}
-        playerCount={playerCount}
-        score={score}
-        satOut={satOut}
-        finalGameNo={finalGameNo}
-        stats={stats}
-      />
-    );
-  }
 
-  return (
+  const plain = (
     <PhoneScreen data-testid="player-finale" harvestSky="night">
       <PhoneHeader eyebrow="FINAL RESULTS" />
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
@@ -144,6 +130,25 @@ export function PlayerFinaleView({
       </div>
     </PhoneScreen>
   );
+
+  if (!won && winner && isNovemberPhone(themeKey)) {
+    // A throw in the November card falls back to the everyday finale.
+    return (
+      <ThemeLayerBoundary name="november:finale" fallback={plain}>
+        <NovemberFinaleCard
+          winner={winner}
+          playerName={playerName}
+          rank={rank}
+          playerCount={playerCount}
+          score={score}
+          satOut={satOut}
+          finalGameNo={finalGameNo}
+          stats={stats}
+        />
+      </ThemeLayerBoundary>
+    );
+  }
+  return plain;
 }
 
 const SHADOW = "0 1px 8px rgba(20,10,5,.9)";
@@ -184,7 +189,7 @@ function NovemberFinaleCard({
           <Eyebrow color={NOVEMBER_PHONE_ACCENT} size={10}>TONIGHT&apos;S WINNER</Eyebrow>
           <div data-testid="player-finale-winner-name">
           <Display
-            size="clamp(40px, 15cqw, 60px)"
+            size="clamp(40px, 15vw, 60px)"
             color={NOVEMBER_PHONE_CREAM}
             weight={800}
             style={{ display: "block", marginTop: 2, textShadow: SHADOW, overflowWrap: "anywhere" }}
@@ -210,7 +215,9 @@ function NovemberFinaleCard({
             border: "1px solid rgba(242,222,174,.08)",
           }}
         >
-          <Eyebrow color={LABEL} size={10}>YOUR NIGHT{playerName ? ` · ${playerName.toUpperCase()}` : ""}</Eyebrow>
+          <div style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <Eyebrow color={LABEL} size={10}>YOUR NIGHT{playerName ? ` · ${String(playerName).toUpperCase()}` : ""}</Eyebrow>
+          </div>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
             <div style={{ minWidth: 0 }}>
               {rank !== null ? (

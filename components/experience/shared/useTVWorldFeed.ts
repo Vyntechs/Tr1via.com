@@ -1,5 +1,5 @@
-// What every TV world reads from the TV, in one place (November first;
-// October still carries its own copy in OctoberTVWorld.tsx, same rules):
+// What every TV world reads from the TV, in one place (October and November
+// both use it; never copy these rules into a month):
 //
 //   - the moment each screen announces (publish), with the question clock
 //     and the broadcast's clock skew

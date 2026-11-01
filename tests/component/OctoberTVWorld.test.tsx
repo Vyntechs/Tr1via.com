@@ -68,6 +68,13 @@ describe("October world on the venue TV", () => {
     }
   });
 
+  it("leaves a November night to November's own world", () => {
+    const { unmount } = renderTV("question", "november");
+    expect(screen.queryByTestId("october-world")).toBeNull();
+    expect(screen.getByTestId("november-world")).toBeInTheDocument();
+    unmount();
+  });
+
   it("mounts once around the screens on an October night", async () => {
     renderTV("question", "october");
     const world = screen.getByTestId("october-world");

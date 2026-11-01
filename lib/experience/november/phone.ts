@@ -86,10 +86,11 @@ export function phoneTurkeyPlan(
   return plan(p.anim, p.play);
 }
 
-/** The phone only ships the 128 px idle (the small turkey in the timer
- *  strip); every bigger or other turkey uses the TV's 256 px strips. */
+/** Small turkeys (80 px or less: question, locked, winner card) use the
+ *  128 px strips; bigger ones (reveal, between games, lobby) keep the TV's
+ *  256 px strips so they stay sharp on a 3x phone. The walk only comes big. */
 export function phoneTurkeyStripPx(anim: PhoneTurkeyAnim, size: number): 128 | 256 {
-  return anim === "idle" && size <= 80 ? 128 : 256;
+  return anim !== "walk" && size <= 80 ? 128 : 256;
 }
 
 export function phoneTurkeyUrl(anim: PhoneTurkeyAnim, px: 128 | 256): string {
@@ -128,26 +129,37 @@ export function stripKeyframes(endPx: number): { name: string; css: string } {
 }
 
 // ── Preload ────────────────────────────────────────────────────────────────
-// Every November phone picture is small (the whole set is about 1 MB), so the
-// first field screen a phone opens fetches them all. A mood change later (fan
-// on lock-in, gobble, droop, hay-bale dive, dusk/night field) then draws from
-// memory instead of showing an empty box on slow venue wifi.
+// Nothing is fetched on the join screen (that is when 40 phones share the
+// venue wifi with their join requests). After the join, two small waves:
+//   soon  : what the first question needs (small idle + fan, the dusk field)
+//   later : the reveal strips, the night field, pie, wishbone, feathers
+// The lobby's own turkey (walk + idle 256) loads with the lobby itself.
 
-const PHONE_STRIPS: readonly PhoneTurkeyAnim[] = ["walk", "idle", "fan", "right", "wrong", "hide"];
+export interface PhonePreloadWaves {
+  soon: string[];
+  later: string[];
+}
 
-/** Every picture a November phone can show, in the order a night needs them. */
+export function phonePreloadWaves(): PhonePreloadWaves {
+  return {
+    soon: [phoneTurkeyUrl("idle", 128), phoneTurkeyUrl("fan", 128), phoneWorldUrl("dusk")],
+    later: [
+      phoneTurkeyUrl("right", 256),
+      phoneTurkeyUrl("wrong", 256),
+      phoneTurkeyUrl("hide", 256),
+      ...([1, 2, 3, 4] as const).map(featherUrl),
+      phoneWorldUrl("night"),
+      PHONE_PIE_URL,
+      phoneTurkeyUrl("right", 128),
+      PHONE_WISHBONE_URL,
+    ],
+  };
+}
+
+/** Every picture the waves fetch, in order. */
 export function phonePreloadUrls(): string[] {
-  const strips = PHONE_STRIPS.map((a) => phoneTurkeyUrl(a, 256));
-  return [
-    ...strips.slice(0, 2),
-    phoneTurkeyUrl("idle", 128),
-    ...strips.slice(2),
-    phoneWorldUrl("dusk"),
-    phoneWorldUrl("night"),
-    ...([1, 2, 3, 4] as const).map(featherUrl),
-    PHONE_WISHBONE_URL,
-    PHONE_PIE_URL,
-  ];
+  const w = phonePreloadWaves();
+  return [...w.soon, ...w.later];
 }
 
 // ── Category bar ───────────────────────────────────────────────────────────
@@ -200,4 +212,14 @@ export function finaleWinner(
   if (list.some((n) => !n)) return null;
   const name = list.length === 1 ? list[0] : list.length === 2 ? `${list[0]} & ${list[1]}` : `${list.slice(0, -1).join(", ")} & ${list[list.length - 1]}`;
   return { name, score: top[0].row.score ?? 0 };
+}
+
+/** Runs the winner lookup, but a bad row gives "no winner card" instead of
+ *  crashing the finale screen. */
+export function safeFinaleWinner(find: () => { name: string; score: number } | null): { name: string; score: number } | null {
+  try {
+    return find();
+  } catch {
+    return null;
+  }
 }

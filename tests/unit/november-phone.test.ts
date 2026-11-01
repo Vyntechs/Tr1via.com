@@ -60,10 +60,13 @@ describe("november phone turkey", () => {
     for (const s of ["sending", "unconfirmed", "rejected", undefined, null]) expect(phoneTurkeyMood(s)).toBe("waiting");
   });
 
-  it("uses the small 128 px idle only for the small turkey, 256 px strips otherwise", () => {
+  it("uses 128 px strips for small turkeys, 256 px strips for big ones and the walk", () => {
     expect(phoneTurkeyStripPx("idle", 60)).toBe(128);
     expect(phoneTurkeyStripPx("idle", 120)).toBe(256);
-    expect(phoneTurkeyStripPx("fan", 60)).toBe(256);
+    expect(phoneTurkeyStripPx("fan", 60)).toBe(128);
+    expect(phoneTurkeyStripPx("right", 64)).toBe(128);
+    expect(phoneTurkeyStripPx("right", 112)).toBe(256);
+    expect(phoneTurkeyStripPx("walk", 60)).toBe(256);
     expect(phoneTurkeyUrl("idle", 128)).toBe("/themes/november/turkey/A/idle-128.webp");
     expect(phoneWorldUrl("dusk")).toBe("/themes/november/phone/dusk.webp");
   });
@@ -73,6 +76,8 @@ import {
   finaleWinner,
   phoneCategoryBar,
   phonePreloadUrls,
+  phonePreloadWaves,
+  safeFinaleWinner,
   stripKeyframes,
 } from "@/lib/experience/november/phone";
 import { heroTurkeySize } from "@/components/experience/november/NovemberLobby";
@@ -87,10 +92,13 @@ describe("november phone step 3b", () => {
     expect(stripKeyframes(Number.NaN).css).toContain("translateX(0px)");
   });
 
-  it("preloads every strip a mood change can need, plus dusk and night", () => {
+  it("preloads every strip a mood change can need, plus dusk and night, in two waves", () => {
     const urls = phonePreloadUrls();
-    for (const a of ["walk", "idle", "fan", "right", "wrong", "hide"]) expect(urls).toContain(`/themes/november/turkey/A/${a}-256.webp`);
-    expect(urls).toContain("/themes/november/turkey/A/idle-128.webp");
+    for (const a of ["right", "wrong", "hide"]) expect(urls).toContain(`/themes/november/turkey/A/${a}-256.webp`);
+    for (const a of ["idle", "fan", "right"]) expect(urls).toContain(`/themes/november/turkey/A/${a}-128.webp`);
+    // The lobby's own turkey loads with the lobby; never twice.
+    expect(urls).not.toContain("/themes/november/turkey/A/walk-256.webp");
+    expect(phonePreloadWaves().soon).toContain("/themes/november/phone/dusk.webp");
     expect(urls).toContain("/themes/november/phone/dusk.webp");
     expect(urls).toContain("/themes/november/phone/night.webp");
     expect(new Set(urls).size).toBe(urls.length);
@@ -116,5 +124,16 @@ describe("november phone step 3b", () => {
     expect(heroTurkeySize(346, 400)).toBe(215);
     expect(heroTurkeySize(400, 600)).toBe(236);
     expect(heroTurkeySize(331, 100)).toBe(96);
+  });
+});
+
+describe("safeFinaleWinner", () => {
+  it("passes the winner through and turns a throw into no winner card", () => {
+    expect(safeFinaleWinner(() => ({ name: "Maya", score: 3 }))).toEqual({ name: "Maya", score: 3 });
+    expect(
+      safeFinaleWinner(() => {
+        throw new Error("bad row");
+      }),
+    ).toBeNull();
   });
 });

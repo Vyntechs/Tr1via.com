@@ -81,6 +81,8 @@ export const TURKEY_ROW_ART: RowArt<HarvestScene, TurkeyFx> = {
     feather3: feather(3),
     feather4: feather(4),
   },
+  // The lobby row only needs these; the rest arrive while players join.
+  startWith: ["idle", "walk"],
   newFx: () => ({ feathersAt: -1 }),
   create: createTurkeyRenderer,
 };

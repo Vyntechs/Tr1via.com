@@ -10,6 +10,7 @@ import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import { NovemberLobby } from "@/components/experience/november/NovemberLobby";
+import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { isNovemberPhone } from "@/lib/experience/november/phone";
 import { categoryColor } from "@/lib/theme/categories";
 import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
@@ -49,21 +50,7 @@ export function PlayerLobby({
   const { t, themeKey } = useTheme();
   const yourPumpkin = hasPhoneLayer(themeKey);
   const yourTurkey = isNovemberPhone(themeKey);
-  return (
-    <PhoneScreen data-testid="player-lobby" harvestSky="golden">
-      <PhoneHeader eyebrow="IN THE GAME" />
-
-      {yourTurkey ? (
-        // November: Figma P1. Your turkey walks into the field as the hero,
-        // standing on your name plate; who's in and the topics sit below.
-        <NovemberLobby
-          playerName={playerName}
-          hostName={hostName}
-          inRoomCount={inRoomCount}
-          newestNames={newestNames}
-          topics={topics}
-        />
-      ) : (
+  const plainLobby = (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
         <Display size={64} color={t.ink}>
           You&apos;re in,
@@ -217,6 +204,27 @@ export function PlayerLobby({
           )}
         </div>
       </div>
+  );
+  return (
+    <PhoneScreen data-testid="player-lobby" harvestSky="golden">
+      <PhoneHeader eyebrow="IN THE GAME" />
+
+      {yourTurkey ? (
+        // November: Figma P1. Your turkey walks into the field as the hero,
+        // standing on your name plate; who's in and the topics sit below.
+        // A throw anywhere in it falls back to the everyday lobby, never a
+        // blank phone.
+        <ThemeLayerBoundary name="november:lobby" fallback={plainLobby}>
+        <NovemberLobby
+          playerName={playerName}
+          hostName={hostName}
+          inRoomCount={inRoomCount}
+          newestNames={newestNames}
+          topics={topics}
+        />
+        </ThemeLayerBoundary>
+      ) : (
+        plainLobby
       )}
     </PhoneScreen>
   );
