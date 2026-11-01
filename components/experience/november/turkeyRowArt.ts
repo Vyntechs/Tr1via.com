@@ -23,6 +23,7 @@ import {
 import {
   clamp01,
   easeOut,
+  roundRect,
   type RowArt,
   type RowKit,
   type RowRenderer,
@@ -81,8 +82,10 @@ export const TURKEY_ROW_ART: RowArt<HarvestScene, TurkeyFx> = {
     feather3: feather(3),
     feather4: feather(4),
   },
-  // The lobby row only needs these; the rest arrive while players join.
-  startWith: ["idle", "walk"],
+  // The lobby row only needs these (the calm phase lights every turkey:
+  // walk in, fan, then the fanned idle; idle is the fallback). The rest
+  // arrive while players join.
+  startWith: ["idle", "walk", "fan", "fanned-idle"],
   // A strip that never loaded (venue wifi) shows the standing turkey instead.
   fallbackSprite: "idle",
   // A still frame only shows these poses (turkeyPose with still: true); the
@@ -231,16 +234,6 @@ function createTurkeyRenderer(kit: RowKit): RowRenderer<HarvestScene, TurkeyFx> 
     drawLabel: drawPlate,
     drawFront: (now) => drawFeathers(now),
   };
-}
-
-function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
 }
 
 /** One soft warm glow, drawn once and reused behind every right answer. */

@@ -32,9 +32,11 @@ describe("your turkey (November phones)", () => {
     expect(screen.getByTestId("your-turkey").querySelectorAll("img").length).toBe(0);
   });
 
-  it("walks into the field in the lobby", () => {
+  it("walks into the field in the lobby (once its picture is in)", () => {
     wrap("november", <PlayerLobby playerName="Maya" inRoomCount={3} />);
-    expect(screen.getByTestId("your-turkey").getAttribute("data-turkey-anim")).toBe("walk");
+    // jsdom never loads pictures, so the walk waits; the load-driven walk is
+    // covered in NovemberPhoneArrive.test.tsx.
+    expect(screen.getByTestId("your-turkey").getAttribute("data-turkey-anim")).toBe("pending");
     expect(screen.getByTestId("player-lobby").getAttribute("data-harvest-sky")).toBe("golden");
   });
 

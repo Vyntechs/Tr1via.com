@@ -28,6 +28,7 @@ import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import { YourTurkey } from "@/components/experience/november/YourTurkey";
 import { isNovemberPhone, phoneCategoryBar, phoneTurkeyMood } from "@/lib/experience/november/phone";
+import { useNovemberGameSky } from "@/components/experience/november/phoneContext";
 import type { StandingRow } from "@/lib/player/betweenGames";
 import { PlayerSendStatus, type PlayerLockedSendState } from "./PlayerSendStatus";
 
@@ -144,6 +145,8 @@ export function PlayerLocked({
   roomMagicEnabled = false,
 }: PlayerLockedProps = {}) {
   const { t, themeKey } = useTheme();
+  // November: dusk in game 1, night in game 2 (the TV's light). Other months ignore it.
+  const harvestSky = useNovemberGameSky();
   const reducedMotion = usePrefersReducedMotion();
   const pulseAnimation = reducedMotion
     ? "none"
@@ -165,7 +168,7 @@ export function PlayerLocked({
     : 0;
 
   return (
-    <PhoneScreen data-testid="player-locked" weatherPage="question" harvestSky="dusk">
+    <PhoneScreen data-testid="player-locked" weatherPage="question" harvestSky={harvestSky}>
       <div
         style={{
           margin: `-14px -22px ${bannerBottomGap}px`,

@@ -18,7 +18,7 @@
 
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { StageWorldContext, TVMomentPublisherContext } from "@/components/experience/StageWorld";
 import { PlayerRowCanvas, type PlayerRowInputs } from "@/components/experience/shared/PlayerRowCanvas";
@@ -30,6 +30,7 @@ import {
   gameStarted as gameStartedFor,
   harvestScene,
   sameHarvestScene,
+  SKIES,
   skyLayerUrl,
   type HarvestScene,
   type HarvestSky,
@@ -157,7 +158,7 @@ export function NovemberTVWorld({ spec, snapshot, tier: requestedTier, off = fal
       >
         {off ? null : (
           <ThemeLayerBoundary name="november:field" onFail={onFail}>
-            <HarvestField scene={scene} mode={fieldMode} />
+            <HarvestField sky={scene.sky} gust={scene.gust} mode={fieldMode} />
           </ThemeLayerBoundary>
         )}
 
@@ -230,9 +231,9 @@ const FIELD_CSS = `
 
 type FieldMode = "full" | "lite" | "still";
 
-const SKIES: readonly HarvestSky[] = ["golden", "dusk", "night"];
-
-function HarvestField({ scene, mode }: { scene: HarvestScene; mode: FieldMode }) {
+// Takes only the plain values it draws from (not the whole scene, which
+// changes on every mood change), so memo skips the re-render on game updates.
+const HarvestField = memo(function HarvestField({ sky: sceneSky, gust, mode }: { sky: HarvestSky; gust: boolean; mode: FieldMode }) {
   // Still: one picture. Lite (a slow TV): the same pictures, but nothing
   // drifts, no leaves, no blend, and the sky swaps instead of crossfading.
   const still = mode === "still";
@@ -258,8 +259,8 @@ function HarvestField({ scene, mode }: { scene: HarvestScene; mode: FieldMode })
     };
   }, [still]);
   // The sky on screen now, and the one fading out under it.
-  const [sky, setSky] = useState<{ cur: HarvestSky; prev: HarvestSky | null }>({ cur: scene.sky, prev: null });
-  if (sky.cur !== scene.sky) setSky({ cur: scene.sky, prev: calm ? null : sky.cur });
+  const [sky, setSky] = useState<{ cur: HarvestSky; prev: HarvestSky | null }>({ cur: sceneSky, prev: null });
+  if (sky.cur !== sceneSky) setSky({ cur: sceneSky, prev: calm ? null : sky.cur });
   useEffect(() => {
     if (!sky.prev) return;
     const id = window.setTimeout(() => setSky((s) => ({ ...s, prev: null })), FADE_MS + 200);
@@ -319,7 +320,7 @@ function HarvestField({ scene, mode }: { scene: HarvestScene; mode: FieldMode })
         : AMBIENT_LEAVES.map((l, i) => (
             <Leaf key={`a${i}`} {...l} style={{ animation: `nov-leaf-${l.path} ${l.dur}s linear ${l.delay}s infinite` }} />
           ))}
-      {!calm && scene.gust
+      {!calm && gust
         ? GUST_LEAVES.map((l, i) => (
             <Leaf key={`g${i}`} {...l} style={{ animation: `nov-leaf-${l.path} ${l.dur}s cubic-bezier(.3,.1,.6,1) ${l.delay}s both` }} />
           ))
@@ -345,7 +346,7 @@ function HarvestField({ scene, mode }: { scene: HarvestScene; mode: FieldMode })
       />
     </div>
   );
-}
+});
 
 function LayerImg({ sky, layer, style }: { sky: HarvestSky; layer: string; style?: CSSProperties }) {
   return (

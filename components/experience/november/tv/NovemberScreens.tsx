@@ -17,6 +17,7 @@ import type { TVIntermissionProps } from "@/components/tv/TVIntermission";
 import type { TVGridProps } from "@/components/tv/TVGrid";
 import { colorHexFromKey, playerColorHex } from "@/lib/player/playerColor";
 import { NOV, NOV_PANEL_STYLE } from "@/lib/experience/november/tvLook";
+import { leaderKey } from "@/lib/experience/november/harvest";
 import { FitStage } from "../../october/tv/FitStage";
 
 const QR_PLATE = NOV.ink;
@@ -212,7 +213,10 @@ export function NovemberBoard({
   const board = cells ?? [];
   const cols = Math.max(1, categories.length);
   const footer = [footerLeft, footerRight].filter(Boolean).join("  ·  ");
-  const leader = leaders.find((r) => r.rank === 1);
+  // The gold tail goes to one clear leader only (a tie at the top gets none):
+  // the same rule the turkey row uses. Rows carry no player key, so the
+  // position stands in for it (names can repeat).
+  const goldTail = leaderKey("board", leaders.map((r, i) => ({ player_key: String(i), score: r.score }))) !== null;
 
   return (
     <Screen page="board" testId="tv-grid">
@@ -373,7 +377,7 @@ export function NovemberBoard({
           </div>
           {upNext.sub ? <div style={{ fontSize: 14, color: NOV.cream(0.7), ...ellipsis }}>{upNext.sub}</div> : null}
         </div>
-      ) : leader && leader.score > 0 ? (
+      ) : goldTail ? (
         <div style={abs(1150, 502, { fontSize: 21, color: NOV.cream(0.75) })}>Leader wears the gold tail.</div>
       ) : null}
       {footer ? (
@@ -402,15 +406,17 @@ export function NovemberBetweenGames({
 
   return (
     <Screen page="intermission" testId="tv-intermission">
-      <Panel x={64} y={48} w={672} h={672} testId="november-panel" />
-      <Panel x={1064} y={48} w={472} h={708} />
+      {/* Both panels end at 656 (where the everyday November panel ends), so
+          nothing reaches the turkey row (it starts at 676). */}
+      <Panel x={64} y={36} w={672} h={620} testId="november-panel" />
+      <Panel x={1064} y={36} w={472} h={620} />
 
       {/* Left: standings */}
-      <div style={abs(104, 88, label(18, NOV.burnt))}>{headerLeft}</div>
-      <div style={abs(104, 118, display(60, { whiteSpace: "nowrap" }))}>Game 1. Standings.</div>
+      <div style={abs(104, 64, label(18, NOV.burnt))}>{headerLeft}</div>
+      <div style={abs(104, 90, display(60, { whiteSpace: "nowrap" }))}>Game 1. Standings.</div>
       {podium.slice(0, 6).map((p, i) => {
         const big = i < 3;
-        const y = big ? 212 + i * 66 : 424 + (i - 3) * 42;
+        const y = big ? 180 + i * 62 : 376 + (i - 3) * 38;
         return (
           <div
             // Position first: two tied players can share a name.
@@ -436,32 +442,44 @@ export function NovemberBetweenGames({
       })}
       {stats ? (
         <>
-          <span style={abs(104, 566, label(15, NOV.cream(0.6)))}>Game 1 in numbers</span>
-          <div data-testid="november-intermission-stats" style={abs(104, 592, { width: 592, fontSize: 24, color: NOV.ink, ...ellipsis })}>
+          <span style={abs(104, 512, label(15, NOV.cream(0.6)))}>Game 1 in numbers</span>
+          <div data-testid="november-intermission-stats" style={abs(104, 536, { width: 592, fontSize: 24, color: NOV.ink, ...ellipsis })}>
             {stats}
           </div>
         </>
       ) : null}
-      <span style={abs(104, 668, label(15, NOV.cream(0.6), { maxWidth: 592, ...ellipsis }))}>{headerRight}</span>
+      <span style={abs(104, 604, label(15, NOV.cream(0.6), { maxWidth: 592, ...ellipsis }))}>{headerRight}</span>
 
       {/* Right: game 2 + scan in */}
-      <div style={abs(1104, 88, label(18, NOV.burnt))}>Ready for Game 2</div>
-      <div style={abs(1104, 118, display(40, { whiteSpace: "nowrap" }))}>Game 2 starts soon.</div>
-      <div style={abs(1104, 176, { width: 392, fontSize: 20, lineHeight: 1.3, color: NOV.cream(0.8) })}>
+      <div style={abs(1104, 64, label(18, NOV.burnt))}>Ready for Game 2</div>
+      <div style={abs(1104, 90, display(40, { whiteSpace: "nowrap" }))}>Game 2 starts soon.</div>
+      <div style={abs(1104, 140, { width: 392, fontSize: 20, lineHeight: 1.3, color: NOV.cream(0.8) })}>
         Open your phone and tap <span style={{ fontWeight: 700, color: NOV.ink }}>Join Game 2</span>. Your name is
         already in. Everyone starts back at zero.
       </div>
       {readyCount != null ? (
-        <div data-testid="november-intermission-ready" style={abs(1104, 258, label(14, NOV.cream(0.7)))}>
+        <div data-testid="november-intermission-ready" style={abs(1104, 224, label(14, NOV.cream(0.7)))}>
           {totalCount ? `${readyCount} of ${totalCount} back in` : `${readyCount} back in`}
         </div>
       ) : null}
-      <span style={abs(1104, 286, label(15, NOV.cream(0.6)))}>New here?</span>
-      <div style={abs(1104, 310, { fontSize: 24, fontWeight: 600, color: NOV.ink })}>Scan to jump into Game 2.</div>
-      <QRPlate x={1134} y={354} size={308} pad={12} testId="tv-intermission-qr" url={joinUrl} />
-      <div style={abs(1064, 700, mono(24, { width: 472, textAlign: "center" }))}>
-        tr1via.com{roomCode ? ` · ${roomCode}` : ""}
+      {/* The room code shares the "New here?" line so the 308 QR still fits
+          above the turkey row. */}
+      <div
+        style={abs(1104, 252, {
+          width: 392,
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: 12,
+        })}
+      >
+        <span style={label(15, NOV.cream(0.6))}>New here?</span>
+        <span data-testid="november-intermission-room" style={mono(20, { minWidth: 0, ...ellipsis })}>
+          tr1via.com{roomCode ? ` · ${roomCode}` : ""}
+        </span>
       </div>
+      <div style={abs(1104, 278, { fontSize: 24, fontWeight: 600, color: NOV.ink })}>Scan to jump into Game 2.</div>
+      <QRPlate x={1134} y={312} size={308} pad={12} testId="tv-intermission-qr" url={joinUrl} />
     </Screen>
   );
 }

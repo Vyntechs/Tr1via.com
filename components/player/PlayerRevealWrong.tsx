@@ -18,6 +18,7 @@ import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import { YourTurkey } from "@/components/experience/november/YourTurkey";
 import { isNovemberPhone } from "@/lib/experience/november/phone";
+import { useNovemberGameSky } from "@/components/experience/november/phoneContext";
 import { gotItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealWrongProps {
@@ -63,12 +64,14 @@ export function PlayerRevealWrong({
   standingsPanel,
 }: PlayerRevealWrongProps = {}) {
   const { t, themeKey } = useTheme();
+  // November: dusk in game 1, night in game 2 (the TV's light). Other months ignore it.
+  const harvestSky = useNovemberGameSky();
   const noAnswer = chosenSlot === null;
   // October: a wrong answer's pumpkin sags and smokes; a missed one tipped over.
   const yourPumpkin = hasPhoneLayer(themeKey);
   const hasRank = rank !== null && rank !== undefined && rank > 0;
   return (
-    <PhoneScreen data-testid="player-reveal-wrong" harvestSky="dusk">
+    <PhoneScreen data-testid="player-reveal-wrong" harvestSky={harvestSky}>
       <PhoneHeader
         eyebrow={`${category.toUpperCase()} · ${value} PTS`}
         score={totalScore}

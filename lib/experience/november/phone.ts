@@ -11,7 +11,7 @@
 
 import type { ThemeKey } from "@/lib/theme/tokens";
 import type { RowMood } from "@/lib/experience/shared/playerRow";
-import { TURKEY_ANIMS, TURKEY_STYLE, featherUrl, turkeyPose, type HarvestSky, type TurkeyAnim } from "./harvest";
+import { TURKEY_ANIMS, TURKEY_STYLE, featherUrl, skyFor, turkeyPose, type HarvestSky, type TurkeyAnim } from "./harvest";
 
 export type { HarvestSky };
 
@@ -86,6 +86,43 @@ export function phoneTurkeyPlan(
   return plan(p.anim, p.play);
 }
 
+// ── Lobby walk-in, picture by picture ─────────────────────────────────────
+// On slow venue wifi the walk strip (~50 KB) and the standing strip
+// (~122 KB) can arrive seconds after the lobby opens. The walk starts only
+// once its strip is in; the walk's last frame holds until the standing strip
+// is in, however long that takes. A walk strip that has not arrived after
+// PHONE_ART_WAIT_MS is skipped (the still standing turkey shows instead), so
+// the turkey never hangs on an empty field.
+
+/** How long the lobby waits for the walk strip before it skips the walk. */
+export const PHONE_ART_WAIT_MS = 4000;
+
+export type PhoneArtLoad = "loading" | "ready" | "failed";
+
+export interface PhoneArrivePlan {
+  /** pending = nothing painted yet (the walk strip is still on its way). */
+  phase: "pending" | "walk" | "hold" | "stand" | "still";
+  plan: PhoneTurkeyPlan;
+}
+
+/**
+ * The lobby turkey (mood "arrive", motion allowed) from what has loaded:
+ *   walk loading                         → pending (no frame, no timer)
+ *   walk ready, not yet walked in        → walk loop (the walk-in runs)
+ *   walked in (or walk gave up) + standing ready → idle loop
+ *   walked in, standing not ready/failed → hold the walk's last frame
+ *   walk gave up, standing not ready     → the still standing turkey
+ *                                          (the reduced-motion frame)
+ */
+export function phoneArrivePlan(input: { walk: PhoneArtLoad; stand: PhoneArtLoad; walked: boolean }): PhoneArrivePlan {
+  const { walk, stand, walked } = input;
+  if (walk === "loading") return { phase: "pending", plan: plan("walk", "still", 0) };
+  if (walk === "ready" && !walked) return { phase: "walk", plan: plan("walk", "loop") };
+  if (stand === "ready") return { phase: "stand", plan: plan("idle", "loop") };
+  if (walk === "ready") return { phase: "hold", plan: plan("walk", "still", TURKEY_ANIMS.walk.frames - 1) };
+  return { phase: "still", plan: phoneTurkeyPlan("waiting", { reduced: true }) };
+}
+
 /** Small turkeys (80 px or less: question, locked, winner card) use the
  *  128 px strips; bigger ones (reveal, between games, lobby) keep the TV's
  *  256 px strips so they stay sharp on a 3x phone. */
@@ -107,6 +144,12 @@ export function phoneTurkeyUrl(anim: PhoneTurkeyAnim, px: 128 | 256): string {
  */
 export function phoneTurkeyMood(sendState: string | undefined | null): RowMood {
   return sendState === "locked" ? "lit" : "waiting";
+}
+
+/** Question, locked and wrong-answer screens: the same light the TV shows
+ *  for that game (dusk in game 1, night in game 2). */
+export function phoneGameSky(gameNo: number | null | undefined): HarvestSky {
+  return skyFor({ moment: "question", gameNo: gameNo === 2 ? 2 : gameNo === 1 ? 1 : null, gameStarted: true });
 }
 
 /** The phone's flattened field picture for each light (sky + far + table +
@@ -142,7 +185,9 @@ export function stripKeyframes(endPx: number): { name: string; css: string } {
 // joining. The room page then asks for three sets, each 1-6 s late:
 //   soon   : after this phone has joined: the first question's small idle +
 //            fan and the dusk field
-//   reveal : once a game is live: the reveal strips, loose feathers and the
+//   reveal : still in the lobby, after the soon set (7-12 s after joining,
+//            so it never lands on question 1); 1-6 s late for a phone that
+//            joins a live game: the reveal strips, loose feathers and the
 //            big idle (half-time turkey, for a phone that joined late)
 //   night  : at the first reveal: night field, pie, small gobble, wishbone
 //            and the big fan (the finale's "Your night" turkey)
@@ -188,6 +233,10 @@ export function phonePreloadUrls(): string[] {
 export const NOVEMBER_PHONE_CREAM = "#F2DEAE";
 export const NOVEMBER_PHONE_ACCENT = "#C25E22";
 export const NOVEMBER_PHONE_PAPER = "#1E1208";
+/** The picked answer card: a darker, solid burnt orange so cream text on it
+ *  reads at 4.9:1 (the accent #C25E22 under cream is only ~3.2:1). Solid, so
+ *  the bright field behind can't wash it out. */
+export const NOVEMBER_PHONE_PICKED = "#9A4414";
 
 export interface PhoneCategoryBarLook {
   background: string;

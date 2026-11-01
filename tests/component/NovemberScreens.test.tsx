@@ -61,6 +61,7 @@ describe("November TV screens keep the everyday content and test ids", () => {
     const rows = screen.getAllByTestId(/^tv-grid-standing-\d+$/);
     expect(rows.map((r) => within(r).getByTestId("tv-grid-standing-name").textContent)).toEqual(["Coach K", "Ricky Bobby"]);
     expect(screen.getByTestId("november-board-left").textContent).toBe("21 left");
+    expect(screen.getByText("Leader wears the gold tail.")).toBeTruthy();
     expect(document.body.innerHTML.toLowerCase()).not.toMatch(/#(5ee0ff|22d3ee|00e5ff|4dd0e1)/);
   });
 
@@ -81,5 +82,41 @@ describe("November TV screens keep the everyday content and test ids", () => {
     expect(screen.getAllByTestId("tv-intermission-podium-row")).toHaveLength(3);
     expect(screen.getByTestId("tv-intermission-qr")).toBeTruthy();
     expect(screen.getByTestId("november-intermission-ready").textContent).toBe("12 of 24 back in");
+    expect(screen.getByTestId("november-intermission-room").textContent).toBe("tr1via.com · K9P·R4M");
+  });
+
+  it("board: a tie at the top gets no gold-tail line (no single leader)", () => {
+    inNovember(
+      <NovemberBoard
+        categories={["Rodents"]}
+        values={[100]}
+        leaders={[
+          { rank: 1, name: "Coach K", score: 1450 },
+          { rank: 1, name: "Ricky Bobby", score: 1450 },
+        ]}
+      />,
+    );
+    expect(screen.queryByText("Leader wears the gold tail.")).toBeNull();
+  });
+
+  it("between games: everything sits above the turkey row (stage y 676)", () => {
+    inNovember(
+      <NovemberBetweenGames
+        podium={Array.from({ length: 6 }, (_, i) => ({ rank: i + 1, name: `P${i}`, score: 100 - i }))}
+        nightStats={[{ v: "12", l: "Questions" }] as never}
+        roomCode="K9P·R4M"
+        joinUrl="https://tr1via.com/join?code=K9PR4M"
+        readyCount={12}
+      />,
+    );
+    // Every absolutely placed box starts above the row; the panels and the QR
+    // plate end above it too.
+    const stage = screen.getByTestId("november-fit-stage").firstElementChild as HTMLElement; // the 1600×680 box
+    for (const el of Array.from(stage.querySelectorAll<HTMLElement>("[style*='position: absolute']"))) {
+      const top = parseFloat(el.style.top);
+      if (Number.isFinite(top)) expect(top).toBeLessThan(640);
+      const h = parseFloat(el.style.height);
+      if (Number.isFinite(top) && Number.isFinite(h)) expect(top + h).toBeLessThanOrEqual(656);
+    }
   });
 });

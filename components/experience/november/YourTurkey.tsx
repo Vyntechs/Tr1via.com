@@ -1,7 +1,10 @@
 // November · "your turkey": the player's own turkey on their phone, the same
 // one that stands in the row on the venue TV.
 //
-//   arrive   walks in from the left (lobby), then idles
+//   arrive   walks in from the left (lobby), then idles. The walk waits for
+//            its picture and the walk's last frame holds until the standing
+//            picture is in (slow venue wifi); a picture that never comes
+//            falls back to the still turkey after PHONE_ART_WAIT_MS.
 //   waiting  small life: head bob, peck, blink (tail down)
 //   lit      tail fans the moment the answer locks in, and stays fanned
 //   blaze    right answer: gobble, with a warm glow behind
@@ -22,12 +25,17 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { featherUrl } from "@/lib/experience/november/harvest";
+import { whenNovemberPhoneArtReady } from "@/components/experience/november/preloadPhoneArt";
 import {
+  PHONE_ART_WAIT_MS,
   PHONE_WALK_MS,
+  phoneArrivePlan,
   phoneTurkeyPlan,
   phoneTurkeyStripPx,
   phoneTurkeyUrl,
   stripKeyframes,
+  type PhoneArtLoad,
+  type PhoneArrivePlan,
   type PhoneTurkeyMood,
 } from "@/lib/experience/november/phone";
 
@@ -61,17 +69,40 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
   // Whole pixels, so every frame step lands on a pixel and no neighbour
   // frame bleeds in at the box edge.
   const size = Number.isFinite(requestedSize) && requestedSize > 0 ? Math.round(requestedSize) : 0;
+  const arriving = mood === "arrive" && !reduced;
+  const walkUrl = phoneTurkeyUrl("walk", phoneTurkeyStripPx("walk", size));
+  const standUrl = phoneTurkeyUrl("idle", phoneTurkeyStripPx("idle", size));
+  const [walkLoad, setWalkLoad] = useState<PhoneArtLoad>("loading");
+  const [standLoad, setStandLoad] = useState<PhoneArtLoad>("loading");
   const [arrived, setArrived] = useState(false);
+
+  // Lobby: ask for both strips the moment it mounts.
   useEffect(() => {
-    if (mood !== "arrive" || reduced) return;
+    if (!arriving) return;
+    const cancelWalk = whenNovemberPhoneArtReady(walkUrl, PHONE_ART_WAIT_MS, (ok) => setWalkLoad(ok ? "ready" : "failed"));
+    // No give-up time for the standing strip: the walk frame (or the still
+    // turkey) holds, and it starts idling whenever the strip lands.
+    const cancelStand = whenNovemberPhoneArtReady(standUrl, null, (ok) => setStandLoad(ok ? "ready" : "failed"));
+    return () => {
+      cancelWalk();
+      cancelStand();
+    };
+  }, [arriving, walkUrl, standUrl]);
+
+  // The walk-in clock starts only once the walk strip is actually there.
+  const walkReady = arriving && walkLoad === "ready";
+  useEffect(() => {
+    if (!walkReady) return;
     const id = window.setTimeout(() => setArrived(true), PHONE_WALK_MS);
     return () => window.clearTimeout(id);
-  }, [mood, reduced]);
+  }, [walkReady]);
 
-  const plan = phoneTurkeyPlan(mood, { reduced, arrived });
+  const arrive: PhoneArrivePlan | null = arriving ? phoneArrivePlan({ walk: walkLoad, stand: standLoad, walked: arrived }) : null;
+  const plan = arrive ? arrive.plan : phoneTurkeyPlan(mood, { reduced, arrived: true });
+  const pending = arrive?.phase === "pending";
   const url = phoneTurkeyUrl(plan.anim, phoneTurkeyStripPx(plan.anim, size));
   const stripW = size * plan.frames;
-  const walking = plan.anim === "walk";
+  const walking = arrive?.phase === "walk";
   const shown = mood === "arrive" ? "waiting" : mood;
 
   // Explicit pixel keyframes (no var() inside @keyframes): Safari-safe.
@@ -90,7 +121,8 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
       aria-hidden
       data-testid="your-turkey"
       data-turkey-mood={shown}
-      data-turkey-anim={plan.anim}
+      data-turkey-anim={pending ? "pending" : plan.anim}
+      data-turkey-play={pending ? undefined : plan.play}
       style={{ position: "relative", display: "inline-block", width: size, height: size, flexShrink: 0, ...style }}
     >
       <style href="tr1via-nov-phone-turkey" precedence="default">
@@ -115,6 +147,7 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
       {/* contact shadow under the feet */}
       <span
         style={{
+          visibility: pending ? "hidden" : undefined,
           position: "absolute",
           left: "22%",
           right: "22%",
@@ -132,7 +165,7 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
           animation: walking ? `tr1via-nov-walkin ${PHONE_WALK_MS}ms cubic-bezier(.25,.6,.35,1) both` : undefined,
         }}
       >
-        <span
+        {pending ? null : <span
           key={`${plan.anim}-${plan.play}`}
           data-testid="your-turkey-frame"
           style={{
@@ -145,7 +178,7 @@ function YourTurkeyArt({ mood, size: requestedSize, style }: YourTurkeyProps) {
             backgroundPosition: "0px 0px",
             ...strip,
           }}
-        />
+        />}
       </span>
       {shown === "smoke" && !reduced ? (
         <>

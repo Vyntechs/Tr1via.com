@@ -146,3 +146,52 @@ describe("safeFinaleWinner", () => {
     ).toBeNull();
   });
 });
+
+import {
+  NOVEMBER_PHONE_CREAM,
+  NOVEMBER_PHONE_PICKED,
+  phoneArrivePlan,
+  phoneGameSky,
+} from "@/lib/experience/november/phone";
+
+describe("november phone: lobby walk waits for its pictures", () => {
+  it("paints nothing (and starts no walk) until the walk strip is in", () => {
+    expect(phoneArrivePlan({ walk: "loading", stand: "loading", walked: false }).phase).toBe("pending");
+    expect(phoneArrivePlan({ walk: "loading", stand: "ready", walked: false }).phase).toBe("pending");
+  });
+  it("walks once the walk strip is in, then stands when the standing strip is", () => {
+    expect(phoneArrivePlan({ walk: "ready", stand: "loading", walked: false }).plan).toMatchObject({ anim: "walk", play: "loop" });
+    expect(phoneArrivePlan({ walk: "ready", stand: "ready", walked: true }).plan).toMatchObject({ anim: "idle", play: "loop" });
+  });
+  it("holds the walk's last frame while the standing strip is late or lost", () => {
+    for (const stand of ["loading", "failed"] as const) {
+      const p = phoneArrivePlan({ walk: "ready", stand, walked: true });
+      expect(p.phase).toBe("hold");
+      expect(p.plan).toMatchObject({ anim: "walk", play: "still", frame: TURKEY_ANIMS.walk.frames - 1 });
+    }
+  });
+  it("a walk strip that times out falls back to the still standing turkey", () => {
+    const still = phoneArrivePlan({ walk: "failed", stand: "loading", walked: false });
+    expect(still.phase).toBe("still");
+    expect(still.plan).toEqual(phoneTurkeyPlan("waiting", { reduced: true }));
+    expect(phoneArrivePlan({ walk: "failed", stand: "ready", walked: false }).plan).toMatchObject({ anim: "idle", play: "loop" });
+  });
+});
+
+describe("november phone: game sky and picked-card contrast", () => {
+  it("dusk in game 1, night in game 2 (same as the TV)", () => {
+    expect(phoneGameSky(1)).toBe("dusk");
+    expect(phoneGameSky(2)).toBe("night");
+    expect(phoneGameSky(null)).toBe("dusk");
+    expect(phoneGameSky(undefined)).toBe("dusk");
+  });
+  it("cream text on the picked card reads at 4.5:1 or better", () => {
+    const lum = (hex: string) => {
+      const c = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255).map((x) => (x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+      return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    };
+    const [hi, lo] = [lum(NOVEMBER_PHONE_CREAM), lum(NOVEMBER_PHONE_PICKED)].sort((a, b) => b - a);
+    expect(NOVEMBER_PHONE_PICKED).toMatch(/^#[0-9A-F]{6}$/i);
+    expect((hi + 0.05) / (lo + 0.05)).toBeGreaterThanOrEqual(4.5);
+  });
+});

@@ -33,6 +33,7 @@ import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
 import { YourTurkey } from "@/components/experience/november/YourTurkey";
 import { isNovemberPhone, phoneCategoryBar, phoneTurkeyMood } from "@/lib/experience/november/phone";
+import { useNovemberGameSky } from "@/components/experience/november/phoneContext";
 import type { StandingRow } from "@/lib/player/betweenGames";
 import {
   PlayerSendStatus,
@@ -128,6 +129,8 @@ export function PlayerQuestion({
   roomMagicEnabled = false,
 }: PlayerQuestionProps = {}) {
   const { t, themeKey } = useTheme();
+  // November: dusk in game 1, night in game 2 (the TV's light). Other months ignore it.
+  const harvestSky = useNovemberGameSky();
   const reducedMotion = usePrefersReducedMotion();
   const catColor = categoryColor(category, t.accent);
   const bar = phoneCategoryBar(isNovemberPhone(themeKey), catColor);
@@ -250,7 +253,7 @@ export function PlayerQuestion({
       data-testid={pick ? "player-locked" : "player-question"}
       scroll={pick ? "auto" : "locked"}
       weatherPage="question"
-      harvestSky="dusk"
+      harvestSky={harvestSky}
       screenRef={screenRef}
       style={{ ["--player-question-decoration-level" as string]: decorationLevel }}
     >

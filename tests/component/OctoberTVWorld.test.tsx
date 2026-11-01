@@ -40,6 +40,7 @@ afterEach(() => {
   crash.patch = false;
   crash.head = false;
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 function renderTV(moment: DemoMoment, themeKey: ThemeKey, worldTier?: "full" | "still") {
@@ -326,7 +327,13 @@ describe("October world on the venue TV", () => {
   });
   // ── headstones (Heather's request, Oct 7): pure decoration in the backdrop ──
   function renderStones(players: number, worldTier?: "full" | "still", themeKey: ThemeKey = "october", seated = players) {
-    const night = demoNight({ moment: "question", nowMs: Date.parse("2026-10-14T23:50:00Z"), secondsLeft: 14, locked: 3, players: seated });
+    const nowMs = Date.parse("2026-10-14T23:50:00Z");
+    // Freeze the clock (only Date, so timers still run) on the sample night:
+    // the world drops anyone silent for 10+ minutes by the real clock, which
+    // would otherwise empty the patch on any later day. Restored in afterEach.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(nowMs);
+    const night = demoNight({ moment: "question", nowMs, secondsLeft: 14, locked: 3, players: seated });
     const tv = (n: number) => (
       <ThemeProvider themeKey={themeKey}>
         <TVStateMachine

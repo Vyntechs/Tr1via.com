@@ -15,6 +15,7 @@ import { useEffect, useRef, type CSSProperties } from "react";
 import { useTheme } from "./ThemeProvider";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { useNovemberPhone } from "@/components/experience/november/phoneContext";
+import { NOVEMBER_PHONE_PICKED } from "@/lib/experience/november/phone";
 import { Numeric } from "./Numeric";
 
 export type AnswerCardState =
@@ -136,7 +137,8 @@ export function AnswerCard({
     // The Figma "Phone/Answer" states: chosen = burnt orange, right = solid
     // green (today's correct color), wrong = dark panel with the wrong edge.
     if (isLockedSelf) {
-      cardBg = "rgba(194,94,34,.94)";
+      // Solid and darker than the accent so the cream text reads at 4.9:1.
+      cardBg = NOVEMBER_PHONE_PICKED;
       cardBorder = "rgba(242,222,174,.28)";
       barBg = "rgba(30,18,8,.55)";
       barInk = "#F2DEAE";

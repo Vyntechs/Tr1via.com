@@ -72,6 +72,7 @@ import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { rankScores } from "@/lib/game/rankScores";
 import { scheduleNovemberPhonePreload } from "@/components/experience/november/preloadPhoneArt";
+import { NovemberGameNoContext } from "@/components/experience/november/phoneContext";
 import { playerColorHex } from "@/lib/player/playerColor";
 import {
   selectBetweenGamesView,
@@ -341,8 +342,11 @@ function RoomStateMachine({
   const gameUnderway = currentGame?.state === "live" || game1?.state === "live" || game1?.state === "done";
   const revealSeen = resolvedQId !== null;
   useEffect(() => (novemberPhone ? scheduleNovemberPhonePreload("soon") : undefined), [novemberPhone]);
+  // The reveal set starts in the lobby, after the soon set (7-12 s after
+  // joining), so it never lands on question 1. If the game goes live before
+  // it has started (or this phone joined a live game) it comes 1-6 s later.
   useEffect(
-    () => (novemberPhone && gameUnderway ? scheduleNovemberPhonePreload("reveal") : undefined),
+    () => (novemberPhone ? scheduleNovemberPhonePreload("reveal", gameUnderway ? 1000 : 7000) : undefined),
     [novemberPhone, gameUnderway],
   );
   useEffect(
@@ -657,7 +661,9 @@ function RoomStateMachine({
           onComplete={() => setBoltActive(false)}
         />
       )}
-      {inner}
+      {/* November: lets the question, locked and wrong-answer screens show
+          the TV's light for this game (night in game 2). Read-only. */}
+      <NovemberGameNoContext.Provider value={currentGame?.game_no ?? null}>{inner}</NovemberGameNoContext.Provider>
       {/* July: schedule the synchronized firework beat for THIS phone. A finale
           (game end) fires for everyone; a per-question salvo fires only when I
           got it right (gateBeatForPlayer). Render-less; no-op on non-July. */}
