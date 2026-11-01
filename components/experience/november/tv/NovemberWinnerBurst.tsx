@@ -19,6 +19,7 @@ const CSS = `
 @keyframes nov-snap { 0%, 22% { opacity: 0; transform: scale(.3) } 30% { opacity: 1; transform: scale(1.5) } 100% { opacity: .55; transform: scale(1) } }
 @keyframes nov-leaf { 0%, 24% { opacity: 0; transform: translate(var(--fx), var(--fy)) rotate(0deg) scale(.4) } 34% { opacity: 1 } 100% { opacity: .9; transform: translate(0, 0) rotate(var(--spin)) scale(1) } }
 @media (prefers-reduced-motion: reduce) { [data-nov-burst] * { animation: none !important } }
+[data-world-field="still"] [data-nov-burst] * { animation: none !important }
 `;
 
 /** One half of the drawn wishbone: a thick bone arm (dark edge, cream bone,

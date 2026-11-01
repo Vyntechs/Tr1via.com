@@ -210,8 +210,6 @@ function NovemberFinaleCard({
             padding: "18px 18px 18px 20px",
             borderRadius: 24,
             background: NOVEMBER_PHONE_PANEL,
-            backdropFilter: "blur(12px)",
-            WebkitBackdropFilter: "blur(12px)",
             border: "1px solid rgba(242,222,174,.08)",
           }}
         >

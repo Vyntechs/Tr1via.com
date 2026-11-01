@@ -102,7 +102,9 @@ export function PlayerRowCanvas<S extends RowScene, F>({
     let bitmaps: Partial<Record<string, HTMLCanvasElement>> = {};
     let bitmapScale = 0;
     const images: Partial<Record<string, HTMLImageElement>> = {};
-    const spriteKeys = Object.keys(art.sprites);
+    const spriteKeys = Object.keys(art.sprites).filter(
+      (key) => !still || !art.stillSprites || art.stillSprites.includes(key),
+    );
 
     const slots = new Map<string, RowSlotState<F>>();
     let initialized = false;
@@ -125,8 +127,8 @@ export function PlayerRowCanvas<S extends RowScene, F>({
     };
 
     // Each picture resolves on its first try (loaded or failed) so the row
-    // can start; a failed one is tried again twice in the background and
-    // drawn as soon as it arrives.
+    // can start; a failed one is tried again in the background (after 3 s,
+    // 6 s, then every 30 s all night) and drawn as soon as it arrives.
     const retryTimers: number[] = [];
     let started = false;
     const loadOne = (key: string, attempt: number, settle?: () => void) => {
@@ -141,8 +143,9 @@ export function PlayerRowCanvas<S extends RowScene, F>({
       };
       img.onerror = () => {
         settle?.();
-        if (stopped || attempt >= 2) return;
-        retryTimers.push(window.setTimeout(() => loadOne(key, attempt + 1), 3000 * (attempt + 1)));
+        if (stopped) return;
+        const wait = attempt < 2 ? 3000 * (attempt + 1) : 30000;
+        retryTimers.push(window.setTimeout(() => loadOne(key, attempt + 1), wait));
       };
       img.src = art.sprites[key].url;
     };
@@ -235,8 +238,14 @@ export function PlayerRowCanvas<S extends RowScene, F>({
     };
 
     const drawSpriteFrame: RowKit["drawSpriteFrame"] = (key, frame, cx, top, w, h, alpha) => {
-      const bmp = bitmaps[key];
-      const n = art.sprites[key]?.frames ?? 1;
+      let bmp = bitmaps[key];
+      let n = art.sprites[key]?.frames ?? 1;
+      if (!bmp && art.fallbackSprite && bitmaps[art.fallbackSprite]) {
+        // That strip never arrived: stand in with the fallback's first frame.
+        bmp = bitmaps[art.fallbackSprite];
+        n = art.sprites[art.fallbackSprite]?.frames ?? 1;
+        frame = 0;
+      }
       if (!bmp || alpha <= 0.01 || !Number.isFinite(frame)) return;
       const fw = bmp.width / n;
       const f = ((Math.floor(frame) % n) + n) % n;

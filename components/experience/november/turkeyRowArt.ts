@@ -83,6 +83,11 @@ export const TURKEY_ROW_ART: RowArt<HarvestScene, TurkeyFx> = {
   },
   // The lobby row only needs these; the rest arrive while players join.
   startWith: ["idle", "walk"],
+  // A strip that never loaded (venue wifi) shows the standing turkey instead.
+  fallbackSprite: "idle",
+  // A still frame only shows these poses (turkeyPose with still: true); the
+  // host phone's mini-TV skips walk, fan and the loose feathers.
+  stillSprites: ["idle", "fanned-idle", "right", "wrong", "hide", "leader"],
   newFx: () => ({ feathersAt: -1 }),
   create: createTurkeyRenderer,
 };

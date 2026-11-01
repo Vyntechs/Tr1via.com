@@ -19,6 +19,7 @@ import {
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import type { ThemeKey } from "@/lib/theme/tokens";
+import { isNovemberPhone } from "@/lib/experience/november/phone";
 
 export interface PlayerJoinProps {
   themeKey?: ThemeKey;
@@ -62,7 +63,7 @@ export function PlayerJoin({
   submitting,
   error,
 }: PlayerJoinProps = {}) {
-  const { t } = useTheme();
+  const { t, themeKey } = useTheme();
   const interactive = !!onSubmit;
   const [name, setName] = useState(playerName);
 
@@ -87,8 +88,10 @@ export function PlayerJoin({
       {/* November on short phones (iPhone SE, 375x667): the Harvest Field join
           tightens its spacing so "Join the game" sits on screen without a scroll.
           Only matches the November field screen (data-harvest-sky), so every
-          other month keeps its layout. */}
-      <style href="tr1via-nov-join-short" precedence="default">{NOVEMBER_SHORT_JOIN_CSS}</style>
+          other month keeps its layout (and only November adds the rule). */}
+      {isNovemberPhone(themeKey) ? (
+        <style href="tr1via-nov-join-short" precedence="default">{NOVEMBER_SHORT_JOIN_CSS}</style>
+      ) : null}
       <PhoneHeader eyebrow={`JOINING · ${venueName.toUpperCase()}`} />
 
       <form

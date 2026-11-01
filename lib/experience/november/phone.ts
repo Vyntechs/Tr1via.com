@@ -136,13 +136,16 @@ export function stripKeyframes(endPx: number): { name: string; css: string } {
 }
 
 // ── Preload ────────────────────────────────────────────────────────────────
-// Nothing is fetched on the join screen (that is when 40 phones share the
-// venue wifi with their join requests). The room page asks for three sets:
+// The join screen fetches one small picture, its golden field (15 KB), while
+// 40 phones share the venue wifi with their join requests. The lobby's own
+// turkey (walk + idle 256, about 172 KB) loads with the lobby, right after
+// joining. The room page then asks for three sets, each 1-6 s late:
 //   soon   : after this phone has joined: the first question's small idle +
 //            fan and the dusk field
-//   reveal : once a game is live: the reveal strips and loose feathers
+//   reveal : once a game is live: the reveal strips, loose feathers and the
+//            big idle (half-time turkey, for a phone that joined late)
 //   night  : at the first reveal: night field, pie, small gobble, wishbone
-// The lobby's own turkey (walk + idle 256) loads with the lobby itself.
+//            and the big fan (the finale's "Your night" turkey)
 
 export interface PhonePreloadWaves {
   soon: string[];
@@ -157,9 +160,16 @@ export function phonePreloadWaves(): PhonePreloadWaves {
       phoneTurkeyUrl("right", 256),
       phoneTurkeyUrl("wrong", 256),
       phoneTurkeyUrl("hide", 256),
+      phoneTurkeyUrl("idle", 256),
       ...([1, 2, 3, 4] as const).map(featherUrl),
     ],
-    night: [phoneWorldUrl("night"), PHONE_PIE_URL, phoneTurkeyUrl("right", 128), PHONE_WISHBONE_URL],
+    night: [
+      phoneWorldUrl("night"),
+      PHONE_PIE_URL,
+      phoneTurkeyUrl("right", 128),
+      PHONE_WISHBONE_URL,
+      phoneTurkeyUrl("fan", 256),
+    ],
   };
 }
 

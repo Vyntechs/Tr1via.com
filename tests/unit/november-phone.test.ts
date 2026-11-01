@@ -99,8 +99,12 @@ describe("november phone step 3b", () => {
     const urls = phonePreloadUrls();
     for (const a of ["right", "wrong", "hide"]) expect(urls).toContain(`/themes/november/turkey/A/${a}-256.webp`);
     for (const a of ["idle", "fan", "right"]) expect(urls).toContain(`/themes/november/turkey/A/${a}-128.webp`);
-    // The lobby's own turkey loads with the lobby; never twice.
+    // The lobby's own walk loads with the lobby only.
     expect(urls).not.toContain("/themes/november/turkey/A/walk-256.webp");
+    // Late joiners: the half-time turkey (idle 256) and the finale's
+    // "Your night" turkey (fan 256) are in a set too.
+    expect(phonePreloadWaves().reveal).toContain("/themes/november/turkey/A/idle-256.webp");
+    expect(phonePreloadWaves().night).toContain("/themes/november/turkey/A/fan-256.webp");
     expect(phonePreloadWaves().soon).toContain("/themes/november/phone/dusk.webp");
     expect(phonePreloadWaves().night).toContain("/themes/november/phone/night.webp");
     for (const u of urls) expect(fs.existsSync(`public${u}`)).toBe(true);

@@ -20,13 +20,19 @@ describe("November TV, step 2b", () => {
     expect(NOV_PANEL_INSET.side).toBeGreaterThanOrEqual(56);
   });
 
-  it("winner name shrinks to one line, never past 220 or under 72", () => {
+  it("winner name shrinks to one line, never past 220 or under 48", () => {
     expect(novWinnerNameSize("Coach K")).toBe(205);
     expect(novWinnerNameSize("Al")).toBe(220);
     const long = novWinnerNameSize("Les Quizerables");
     expect(long).toBeLessThan(110);
     expect(long * 0.56 * 16).toBeLessThanOrEqual(NOV_WINNER_NAME_ZONE.w);
-    expect(novWinnerNameSize("x".repeat(80))).toBe(72);
+    expect(novWinnerNameSize("x".repeat(80))).toBe(48);
+    // A long three-way tie fits two lines of the name zone.
+    const tie = "Les Quizerables + The Know-It-Alls + Quiz Khalifa";
+    const size = novWinnerNameSize(tie);
+    expect(size).toBeGreaterThanOrEqual(48);
+    expect(size).toBeLessThan(72);
+    expect((tie.length + 1) * 0.56 * size).toBeLessThanOrEqual(2 * (NOV_WINNER_NAME_ZONE.w - 40));
   });
 
   it("name plates stay fully inside the frame", () => {

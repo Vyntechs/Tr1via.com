@@ -23,8 +23,6 @@ import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
 
 const PANEL: CSSProperties = {
   background: NOVEMBER_PHONE_PANEL,
-  backdropFilter: "blur(12px)",
-  WebkitBackdropFilter: "blur(12px)",
   border: "1px solid rgba(242,222,174,.08)",
   borderRadius: 24,
   padding: "20px 20px 22px",

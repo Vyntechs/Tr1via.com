@@ -112,6 +112,12 @@ export interface RowArt<S extends RowScene, F = unknown> {
   /** Start drawing once these sprites have loaded (the rest fill in as they
    *  arrive). Leave out to wait for every sprite (October). */
   startWith?: readonly string[];
+  /** Drawn in place of a strip whose picture never arrived (frame 0), so a
+   *  figure never vanishes. Leave out to draw nothing (October). */
+  fallbackSprite?: string;
+  /** In the still tier only these sprites are fetched (the poses a still
+   *  frame can show). Leave out to fetch every sprite (October). */
+  stillSprites?: readonly string[];
   newFx: (now: number) => F;
   create: (kit: RowKit) => RowRenderer<S, F>;
 }

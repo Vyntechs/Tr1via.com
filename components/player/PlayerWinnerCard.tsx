@@ -99,7 +99,9 @@ export function PlayerWinnerCard({
       const opts = {
         // Bump pixel ratio so the saved card is crisp on retina screens.
         pixelRatio: Math.min((typeof window !== "undefined" && window.devicePixelRatio) || 2, 3),
-        cacheBust: true,
+        // November's pictures have fixed names, so the save reuses the copies
+        // already on the phone instead of fetching them again.
+        cacheBust: !november,
         backgroundColor: t.paper,
         // html-to-image also writes backgroundColor onto the card itself, which
         // paints over the accent fill (the card saved near-black). November puts

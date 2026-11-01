@@ -239,7 +239,9 @@ function HarvestField({ scene, mode }: { scene: HarvestScene; mode: FieldMode })
   const calm = mode !== "full";
   // Fetch every sky's layers a few seconds after the first paint and keep
   // them, so the dusk and night fields are ready before the sky changes.
+  // Still (the host phone's mini-TV) swaps instantly, so it skips this.
   useEffect(() => {
+    if (still) return;
     const kept: HTMLImageElement[] = [];
     const id = window.setTimeout(() => {
       for (const s of SKIES)
@@ -254,7 +256,7 @@ function HarvestField({ scene, mode }: { scene: HarvestScene; mode: FieldMode })
       window.clearTimeout(id);
       kept.length = 0;
     };
-  }, []);
+  }, [still]);
   // The sky on screen now, and the one fading out under it.
   const [sky, setSky] = useState<{ cur: HarvestSky; prev: HarvestSky | null }>({ cur: scene.sky, prev: null });
   if (sky.cur !== scene.sky) setSky({ cur: scene.sky, prev: calm ? null : sky.cur });

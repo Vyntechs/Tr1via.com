@@ -79,10 +79,11 @@ export const NOV_WINNER_LEAVES: ReadonlyArray<readonly [number, number, number, 
 ];
 
 /** Winner name size (px): as big as 220, shrunk so the name fits one line
- *  in the name zone instead of wrapping over the cards and the field. */
+ *  in the name zone instead of wrapping over the cards and the field (down
+ *  to 48, so a long three-way tie wraps to two lines at most). */
 export function novWinnerNameSize(name: string, maxWidth = NOV_WINNER_NAME_ZONE.w - 40): number {
   const chars = Math.max(1, [...name].length + 1); // + the full stop
-  return Math.max(72, Math.min(220, Math.floor(maxWidth / (chars * 0.56))));
+  return Math.max(48, Math.min(220, Math.floor(maxWidth / (chars * 0.56))));
 }
 
 /** The drawn wishbone's box on the winner screen (stage px). */

@@ -325,12 +325,12 @@ export function NovemberBoard({
         <div data-testid="tv-grid-standings" style={abs(1150, 124, { width: 338 })}>
           <span style={label(15, NOV.cream(0.6))}>Standings</span>
           <div style={{ marginTop: 20, display: "flex", flexDirection: "column", gap: 22 }}>
-            {leaders.slice(0, 5).map((r) => {
+            {leaders.slice(0, 5).map((r, i) => {
               const top = r.rank === 1;
               return (
                 <div
-                  // Ties share a rank, so the name keeps the key unique.
-                  key={`${r.rank}-${r.name}`}
+                  // Ties share a rank and can share a name; the index keeps it unique.
+                  key={`${r.rank}-${r.name}-${i}`}
                   data-testid={`tv-grid-standing-${r.rank}`}
                   style={{
                     display: "grid",

@@ -332,10 +332,11 @@ function RoomStateMachine({
   }, [themeKey, resolvedQId]);
 
   // November: the phone pictures come in three small sets, each at a random
-  // 1-6 s, never on the join screen or all at once while 40 phones are
-  // joining: what the first question needs after this phone has joined, the
-  // reveal strips once a game is live, the night set at the first reveal
-  // (nobody is tapping then). A phone that reloads mid-game gets them all.
+  // 1-6 s, never all at once while 40 phones are joining (join itself only
+  // fetches its 15 KB field; the lobby turkey comes with the lobby): what the
+  // first question needs after this phone has joined, the reveal strips once
+  // a game is live, the night set at the first reveal (nobody is tapping
+  // then). A phone that reloads mid-game gets them all.
   const novemberPhone = isNovemberPhone(themeKey);
   const gameUnderway = currentGame?.state === "live" || game1?.state === "live" || game1?.state === "done";
   const revealSeen = resolvedQId !== null;
