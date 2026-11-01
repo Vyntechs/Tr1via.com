@@ -62,6 +62,18 @@ export function skyFor(input: { moment: TVMomentKind; gameNo: 1 | 2 | null; game
   return gameStarted ? "dusk" : "golden";
 }
 
+/** Has the game on screen asked a question yet? A reveal event for it, or
+ *  anyone in its scores list with an answer or points. */
+export function gameStarted(input: {
+  currentGameId: string | null;
+  reveals: readonly { gameId: string; event: string }[];
+  scores: readonly { score: number; answered_count?: number }[];
+}): boolean {
+  const { currentGameId, reveals, scores } = input;
+  if (currentGameId && reveals.some((r) => r.gameId === currentGameId && r.event === "reveal")) return true;
+  return scores.some((s) => (s.answered_count ?? 0) > 0 || s.score > 0);
+}
+
 // ── The leader ────────────────────────────────────────────────────────────
 
 /** Screens where the gold tail shows. During a question a fanned gold tail

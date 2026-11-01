@@ -10,6 +10,8 @@ import {
   turkeyUrl,
 } from "@/lib/experience/november/harvest";
 import { tvWorldFor, hasPhoneLayer } from "@/lib/experience/packs";
+import { demoNight } from "@/lib/experience/demoNight";
+import { gameStarted } from "@/lib/experience/november/harvest";
 import type { RowMood } from "@/lib/experience/shared/playerRow";
 import type { TVMoment, TVMomentKind } from "@/lib/experience/tvMoment";
 
@@ -101,5 +103,19 @@ describe("Leader and scene", () => {
   it("November wears a world on the TV, not on phones", () => {
     expect(tvWorldFor("november")?.pack).toBe("november");
     expect(hasPhoneLayer("november")).toBe(false);
+  });
+});
+
+describe("Sky on the demo night", () => {
+  const skyOn = (moment: "lobby" | "board" | "between-games" | "winner") => {
+    const snap = demoNight({ moment, players: 29 } as Parameters<typeof demoNight>[0]).snapshot;
+    const gameNo = snap.games.find((g) => g.id === snap.currentGameId)?.gameNo ?? null;
+    return skyFor({ moment, gameNo, gameStarted: gameStarted(snap) });
+  };
+  it("lobby golden, board dusk, between games and winner night", () => {
+    expect(skyOn("lobby")).toBe("golden");
+    expect(skyOn("board")).toBe("dusk");
+    expect(skyOn("between-games")).toBe("night");
+    expect(skyOn("winner")).toBe("night");
   });
 });

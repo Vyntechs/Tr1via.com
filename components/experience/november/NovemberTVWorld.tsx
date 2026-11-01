@@ -27,6 +27,7 @@ import type { TVWorldSpec } from "@/lib/experience/packs";
 import { NO_MOMENT } from "@/lib/experience/tvMoment";
 import { momentSecondsLeft } from "@/lib/experience/october/patch";
 import {
+  gameStarted as gameStartedFor,
   harvestScene,
   sameHarvestScene,
   skyLayerUrl,
@@ -63,14 +64,14 @@ export function NovemberTVWorld({ spec, snapshot, tier: requestedTier, off = fal
     () => snapshot.games.find((g) => g.id === snapshot.currentGameId)?.gameNo ?? null,
     [snapshot.games, snapshot.currentGameId],
   );
-  const gameStarted = useMemo(
-    () => snapshot.reveals.some((r) => r.gameId === snapshot.currentGameId && r.event === "reveal"),
-    [snapshot.reveals, snapshot.currentGameId],
+  const started = useMemo(
+    () => gameStartedFor({ currentGameId: snapshot.currentGameId, reveals: snapshot.reveals, scores: snapshot.scores }),
+    [snapshot.reveals, snapshot.currentGameId, snapshot.scores],
   );
   const scores = snapshot.scores;
 
   const [scene, setScene] = useState<HarvestScene>(() =>
-    harvestScene({ moment: NO_MOMENT, secondsLeft: null, players, answers, gameNo, gameStarted, scores }),
+    harvestScene({ moment: NO_MOMENT, secondsLeft: null, players, answers, gameNo, gameStarted: started, scores }),
   );
   const timed = moment.kind === "question" || moment.kind === "reveal";
   useEffect(() => {
@@ -85,7 +86,7 @@ export function NovemberTVWorld({ spec, snapshot, tier: requestedTier, off = fal
           serverNowMs: serverNow(),
           durationS: QUESTION_CLOCK_S,
         });
-        const next = harvestScene({ moment, secondsLeft, players, answers, gameNo, gameStarted, scores });
+        const next = harvestScene({ moment, secondsLeft, players, answers, gameNo, gameStarted: started, scores });
         setScene((prev) => (sameHarvestScene(prev, next) ? prev : next));
       } catch (error) {
         report(error);
@@ -97,7 +98,7 @@ export function NovemberTVWorld({ spec, snapshot, tier: requestedTier, off = fal
       window.clearTimeout(first);
       if (id !== null) window.clearInterval(id);
     };
-  }, [moment, questionClock, players, answers, gameNo, gameStarted, scores, timed, off, serverNow, report]);
+  }, [moment, questionClock, players, answers, gameNo, started, scores, timed, off, serverNow, report]);
 
   const inputs = useMemo<PlayerRowInputs<HarvestScene>>(
     () => ({ players, scene, secondsLeftNow, colorFor: playerColorHex }),
