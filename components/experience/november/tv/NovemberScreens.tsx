@@ -66,6 +66,9 @@ const mono = (size: number, extra: CSSProperties = {}): CSSProperties => ({
 
 const ellipsis: CSSProperties = { whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" };
 
+/** A board category name short enough for one 21 px line in its column. */
+const fitsOneLine = (name: string): boolean => [...name].length <= 13;
+
 function Panel({ x, y, w, h, testId }: { x: number; y: number; w: number; h: number; testId?: string }) {
   return <div aria-hidden="true" data-testid={testId} style={abs(x, y, { width: w, height: h, ...NOV_PANEL_STYLE })} />;
 }
@@ -240,13 +243,26 @@ export function NovemberBoard({
         {categories.map((c) => (
           <div
             key={c}
+            data-testid="november-board-category"
             style={{
               alignSelf: "start",
-              fontSize: 21,
               fontWeight: 700,
-              lineHeight: 1.2,
               color: NOV.ink,
-              ...ellipsis,
+              // A column is ~155 px: short names keep one 21 px line; longer
+              // ones ("The color Green") wrap to two smaller lines in the
+              // same 40 px row instead of losing their end.
+              ...(fitsOneLine(c)
+                ? { fontSize: 21, lineHeight: 1.2, ...ellipsis }
+                : {
+                    fontSize: 17,
+                    lineHeight: 1.1,
+                    paddingTop: 3, // one line sits on the 21 px names' baseline
+                    overflow: "hidden",
+                    overflowWrap: "anywhere",
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                  }),
             }}
           >
             {c}
