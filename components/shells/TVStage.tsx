@@ -9,7 +9,7 @@ import { useTheme } from "@/components/system/ThemeProvider";
 import type { AugustPageName } from "@/components/system/AugustPage";
 import { Weather } from "@/components/system/Weather";
 import { useStageWorld } from "@/components/experience/StageWorld";
-import { NOV, NOV_PANEL_INSET } from "@/lib/experience/november/tvLook";
+import { NOV_PANEL_INSET, NOV_PANEL_STYLE } from "@/lib/experience/november/tvLook";
 
 export interface TVStageProps {
   children: ReactNode;
@@ -111,12 +111,7 @@ export function TVStage({
               inset: `${NOV_PANEL_INSET.top}px ${NOV_PANEL_INSET.side}px ${NOV_PANEL_INSET.bottom}px`,
               zIndex: -1,
               pointerEvents: "none",
-              borderRadius: 32,
-              background: NOV.panel,
-              border: `1px solid ${NOV.panelEdge}`,
-              backdropFilter: "blur(12px)",
-              WebkitBackdropFilter: "blur(12px)",
-              boxShadow: "0 18px 60px rgba(10,5,2,.45)",
+              ...NOV_PANEL_STYLE,
             }}
           />
         ) : null

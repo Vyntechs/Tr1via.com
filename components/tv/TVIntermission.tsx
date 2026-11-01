@@ -21,6 +21,7 @@ import type { ResolvedTheme } from "@/lib/theme/resolve";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { useStageWorld } from "@/components/experience/StageWorld";
 import { OctoberBetweenGames } from "@/components/experience/october/tv/OctoberScreens";
+import { NovemberBetweenGames } from "@/components/experience/november/tv/NovemberScreens";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { readableForeground } from "@/lib/theme/contrast";
 
@@ -97,6 +98,13 @@ function TVIntermissionBody(props: Omit<TVIntermissionProps, "themeKey">) {
     return (
       <ThemeLayerBoundary name="october:OctoberBetweenGames" fallback={<TVIntermissionInner {...props} />}>
         <OctoberBetweenGames {...props} />
+      </ThemeLayerBoundary>
+    );
+  }
+  if (world?.pack === "november") {
+    return (
+      <ThemeLayerBoundary name="november:NovemberBetweenGames" fallback={<TVIntermissionInner {...props} />}>
+        <NovemberBetweenGames {...props} />
       </ThemeLayerBoundary>
     );
   }

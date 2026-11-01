@@ -24,6 +24,7 @@ import { useStageWorld } from "@/components/experience/StageWorld";
 import { OctoberWinner } from "@/components/experience/october/tv/OctoberScreens";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { NovemberWinnerBurst } from "@/components/experience/november/tv/NovemberWinnerBurst";
+import { novWinnerNameSize } from "@/lib/experience/november/tvLook";
 import { useCrescendo } from "@/lib/hooks/useCrescendo";
 
 export interface TVFinaleWinnerData {
@@ -250,7 +251,7 @@ function TVFinaleWinnerInner({
             <Eyebrow color={t.accent} size={13}>WON THE NIGHT</Eyebrow>
             <span data-testid="tv-finale-winner-name" style={{ display: "block" }}>
               <Display
-                size={220}
+                size={nov ? novWinnerNameSize(winner.name) : 220}
                 color={t.ink}
                 weight={700}
                 tracking={-0.05}

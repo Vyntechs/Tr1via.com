@@ -11,6 +11,7 @@
 import { TVStage, TVHeader, TVFooter } from "@/components/shells";
 import { useStageWorld } from "@/components/experience/StageWorld";
 import { FlamingHead } from "@/components/experience/october/FlamingHead";
+import { NovemberBoard } from "@/components/experience/november/tv/NovemberScreens";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import {
   Eyebrow,
@@ -94,11 +95,26 @@ export function TVGrid({ themeKey, ...rest }: TVGridProps) {
   if (themeKey) {
     return (
       <ThemeProvider themeKey={themeKey}>
-        <TVGridInner {...rest} />
+        <TVGridBody {...rest} />
       </ThemeProvider>
     );
   }
-  return <TVGridInner {...rest} />;
+  return <TVGridBody {...rest} />;
+}
+
+// November (Harvest Field) lays the board out anew on its own panel. Any
+// other night renders the everyday board, untouched. If the November version
+// ever fails, the everyday one takes its place.
+function TVGridBody(props: Omit<TVGridProps, "themeKey">) {
+  const world = useStageWorld();
+  if (world?.pack === "november") {
+    return (
+      <ThemeLayerBoundary name="november:NovemberBoard" fallback={<TVGridInner {...props} />}>
+        <NovemberBoard {...props} />
+      </ThemeLayerBoundary>
+    );
+  }
+  return <TVGridInner {...props} />;
 }
 
 function TVGridInner({

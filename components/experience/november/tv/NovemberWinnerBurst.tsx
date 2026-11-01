@@ -1,44 +1,63 @@
 // November · the winner moment: a wishbone snaps in two above the champion's
 // name and autumn leaves burst out across the night field (Figma "9 Winner").
 // Decoration only: no text, nothing to click. With reduced motion it shows the
-// snapped wishbone and the leaves at rest, no movement.
+// snapped wishbone and the leaves at rest, no movement. The wishbone is drawn
+// (thick bone arms, a knob at the top) so it reads from across the bar, and
+// the leaves rest above or right of the winner's name, never on it.
 
 "use client";
 
 import type { CSSProperties } from "react";
+import { NOV_WINNER_LEAVES, NOV_WISHBONE_BOX } from "@/lib/experience/november/tvLook";
 
-const WISHBONE = "/themes/november/props/wishbone.png";
 const leaf = (n: number) => `/themes/november/leaves/leaf-${n}.webp`;
-
-// The Figma's burst, trimmed to 14 leaves: x, y, size (stage px), leaf, spin.
-const LEAVES: Array<[number, number, number, number, number]> = [
-  [242, 148, 88, 1, -40], [1125, 115, 87, 2, 30], [660, 19, 60, 3, 120], [162, 194, 71, 4, -90],
-  [1090, 143, 69, 5, 60], [369, 114, 49, 6, -20], [1025, 163, 92, 1, 150], [1277, 254, 43, 2, -60],
-  [1188, 6, 71, 3, 80], [340, 175, 68, 4, 200], [149, 217, 76, 5, -130], [888, 35, 57, 6, 45],
-  [1503, 491, 60, 1, 100], [469, 153, 91, 2, -75],
-];
+const { x: WB_X, y: WB_Y, w: WB_W, h: WB_H } = NOV_WISHBONE_BOX;
 
 const CSS = `
-@keyframes nov-wish-left { 0% { transform: rotate(0deg) translateX(0) } 18% { transform: rotate(0deg) translateX(0) } 30% { transform: rotate(-9deg) translateX(-26px) } 100% { transform: rotate(-12deg) translateX(-34px) } }
-@keyframes nov-wish-right { 0% { transform: rotate(0deg) translateX(0) } 18% { transform: rotate(0deg) translateX(0) } 30% { transform: rotate(9deg) translateX(26px) } 100% { transform: rotate(12deg) translateX(34px) } }
+@keyframes nov-wish-left { 0% { transform: rotate(0deg) translateX(0) } 18% { transform: rotate(0deg) translateX(0) } 30% { transform: rotate(-11deg) translateX(-14px) } 100% { transform: rotate(-14deg) translateX(-18px) } }
+@keyframes nov-wish-right { 0% { transform: rotate(0deg) translateX(0) } 18% { transform: rotate(0deg) translateX(0) } 30% { transform: rotate(11deg) translateX(14px) } 100% { transform: rotate(14deg) translateX(18px) } }
 @keyframes nov-snap { 0%, 22% { opacity: 0; transform: scale(.3) } 30% { opacity: 1; transform: scale(1.5) } 100% { opacity: .55; transform: scale(1) } }
 @keyframes nov-leaf { 0%, 24% { opacity: 0; transform: translate(var(--fx), var(--fy)) rotate(0deg) scale(.4) } 34% { opacity: 1 } 100% { opacity: .9; transform: translate(0, 0) rotate(var(--spin)) scale(1) } }
 @media (prefers-reduced-motion: reduce) { [data-nov-burst] * { animation: none !important } }
 `;
 
+/** One half of the drawn wishbone: a thick bone arm (dark edge, cream bone,
+ *  soft highlight). The knob at the joint cracks in two with it. */
+function WishboneHalf({ side }: { side: "left" | "right" }) {
+  const left = side === "left";
+  // Arm from the top joint (110, 30) bowing down and out to a foot that
+  // kicks outward, like a real wishbone.
+  const arm = left ? "M106 34 C 92 58, 70 88, 52 116 L 34 124" : "M114 34 C 128 58, 150 88, 168 116 L 186 124";
+  return (
+    <svg
+      width={WB_W}
+      height={WB_H}
+      viewBox={`0 0 ${WB_W} ${WB_H}`}
+      style={{
+        position: "absolute",
+        left: WB_X,
+        top: WB_Y,
+        overflow: "visible",
+        transformOrigin: left ? "52px 116px" : "168px 116px",
+        // Snapped at rest, so reduced motion (no animation) still shows the snap.
+        transform: left ? "rotate(-14deg) translateX(-18px)" : "rotate(14deg) translateX(18px)",
+        animation: `nov-wish-${side} 2.6s cubic-bezier(.2,.8,.2,1) both`,
+        // Each half shows only its own side of the joint.
+        clipPath: left ? "inset(-20% 50% -20% -20%)" : "inset(-20% -20% -20% 50%)",
+        filter: "drop-shadow(0 6px 10px rgba(10,5,2,.55))",
+      }}
+    >
+      <path d={arm} fill="none" stroke="#5A3416" strokeWidth={36} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={arm} fill="none" stroke="#EAD3A0" strokeWidth={26} strokeLinecap="round" strokeLinejoin="round" />
+      <path d={arm} fill="none" stroke="#FFF3D6" strokeWidth={7} strokeLinecap="round" opacity={0.7} transform="translate(-3 -3)" />
+      <circle cx={110} cy={26} r={25} fill="#5A3416" />
+      <circle cx={110} cy={26} r={19} fill="#EAD3A0" />
+      <circle cx={104} cy={20} r={6} fill="#FFF3D6" opacity={0.75} />
+    </svg>
+  );
+}
+
 export function NovemberWinnerBurst() {
-  // Halves: the Figma crops one wishbone picture into a left and right frame
-  // (each 167×251 of a 279 px square) at x 615 and 874, y 34.
-  const half = (side: "left" | "right"): CSSProperties => ({
-    position: "absolute",
-    left: side === "left" ? 615 : 874,
-    top: 34,
-    width: 167,
-    height: 251,
-    overflow: "hidden",
-    transformOrigin: side === "left" ? "100% 100%" : "0% 100%",
-    animation: `nov-wish-${side} 2.6s cubic-bezier(.2,.8,.2,1) both`,
-  });
   return (
     <div
       data-nov-burst=""
@@ -56,7 +75,7 @@ export function NovemberWinnerBurst() {
       }}
     >
       <style>{CSS}</style>
-      {LEAVES.map(([x, y, size, n, spin], i) => (
+      {NOV_WINNER_LEAVES.map(([x, y, size, n, spin], i) => (
         // eslint-disable-next-line @next/next/no-img-element
         <img
           key={i}
@@ -69,28 +88,22 @@ export function NovemberWinnerBurst() {
             width: size,
             height: size,
             ["--fx" as string]: `${800 - x - size / 2}px`,
-            ["--fy" as string]: `${250 - y}px`,
+            ["--fy" as string]: `${120 - y}px`,
             ["--spin" as string]: `${spin}deg`,
             transform: `rotate(${spin}deg)`,
             animation: `nov-leaf 2.8s cubic-bezier(.15,.8,.25,1) both`,
           } as CSSProperties}
         />
       ))}
-      <div style={half("left")}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={WISHBONE} alt="" style={{ position: "absolute", left: 0, top: 0, width: 279, height: 279 }} />
-      </div>
-      <div style={half("right")}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src={WISHBONE} alt="" style={{ position: "absolute", left: -115, top: 0, width: 279, height: 279 }} />
-      </div>
+      <WishboneHalf side="left" />
+      <WishboneHalf side="right" />
       <div
         style={{
           position: "absolute",
-          left: 778,
-          top: 226,
-          width: 44,
-          height: 44,
+          left: WB_X + WB_W / 2 - 24,
+          top: WB_Y + 2,
+          width: 48,
+          height: 48,
           borderRadius: 99,
           background: "radial-gradient(circle, rgba(255,226,150,.95), rgba(255,190,96,0) 70%)",
           animation: "nov-snap 2.6s ease-out both",
