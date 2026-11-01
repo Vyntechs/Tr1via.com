@@ -88,10 +88,13 @@ export function phoneTurkeyPlan(
 
 /** Small turkeys (80 px or less: question, locked, winner card) use the
  *  128 px strips; bigger ones (reveal, between games, lobby) keep the TV's
- *  256 px strips so they stay sharp on a 3x phone. The walk only comes big. */
+ *  256 px strips so they stay sharp on a 3x phone. */
 export function phoneTurkeyStripPx(anim: PhoneTurkeyAnim, size: number): 128 | 256 {
-  return anim !== "walk" && size <= 80 ? 128 : 256;
+  return SMALL_STRIPS.includes(anim) && size <= 80 ? 128 : 256;
 }
+
+/** The strips that ship a 128 px copy (the moods a small turkey shows). */
+const SMALL_STRIPS: readonly PhoneTurkeyAnim[] = ["idle", "fan", "right"];
 
 export function phoneTurkeyUrl(anim: PhoneTurkeyAnim, px: 128 | 256): string {
   return `/themes/november/turkey/${TURKEY_STYLE}/${anim}-${px}.webp`;
@@ -130,36 +133,36 @@ export function stripKeyframes(endPx: number): { name: string; css: string } {
 
 // ── Preload ────────────────────────────────────────────────────────────────
 // Nothing is fetched on the join screen (that is when 40 phones share the
-// venue wifi with their join requests). After the join, two small waves:
-//   soon  : what the first question needs (small idle + fan, the dusk field)
-//   later : the reveal strips, the night field, pie, wishbone, feathers
+// venue wifi with their join requests). The room page asks for three sets:
+//   soon   : after this phone has joined: the first question's small idle +
+//            fan and the dusk field
+//   reveal : once a game is live: the reveal strips and loose feathers
+//   night  : at the first reveal: night field, pie, small gobble, wishbone
 // The lobby's own turkey (walk + idle 256) loads with the lobby itself.
 
 export interface PhonePreloadWaves {
   soon: string[];
-  later: string[];
+  reveal: string[];
+  night: string[];
 }
 
 export function phonePreloadWaves(): PhonePreloadWaves {
   return {
     soon: [phoneTurkeyUrl("idle", 128), phoneTurkeyUrl("fan", 128), phoneWorldUrl("dusk")],
-    later: [
+    reveal: [
       phoneTurkeyUrl("right", 256),
       phoneTurkeyUrl("wrong", 256),
       phoneTurkeyUrl("hide", 256),
       ...([1, 2, 3, 4] as const).map(featherUrl),
-      phoneWorldUrl("night"),
-      PHONE_PIE_URL,
-      phoneTurkeyUrl("right", 128),
-      PHONE_WISHBONE_URL,
     ],
+    night: [phoneWorldUrl("night"), PHONE_PIE_URL, phoneTurkeyUrl("right", 128), PHONE_WISHBONE_URL],
   };
 }
 
-/** Every picture the waves fetch, in order. */
+/** Every picture the sets fetch, in order. */
 export function phonePreloadUrls(): string[] {
   const w = phonePreloadWaves();
-  return [...w.soon, ...w.later];
+  return [...w.soon, ...w.reveal, ...w.night];
 }
 
 // ── Category bar ───────────────────────────────────────────────────────────

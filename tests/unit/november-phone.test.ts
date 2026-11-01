@@ -1,3 +1,4 @@
+import fs from "node:fs";
 // November · "your turkey" rules on the phone (lib/experience/november/phone.ts).
 
 import { describe, expect, it } from "vitest";
@@ -67,6 +68,7 @@ describe("november phone turkey", () => {
     expect(phoneTurkeyStripPx("right", 64)).toBe(128);
     expect(phoneTurkeyStripPx("right", 112)).toBe(256);
     expect(phoneTurkeyStripPx("walk", 60)).toBe(256);
+    expect(phoneTurkeyStripPx("wrong", 60)).toBe(256);
     expect(phoneTurkeyUrl("idle", 128)).toBe("/themes/november/turkey/A/idle-128.webp");
     expect(phoneWorldUrl("dusk")).toBe("/themes/november/phone/dusk.webp");
   });
@@ -92,13 +94,15 @@ describe("november phone step 3b", () => {
     expect(stripKeyframes(Number.NaN).css).toContain("translateX(0px)");
   });
 
-  it("preloads every strip a mood change can need, plus dusk and night, in two waves", () => {
+  it("preloads every strip a mood change can need, plus dusk and night, in three sets", () => {
     const urls = phonePreloadUrls();
     for (const a of ["right", "wrong", "hide"]) expect(urls).toContain(`/themes/november/turkey/A/${a}-256.webp`);
     for (const a of ["idle", "fan", "right"]) expect(urls).toContain(`/themes/november/turkey/A/${a}-128.webp`);
     // The lobby's own turkey loads with the lobby; never twice.
     expect(urls).not.toContain("/themes/november/turkey/A/walk-256.webp");
     expect(phonePreloadWaves().soon).toContain("/themes/november/phone/dusk.webp");
+    expect(phonePreloadWaves().night).toContain("/themes/november/phone/night.webp");
+    for (const u of urls) expect(fs.existsSync(`public${u}`)).toBe(true);
     expect(urls).toContain("/themes/november/phone/dusk.webp");
     expect(urls).toContain("/themes/november/phone/night.webp");
     expect(new Set(urls).size).toBe(urls.length);

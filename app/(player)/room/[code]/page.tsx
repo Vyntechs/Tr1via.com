@@ -271,11 +271,6 @@ function RoomStateMachine({
   me: PlayerRow;
   themeKey: ThemeKey;
 }) {
-  // November: fetch the phone pictures a little later, after the join, in
-  // two small staggered waves (never on the join screen, where 40 phones
-  // share the venue wifi with their join requests).
-  const novemberPhone = isNovemberPhone(themeKey);
-  useEffect(() => (novemberPhone ? scheduleNovemberPhonePreload() : undefined), [novemberPhone]);
   // Live game (or pre-game). Used to decide which screen to show.
   const game1 = snapshot.games.find((g) => g.game_no === 1) ?? null;
   const game2 = snapshot.games.find((g) => g.game_no === 2) ?? null;
@@ -335,6 +330,24 @@ function RoomStateMachine({
       fireJuneBeat("reveal");
     }
   }, [themeKey, resolvedQId]);
+
+  // November: the phone pictures come in three small sets, each at a random
+  // 1-6 s, never on the join screen or all at once while 40 phones are
+  // joining: what the first question needs after this phone has joined, the
+  // reveal strips once a game is live, the night set at the first reveal
+  // (nobody is tapping then). A phone that reloads mid-game gets them all.
+  const novemberPhone = isNovemberPhone(themeKey);
+  const gameUnderway = currentGame?.state === "live" || game1?.state === "live" || game1?.state === "done";
+  const revealSeen = resolvedQId !== null;
+  useEffect(() => (novemberPhone ? scheduleNovemberPhonePreload("soon") : undefined), [novemberPhone]);
+  useEffect(
+    () => (novemberPhone && gameUnderway ? scheduleNovemberPhonePreload("reveal") : undefined),
+    [novemberPhone, gameUnderway],
+  );
+  useEffect(
+    () => (novemberPhone && revealSeen ? scheduleNovemberPhonePreload("night") : undefined),
+    [novemberPhone, revealSeen],
+  );
 
   // June: every lock-in ripples this phone's water — the room's pulse felt on
   // your own screen. Own lock is known locally (instant); other players' locks
