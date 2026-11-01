@@ -22,6 +22,8 @@ import {
 import { TVHouseLights } from "@/components/tv/TVHouseLights";
 import type { MarqueeChip } from "@/components/tv/TVScoreboardMarquee";
 import { useAutoFitText } from "@/lib/hooks/useAutoFitText";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import { NOV, NOV_QUESTION_SIZES, novTimerColor } from "@/lib/experience/november/tvLook";
 import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 
@@ -106,7 +108,10 @@ function TVQuestionInner({
   const { t } = useTheme();
   // October's world says "TIME'S UP" when the clock hits zero (the Horseman
   // is riding through the patch right then). The clock itself is unchanged.
-  const octoberWorld = useStageWorld()?.pack === "october";
+  const pack = useStageWorld()?.pack;
+  const octoberWorld = pack === "october";
+  // November restyles this same screen on its quiet panel (same content).
+  const nov = pack === "november";
   const cc = categoryColor(category, t.accent);
   const [imageFailed, setImageFailed] = useState(false);
   const imageRef = useRef<HTMLImageElement | null>(null);
@@ -129,7 +134,9 @@ function TVQuestionInner({
   // pixel viewport varies night to night. Measurement (not media queries) is
   // what guarantees fit.
   const { frameRef, textRef, fontSize: questionFontSize } = useAutoFitText({
-    sizes: octoberWorld
+    sizes: nov
+      ? NOV_QUESTION_SIZES
+      : octoberWorld
       ? QUESTION_SIZES_IN_WORLD
       : showImage
         ? QUESTION_SIZES_WITH_IMAGE
@@ -165,11 +172,11 @@ function TVQuestionInner({
       {/* Category banner */}
       <div
         style={{
-          margin: "24px 56px 0",
-          padding: "16px 24px",
+          margin: nov ? "14px 56px 0" : "24px 56px 0",
+          padding: nov ? "0" : "16px 24px",
           borderRadius: 14,
-          background: cc,
-          color: "#0E0805",
+          background: nov ? "transparent" : cc,
+          color: nov ? NOV.ink : "#0E0805",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -178,21 +185,21 @@ function TVQuestionInner({
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 18 }}>
-          <Eyebrow color="rgba(14,8,5,.65)" size={11}>CATEGORY</Eyebrow>
+          <Eyebrow color={nov ? NOV.burnt : "rgba(14,8,5,.65)"} size={11}>CATEGORY</Eyebrow>
           <span style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-0.015em" }}>
             {category}
           </span>
         </div>
-        <PointTag value={value} color="#0E0805" ink={cc} size="md" />
+        <PointTag value={value} color={nov ? NOV.burnt : "#0E0805"} ink={nov ? NOV.paper : cc} size="md" />
       </div>
 
       <div
         style={{
           flex: 1,
           minHeight: 0,
-          padding: "28px 56px 0",
+          padding: nov ? "18px 56px 0" : "28px 56px 0",
           display: "grid",
-          gridTemplateColumns: showImage ? "260px 1fr 180px" : "1fr 180px",
+          gridTemplateColumns: showImage ? `260px 1fr ${nov ? 150 : 180}px` : `1fr ${nov ? 150 : 180}px`,
           // Lock the one grid row to the container's height. Without this,
           // the image's intrinsic 260px (with alignSelf: flex-start) bullies
           // the row taller than the container in short viewports — the frame
@@ -254,11 +261,11 @@ function TVQuestionInner({
               // keeps the editorial feel — useAutoFitText drives the size.
               fontFamily: "var(--font-display)",
               fontOpticalSizing: "auto",
-              fontStretch: "85%",
-              fontWeight: 500,
+              fontStretch: nov ? "100%" : "85%",
+              fontWeight: nov ? 600 : 500,
               fontSize: `${questionFontSize}px`,
-              letterSpacing: "-0.025em",
-              lineHeight: 0.92,
+              letterSpacing: nov ? "-0.01em" : "-0.025em",
+              lineHeight: nov ? 1.12 : 0.92,
               color: t.ink,
             }}
           >
@@ -266,19 +273,23 @@ function TVQuestionInner({
           </div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, alignSelf: "flex-start" }}>
-          <TVTimerArc accent={cc} seconds={seconds} />
-          <Eyebrow color={seconds <= 5 ? t.wrong : cc} size={10}>
-            {octoberWorld && seconds <= 0 ? "TIME'S UP" : seconds <= 5 ? "FINAL SECONDS" : "SPEED BONUS < 5s"}
+          {nov ? (
+            <NovemberTimerRing seconds={seconds} />
+          ) : (
+            <TVTimerArc accent={cc} seconds={seconds} />
+          )}
+          <Eyebrow color={nov ? novTimerColor(seconds) : seconds <= 5 ? t.wrong : cc} size={nov ? 12 : 10}>
+            {(octoberWorld || nov) && seconds <= 0 ? "TIME'S UP" : seconds <= 5 ? "FINAL SECONDS" : "SPEED BONUS < 5s"}
           </Eyebrow>
         </div>
       </div>
 
       <div
         style={{
-          padding: "36px 56px 0",
+          padding: nov ? "22px 56px 0" : "36px 56px 0",
           display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 18,
+          gridTemplateColumns: nov ? "repeat(2, 1fr)" : "repeat(4, 1fr)",
+          gap: nov ? 16 : 18,
           position: "relative",
           zIndex: 1,
           flexShrink: 0,
@@ -288,25 +299,46 @@ function TVQuestionInner({
           <div
             key={o.n}
             style={{
-              background: t.dark ? "rgba(244,230,196,.06)" : "#FFF",
-              border: `1.5px solid ${t.line}`,
-              borderRadius: 16,
+              background: nov ? NOV.tile : t.dark ? "rgba(244,230,196,.06)" : "#FFF",
+              border: nov ? `1px solid ${NOV.tileEdge}` : `1.5px solid ${t.line}`,
+              borderRadius: nov ? 18 : 16,
               display: "flex",
               alignItems: "center",
               gap: 18,
-              padding: "20px 24px",
-              minHeight: 110,
+              padding: nov ? "16px 20px" : "20px 24px",
+              minHeight: nov ? 88 : 110,
             }}
           >
-            <Numeric size={84} weight={700} color={cc} tracking={-0.05} style={{ lineHeight: 1 }}>
-              {o.n}
-            </Numeric>
+            {nov ? (
+              <span
+                style={{
+                  width: 52,
+                  height: 52,
+                  flexShrink: 0,
+                  borderRadius: 99,
+                  border: `2px solid ${NOV.cream(0.55)}`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontFamily: "var(--font-mono)",
+                  fontWeight: 700,
+                  fontSize: 26,
+                  color: NOV.ink,
+                }}
+              >
+                {o.n}
+              </span>
+            ) : (
+              <Numeric size={84} weight={700} color={cc} tracking={-0.05} style={{ lineHeight: 1 }}>
+                {o.n}
+              </Numeric>
+            )}
             <span
               data-testid="tv-question-option-text"
               style={{
-                fontSize: "clamp(32px, 4vmin, 44px)",
+                fontSize: nov ? 36 : "clamp(32px, 4vmin, 44px)",
                 color: t.ink,
-                fontWeight: 650,
+                fontWeight: nov ? 600 : 650,
                 lineHeight: 1.08,
                 letterSpacing: "-0.012em",
               }}
@@ -322,7 +354,7 @@ function TVQuestionInner({
       <div
         data-testid="tv-question-pile"
         style={{
-          padding: "18px 56px 24px",
+          padding: nov ? "16px 56px 22px" : "18px 56px 24px",
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
@@ -346,7 +378,7 @@ function TVQuestionInner({
             <span
               style={{
                 fontFamily: "var(--font-mono)",
-                fontSize: "clamp(24px, 1.8vw, 30px)",
+                fontSize: nov ? 22 : "clamp(24px, 1.8vw, 30px)",
                 fontWeight: 750,
                 letterSpacing: "0.025em",
                 color: t.ink,
@@ -354,13 +386,13 @@ function TVQuestionInner({
             >
               {lockedIn} OF {denominator} LOCKED IN
             </span>
-            <Eyebrow color={t.inkMute} size={11}>READ HERE · TAP ON YOUR PHONE</Eyebrow>
+            <Eyebrow color={nov ? NOV.cream(0.7) : t.inkMute} size={nov ? 13 : 11}>READ HERE · TAP ON YOUR PHONE</Eyebrow>
           </div>
           <div
             style={{
               width: "100%",
-              height: 10,
-              background: t.line,
+              height: nov ? 6 : 10,
+              background: nov ? NOV.cream(0.12) : t.line,
               borderRadius: 99,
               overflow: "hidden",
             }}
@@ -369,7 +401,7 @@ function TVQuestionInner({
               style={{
                 width: `${Math.round(progress * 100)}%`,
                 height: "100%",
-                background: cc,
+                background: nov ? NOV.burnt : cc,
                 borderRadius: 99,
                 transition: "width .25s ease",
               }}
@@ -386,5 +418,56 @@ function TVQuestionInner({
         ) : null}
       </div>
     </TVStage>
+  );
+}
+
+/** November's timer: a thin burnt-orange ring that turns red at 5 s and under. */
+function NovemberTimerRing({ seconds }: { seconds: number }) {
+  const max = questionDurationFor("november");
+  const size = 132;
+  const stroke = 6;
+  const r = (size - stroke) / 2;
+  const C = 2 * Math.PI * r;
+  const frac = Math.max(0, Math.min(1, seconds / max));
+  const color = novTimerColor(seconds);
+  return (
+    <div
+      data-testid="november-timer"
+      style={{ position: "relative", width: size, height: size }}
+      role="timer"
+      aria-label={`${seconds} seconds remaining`}
+    >
+      <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }} aria-hidden="true">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={NOV.cream(0.14)} strokeWidth={stroke} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          fill="none"
+          stroke={color}
+          strokeWidth={stroke}
+          strokeDasharray={C}
+          strokeDashoffset={C * (1 - frac)}
+          strokeLinecap="round"
+          style={{ transition: "stroke-dashoffset 1s linear, stroke .25s" }}
+        />
+      </svg>
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontFamily: "var(--font-mono)",
+          fontSize: 56,
+          fontWeight: 700,
+          fontVariantNumeric: "tabular-nums",
+          color: seconds <= 5 ? NOV.red : NOV.ink,
+        }}
+      >
+        {seconds}
+      </div>
+    </div>
   );
 }

@@ -8,6 +8,7 @@
 // drift off wrong answers (capped), and a cream name plate.
 
 import { ROW_GEOMETRY } from "@/lib/experience/shared/playerRow";
+import { turkeyPlateTop } from "@/lib/experience/november/tvLook";
 import {
   FEATHER_SPAWN_FRAME,
   TURKEY_ANIMS,
@@ -196,7 +197,8 @@ function createTurkeyRenderer(kit: RowKit): RowRenderer<HarvestScene, TurkeyFx> 
     const w = tw + padX * 2;
     const h = toS(s.stakeH * 0.92);
     const x = toX(rt.x) - w / 2;
-    const y = toY(s.stakeTop) + toS(2);
+    // Plates stand in two lanes under the turkeys (never on a front tail).
+    const y = toY(turkeyPlateTop(s, ROW_GEOMETRY));
     const r = Math.min(h / 2, toS(5));
     ctx.fillStyle = "rgba(14,7,3,0.35)";
     roundRect(ctx, x, y + toS(1.5), w, h, r);
