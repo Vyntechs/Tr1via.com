@@ -9,7 +9,8 @@
 //   - not cut by any ancestor that hides its overflow (all four edges),
 //   - not overflowing its own box (team names may end in "…" by design, the
 //     same as every other month; the winner's name and the answer never),
-//   - above the turkey row (stage y 676) and inside the 1600-wide stage.
+//   - above the turkey row (stage y 676) and inside the 1600-wide stage,
+//   - not overlapping another text run.
 // Measured in stage pixels (the 1600×900 stage renders 1:1 at 1600×900).
 
 import { test, expect } from "@playwright/test";
@@ -56,6 +57,7 @@ for (const c of CASES) {
       };
       const label = (el: Element) => el.textContent!.trim().replace(/\s+/g, " ").slice(0, 40);
       const issues: string[] = [];
+      const runs: { el: HTMLElement; b: { l: number; t: number; r: number; b: number } }[] = [];
       for (const el of content.querySelectorAll<HTMLElement>("*")) {
         const own = [...el.childNodes].filter((n) => n.nodeType === 3 && n.textContent!.trim());
         if (!own.length || !visible(el)) continue;
@@ -76,6 +78,7 @@ for (const c of CASES) {
           const k = 0.12 * parseFloat(cs.fontSize) * ((er.b - er.t) / (el.offsetHeight || er.b - er.t || 1));
           b.t += k; b.b -= k;
         } else { b.t = Math.max(b.t, er.t); b.b = Math.min(b.b, er.b); }
+        runs.push({ el, b });
 
         // Only a team name may end in "…" (as on every other month).
         const nameCut = cs.textOverflow === "ellipsis" && TEAM_NAME.test(label(el));
@@ -94,6 +97,15 @@ for (const c of CASES) {
         if (b.b > (rowTop as number)) issues.push(`under the turkeys: "${label(el)}" bottom ${Math.round(b.b)}`);
         if (b.l < 0 || b.r > 1600 || b.t < 0) issues.push(`off the stage: "${label(el)}"`);
       }
+      // No two separate text runs overlap (e.g. a two-line winner name and the score).
+      for (let i = 0; i < runs.length; i++)
+        for (let j = i + 1; j < runs.length; j++) {
+          const A = runs[i], B = runs[j];
+          if (A.el.contains(B.el) || B.el.contains(A.el)) continue;
+          const ox = Math.min(A.b.r, B.b.r) - Math.max(A.b.l, B.b.l);
+          const oy = Math.min(A.b.b, B.b.b) - Math.max(A.b.t, B.b.t);
+          if (ox > 4 && oy > 4) issues.push(`overlap: "${label(A.el)}" and "${label(B.el)}" (${Math.round(ox)}x${Math.round(oy)}px)`);
+        }
       // Cards, plates and pictures end above the turkeys too.
       for (const el of content.querySelectorAll<HTMLElement>("*")) {
         const cs = getComputedStyle(el);
