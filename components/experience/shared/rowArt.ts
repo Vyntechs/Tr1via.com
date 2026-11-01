@@ -12,8 +12,12 @@ export interface RowSprite {
   url: string;
   width: number;
   height: number;
-  /** Width in stage units to pre-draw at; omitted = a front-row slot's width. */
+  /** Width in stage units to pre-draw at; omitted = a front-row slot's width.
+   *  For a strip, the width of ONE frame. */
   designW?: number;
+  /** A strip of this many equal frames, left to right (drawn with
+   *  drawSpriteFrame); omitted = one picture. */
+  frames?: number;
 }
 
 /** One player's figure, as the row keeps it (stage units, 1600×900). */
@@ -75,6 +79,8 @@ export interface RowKit {
     scaleY?: number,
   ) => void;
   /** A name cut to fit maxW canvas pixels in the current ctx.font (cached). */
+  /** One frame of a strip sprite, its box's top-left at (cx - w/2, top). */
+  drawSpriteFrame: (key: string, frame: number, cx: number, top: number, w: number, h: number, alpha: number) => void;
   fitLabel: (name: string, maxW: number) => string;
   fontFamily: () => string;
   secondsLeftNow: () => number | null;

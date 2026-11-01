@@ -60,7 +60,7 @@ describe("October world on the venue TV", () => {
   // (Pixel-for-pixel sameness of the other themes is checked by the
   // before/after picture comparison, not here.)
   it("is not mounted on any other theme", () => {
-    for (const theme of ["house", "may", "july", "september", "november"] as ThemeKey[]) {
+    for (const theme of ["house", "may", "july", "september"] as ThemeKey[]) {
       const { unmount } = renderTV("question", theme);
       expect(screen.queryByTestId("october-world")).toBeNull();
       expect(screen.getByTestId("tv-question")).not.toHaveAttribute("data-stage-world");

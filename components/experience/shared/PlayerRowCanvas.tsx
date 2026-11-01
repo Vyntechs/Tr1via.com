@@ -172,8 +172,13 @@ export function PlayerRowCanvas<S extends RowScene, F>({
         if (!img) continue;
         const sprite = art.sprites[key];
         const designW = sprite.designW ?? front;
-        const w = Math.max(8, Math.ceil(designW * scale));
-        const h = Math.max(8, Math.ceil((w * sprite.height) / sprite.width));
+        let w = Math.max(8, Math.ceil(designW * scale));
+        let h = Math.max(8, Math.ceil((w * sprite.height) / sprite.width));
+        if (sprite.frames && sprite.frames > 1) {
+          // A strip: whole-pixel frames so no frame bleeds into the next.
+          h = Math.max(8, Math.ceil((w * sprite.height * sprite.frames) / sprite.width));
+          w *= sprite.frames;
+        }
         const c = document.createElement("canvas");
         c.width = w;
         c.height = h;
@@ -202,6 +207,18 @@ export function PlayerRowCanvas<S extends RowScene, F>({
       ctx.restore();
     };
 
+    const drawSpriteFrame: RowKit["drawSpriteFrame"] = (key, frame, cx, top, w, h, alpha) => {
+      const bmp = bitmaps[key];
+      const n = art.sprites[key]?.frames ?? 1;
+      if (!bmp || alpha <= 0.01 || !Number.isFinite(frame)) return;
+      const fw = bmp.width / n;
+      const f = ((Math.floor(frame) % n) + n) % n;
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, alpha);
+      ctx.drawImage(bmp, f * fw, 0, fw, bmp.height, toX(cx - w / 2), toY(top), toS(w), toS(h));
+      ctx.restore();
+    };
+
     const kit: RowKit = {
       ctx,
       still,
@@ -210,6 +227,7 @@ export function PlayerRowCanvas<S extends RowScene, F>({
       toY,
       toS,
       drawSprite,
+      drawSpriteFrame,
       fitLabel: (name, maxW) => {
         const cacheKey = `${name}|${ctx.font}|${Math.round(maxW)}`;
         let label = labelCache.get(cacheKey);
