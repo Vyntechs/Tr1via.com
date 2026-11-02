@@ -16,6 +16,8 @@ import {
 import { PhoneScreen } from "@/components/shells";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
+import { YourTurkey } from "@/components/experience/november/YourTurkey";
+import { isNovemberPhone } from "@/lib/experience/november/phone";
 import { nailedItLine } from "@/lib/player/celebrationCopy";
 
 export interface PlayerRevealCorrectProps {
@@ -121,6 +123,9 @@ export function PlayerRevealCorrect({
             size={100}
             style={{ marginLeft: 6, marginTop: -26, marginBottom: -12, verticalAlign: "bottom" }}
           />
+        ) : isNovemberPhone(themeKey) ? (
+          // November: the green screen stays, and your turkey gobbles in a warm glow.
+          <YourTurkey mood="blaze" size={112} style={{ marginLeft: 4, marginTop: -30, marginBottom: -14, verticalAlign: "bottom" }} />
         ) : null}
       </div>
 

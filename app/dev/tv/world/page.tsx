@@ -10,6 +10,9 @@
 // locked: how many players have locked in (question / reveal)
 // tier:   still → the host phone preview's no-animation version
 // long:   1 → worst-case content (long question + photo + long answers + fact)
+// wide:   1 → worst-case names and numbers: every team name ~24 characters,
+//         the top score 12,840, a long category name
+//         (tests/e2e/november-fit.spec.ts)
 // play:   9 s left → lock-ins arrive → last five seconds → time's up →
 //         the reveal lands 0.6 s after zero (like the real game) → board.
 // host:   1 → inside the host's laptop console (TV panel + control strip,
@@ -28,6 +31,7 @@ import { ScaledTVCanvas, TVStateMachine } from "@/components/tv";
 import { HostLiveConsole } from "@/components/host/HostLiveConsole";
 import { ThemeProvider } from "@/components/system";
 import { demoNight, type DemoMoment } from "@/lib/experience/demoNight";
+import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { isThemeKey, type ThemeKey } from "@/lib/theme/tokens";
 
 const MOMENTS: DemoMoment[] = ["lobby", "board", "question", "reveal", "between-games", "winner"];
@@ -94,10 +98,11 @@ function TVWorldPreview() {
   }
 
   const night = useDemoNight(moment, players, secondsLeft, locked, builtAtMs, questionRevealedAtMs, long, questionNo);
-  const snapshot = useMemo(
-    () => ({ ...night.snapshot, night: { ...night.snapshot.night, themeKey } }),
-    [night, themeKey],
-  );
+  const wide = params.get("wide") === "1";
+  const snapshot = useMemo(() => {
+    const base = { ...night.snapshot, night: { ...night.snapshot.night, themeKey } };
+    return wide ? widen(base) : base;
+  }, [night, themeKey, wide]);
 
   if (params.get("host") === "1") {
     return (
@@ -131,6 +136,52 @@ function TVWorldPreview() {
       </ThemeProvider>
     </div>
   );
+}
+
+// ── wide=1: the longest realistic names and the biggest scores ───────────
+
+const WIDE_NAMES = [
+  "The Quizzly Bear Brigade", "Les Quizerables Reunited", "Smarty Pints of Cleburne",
+  "Agatha Quiztie & Friends", "Trivia Newton John Fans", "Universally Challenged!",
+  "Quiz Khalifa and the Crew", "Hot Sauce Committee Pt 2",
+];
+
+const WIDE_CATEGORY = "One-Hit Wonders of the 80s";
+const WIDE_LIVE_CATEGORY = "Big City Subway Systems!";
+
+/** Every player renamed to ~24 characters; the top score becomes 12,840 (a
+ *  tie at the top stays a tie); each game's last category gets a long name.
+ *  Preview only. */
+function widen(snapshot: TVSnapshot): TVSnapshot {
+  const nameOf = new Map<string, string>();
+  snapshot.players.forEach((p, i) => {
+    const lap = Math.floor(i / WIDE_NAMES.length);
+    const suffix = lap === 0 ? "" : ` ${lap + 1}`;
+    nameOf.set(p.id, WIDE_NAMES[i % WIDE_NAMES.length].slice(0, 24 - suffix.length) + suffix);
+  });
+  const rename = (key: string, name: string) => nameOf.get(key) ?? name;
+  const liveId = snapshot.liveQuestionId ?? snapshot.targetQuestionId;
+  const liveCategory = snapshot.questions.find((q) => q.id === liveId)?.categoryId;
+  const top = Math.max(0, ...snapshot.scores.map((s) => s.score));
+  const lift = top > 0 ? 12_840 - top : 0;
+  return {
+    ...snapshot,
+    // Long category names: each game's last column, and the live question's.
+    categories: snapshot.categories.map((c, i, all) =>
+      c.id === liveCategory
+        ? { ...c, name: WIDE_LIVE_CATEGORY, topic: WIDE_LIVE_CATEGORY }
+        : all.slice(i + 1).some((n) => n.gameId === c.gameId)
+          ? c
+          : { ...c, name: WIDE_CATEGORY, topic: WIDE_CATEGORY },
+    ),
+    players: snapshot.players.map((p) => ({ ...p, displayName: rename(p.id, p.displayName) })),
+    scores: snapshot.scores.map((s) => ({
+      ...s,
+      display_name: rename(s.player_key, s.display_name),
+      score: s.score > 0 ? s.score + lift : s.score,
+    })),
+    liveAnswers: snapshot.liveAnswers.map((a) => ({ ...a, player_name: rename(a.player_key, a.player_name) })),
+  };
 }
 
 // ── tour=1: whole nights on a loop ─────────────────────────────────────────

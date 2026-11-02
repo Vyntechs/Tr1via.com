@@ -26,6 +26,9 @@ import { categoryColor } from "@/lib/theme/categories";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { hasPhoneLayer } from "@/lib/experience/packs";
 import { YourPumpkin } from "@/components/experience/october/YourPumpkin";
+import { YourTurkey } from "@/components/experience/november/YourTurkey";
+import { isNovemberPhone, phoneCategoryBar, phoneTurkeyMood } from "@/lib/experience/november/phone";
+import { useNovemberGameSky } from "@/components/experience/november/phoneContext";
 import type { StandingRow } from "@/lib/player/betweenGames";
 import { PlayerSendStatus, type PlayerLockedSendState } from "./PlayerSendStatus";
 
@@ -142,11 +145,14 @@ export function PlayerLocked({
   roomMagicEnabled = false,
 }: PlayerLockedProps = {}) {
   const { t, themeKey } = useTheme();
+  // November: dusk in game 1, night in game 2 (the TV's light). Other months ignore it.
+  const harvestSky = useNovemberGameSky();
   const reducedMotion = usePrefersReducedMotion();
   const pulseAnimation = reducedMotion
     ? "none"
     : "tr1via-pulse 1.4s ease-in-out infinite";
   const catColor = categoryColor(category, t.accent);
+  const bar = phoneCategoryBar(isNovemberPhone(themeKey), catColor);
   const septemberQuestion = themeKey === "september";
   const bannerBottomGap = septemberQuestion ? 0 : 18;
   const isLocked = sendState === "locked";
@@ -162,25 +168,26 @@ export function PlayerLocked({
     : 0;
 
   return (
-    <PhoneScreen data-testid="player-locked" weatherPage="question">
+    <PhoneScreen data-testid="player-locked" weatherPage="question" harvestSky={harvestSky}>
       <div
         style={{
           margin: `-14px -22px ${bannerBottomGap}px`,
           padding: "14px 22px",
-          background: catColor,
-          color: "#0E0805",
+          background: bar.background,
+          borderBottom: bar.borderBottom,
+          color: bar.ink,
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
         }}
       >
         <div>
-          <Eyebrow color="rgba(14,8,5,.65)" size={10}>
+          <Eyebrow color={bar.eyebrow} size={10}>
             QUESTION {_questionNumber ?? 10} · {category.toUpperCase()}
           </Eyebrow>
           <div style={{ marginTop: 4, fontSize: 22, fontWeight: 700, letterSpacing: "-0.02em" }}>{category}</div>
         </div>
-        <PointTag value={value} color="#0E0805" ink={catColor} size="md" />
+        <PointTag value={value} color={bar.tagColor} ink={bar.tagInk} size="md" />
       </div>
 
       {septemberQuestion && <SeptemberQuestionLampBand />}
@@ -207,6 +214,10 @@ export function PlayerLocked({
             size={56}
             style={{ margin: "-18px 0 -8px" }}
           />
+        ) : null}
+        {isNovemberPhone(themeKey) && sendState !== "rejected" ? (
+          // November: your turkey fans its tail the moment the server says yes.
+          <YourTurkey mood={phoneTurkeyMood(sendState)} size={60} style={{ margin: "-20px 0 -10px" }} />
         ) : null}
         {!hasLiveCount && lockedSummary && <Numeric size={12} color={t.inkMid}>{lockedSummary}</Numeric>}
       </div>

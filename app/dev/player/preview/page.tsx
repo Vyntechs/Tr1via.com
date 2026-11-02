@@ -13,6 +13,10 @@
 //   variant — short | long | image | long-image | long-category (default: short)
 //   theme   — any ThemeKey                                    (default: house)
 //   state   — lobby | question | locked | recap               (default: question)
+//             also: join | question-locked | correct | wrong | timeup |
+//             join-game-2 | between | winner | finale | finale-won (the reveal
+//             and finale screens,
+//             added for November's phone looks)
 //
 // Not linked from anywhere — accessed directly from validation scripts and
 // the dev gallery footer. Excluded from production builds via the `/dev`
@@ -21,7 +25,19 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { PlayerLobby, PlayerLocked, PlayerQuestion, PlayerRecap } from "@/components/player";
+import {
+  PlayerBetweenGames,
+  PlayerFinaleView,
+  PlayerJoin,
+  PlayerJoinGame2,
+  PlayerLobby,
+  PlayerLocked,
+  PlayerQuestion,
+  PlayerRecap,
+  PlayerRevealCorrect,
+  PlayerRevealWrong,
+  PlayerWinnerCard,
+} from "@/components/player";
 import { ThemeProvider } from "@/components/system";
 import { THEME_KEYS, type ThemeKey } from "@/lib/theme/tokens";
 import { Suspense } from "react";
@@ -73,7 +89,50 @@ function PreviewBody() {
           flexDirection: "column",
         }}
       >
-        {state === "recap" ? (
+        {state === "join" ? (
+          <PlayerJoin />
+        ) : state === "question-locked" ? (
+          <PlayerQuestion
+            prompt={prompt}
+            imageUrl={imageUrl}
+            category={category}
+            pick={{ chosenSlot: 2, sendState: "locked", msToLock: 2300 }}
+          />
+        ) : state === "correct" ? (
+          <PlayerRevealCorrect />
+        ) : state === "wrong" ? (
+          <PlayerRevealWrong />
+        ) : state === "timeup" ? (
+          <PlayerRevealWrong chosenSlot={null} />
+        ) : state === "join-game-2" ? (
+          <PlayerJoinGame2 />
+        ) : state === "between" ? (
+          <PlayerBetweenGames
+            playerName="You"
+            top={[
+              { rank: 1, name: "Alice", score: 12320, isYou: false },
+              { rank: 2, name: "You", score: 9160, isYou: true },
+              { rank: 3, name: "Carol", score: 8420, isYou: false },
+            ]}
+            you={null}
+          />
+        ) : state === "finale-won" || state === "finale" ? (
+          // The real in-room finale (/room), won or not.
+          <PlayerFinaleView
+            won={state === "finale-won"}
+            rank={state === "finale-won" ? 1 : 7}
+            score={state === "finale-won" ? 2940 : 1860}
+            correct={14}
+            answered={20}
+            fastestMs={1800}
+            longestStreak={5}
+            playerName="Maya"
+            playerCount={24}
+            winner={state === "finale-won" ? { name: "Maya", score: 2940 } : { name: "Linda", score: 2940 }}
+          />
+        ) : state === "winner" ? (
+          <PlayerWinnerCard />
+        ) : state === "recap" ? (
           <PlayerRecap />
         ) : state === "lobby" ? (
           <PlayerLobby playerName="Maya" inRoomCount={12} />

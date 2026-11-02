@@ -9,6 +9,7 @@ import { useTheme } from "@/components/system/ThemeProvider";
 import type { AugustPageName } from "@/components/system/AugustPage";
 import { Weather } from "@/components/system/Weather";
 import { useStageWorld } from "@/components/experience/StageWorld";
+import { NOV_PANEL_INSET, NOV_PANEL_STYLE } from "@/lib/experience/november/tvLook";
 
 export interface TVStageProps {
   children: ReactNode;
@@ -29,6 +30,9 @@ export interface TVStageProps {
   "data-testid"?: string;
   /** Optional semantic marker used by visual regression checks. */
   "data-reading-surface"?: string;
+  /** November's world: draw the one quiet dark panel behind this screen
+   *  (default). Screens that lay out their own panels pass false. */
+  worldPanel?: boolean;
 }
 
 export function TVStage({
@@ -41,6 +45,7 @@ export function TVStage({
   style,
   "data-testid": dataTestId,
   "data-reading-surface": dataReadingSurface,
+  worldPanel = true,
 }: TVStageProps) {
   const { t, themeKey } = useTheme();
   // A theme's living world (October) is mounted behind every TV screen. The
@@ -50,6 +55,11 @@ export function TVStage({
   // element structure either way, so if the world switches off mid-night the
   // screen inside doesn't restart.
   const world = useStageWorld();
+  // November: one quiet dark panel over the field, so every screen reads on
+  // the bright harvest light. The panel is a backdrop sibling (same element
+  // slot the vignette uses), so the screen inside never remounts.
+  const november = world?.pack === "november";
+  const panel = november && worldPanel;
   return (
     <div
       data-testid={dataTestId}
@@ -59,7 +69,17 @@ export function TVStage({
         width: "100%",
         height: world ? `${world.contentHeight * 100}%` : "100%",
         ...(world ? { flexShrink: 0 } : null),
-        background: world ? (page === "reveal" ? "rgba(18,10,6,.72)" : "transparent") : bg ?? t.paper,
+        background: world
+          ? page === "reveal" && !november
+            ? "rgba(18,10,6,.72)"
+            : "transparent"
+          : bg ?? t.paper,
+        ...(panel
+          ? {
+              padding: `${NOV_PANEL_INSET.top}px ${NOV_PANEL_INSET.side}px ${NOV_PANEL_INSET.bottom}px`,
+              isolation: "isolate" as const,
+            }
+          : null),
         color: t.ink,
         fontFamily: "var(--font-sans)",
         position: "relative",
@@ -81,7 +101,21 @@ export function TVStage({
           substrate={!bg || bg === t.paper}
         />
       )}
-      {world ? null : (
+      {world ? (
+        panel ? (
+          <div
+            aria-hidden="true"
+            data-testid="november-panel"
+            style={{
+              position: "absolute",
+              inset: `${NOV_PANEL_INSET.top}px ${NOV_PANEL_INSET.side}px ${NOV_PANEL_INSET.bottom}px`,
+              zIndex: -1,
+              pointerEvents: "none",
+              ...NOV_PANEL_STYLE,
+            }}
+          />
+        ) : null
+      ) : (
         <div
           style={{
             position: "absolute",

@@ -16,17 +16,27 @@
 //            few seconds behind, so knocking pumpkins over at zero could
 //            wrongly call out someone who locked in at the buzzer)
 
+//
+// The mood rules, phases and slot layout are shared with every month's
+// player row (lib/experience/shared/playerRow.ts); October adds the moon,
+// clouds, shiver and the Horseman on top.
+
 import type { TVMoment } from "@/lib/experience/tvMoment";
+import {
+  ROW_GEOMETRY,
+  rowCounts,
+  rowLayout,
+  rowScene,
+  type RowAnswer,
+  type RowMood,
+  type RowPhase,
+  type RowPlayer,
+  type RowSlot,
+} from "@/lib/experience/shared/playerRow";
 
-export type PumpkinMood = "waiting" | "lit" | "blaze" | "smoke" | "toppled";
+export type PumpkinMood = RowMood;
 
-export type PatchPhase =
-  | "calm" //          lobby, board, standings, between games
-  | "asking" //        question up, more than 5 seconds left
-  | "final-seconds" // 5 seconds or less left
-  | "times-up" //      clock hit zero, the reveal isn't on screen yet
-  | "reveal"
-  | "winner";
+export type PatchPhase = RowPhase;
 
 export type MoonPose =
   | "lobby"
@@ -38,17 +48,9 @@ export type MoonPose =
 
 export type HorsemanCue = "none" | "ridge" | "ride" | "bridge" | "rear";
 
-export interface PatchPlayer {
-  key: string;
-  name: string;
-}
+export type PatchPlayer = RowPlayer;
 
-export interface PatchAnswer {
-  playerKey: string;
-  questionId: string;
-  /** Null until the question is resolved (the TV never sees it earlier). */
-  isCorrect: boolean | null;
-}
+export type PatchAnswer = RowAnswer;
 
 export interface PatchScene {
   phase: PatchPhase;
@@ -74,7 +76,6 @@ export const QUESTION_SECONDS = 25;
 export const RIDE_LEAD_SECONDS = 1.8;
 /** …and is still in frame this long after, carried across the reveal. */
 export const RIDE_TAIL_SECONDS = 1.2;
-const FINAL_SECONDS = 5;
 
 /** The most recent question the TV showed, so the Horseman can finish his
  *  ride after the screen switches to the reveal. */
@@ -109,21 +110,12 @@ export function patchScene(input: PatchSceneInput): PatchScene {
   const { moment, players } = input;
   const secondsLeft = momentSecondsLeft(input);
 
-  const phase = phaseFor(moment, secondsLeft);
-  const answers = moment.questionId
-    ? input.answers.filter((a) => a.questionId === moment.questionId)
-    : [];
-  const answered = new Map(answers.map((a) => [a.playerKey, a]));
-
-  const moods: Record<string, PumpkinMood> = {};
-  for (const p of players) {
-    moods[p.key] = moodFor(phase, answered.get(p.key));
-  }
+  const { phase, moods, showNames } = rowScene({ moment, secondsLeft, players, answers: input.answers });
 
   return {
     phase,
     moods,
-    showNames: phase !== "reveal" && phase !== "times-up" && moment.kind !== "board",
+    showNames,
     shiver: phase === "final-seconds",
     clouds: phase === "final-seconds" || phase === "times-up",
     moon: moonFor(moment.kind),
@@ -148,42 +140,6 @@ export function momentSecondsLeft(input: PatchSceneInput): number | null {
     return rawSecondsLeft(questionClock.revealedAtMs, input.serverNowMs, input.durationS);
   }
   return null;
-}
-
-function phaseFor(moment: TVMoment, secondsLeft: number | null): PatchPhase {
-  switch (moment.kind) {
-    case "question":
-      if (secondsLeft === null || secondsLeft > FINAL_SECONDS) return "asking";
-      if (secondsLeft > 0) return "final-seconds";
-      return "times-up";
-    case "reveal":
-      return "reveal";
-    case "winner":
-      return "winner";
-    default:
-      return "calm";
-  }
-}
-
-function moodFor(phase: PatchPhase, answer: PatchAnswer | undefined): PumpkinMood {
-  switch (phase) {
-    case "asking":
-    case "final-seconds":
-      return answer ? "lit" : "waiting";
-    case "times-up":
-      // Unknown yet: hold dark until the reveal brings the full answer list.
-      return answer ? "lit" : "waiting";
-    case "reveal":
-      if (!answer) return "toppled";
-      if (answer.isCorrect === true) return "blaze";
-      if (answer.isCorrect === false) return "smoke";
-      return "lit";
-    case "winner":
-      return "blaze";
-    case "calm":
-    default:
-      return "lit";
-  }
 }
 
 function moonFor(kind: TVMoment["kind"]): MoonPose {
@@ -222,75 +178,14 @@ function horsemanFor(
 // step; the "41 players fit" proof keeps two rows on a tighter step. Past
 // 44 players a third row keeps names readable.
 
-export const PATCH_BOX = { x: 56, y: 676, w: 1488, h: 210 } as const;
-const DESIGN_STEP = 99.2;
-const FRONT_BOX_W = 124;
-const FRONT_BOTTOM = PATCH_BOX.y + 216.2;
-const ROW_SIZES: Record<number, number[]> = {
-  1: [1],
-  2: [101.7 / FRONT_BOX_W, 1],
-  3: [0.74, 0.86, 1],
-};
+export const PATCH_BOX = ROW_GEOMETRY.box;
 
-export interface PumpkinSlot {
-  /** Centre x of the pumpkin's art box. */
-  cx: number;
-  /** Top of the art box (art is 160×200, the pumpkin sits in its lower part). */
-  top: number;
-  w: number;
-  h: number;
-  /** 0 = back row. */
-  row: number;
-  /** Top of the name stake. */
-  stakeTop: number;
-  stakeH: number;
-  stakeFont: number;
-  stakeMaxW: number;
-}
+export type PumpkinSlot = RowSlot;
 
-export function patchRows(count: number): number[] {
-  if (count <= 0) return [];
-  const rows = count <= 1 ? 1 : count <= 44 ? 2 : 3;
-  const base = Math.floor(count / rows);
-  const extra = count % rows;
-  // Back to front; the front rows take the extra pumpkins.
-  return Array.from({ length: rows }, (_, r) => base + (r >= rows - extra ? 1 : 0));
-}
+export const patchRows = rowCounts;
 
 export function patchLayout(count: number): PumpkinSlot[] {
-  const rows = patchRows(count);
-  if (rows.length === 0) return [];
-  const widest = Math.max(...rows);
-  const step = Math.min(DESIGN_STEP, PATCH_BOX.w / widest);
-  // Three rows must still fit between the top of the strip and the hill.
-  const s = Math.min(step / DESIGN_STEP, rows.length === 3 ? 0.848 : 1);
-  const sizes = ROW_SIZES[rows.length] ?? ROW_SIZES[2];
-  const gap = rows.length === 3 ? 50 * s : 61.2 * s;
-
-  const slots: PumpkinSlot[] = [];
-  const frontH = FRONT_BOX_W * 1.25 * s;
-  const frontTop = FRONT_BOTTOM - frontH;
-  rows.forEach((n, r) => {
-    const fromFront = rows.length - 1 - r;
-    const w = FRONT_BOX_W * sizes[r] * s;
-    const h = w * 1.25;
-    const top = frontTop - fromFront * gap;
-    const mid = PATCH_BOX.x + PATCH_BOX.w / 2;
-    for (let i = 0; i < n; i++) {
-      slots.push({
-        cx: mid + (i - (n - 1) / 2) * step,
-        top,
-        w,
-        h,
-        row: r,
-        stakeTop: top + h * 0.784,
-        stakeH: 22 * s,
-        stakeFont: Math.max(9, 13 * s),
-        stakeMaxW: Math.max(40, step * 0.94),
-      });
-    }
-  });
-  return slots;
+  return rowLayout(count, ROW_GEOMETRY);
 }
 
 
