@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useId, useState, type CSSProperties, type FormEvent } from "react";
 import {
   useTheme,
   Wordmark,
@@ -26,7 +26,7 @@ import {
   countNameChars,
   hasVisibleChar,
 } from "@/lib/player/nameLimit";
-import { isImeEnter, useCappedNameInput } from "@/lib/player/useCappedNameInput";
+import { useCappedNameInput } from "@/lib/player/useCappedNameInput";
 
 // Read by screen readers, invisible on screen.
 const VISUALLY_HIDDEN: CSSProperties = {
@@ -96,20 +96,15 @@ export function PlayerJoin({
     ? Math.min(countNameChars(name), MAX_PLAYER_NAME)
     : countNameChars(name);
   const nameFull = !composing && nameCount >= MAX_PLAYER_NAME;
-  // Set by the Enter that confirms a conversion, so the form's built-in
-  // "Enter submits" doesn't send a half-typed name. Cleared right after.
-  const imeEnterRef = useRef(false);
   const hintId = useId();
   const counterId = useId();
 
   function handleSubmit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (!interactive) return;
-    if (imeEnterRef.current) {
-      imeEnterRef.current = false;
-      return;
-    }
     // Clamp again: Enter can submit while a keyboard is still converting.
+    // No Enter guard here on purpose: Android keyboards report the Go key as a
+    // converting Enter, and blocking it would make the first Go tap do nothing.
     const cleaned = clampPlayerName(name).trim();
     if (!hasVisibleChar(cleaned)) return;
     onSubmit?.(cleaned);
@@ -161,16 +156,6 @@ export function PlayerJoin({
                   type="text"
                   value={name}
                   {...nameInput}
-                  onKeyDown={(e) => {
-                    // Only notes the key; never blocks it, so the keyboard
-                    // still finishes its word normally.
-                    if (isImeEnter(e)) {
-                      imeEnterRef.current = true;
-                      setTimeout(() => {
-                        imeEnterRef.current = false;
-                      }, 0);
-                    }
-                  }}
                   placeholder="Your name"
                   // Raw ceiling only: the real 16-character cap is the clamp
                   // above, because maxLength counts an emoji as 2+.

@@ -225,17 +225,15 @@ describe("review 3: Android Gboard composing a Latin word past 16", () => {
     expect(note).toHaveTextContent("Name is full, 16 characters.");
   });
 
-  it("the Enter that confirms a conversion does not submit; a real Enter does", () => {
+  it("Enter while a keyboard is converting still submits (Android Go key), with the name cut to 16", () => {
     const onSubmit = vi.fn();
     render(wrap(<PlayerJoin playerName="" onSubmit={onSubmit} />));
     const input = screen.getByTestId("player-name-input") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "Maya" } });
+    fireEvent.compositionStart(input);
+    fireEvent.change(input, { target: { value: "Christopher Johnson" } });
     fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
     fireEvent.submit(input.form!);
-    expect(onSubmit).not.toHaveBeenCalled();
-    fireEvent.keyDown(input, { key: "Enter", keyCode: 13 });
-    fireEvent.submit(input.form!);
-    expect(onSubmit).toHaveBeenCalledWith("Maya");
+    expect(onSubmit).toHaveBeenCalledWith("Christopher John");
   });
 });
 
