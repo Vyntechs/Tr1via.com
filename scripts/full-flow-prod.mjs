@@ -38,8 +38,9 @@
 //       (auto-opts into game 1). Optional realtime subscribe per phone.
 //   7.  Play game 1 (start → 7 cells of reveal/parallel-answer/end-early).
 //   8.  End game 1.
-//   9.  [3-phone mode only] Phones explicitly join game 2.
-//   10. [3-phone mode only] Set up game 2 category and play it.
+//   10. [3-phone mode only] Set up game 2 category (must be ready first:
+//       the server refuses game-2 joins until it has a ready category).
+//   9.  [3-phone mode only] Phones explicitly join game 2, then play it.
 //   11. [3-phone mode only] End game 2.
 //   12. [3-phone mode only] Assert cumulative leaderboard across both games.
 //   13. Cleanup: delete the night (cascade).
@@ -139,7 +140,7 @@ function questionDurationFor(themeKey) {
   if (!themeKey) return DEFAULT_DURATION;
   return DURATION_BY_THEME[themeKey] ?? DEFAULT_DURATION;
 }
-const MARQUEE_THEMES = new Set(["may"]);
+const MARQUEE_THEMES = new Set(["may", "july"]);
 
 function colorize(s, c) {
   const codes = { red: 31, green: 32, yellow: 33, cyan: 36, gray: 90, magenta: 35 };
@@ -926,6 +927,20 @@ async function runOnePass(passThemeKey) {
     // stops after game 1 because the relevant signal is intra-game peak
     // concurrency, not narrative span.
     if (!LOAD_MODE) {
+      // 10. Set up game 2 categories. Runs BEFORE the phones join game 2:
+      // the join-game route refuses joins (403 "game is not ready yet") until
+      // game 2 has a ready category, same as the real "Join Game 2" button.
+      step(`10. set up game 2 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
+      {
+        for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
+          const t0 = Date.now();
+          const topic = TOPIC_BANK_G2[i] ?? `${TOPIC_BANK_G2[0]} ${i + 1}`;
+          const r = await setupCategory(game2Id, topic, i + 1);
+          gameCategories[1].push(r);
+          pass(`g2 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
+        }
+      }
+
       // 9. Phones explicitly join game 2 (the "Join Game 2" button path)
       step("9. phones join game 2");
       for (const p of phones) {
@@ -943,18 +958,6 @@ async function runOnePass(passThemeKey) {
           throw new Error(`missing g2 participations: ${missing.map((m) => m.name).join(",")}`);
         }
         pass("all 3 have game_participations rows for game 2");
-      }
-
-      // 10. Set up game 2 categories
-      step(`10. set up game 2 categories (${CATEGORIES_PER_GAME} × create → generate → pick 7)`);
-      {
-        for (let i = 0; i < CATEGORIES_PER_GAME; i++) {
-          const t0 = Date.now();
-          const topic = TOPIC_BANK_G2[i] ?? `${TOPIC_BANK_G2[0]} ${i + 1}`;
-          const r = await setupCategory(game2Id, topic, i + 1);
-          gameCategories[1].push(r);
-          pass(`g2 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
-        }
       }
 
       step(`11. play game 2 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
