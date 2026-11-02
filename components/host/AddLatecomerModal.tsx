@@ -6,7 +6,8 @@
 
 import { useEffect, useState } from "react";
 import { Eyebrow } from "@/components/system";
-import { MAX_PLAYER_NAME_RAW, handleNameInputChange } from "@/lib/player/nameLimit";
+import { MAX_PLAYER_NAME_RAW, clampPlayerName, hasVisibleChar } from "@/lib/player/nameLimit";
+import { useCappedNameInput } from "@/lib/player/useCappedNameInput";
 
 export interface AddLatecomerModalProps {
   onCancel: () => void;
@@ -18,8 +19,9 @@ export interface AddLatecomerModalProps {
 export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps) {
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const trimmed = name.trim();
-  const canSubmit = trimmed.length > 0 && !submitting;
+  const nameInput = useCappedNameInput(name, setName);
+  const trimmed = clampPlayerName(name).trim();
+  const canSubmit = hasVisibleChar(trimmed) && !submitting;
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -108,7 +110,7 @@ export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps
             maxLength={MAX_PLAYER_NAME_RAW}
             placeholder="e.g. Sam (phone dead)"
             // Same 16-character cap as the phone join screen (emoji = 1).
-            onChange={(e) => handleNameInputChange(e.target, name, setName)}
+            {...nameInput}
             onKeyDown={(e) => {
               if (e.key === "Enter" && canSubmit) void submit();
             }}

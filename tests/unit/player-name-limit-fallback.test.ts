@@ -71,4 +71,49 @@ describe("name limit without Intl.Segmenter", () => {
     expect(fb.clampPlayerName("abcdefghijklmno🇺🇸Z")).toBe("abcdefghijklmno🇺🇸");
     expect(fb.clampPlayerName("abcdefghijklmno👍🏽Z")).toBe("abcdefghijklmno👍🏽");
   });
+
+  it("never counts a zero-width joiner between letters as one character (review 2)", () => {
+    for (const s of ["a‍b‍c‍d", "ශ්‍රී ලංකා", "x".repeat(15) + "‍" + "y".repeat(10), "a‍😀", "😀‍a"]) {
+      expect(fb.countNameChars(s)).toBeGreaterThanOrEqual(full.countNameChars(s));
+    }
+    expect(fb.countNameChars("a‍b‍c‍d")).toBe(4);
+  });
+
+  it("is never looser than the server on thousands of generated names", () => {
+    // Small seeded generator so the run is repeatable (no extra library).
+    let seed = 0x5eed1234;
+    const rand = (n: number) => {
+      seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+      return seed % n;
+    };
+    const pool = [
+      "a", "Z", "7", " ", "é", "́", "̣", "̂", // letters, combining marks
+      "ि", "्", "क", "ष", "ါ", "က", // Hindi spacing mark + virama, Myanmar mark
+      "‍", "‌", "️", "︎", "⃣", // joiners, variation selectors, keycap
+      "😀", "👨", "👩", "👧", "🚀", "❤", "🏳", "🌈", "👍", "🧑", // emoji
+      "\u{1F3FB}", "\u{1F3FD}", "\u{1F3FF}", // skin tones
+      "\u{1F1FA}", "\u{1F1F8}", "\u{1F1EC}", // flag letters
+      "\u{E0067}", "\u{E0062}", "\u{E007F}", // tag characters
+      "ᄀ", "ᅡ", "ᆨ", "한", // Hangul letter parts
+      "\u0007", "­", "\r", "\n", "؀", "​", "‮", "ㅤ", // controls, format, invisibles
+      "李", "ශ", "්", "ර",
+    ];
+    let checked = 0;
+    for (let i = 0; i < 4000; i++) {
+      const len = 1 + rand(24);
+      let s = "";
+      for (let j = 0; j < len; j++) s += pool[rand(pool.length)];
+      const fbCount = fb.countNameChars(s);
+      const serverCount = full.countNameChars(s);
+      if (fbCount < serverCount) throw new Error(`fallback ${fbCount} < server ${serverCount} for ${JSON.stringify(s)}`);
+      const cleaned = fb.cleanPlayerName(s);
+      expect(fb.countNameChars(cleaned)).toBeGreaterThanOrEqual(full.countNameChars(cleaned));
+      // Whatever the old phone's box would hold passes the server.
+      const c = fb.clampPlayerName(s).trim();
+      expect(full.playerNameFits(full.cleanPlayerName(c).trim())).toBe(true);
+      checked++;
+    }
+    expect(checked).toBe(4000);
+  });
 });
+

@@ -15,7 +15,8 @@ import {
   MAX_PLAYER_NAME_RAW,
   PLAYER_NAME_TOO_LONG_MESSAGE,
   playerNameFits,
-  stripExcessMarks,
+  cleanPlayerName,
+  hasVisibleChar,
 } from "@/lib/player/nameLimit";
 
 const THEME_KEYS = [
@@ -73,8 +74,8 @@ export const CreateNightSchema = z.object({
 });
 
 /**
- * A player's name before the 16-character cap: extra stacked marks
- * stripped, trimmed, non-empty, with a raw-length ceiling. Only the self-join route uses this directly, so
+ * A player's name before the 16-character cap: cleaned (invisible
+ * characters and extra stacked marks removed), at least one visible character, trimmed, non-empty, with a raw-length ceiling. Only the self-join route uses this directly, so
  * a same-device rejoin carrying an old long name can be shortened instead
  * of bounced mid-night (see app/api/players/route.ts).
  */
@@ -82,14 +83,16 @@ export const LoosePlayerDisplayNameSchema = z
   .string()
   // Hard stop on junk before any work (old pages capped at 40).
   .max(MAX_PLAYER_NAME_RAW * 8, { message: PLAYER_NAME_TOO_LONG_MESSAGE })
-  // Same "glitch text" strip the phone applies, so stacked accent marks are
-  // dropped the same way on both sides before anything is counted.
-  .transform((s) => stripExcessMarks(s).trim())
+  // Same cleanup the phone applies (invisible and direction-trick
+  // characters, "glitch text" marks), so both sides count the same thing.
+  .transform((s) => cleanPlayerName(s).trim())
   .pipe(
     z
       .string()
       .min(1, { message: "Pick a name to join." })
-      .max(MAX_PLAYER_NAME_RAW, { message: PLAYER_NAME_TOO_LONG_MESSAGE }),
+      .max(MAX_PLAYER_NAME_RAW, { message: PLAYER_NAME_TOO_LONG_MESSAGE })
+      // A name made only of blank-looking characters is no name.
+      .refine(hasVisibleChar, { message: "Pick a name to join." }),
   );
 
 /**

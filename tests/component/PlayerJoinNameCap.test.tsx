@@ -112,3 +112,94 @@ describe("AddLatecomerModal name cap", () => {
     expect(input.value).toBe("Pizza Party Pal🍕");
   });
 });
+
+describe("name box review 2 fixes", () => {
+  it("leaves a Japanese/Chinese conversion alone until it finishes, then fits it", () => {
+    const onSubmit = vi.fn();
+    render(wrap(<PlayerJoin playerName="" onSubmit={onSubmit} />));
+    const input = screen.getByTestId("player-name-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "ABCDEFGHIJKLMN" } }); // 14
+    fireEvent.compositionStart(input);
+    typeAt(input, "ABCDEFGHIJKLMNy", 15);
+    typeAt(input, "ABCDEFGHIJKLMNや", 15);
+    typeAt(input, "ABCDEFGHIJKLMNやま", 16);
+    typeAt(input, "ABCDEFGHIJKLMNやまだ", 17);
+    // Over 16 while converting: not touched, so the keyboard isn't interrupted.
+    expect(input.value).toBe("ABCDEFGHIJKLMNやまだ");
+    typeAt(input, "ABCDEFGHIJKLMN山田太郎", 18);
+    expect(input.value).toBe("ABCDEFGHIJKLMN山田太郎");
+    fireEvent.compositionEnd(input);
+    // Conversion done: only the inserted part is cut to fit.
+    expect(input.value).toBe("ABCDEFGHIJKLMN山田");
+    expect(input.selectionStart).toBe(16);
+    expect(screen.getByTestId("player-name-counter")).toHaveTextContent("16/16");
+    // Safari sends one more plain input after the conversion: no change.
+    typeAt(input, "ABCDEFGHIJKLMN山田", 16);
+    expect(input.value).toBe("ABCDEFGHIJKLMN山田");
+    fireEvent.click(screen.getByTestId("player-join-submit"));
+    expect(onSubmit).toHaveBeenCalledWith("ABCDEFGHIJKLMN山田");
+  });
+
+  it("submitting mid-conversion still sends at most 16 characters", () => {
+    const onSubmit = vi.fn();
+    render(wrap(<PlayerJoin playerName="" onSubmit={onSubmit} />));
+    const input = screen.getByTestId("player-name-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "ABCDEFGHIJKLMN" } });
+    fireEvent.compositionStart(input);
+    typeAt(input, "ABCDEFGHIJKLMNzhangwei", 22);
+    fireEvent.click(screen.getByTestId("player-join-submit"));
+    expect(onSubmit).toHaveBeenCalledWith("ABCDEFGHIJKLMNzh");
+  });
+
+  it("paste over a selection in a full box pastes what fits and keeps the rest", () => {
+    render(wrap(<PlayerJoin playerName="" onSubmit={() => {}} />));
+    const input = screen.getByTestId("player-name-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "abcdefghijklmnop" } });
+    // "abc" selected, "XYZW" pasted: the browser leaves the cursor after it.
+    typeAt(input, "XYZWdefghijklmnop", 4);
+    expect(input.value).toBe("XYZdefghijklmnop");
+    expect(input.selectionStart).toBe(3);
+    // Select-all + paste replaces the whole name.
+    typeAt(input, "Christopher Columbus", 20);
+    expect(input.value).toBe("Christopher Colu");
+    expect(input.selectionStart).toBe(16);
+  });
+
+  it("paste in the middle keeps the end of what was typed, cursor after the paste", () => {
+    render(wrap(<PlayerJoin playerName="" onSubmit={() => {}} />));
+    const input = screen.getByTestId("player-name-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Bob the Builder" } });
+    typeAt(input, "Captain Bob the Builder", 8);
+    expect(input.value).toBe("CBob the Builder");
+    expect(input.selectionStart).toBe(1);
+  });
+
+  it("an invisible-only name can't join; a direction override is stripped", () => {
+    const onSubmit = vi.fn();
+    render(wrap(<PlayerJoin playerName="" onSubmit={onSubmit} />));
+    const input = screen.getByTestId("player-name-input") as HTMLInputElement;
+    const submit = screen.getByTestId("player-join-submit");
+    fireEvent.change(input, { target: { value: "​​ㅤ⠀" } });
+    expect(input.value).toBe("");
+    expect(submit).toBeDisabled();
+    fireEvent.change(input, { target: { value: "‮evil name" } });
+    expect(input.value).toBe("evil name");
+    fireEvent.click(submit);
+    expect(onSubmit).toHaveBeenCalledWith("evil name");
+  });
+
+  it("host latecomer box: same conversion handling and invisible-only check", () => {
+    render(<AddLatecomerModal onCancel={() => {}} onSubmit={async () => {}} />);
+    const input = screen.getByTestId("latecomer-name-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "​ㅤ" } });
+    expect(input.value).toBe("");
+    fireEvent.change(input, { target: { value: "ABCDEFGHIJKLMN" } });
+    fireEvent.compositionStart(input);
+    typeAt(input, "ABCDEFGHIJKLMNやまだ", 17);
+    expect(input.value).toBe("ABCDEFGHIJKLMNやまだ");
+    typeAt(input, "ABCDEFGHIJKLMN山田太郎", 18);
+    fireEvent.compositionEnd(input);
+    expect(input.value).toBe("ABCDEFGHIJKLMN山田");
+  });
+});
+

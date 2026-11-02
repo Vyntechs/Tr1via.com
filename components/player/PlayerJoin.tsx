@@ -24,8 +24,9 @@ import {
   MAX_PLAYER_NAME_RAW,
   clampPlayerName,
   countNameChars,
-  handleNameInputChange,
+  hasVisibleChar,
 } from "@/lib/player/nameLimit";
+import { useCappedNameInput } from "@/lib/player/useCappedNameInput";
 
 // Read by screen readers, invisible on screen.
 const VISUALLY_HIDDEN: CSSProperties = {
@@ -87,6 +88,7 @@ export function PlayerJoin({
     if (!interactive) setName(clampPlayerName(playerName));
   }, [playerName, interactive]);
 
+  const nameInput = useCappedNameInput(name, setName);
   const nameCount = countNameChars(name);
   const hintId = useId();
   const counterId = useId();
@@ -94,12 +96,13 @@ export function PlayerJoin({
   function handleSubmit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (!interactive) return;
-    const cleaned = name.trim();
-    if (!cleaned) return;
+    // Clamp again: Enter can submit while a keyboard is still converting.
+    const cleaned = clampPlayerName(name).trim();
+    if (!hasVisibleChar(cleaned)) return;
     onSubmit?.(cleaned);
   }
 
-  const ctaDisabled = interactive && (!name.trim() || submitting);
+  const ctaDisabled = interactive && (!hasVisibleChar(clampPlayerName(name).trim()) || submitting);
 
   return (
     <PhoneScreen data-testid="player-join">
@@ -144,7 +147,7 @@ export function PlayerJoin({
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => handleNameInputChange(e.target, name, setName)}
+                  {...nameInput}
                   placeholder="Your name"
                   // Raw ceiling only: the real 16-character cap is the clamp
                   // above, because maxLength counts an emoji as 2+.
