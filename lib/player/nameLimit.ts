@@ -62,12 +62,12 @@ const isPictographic = (cp: string | undefined): boolean => !!cp && !!PICTOGRAPH
  * left-to-right / right-to-left mark, embedding, override and isolate.
  */
 const INVISIBLE =
-  /[\p{Cc}­؜ᅟᅠ឴឵᠎​‎‏‪-‮⁠-⁯⠀ㅤ﻿ﾠ]/gu;
+  /[\p{Cc}\u00AD\u061C\u115F\u1160\u17B4\u17B5\u180E\u200B\u200E\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0]/gu;
 const LETTER_OR_MARK = /^[\p{L}\p{M}]$/u;
 /** Parts that can sit between an emoji and its zero-width joiner. */
 const EMOJI_TRAIL = /^[\p{Mn}\p{Me}\u{1F3FB}-\u{1F3FF}]$/u;
-const ZWNJ = "‌";
-const ZWJ = "‍";
+const ZWNJ = "\u200C";
+const ZWJ = "\u200D";
 
 /**
  * Remove invisible and direction-trick characters. Zero-width joiners stay
@@ -134,7 +134,7 @@ function getSegmenter(): SegmenterLike | null {
 //     before the joiner (family, profession, rainbow flag).
 // Spacing marks (some Hindi vowel signs), Hangul letter parts and the like
 // count separately here, so a few names count higher on these old phones.
-const GLUES_TO_PREV = /^[\p{Mn}\p{Me}‍\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]$/u;
+const GLUES_TO_PREV = /^[\p{Mn}\p{Me}\u200D\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]$/u;
 const REGIONAL_INDICATOR = /^\p{Regional_Indicator}$/u;
 // The server never joins anything onto a control or format character, and
 // treats some unassigned code points the same way; an unassigned one is

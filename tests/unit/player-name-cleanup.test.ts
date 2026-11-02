@@ -16,33 +16,33 @@ const join = (displayName: string) => CreatePlayerSchema.safeParse({ nightId: NI
 
 describe("cleanPlayerName: invisible and direction-trick characters", () => {
   it("removes zero-width spaces, word joiners, BOM, soft hyphens and controls", () => {
-    expect(cleanPlayerName("Ma​ya⁠﻿­\t")).toBe("Maya");
+    expect(cleanPlayerName("Ma\u200Bya\u2060\uFEFF\u00AD\t")).toBe("Maya");
   });
 
   it("removes Hangul fillers and the blank Braille cell", () => {
-    expect(cleanPlayerName("ㅤBoᅟᅠbﾠ⠀")).toBe("Bob");
+    expect(cleanPlayerName("\u3164Bo\u115F\u1160b\uFFA0\u2800")).toBe("Bob");
   });
 
   it("removes every direction override, embedding, isolate and mark", () => {
-    const tricks = "‪‫‬‭‮⁦⁧⁨⁩‎‏؜";
+    const tricks = "\u202A\u202B\u202C\u202D\u202E\u2066\u2067\u2068\u2069\u200E\u200F\u061C";
     expect(cleanPlayerName(`${tricks}evil name${tricks}`)).toBe("evil name");
-    expect(cleanPlayerName("‮eman live")).toBe("eman live");
+    expect(cleanPlayerName("\u202Eeman live")).toBe("eman live");
   });
 
   it("keeps the joiner inside family, profession, flag and skin-tone emoji", () => {
-    for (const e of ["👨‍👩‍👧", "🧑🏽‍🚀", "🏳️‍🌈", "👁️‍🗨️", "👩🏿‍❤️‍👨🏻", "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "1️⃣", "🇺🇸"]) {
+    for (const e of ["👨\u200D👩\u200D👧", "🧑🏽\u200D🚀", "🏳️\u200D🌈", "👁️\u200D🗨️", "👩🏿\u200D❤️\u200D👨🏻", "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "1️⃣", "🇺🇸"]) {
       expect(cleanPlayerName(e)).toBe(e);
       expect(countNameChars(cleanPlayerName(e))).toBe(1);
     }
   });
 
   it("keeps joiners between letters of scripts that use them, drops stray ones", () => {
-    expect(cleanPlayerName("ශ්‍රී")).toBe("ශ්‍රී"); // Sinhala
-    expect(cleanPlayerName("می‌خواهم")).toBe("می‌خواهم"); // Persian non-joiner
-    expect(cleanPlayerName("‍Sam‍")).toBe("Sam");
-    expect(cleanPlayerName("Sam ‌‍ 😀")).toBe("Sam  😀");
-    expect(cleanPlayerName("a‍😀")).toBe("a😀");
-    expect(cleanPlayerName("😀‍a")).toBe("😀a");
+    expect(cleanPlayerName("ශ්\u200Dරී")).toBe("ශ්\u200Dරී"); // Sinhala
+    expect(cleanPlayerName("می\u200Cخواهم")).toBe("می\u200Cخواهم"); // Persian non-joiner
+    expect(cleanPlayerName("\u200DSam\u200D")).toBe("Sam");
+    expect(cleanPlayerName("Sam \u200C\u200D 😀")).toBe("Sam  😀");
+    expect(cleanPlayerName("a\u200D😀")).toBe("a😀");
+    expect(cleanPlayerName("😀\u200Da")).toBe("😀a");
   });
 
   it("leaves ordinary names and accents alone", () => {
@@ -50,8 +50,8 @@ describe("cleanPlayerName: invisible and direction-trick characters", () => {
   });
 
   it("needs at least one visible character", () => {
-    expect(hasVisibleChar(cleanPlayerName("​".repeat(16)))).toBe(false);
-    expect(hasVisibleChar(cleanPlayerName("ㅤㅤ"))).toBe(false);
+    expect(hasVisibleChar(cleanPlayerName("\u200B".repeat(16)))).toBe(false);
+    expect(hasVisibleChar(cleanPlayerName("\u3164\u3164"))).toBe(false);
     expect(hasVisibleChar("́́")).toBe(false);
     expect(hasVisibleChar("😀")).toBe(true);
     expect(hasVisibleChar("7")).toBe(true);
@@ -60,7 +60,7 @@ describe("cleanPlayerName: invisible and direction-trick characters", () => {
 
 describe("server uses the same cleanup", () => {
   it("rejects an invisible-only name with the friendly error", () => {
-    for (const n of ["​".repeat(16), "ㅤ", "ᅟᅠ", "‮", "﻿⠀", "́"]) {
+    for (const n of ["\u200B".repeat(16), "\u3164", "\u115F\u1160", "\u202E", "\uFEFF\u2800", "́"]) {
       const r = join(n);
       expect(r.success).toBe(false);
       if (!r.success) expect(r.error.issues[0].message).toBe("Pick a name to join.");
@@ -69,17 +69,17 @@ describe("server uses the same cleanup", () => {
   });
 
   it("strips a right-to-left override before saving", () => {
-    const r = join("‮evil name");
+    const r = join("\u202Eevil name");
     expect(r.success && r.data.displayName).toBe("evil name");
   });
 
   it("does not count stripped invisibles toward 16", () => {
-    const r = join("A".repeat(16) + "​".repeat(10));
+    const r = join("A".repeat(16) + "\u200B".repeat(10));
     expect(r.success && r.data.displayName).toBe("A".repeat(16));
   });
 
   it("cleaning twice gives the same name (phone result always passes the server)", () => {
-    for (const n of ["‍a‍😀‍", " ‮x ​", "ශ්‍රී ලංකා", "👨‍👩‍👧 Crew‍"]) {
+    for (const n of ["\u200Da\u200D😀\u200D", " \u202Ex \u200B", "ශ්\u200Dරී ලංකා", "👨\u200D👩\u200D👧 Crew\u200D"]) {
       const once = cleanPlayerName(n).trim();
       expect(cleanPlayerName(once).trim()).toBe(once);
     }
@@ -125,5 +125,37 @@ describe("fitNameEdit: over the cap, cut only the inserted text", () => {
   it("works without a cursor position", () => {
     expect(fitNameEdit("", "Christopher Smith Jr").value).toBe("Christopher Smit");
     expect(fitNameEdit("Jennifer Thompso", "Jenniferr Thompso").value).toBe("Jennifer Thompso");
+  });
+});
+
+describe("review 3: the invisible-character strip list", () => {
+  // Written as code points on purpose: if an editor or copy-paste ever drops
+  // a raw zero-width character from nameLimit.ts, one of these fails.
+  const EXPECTED: number[] = [
+    0x00ad, 0x061c, 0x115f, 0x1160, 0x17b4, 0x17b5, 0x180e, 0x200b, 0x200e, 0x200f,
+    0x202a, 0x202b, 0x202c, 0x202d, 0x202e, 0x2800, 0x3164, 0xfeff, 0xffa0,
+    ...Array.from({ length: 0x206f - 0x2060 + 1 }, (_, i) => 0x2060 + i),
+    0x0000, 0x0009, 0x000a, 0x001f, 0x007f, 0x009f,
+  ];
+
+  it.each(EXPECTED.map((cp) => [cp.toString(16).toUpperCase().padStart(4, "0"), cp]))(
+    "strips U+%s",
+    (_label, cp) => {
+      expect(cleanPlayerName(`a${String.fromCodePoint(cp as number)}b`)).toBe("ab");
+    },
+  );
+
+  it("drops stray zero-width joiners but keeps them inside an emoji", () => {
+    // Not between two letters and not inside an emoji: dropped.
+    expect(cleanPlayerName("\u200Ca 1\u200D")).toBe("a 1");
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}";
+    expect(cleanPlayerName(family)).toBe(family);
+  });
+
+  it("nameLimit.ts has no raw invisible or direction characters in its source", async () => {
+    const { readFileSync } = await import("node:fs");
+    const { resolve } = await import("node:path");
+    const src = readFileSync(resolve(process.cwd(), "lib/player/nameLimit.ts"), "utf8");
+    expect(src).not.toMatch(/[\u00AD\u061C\u115F\u1160\u17B4\u17B5\u180E\u200B-\u200F\u202A-\u202E\u2060-\u206F\u2800\u3164\uFEFF\uFFA0]/u);
   });
 });

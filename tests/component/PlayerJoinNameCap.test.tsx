@@ -179,10 +179,10 @@ describe("name box review 2 fixes", () => {
     render(wrap(<PlayerJoin playerName="" onSubmit={onSubmit} />));
     const input = screen.getByTestId("player-name-input") as HTMLInputElement;
     const submit = screen.getByTestId("player-join-submit");
-    fireEvent.change(input, { target: { value: "​​ㅤ⠀" } });
+    fireEvent.change(input, { target: { value: "\u200B\u200B\u3164\u2800" } });
     expect(input.value).toBe("");
     expect(submit).toBeDisabled();
-    fireEvent.change(input, { target: { value: "‮evil name" } });
+    fireEvent.change(input, { target: { value: "\u202Eevil name" } });
     expect(input.value).toBe("evil name");
     fireEvent.click(submit);
     expect(onSubmit).toHaveBeenCalledWith("evil name");
@@ -191,7 +191,7 @@ describe("name box review 2 fixes", () => {
   it("host latecomer box: same conversion handling and invisible-only check", () => {
     render(<AddLatecomerModal onCancel={() => {}} onSubmit={async () => {}} />);
     const input = screen.getByTestId("latecomer-name-input") as HTMLInputElement;
-    fireEvent.change(input, { target: { value: "​ㅤ" } });
+    fireEvent.change(input, { target: { value: "\u200B\u3164" } });
     expect(input.value).toBe("");
     fireEvent.change(input, { target: { value: "ABCDEFGHIJKLMN" } });
     fireEvent.compositionStart(input);
@@ -200,6 +200,56 @@ describe("name box review 2 fixes", () => {
     typeAt(input, "ABCDEFGHIJKLMN山田太郎", 18);
     fireEvent.compositionEnd(input);
     expect(input.value).toBe("ABCDEFGHIJKLMN山田");
+  });
+});
+
+describe("review 3: Android Gboard composing a Latin word past 16", () => {
+  it("counter stays at 16/16, no full note until the word ends, then the box is cut", () => {
+    render(wrap(<PlayerJoin playerName="" onSubmit={() => {}} />));
+    const input = screen.getByTestId("player-name-input") as HTMLInputElement;
+    const note = screen.getByTestId("player-name-limit-note");
+    fireEvent.change(input, { target: { value: "Christopher " } }); // 12
+    fireEvent.compositionStart(input);
+    typeAt(input, "Christopher J", 13);
+    typeAt(input, "Christopher Joh", 15);
+    typeAt(input, "Christopher John", 16);
+    typeAt(input, "Christopher Johns", 17);
+    typeAt(input, "Christopher Johnson", 19);
+    expect(input.value).toBe("Christopher Johnson"); // untouched mid-word
+    expect(screen.getByTestId("player-name-counter")).toHaveTextContent("16/16");
+    expect(screen.getByTestId("player-name-counter")).not.toHaveTextContent("19");
+    expect(note).toHaveTextContent("");
+    fireEvent.compositionEnd(input);
+    expect(input.value).toBe("Christopher John");
+    expect(screen.getByTestId("player-name-counter")).toHaveTextContent("16/16");
+    expect(note).toHaveTextContent("Name is full, 16 characters.");
+  });
+
+  it("the Enter that confirms a conversion does not submit; a real Enter does", () => {
+    const onSubmit = vi.fn();
+    render(wrap(<PlayerJoin playerName="" onSubmit={onSubmit} />));
+    const input = screen.getByTestId("player-name-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "Maya" } });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    fireEvent.submit(input.form!);
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 13 });
+    fireEvent.submit(input.form!);
+    expect(onSubmit).toHaveBeenCalledWith("Maya");
+  });
+});
+
+describe("review 3: host latecomer box and the conversion Enter", () => {
+  it("Enter that confirms a conversion does not add the latecomer", () => {
+    const onSubmit = vi.fn(async () => {});
+    render(<AddLatecomerModal onCancel={() => {}} onSubmit={onSubmit} />);
+    const input = screen.getByTestId("latecomer-name-input") as HTMLInputElement;
+    fireEvent.change(input, { target: { value: "山田" } });
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 229 });
+    fireEvent.keyDown(input, { key: "Enter", isComposing: true });
+    expect(onSubmit).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: "Enter", keyCode: 13 });
+    expect(onSubmit).toHaveBeenCalledWith("山田");
   });
 });
 

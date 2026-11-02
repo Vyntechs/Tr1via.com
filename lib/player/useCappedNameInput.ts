@@ -8,13 +8,18 @@
 // converting letters (IME composition), the text is left alone: changing
 // it mid-conversion cancels or commits the half-typed word on iOS. The cap
 // is applied once the conversion finishes.
+//
+// Android Gboard composes even plain Latin words, so mid-word the box can
+// briefly hold more than 16. `composing` lets the screen keep its counter at
+// 16/16 and hold the "name is full" note until the word ends.
 
-import { useEffect, useRef } from "react";
-import type { ChangeEvent, CompositionEvent } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ChangeEvent, CompositionEvent, KeyboardEvent } from "react";
 import { fitNameEdit } from "@/lib/player/nameLimit";
 
 export function useCappedNameInput(name: string, setName: (value: string) => void) {
   const composing = useRef(false);
+  const [isComposing, setIsComposing] = useState(false);
   // The last capped value: what the box held before the current edit.
   const committed = useRef(name);
 
@@ -41,7 +46,7 @@ export function useCappedNameInput(name: string, setName: (value: string) => voi
     setName(value);
   }
 
-  return {
+  const inputProps = {
     onChange(e: ChangeEvent<HTMLInputElement>) {
       const native = e.nativeEvent as Partial<InputEvent>;
       if (composing.current || native.isComposing) {
@@ -52,10 +57,23 @@ export function useCappedNameInput(name: string, setName: (value: string) => voi
     },
     onCompositionStart() {
       composing.current = true;
+      setIsComposing(true);
     },
     onCompositionEnd(e: CompositionEvent<HTMLInputElement>) {
       composing.current = false;
+      setIsComposing(false);
       commit(e.currentTarget);
     },
   };
+
+  return { inputProps, composing: isComposing };
+}
+
+/**
+ * True for the Enter that confirms a Japanese/Chinese/Korean conversion.
+ * Chrome flags it with isComposing; Safari ends the conversion first and
+ * sends keyCode 229. That Enter must never submit the name.
+ */
+export function isImeEnter(e: KeyboardEvent<HTMLInputElement>): boolean {
+  return e.key === "Enter" && (e.nativeEvent.isComposing || e.keyCode === 229);
 }

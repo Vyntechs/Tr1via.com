@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useEffect, useId, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type FormEvent } from "react";
 import {
   useTheme,
   Wordmark,
@@ -26,7 +26,7 @@ import {
   countNameChars,
   hasVisibleChar,
 } from "@/lib/player/nameLimit";
-import { useCappedNameInput } from "@/lib/player/useCappedNameInput";
+import { isImeEnter, useCappedNameInput } from "@/lib/player/useCappedNameInput";
 
 // Read by screen readers, invisible on screen.
 const VISUALLY_HIDDEN: CSSProperties = {
@@ -88,14 +88,27 @@ export function PlayerJoin({
     if (!interactive) setName(clampPlayerName(playerName));
   }, [playerName, interactive]);
 
-  const nameInput = useCappedNameInput(name, setName);
-  const nameCount = countNameChars(name);
+  const { inputProps: nameInput, composing } = useCappedNameInput(name, setName);
+  // While a keyboard is mid-word (Android Gboard does this even for Latin
+  // letters) the box can briefly hold more than 16; the extra is cut when the
+  // word ends or on Join. Keep the counter calm at 16/16 meanwhile.
+  const nameCount = composing
+    ? Math.min(countNameChars(name), MAX_PLAYER_NAME)
+    : countNameChars(name);
+  const nameFull = !composing && nameCount >= MAX_PLAYER_NAME;
+  // Set by the Enter that confirms a conversion, so the form's built-in
+  // "Enter submits" doesn't send a half-typed name. Cleared right after.
+  const imeEnterRef = useRef(false);
   const hintId = useId();
   const counterId = useId();
 
   function handleSubmit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (!interactive) return;
+    if (imeEnterRef.current) {
+      imeEnterRef.current = false;
+      return;
+    }
     // Clamp again: Enter can submit while a keyboard is still converting.
     const cleaned = clampPlayerName(name).trim();
     if (!hasVisibleChar(cleaned)) return;
@@ -148,6 +161,16 @@ export function PlayerJoin({
                   type="text"
                   value={name}
                   {...nameInput}
+                  onKeyDown={(e) => {
+                    // Only notes the key; never blocks it, so the keyboard
+                    // still finishes its word normally.
+                    if (isImeEnter(e)) {
+                      imeEnterRef.current = true;
+                      setTimeout(() => {
+                        imeEnterRef.current = false;
+                      }, 0);
+                    }
+                  }}
                   placeholder="Your name"
                   // Raw ceiling only: the real 16-character cap is the clamp
                   // above, because maxLength counts an emoji as 2+.
@@ -211,7 +234,7 @@ export function PlayerJoin({
                 // Always in the page (late-added live regions are often
                 // missed). Silent while typing; one polite note at the cap.
                 <span aria-live="polite" data-testid="player-name-limit-note" style={VISUALLY_HIDDEN}>
-                  {nameCount >= MAX_PLAYER_NAME ? `Name is full, ${MAX_PLAYER_NAME} characters.` : ""}
+                  {nameFull ? `Name is full, ${MAX_PLAYER_NAME} characters.` : ""}
                 </span>
               )}
             </div>

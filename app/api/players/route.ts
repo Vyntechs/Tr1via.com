@@ -16,6 +16,8 @@ import { CreatePlayerLooseSchema } from "@/lib/api/schemas";
 import {
   PLAYER_NAME_TOO_LONG_MESSAGE,
   clampPlayerName,
+  cleanPlayerName,
+  hasVisibleChar,
   playerNameFits,
 } from "@/lib/player/nameLimit";
 import { badRequest, ok, serverError, unauthorized, notFound, forbidden } from "@/lib/api/responses";
@@ -35,12 +37,13 @@ export async function POST(req: NextRequest) {
   } catch {
     return badRequest("invalid JSON");
   }
-  // Parse with the loose name rule first: whether a name over 16 characters
-  // is rejected or shortened depends on whether this device is already in
-  // the room, which we only learn after the night lookup below.
+  // Parse the name as a plain string first. Which name rules apply depends
+  // on whether this device already has a seat tonight, which we only learn
+  // after the lookups below.
   const parsed = CreatePlayerLooseSchema.safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
-  const nameFits = playerNameFits(parsed.data.displayName);
+  // Same cleanup the phone applies, so both sides count the same thing.
+  const cleaned = cleanPlayerName(parsed.data.displayName).trim();
 
   const admin = getSupabaseAdmin();
 
@@ -61,22 +64,38 @@ export async function POST(req: NextRequest) {
   // lets the welcome broadcast fire ONLY when the player is genuinely new
   // — a returning player on the same device shouldn't trigger a second
   // welcome moment on the TV when they reload the page.
-  const { data: existing } = await admin
+  const { data: existing, error: lookupError } = await admin
     .from("players")
-    .select("id")
+    .select("id, display_name")
     .eq("night_id", parsed.data.nightId)
     .eq("device_id", deviceId)
     .maybeSingle();
+  // A failed lookup keeps the old behaviour for the welcome (fire it; the TV
+  // shrugs off a duplicate) but is never treated as "new" for name rules.
   const isFirstJoin = !existing;
 
-  // 16-character cap. A brand-new player gets a clear error so the phone can
-  // show it. A same-device rejoin (e.g. a phone still running the old page
-  // that allowed 40 characters, across a mid-night deploy) is never bounced:
-  // we keep their seat and quietly shorten the name to 16.
-  if (!nameFits && isFirstJoin) return badRequest(PLAYER_NAME_TOO_LONG_MESSAGE);
-  const displayName = nameFits
-    ? parsed.data.displayName
-    : clampPlayerName(parsed.data.displayName).trimEnd();
+  // A name that can be shown: cleaned, cut to 16 characters, still visible.
+  const capped = clampPlayerName(cleaned).trim();
+  const usable = hasVisibleChar(capped) ? capped : null;
+
+  let displayName: string;
+  if (existing) {
+    // Already seated on this device tonight: the seat is ALWAYS kept. Use the
+    // new name (cut to 16) if it has something visible, otherwise keep the
+    // stored name (e.g. an old blank-looking name from the pre-cap page).
+    displayName = usable ?? existing.display_name;
+  } else if (lookupError) {
+    // Can't tell new from returning (database hiccup). Never refuse a
+    // possible rejoin over the name: accept it cut to 16. With nothing
+    // visible to show and no stored name to fall back on, ask for a retry.
+    if (!usable) return serverError("Couldn't check your seat. Try again.");
+    displayName = usable;
+  } else {
+    // Brand-new player: the name rules apply, with clear messages.
+    if (!cleaned || !hasVisibleChar(cleaned)) return badRequest("Pick a name to join.");
+    if (!playerNameFits(cleaned)) return badRequest(PLAYER_NAME_TOO_LONG_MESSAGE);
+    displayName = cleaned;
+  }
 
   // Upsert keyed on the unique (night_id, device_id). On conflict, refresh
   // display_name + last_seen_at so the player object is current.

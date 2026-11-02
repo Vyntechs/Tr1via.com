@@ -27,6 +27,8 @@ function makeRequest(body: unknown) {
   });
 }
 
+const LOOKUP_FAILS = Symbol("lookup fails");
+
 // Minimal chainable fake of the supabase query builder.
 function chain(result: unknown, onUpsert?: (row: Record<string, unknown>) => void) {
   const q: Record<string, unknown> = {};
@@ -38,12 +40,16 @@ function chain(result: unknown, onUpsert?: (row: Record<string, unknown>) => voi
     onUpsert?.(row);
     return q;
   });
-  q.maybeSingle = vi.fn(async () => ({ data: result, error: null }));
+  q.maybeSingle = vi.fn(async () =>
+    result === LOOKUP_FAILS
+      ? { data: null, error: { message: "connection reset" } }
+      : { data: result, error: null },
+  );
   q.single = vi.fn(async () => ({ data: result, error: null }));
   return q;
 }
 
-function makeAdmin(existing: { id: string } | null) {
+function makeAdmin(existing: { id: string; display_name?: string } | null | typeof LOOKUP_FAILS) {
   const upserts: Record<string, unknown>[] = [];
   let playersCalls = 0;
   const admin = {
@@ -142,5 +148,70 @@ describe("POST /api/players — 16-character name cap", () => {
     );
     expect(res.status).toBe(201);
     expect(upserts[0].display_name).toBe("A" + "\u0301".repeat(3) + "bc");
+  });
+
+  describe("review 3: an existing seat is always kept", () => {
+    const PID = "pppppppp-pppp-pppp-pppp-pppppppppppp";
+
+    it("seated player with a blank-looking name rejoins and keeps the stored name", async () => {
+      const blank = "\u2800"; // blank Braille cell, the usual "invisible name"
+      const { admin, upserts } = makeAdmin({ id: PID, display_name: blank });
+      adminMock.getSupabaseAdmin.mockReturnValue(admin);
+      const { POST } = await import("@/app/api/players/route");
+      const res = await POST(makeRequest({ nightId: NIGHT_ID, displayName: blank }));
+      expect(res.status).toBe(201);
+      expect(upserts[0].display_name).toBe(blank);
+    });
+
+    it("seated player sending a name that cleans to nothing keeps the stored name", async () => {
+      const { admin, upserts } = makeAdmin({ id: PID, display_name: "Sam" });
+      adminMock.getSupabaseAdmin.mockReturnValue(admin);
+      const { POST } = await import("@/app/api/players/route");
+      const res = await POST(makeRequest({ nightId: NIGHT_ID, displayName: "\u200B\u3164 " }));
+      expect(res.status).toBe(201);
+      expect(upserts[0].display_name).toBe("Sam");
+    });
+
+    it("seated player sending a real new name gets it (cleaned, cut to 16)", async () => {
+      const { admin, upserts } = makeAdmin({ id: PID, display_name: "\u2800" });
+      adminMock.getSupabaseAdmin.mockReturnValue(admin);
+      const { POST } = await import("@/app/api/players/route");
+      const res = await POST(
+        makeRequest({ nightId: NIGHT_ID, displayName: "\u200BBartholomew The Magnificent" }),
+      );
+      expect(res.status).toBe(201);
+      expect(upserts[0].display_name).toBe("Bartholomew The");
+    });
+
+    it("brand-new player with a blank-looking name is still refused", async () => {
+      const { admin, upserts } = makeAdmin(null);
+      adminMock.getSupabaseAdmin.mockReturnValue(admin);
+      const { POST } = await import("@/app/api/players/route");
+      const res = await POST(makeRequest({ nightId: NIGHT_ID, displayName: "\u2800" }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toBe("Pick a name to join.");
+      expect(upserts).toHaveLength(0);
+    });
+
+    it("seat lookup fails: a long name is accepted cut to 16, never refused", async () => {
+      const { admin, upserts } = makeAdmin(LOOKUP_FAILS);
+      adminMock.getSupabaseAdmin.mockReturnValue(admin);
+      const { POST } = await import("@/app/api/players/route");
+      const res = await POST(
+        makeRequest({ nightId: NIGHT_ID, displayName: "Bartholomew The Magnificent" }),
+      );
+      expect(res.status).toBe(201);
+      expect(upserts[0].display_name).toBe("Bartholomew The");
+    });
+
+    it("seat lookup fails with a blank name: retryable server error, not a name refusal", async () => {
+      const { admin, upserts } = makeAdmin(LOOKUP_FAILS);
+      adminMock.getSupabaseAdmin.mockReturnValue(admin);
+      const { POST } = await import("@/app/api/players/route");
+      const res = await POST(makeRequest({ nightId: NIGHT_ID, displayName: "\u2800" }));
+      expect(res.status).toBe(500);
+      expect((await res.json()).error).toMatch(/try again/i);
+      expect(upserts).toHaveLength(0);
+    });
   });
 });

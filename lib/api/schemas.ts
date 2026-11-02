@@ -75,9 +75,9 @@ export const CreateNightSchema = z.object({
 
 /**
  * A player's name before the 16-character cap: cleaned (invisible
- * characters and extra stacked marks removed), at least one visible character, trimmed, non-empty, with a raw-length ceiling. Only the self-join route uses this directly, so
- * a same-device rejoin carrying an old long name can be shortened instead
- * of bounced mid-night (see app/api/players/route.ts).
+ * characters and extra stacked marks removed), at least one visible
+ * character, trimmed, non-empty, with a raw-length ceiling. The base of
+ * PlayerDisplayNameSchema (host latecomer route).
  */
 export const LoosePlayerDisplayNameSchema = z
   .string()
@@ -110,10 +110,19 @@ export const CreatePlayerSchema = z.object({
   displayName: PlayerDisplayNameSchema,
 });
 
-/** Same shape as CreatePlayerSchema, without the 16-character check. */
+/**
+ * POST /api/players body before any name rule: the name is only a string
+ * with a hard stop on junk. The route looks up the device's seat first, so a
+ * player already seated is never refused over their name (an old blank-looking
+ * or long name from the pre-cap page); only brand-new players get the
+ * visible-character and 16-character rules (see app/api/players/route.ts).
+ */
 export const CreatePlayerLooseSchema = z.object({
   nightId: UuidSchema,
-  displayName: LoosePlayerDisplayNameSchema,
+  // Hard stop on junk before any work (old pages capped at 40).
+  displayName: z
+    .string()
+    .max(MAX_PLAYER_NAME_RAW * 8, { message: PLAYER_NAME_TOO_LONG_MESSAGE }),
 });
 
 /** POST /api/nights/[id]/players body — host adds a latecomer. */

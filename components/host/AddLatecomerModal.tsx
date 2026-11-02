@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { Eyebrow } from "@/components/system";
 import { MAX_PLAYER_NAME_RAW, clampPlayerName, hasVisibleChar } from "@/lib/player/nameLimit";
-import { useCappedNameInput } from "@/lib/player/useCappedNameInput";
+import { isImeEnter, useCappedNameInput } from "@/lib/player/useCappedNameInput";
 
 export interface AddLatecomerModalProps {
   onCancel: () => void;
@@ -19,7 +19,7 @@ export interface AddLatecomerModalProps {
 export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps) {
   const [name, setName] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const nameInput = useCappedNameInput(name, setName);
+  const { inputProps: nameInput } = useCappedNameInput(name, setName);
   const trimmed = clampPlayerName(name).trim();
   const canSubmit = hasVisibleChar(trimmed) && !submitting;
 
@@ -112,7 +112,9 @@ export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps
             // Same 16-character cap as the phone join screen (emoji = 1).
             {...nameInput}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && canSubmit) void submit();
+              // The Enter that confirms a Japanese/Chinese word only ends the
+              // conversion; it must not add the latecomer.
+              if (e.key === "Enter" && !isImeEnter(e) && canSubmit) void submit();
             }}
             style={{
               padding: "10px 12px",
