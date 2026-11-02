@@ -37,7 +37,9 @@ export function useCappedNameInput(name: string, setName: (value: string) => voi
       // Write the box directly so React sees it already matches and doesn't
       // rewrite it (which would throw the cursor to the end).
       input.value = value;
-      try {
+      // Only move the cursor in a box that still has focus: on iPhone, moving
+      // it after a Join tap ended the word can pop the keyboard back up.
+      if (typeof document !== "undefined" && document.activeElement === input) try {
         input.setSelectionRange(caret, caret);
       } catch {
         // Some input types don't support selection; the value is what matters.

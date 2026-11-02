@@ -1,12 +1,12 @@
 // Route handler test — POST /api/players name cap.
 //
-// New players with a name over 16 characters get a clear 400. A same-device
+// New players with a name over 16 characters are cut to 16 (the phone already
+// stops at 16; this covers phones that count a little differently). A same-device
 // rejoin carrying an old long name (a phone still on the pre-cap page across
 // a mid-night deploy) keeps its seat and the name is shortened to 16.
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest } from "next/server";
-import { PLAYER_NAME_TOO_LONG_MESSAGE } from "@/lib/player/nameLimit";
 
 const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
 const authMock = vi.hoisted(() => ({ getDeviceId: vi.fn() }));
@@ -107,14 +107,13 @@ describe("POST /api/players — 16-character name cap", () => {
     expect(upserts[0].display_name).toBe("A".repeat(16));
   });
 
-  it("new player with 17 characters gets a clear 400", async () => {
+  it("new player with 17 characters joins, name cut to 16", async () => {
     const { admin, upserts } = makeAdmin(null);
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
     const { POST } = await import("@/app/api/players/route");
     const res = await POST(makeRequest({ nightId: NIGHT_ID, displayName: "A".repeat(17) }));
-    expect(res.status).toBe(400);
-    expect((await res.json()).error).toBe(PLAYER_NAME_TOO_LONG_MESSAGE);
-    expect(upserts).toHaveLength(0);
+    expect(res.status).toBe(201);
+    expect(upserts[0].display_name).toBe("A".repeat(16));
   });
 
   it("same-device rejoin with an old long name keeps its seat, name shortened to 16", async () => {

@@ -14,11 +14,9 @@
 import type { NextRequest } from "next/server";
 import { CreatePlayerLooseSchema } from "@/lib/api/schemas";
 import {
-  PLAYER_NAME_TOO_LONG_MESSAGE,
   clampPlayerName,
   cleanPlayerName,
   hasVisibleChar,
-  playerNameFits,
 } from "@/lib/player/nameLimit";
 import { badRequest, ok, serverError, unauthorized, notFound, forbidden } from "@/lib/api/responses";
 import { getDeviceId } from "@/lib/api/auth";
@@ -91,10 +89,12 @@ export async function POST(req: NextRequest) {
     if (!usable) return serverError("Couldn't check your seat. Try again.");
     displayName = usable;
   } else {
-    // Brand-new player: the name rules apply, with clear messages.
-    if (!cleaned || !hasVisibleChar(cleaned)) return badRequest("Pick a name to join.");
-    if (!playerNameFits(cleaned)) return badRequest(PLAYER_NAME_TOO_LONG_MESSAGE);
-    displayName = cleaned;
+    // Brand-new player: a name is required. One over 16 is cut, not refused:
+    // the phone already stops at 16, so this only happens when a phone counts
+    // characters a little differently from the server, and that player should
+    // still get in.
+    if (!usable) return badRequest("Pick a name to join.");
+    displayName = usable;
   }
 
   // Upsert keyed on the unique (night_id, device_id). On conflict, refresh
