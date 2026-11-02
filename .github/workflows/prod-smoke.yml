@@ -28,6 +28,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_show_stats:
+        description: Read-only show statistics only (skips the smoke)
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   # Avoid stacking smokes if multiple pushes land close together. The
@@ -36,7 +41,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Read-only stats for real game nights (selects only). No browser, no
+  # generation. Writes a private artifact; the log gets one summary line.
+  show-stats:
+    if: github.event_name == 'workflow_dispatch' && inputs.run_show_stats == true
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+      - name: Show stats (read-only)
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          STATS_OUT: show-stats
+        run: node scripts/show-stats.mjs
+      - name: Upload stats
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: show-stats
+          path: show-stats/
+          if-no-files-found: warn
+          retention-days: 3
+
   smoke:
+    if: github.event_name != 'workflow_dispatch' || inputs.run_show_stats != true
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
