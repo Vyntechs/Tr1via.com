@@ -66,6 +66,7 @@ import {
   canonicalPickAssignments,
   genTimeoutFromEnv,
 } from "./prod-smoke-config.mjs";
+import { Screens } from "./full-flow-screens.mjs";
 
 const BASE = process.env.SMOKE_BASE_URL ?? "https://tr1via.com";
 const FOUNDER_EMAIL = process.env.SMOKE_FOUNDER_EMAIL ?? "brandon@vyntechs.com";
@@ -123,12 +124,38 @@ const PHONE_NAMES = Array.from({ length: SMOKE_PHONES }, (_, i) => {
 // is about concurrency, not feature correctness — so we run a single pass
 // with no theme override.  In default (game-logic) mode we run both May
 // and a non-May theme (house) unless SMOKE_THEME_SINGLE overrides to one.
-const SMOKE_THEME_SINGLE = process.env.SMOKE_THEME_SINGLE ?? null;
+// SMOKE_THEME_SINGLE=auto runs ONE pass with NO theme override: the night
+// picks its look the way a real host's night does (calendar month, unless the
+// host locked a non-month theme). SMOKE_EXPECT_THEME (e.g. "november") then
+// asserts what that night must resolve to, on the API and on the real screens.
+const SMOKE_THEME_SINGLE = process.env.SMOKE_THEME_SINGLE || null;
+const SMOKE_EXPECT_THEME = process.env.SMOKE_EXPECT_THEME || null;
 const THEME_PASSES = LOAD_MODE
   ? [null]
-  : SMOKE_THEME_SINGLE
-    ? [SMOKE_THEME_SINGLE]
-    : ["may", "house"];
+  : SMOKE_THEME_SINGLE === "auto"
+    ? [null]
+    : SMOKE_THEME_SINGLE
+      ? [SMOKE_THEME_SINGLE]
+      : ["may", "house"];
+
+// Real screens (TV + one phone in a real browser). See full-flow-screens.mjs.
+const SMOKE_BROWSER = process.env.SMOKE_BROWSER === "1" && !LOAD_MODE;
+const SMOKE_SCREENS_DIR = process.env.SMOKE_SCREENS_DIR || "smoke-screens";
+let screens = null;
+
+// Mirror of themeKeyForMonth() in lib/theme/resolveTheme.ts (index = month-1).
+const MONTH_THEME_KEYS = [
+  "january", "february", "march", "april", "may", "june",
+  "july", "august", "september", "october", "november", "december",
+];
+// Month as a Johnson County, TX host sees it (the TV/phone resolve the month
+// from the viewer's own clock; the real screens run in America/Chicago).
+function chicagoMonthThemeKey(now = new Date()) {
+  const m = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/Chicago", month: "numeric" }).format(now),
+  );
+  return MONTH_THEME_KEYS[m - 1] ?? null;
+}
 
 // Duration constants mirrored from lib/theme/lockInCeremony.ts.
 // These must stay in sync with the TypeScript source; no import possible in a
@@ -554,6 +581,27 @@ async function assertSectionCompletePredicate(gameId, expected, ctx) {
   }
 }
 
+// The browser phone's robot answers by tapping the real answer card. We then
+// wait for the answer row to land; if the tap never reaches the server the
+// screens record a failure and the robot answers by API so the night goes on.
+async function answerOnRealPhone(phone, q, slot, tag) {
+  const tapped = await screens.tapAnswer(slot);
+  if (tapped) {
+    for (let i = 0; i < 40; i++) {
+      const { data } = await admin
+        .from("answers")
+        .select("player_id")
+        .eq("question_id", q.id)
+        .eq("player_id", phone.playerId)
+        .maybeSingle();
+      if (data) return;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    screens.fail(`${tag}: phone tap on answer ${slot} never reached the server`);
+  }
+  return phone.submitAnswer(q.id, slot);
+}
+
 async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
   const tag = `G${gameNo} Q${cellGlobalIndex + 1} (${q.point_value}pt)`;
 
@@ -567,6 +615,15 @@ async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
     if (!res.ok) throw new Error(`reveal ${tag}: ${res.status} ${await res.text()}`);
   }
   const revealMs = Date.now() - revealStart;
+  // Real screens: hold still on the first question of each game so the TV
+  // and phone can be checked and photographed (well inside the 25s timer).
+  const shoot = screens && cellGlobalIndex === 0;
+  if (shoot) {
+    await screens.shot(`g${gameNo}-question`, {
+      moments: ["question"],
+      phoneSel: '[data-testid="your-turkey"]',
+    });
+  }
 
   // All phones answer in PARALLEL — this is what 30 real phones look like
   // from the API's perspective (one /api/answers POST per phone, all in
@@ -581,10 +638,17 @@ async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
         decide(pi, cellGlobalIndex, gameNo) === "correct"
           ? correct1
           : (correct1 % 4) + 1;
+      if (screens && pi === 0) return answerOnRealPhone(phone, q, slot, tag);
       return phone.submitAnswer(q.id, slot);
     }),
   );
   const answerMs = Date.now() - answerStart;
+  if (shoot) {
+    await screens.shot(`g${gameNo}-lockin`, {
+      moments: ["question"],
+      phoneSel: '[data-testid="player-locked"]',
+    });
+  }
 
   // Host ends early → resolve_question RPC + broadcast.
   const endEarlyStart = Date.now();
@@ -596,6 +660,9 @@ async function playOneQuestion(gameId, gameNo, q, cellGlobalIndex) {
     if (!res.ok) throw new Error(`end-early ${tag}: ${res.status} ${await res.text()}`);
   }
   const endEarlyMs = Date.now() - endEarlyStart;
+  if (shoot) {
+    await screens.shot(`g${gameNo}-reveal`, { moments: ["reveal", "standings"] });
+  }
 
   // Assert: finished_at set + every answer has is_correct + awarded_points.
   const { data: qRow } = await admin
@@ -728,6 +795,26 @@ async function assertThemePath(nightId, roomCode, nightThemeKey) {
     );
   }
   pass(`TV snapshot.night.themeKey = "${snapThemeKey}" ✓`);
+
+  // 5. No override: prove what the night actually resolves to, using the
+  //    same layers as resolveTheme() (night key → non-month host lock →
+  //    calendar month). A host locked to e.g. "house" would beat the month.
+  if (nightThemeKey === null && SMOKE_EXPECT_THEME) {
+    const hostKey = snap?.night?.hostDefaultThemeKey ?? null;
+    const hostLocks = hostKey && !MONTH_THEME_KEYS.includes(hostKey);
+    if (hostLocks) {
+      throw new Error(
+        `host default_theme_key="${hostKey}" locks every night; the calendar month would never show`,
+      );
+    }
+    const monthKey = chicagoMonthThemeKey();
+    if (monthKey !== SMOKE_EXPECT_THEME) {
+      throw new Error(
+        `calendar month resolves to "${monthKey}" today, expected "${SMOKE_EXPECT_THEME}"`,
+      );
+    }
+    pass(`resolves to "${monthKey}" (no night override, host default="${hostKey ?? "none"}" follows the season) ✓`);
+  }
 }
 
 // ── One full night pass ───────────────────────────────────────────────
@@ -737,6 +824,7 @@ async function runOnePass(passThemeKey) {
   founderJar = new Jar();
   phones = PHONE_NAMES.map((n) => new Phone(n));
   perQuestionTimings = [];
+  screens = null;
 
   const gameCategories = [[], []];
   let nightId = null;
@@ -852,6 +940,17 @@ async function runOnePass(passThemeKey) {
       if (!res.ok) throw new Error(`open: ${res.status} ${await res.text()}`);
       pass(`opened at ${new Date((await res.json()).openedAt).toISOString().slice(11, 19)}`);
     }
+    if (SMOKE_BROWSER) {
+      step("5b. open the real TV screen (browser)");
+      screens = new Screens({
+        base: BASE,
+        roomCode,
+        outDir: SMOKE_SCREENS_DIR,
+        expectTheme: SMOKE_EXPECT_THEME ?? passThemeKey,
+        log: console.log,
+      });
+      await screens.start();
+    }
 
     // 6. Phones join the night (auto-opts into game 1)
     step(`6. spawn ${SMOKE_PHONES} phones and join night${SMOKE_JOIN_STAGGER_MS > 0 ? ` (stagger ${SMOKE_JOIN_STAGGER_MS}ms)` : " (burst)"}`);
@@ -902,6 +1001,15 @@ async function runOnePass(passThemeKey) {
       pass(`all ${SMOKE_PHONES} have game_participations rows for game 1`);
     }
 
+    if (screens) {
+      step(`6b. open ${phones[0].name}'s real phone (browser) + lobby check`);
+      await screens.attachPhone(phones[0]);
+      await screens.shot("lobby", {
+        moments: ["lobby"],
+        phoneSel: '[data-testid="november-lobby"]',
+      });
+    }
+
     // 7. Play game 1
     step(`7. play game 1 (${CATEGORIES_PER_GAME * 7} cells across ${CATEGORIES_PER_GAME} categor${CATEGORIES_PER_GAME === 1 ? "y" : "ies"})`);
     await playGame(game1Id, 1, gameCategories[0]);
@@ -922,6 +1030,7 @@ async function runOnePass(passThemeKey) {
       if (g2?.state === "done") throw new Error(`unexpected g2.state=done before play`);
       pass(`intermission state: g1=done, g2=${g2?.state}`);
     }
+    if (screens) await screens.shot("between-games", { moments: ["between-games"] });
 
     // Steps 9-12 only run in the default (3-phone) game-logic mode. LOAD MODE
     // stops after game 1 because the relevant signal is intra-game peak
@@ -944,6 +1053,24 @@ async function runOnePass(passThemeKey) {
       // 9. Phones explicitly join game 2 (the "Join Game 2" button path)
       step("9. phones join game 2");
       for (const p of phones) {
+        if (screens && p === phones[0] && (await screens.tapJoinGame2())) {
+          let joined = false;
+          for (let i = 0; i < 40 && !joined; i++) {
+            const { data } = await admin
+              .from("game_participations")
+              .select("player_id")
+              .eq("game_id", game2Id)
+              .eq("player_id", p.playerId)
+              .maybeSingle();
+            joined = !!data;
+            if (!joined) await new Promise((r) => setTimeout(r, 250));
+          }
+          if (joined) {
+            pass(`${p.name} joined game 2 (tapped the real Join Game 2 button)`);
+            continue;
+          }
+          note(`${p.name}'s Join Game 2 tap did not register; joining by API`);
+        }
         await p.joinGame(2);
         pass(`${p.name} joined game 2`);
       }
@@ -980,6 +1107,7 @@ async function runOnePass(passThemeKey) {
         }
         pass(`finale state: g1=done, g2=done`);
       }
+      if (screens) await screens.shot("winner", { moments: ["winner"], timeout: 25000 });
     }
 
     // 13. Strict leaderboard assertion (default mode) OR load summary.
@@ -1087,6 +1215,15 @@ async function runOnePass(passThemeKey) {
       pass(`leaderboard correct: ${ranked.map((r) => `${r.name}(${r.total})`).join(" > ")}`);
     }
 
+    if (screens) {
+      step("14. real screens: November look + console check");
+      const s = screens;
+      screens = null;
+      const failures = await s.finish();
+      if (failures.length) throw new Error(`real screens: ${failures.join(" | ")}`);
+      pass(`TV + ${s.phoneName}'s phone showed "${s.expectTheme}" at all ${s.shots.length} moments, 0 console errors`);
+    }
+
     const passLabel = passThemeKey ? `themeKey="${passThemeKey}"` : "default (no theme)";
     const finishedBanner = LOAD_MODE
       ? `═══ LOAD FLOW GREEN (${SMOKE_PHONES} phones) ═══`
@@ -1138,6 +1275,12 @@ async function runOnePass(passThemeKey) {
     console.log("");
     throw e; // re-throw so the outer loop can mark the run failed
   } finally {
+    // Close the real browser (never throws) before deleting the night.
+    if (screens) {
+      const s = screens;
+      screens = null;
+      await s.finish();
+    }
     // Close any per-phone WebSocket subscriptions before exiting the process.
     if (SMOKE_REALTIME) {
       await Promise.all(phones.map((p) => p.closeRealtime().catch(() => undefined)));
@@ -1164,7 +1307,7 @@ let anyFailed = false;
 for (const passThemeKey of THEME_PASSES) {
   const passLabel = passThemeKey
     ? `theme="${passThemeKey}" (${questionDurationFor(passThemeKey)}s timer, marquee=${MARQUEE_THEMES.has(passThemeKey)})`
-    : "default (no theme override, 20s timer)";
+    : `default (no theme override${SMOKE_EXPECT_THEME ? `, expect ${SMOKE_EXPECT_THEME}` : ""}, ${DEFAULT_DURATION}s timer)`;
   passHeader(`PASS: ${passLabel}`);
 
   try {

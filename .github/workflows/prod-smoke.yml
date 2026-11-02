@@ -38,7 +38,7 @@ concurrency:
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
 
@@ -98,16 +98,38 @@ jobs:
       # avoiding four expensive AI generations. Generation gets the same 4m
       # budget as the API smoke; the 12m step budget leaves room for two cold
       # verified generations plus the complete two-game arc and cleanup.
-      - name: Full-flow driver (3 phones × 2 games, single theme pass)
+      #
+      # The pass plays with NO theme override, exactly like a real host's
+      # night: the calendar month picks the look (November in November).
+      # SMOKE_EXPECT_THEME asserts that, and SMOKE_BROWSER opens the real TV
+      # (1600x900) plus one robot's real phone in Chromium for both games,
+      # photographs each key moment, checks the month's look is on screen and
+      # fails on console errors. Screenshots + console log are uploaded below.
+      # Update SMOKE_EXPECT_THEME when running in another month.
+      - name: Full-flow driver (3 phones × 2 games, month look, real screens)
         if: github.event_name == 'workflow_dispatch' && inputs.run_paid_generation == true
-        timeout-minutes: 12
+        timeout-minutes: 16
         env:
           NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           SMOKE_FOUNDER_EMAIL: ${{ secrets.SMOKE_FOUNDER_EMAIL }}
           SMOKE_FOUNDER_PASSWORD: ${{ secrets.SMOKE_FOUNDER_PASSWORD }}
           SMOKE_BASE_URL: https://tr1via.com
-          SMOKE_THEME_SINGLE: may
+          SMOKE_THEME_SINGLE: auto
+          SMOKE_EXPECT_THEME: november
+          SMOKE_BROWSER: "1"
+          SMOKE_SCREENS_DIR: smoke-screens
           CATEGORIES_PER_GAME: 1
           SMOKE_GEN_TIMEOUT_MS: 240000
         run: node scripts/full-flow-prod.mjs
+
+      # Screenshots + console log only. No Playwright trace or HAR: those
+      # would carry the founder's sign-in cookies into a downloadable file.
+      - name: Upload real-screen screenshots
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.run_paid_generation == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-flow-screens
+          path: smoke-screens/
+          if-no-files-found: warn
+          retention-days: 14
