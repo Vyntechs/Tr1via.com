@@ -11,6 +11,13 @@
 
 import { z } from "zod";
 import { ALPHABET } from "@/lib/game/room-code";
+import {
+  MAX_PLAYER_NAME_RAW,
+  PLAYER_NAME_TOO_LONG_MESSAGE,
+  playerNameFits,
+  cleanPlayerName,
+  hasVisibleChar,
+} from "@/lib/player/nameLimit";
 
 const THEME_KEYS = [
   "house",
@@ -66,14 +73,61 @@ export const CreateNightSchema = z.object({
   scheduledAt: z.string().datetime().optional(),
 });
 
+/**
+ * A player's name before the 16-character cap: cleaned (invisible
+ * characters and extra stacked marks removed), at least one visible
+ * character, trimmed, non-empty, with a raw-length ceiling. The base of
+ * PlayerDisplayNameSchema (host latecomer route).
+ */
+export const LoosePlayerDisplayNameSchema = z
+  .string()
+  // Hard stop on junk before any work (old pages capped at 40).
+  .max(MAX_PLAYER_NAME_RAW * 8, { message: PLAYER_NAME_TOO_LONG_MESSAGE })
+  // Same cleanup the phone applies (invisible and direction-trick
+  // characters, "glitch text" marks), so both sides count the same thing.
+  .transform((s) => cleanPlayerName(s).trim())
+  .pipe(
+    z
+      .string()
+      .min(1, { message: "Pick a name to join." })
+      .max(MAX_PLAYER_NAME_RAW, { message: PLAYER_NAME_TOO_LONG_MESSAGE })
+      // A name made only of blank-looking characters is no name.
+      .refine(hasVisibleChar, { message: "Pick a name to join." }),
+  );
+
+/**
+ * A player's name: at most 16 characters as people see them (an emoji
+ * counts as 1). The phone and the host modal clamp to the same rule via
+ * lib/player/nameLimit.ts.
+ */
+export const PlayerDisplayNameSchema = LoosePlayerDisplayNameSchema.refine(
+  playerNameFits,
+  { message: PLAYER_NAME_TOO_LONG_MESSAGE },
+);
+
 export const CreatePlayerSchema = z.object({
   nightId: UuidSchema,
-  displayName: z.string().trim().min(1).max(40),
+  displayName: PlayerDisplayNameSchema,
+});
+
+/**
+ * POST /api/players body before any name rule: the name is only a string
+ * with a hard stop on junk. The route looks up the device's seat first, so a
+ * player already seated is never refused over their name (an old blank-looking
+ * or long name from the pre-cap page); only brand-new players get the
+ * visible-character and 16-character rules (see app/api/players/route.ts).
+ */
+export const CreatePlayerLooseSchema = z.object({
+  nightId: UuidSchema,
+  // Hard stop on junk before any work (old pages capped at 40).
+  displayName: z
+    .string()
+    .max(MAX_PLAYER_NAME_RAW * 8, { message: PLAYER_NAME_TOO_LONG_MESSAGE }),
 });
 
 /** POST /api/nights/[id]/players body — host adds a latecomer. */
 export const HostAddPlayerSchema = z.object({
-  displayName: z.string().trim().min(1).max(40),
+  displayName: PlayerDisplayNameSchema,
 });
 
 export const HeartbeatSchema = z.object({

@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useId, useState, type CSSProperties, type FormEvent } from "react";
 import {
   useTheme,
   Wordmark,
@@ -20,6 +20,27 @@ import {
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { isNovemberPhone } from "@/lib/experience/november/phone";
+import {
+  MAX_PLAYER_NAME,
+  MAX_PLAYER_NAME_RAW,
+  clampPlayerName,
+  countNameChars,
+  hasVisibleChar,
+} from "@/lib/player/nameLimit";
+import { useCappedNameInput } from "@/lib/player/useCappedNameInput";
+
+// Read by screen readers, invisible on screen.
+const VISUALLY_HIDDEN: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0,0,0,0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
 
 export interface PlayerJoinProps {
   themeKey?: ThemeKey;
@@ -65,23 +86,40 @@ export function PlayerJoin({
 }: PlayerJoinProps = {}) {
   const { t, themeKey } = useTheme();
   const interactive = !!onSubmit;
-  const [name, setName] = useState(playerName);
+  // Names cap at 16 visible characters (an emoji counts as 1). A seed name
+  // longer than that (an old 40-character name typed before the cap) is
+  // shortened here so a returning player can still tap Join.
+  const [name, setName] = useState(() => clampPlayerName(playerName));
 
   // Keep the input synced when the parent updates the seed name (e.g. on
   // remount after a network failure).
   useEffect(() => {
-    if (!interactive) setName(playerName);
+    if (!interactive) setName(clampPlayerName(playerName));
   }, [playerName, interactive]);
+
+  const { inputProps: nameInput, composing } = useCappedNameInput(name, setName);
+  // While a keyboard is mid-word (Android Gboard does this even for Latin
+  // letters) the box can briefly hold more than 16; the extra is cut when the
+  // word ends or on Join. Keep the counter calm at 16/16 meanwhile.
+  const nameCount = composing
+    ? Math.min(countNameChars(name), MAX_PLAYER_NAME)
+    : countNameChars(name);
+  const nameFull = !composing && nameCount >= MAX_PLAYER_NAME;
+  const hintId = useId();
+  const counterId = useId();
 
   function handleSubmit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
     if (!interactive) return;
-    const cleaned = name.trim();
-    if (!cleaned) return;
+    // Clamp again: Enter can submit while a keyboard is still converting.
+    // No Enter guard here on purpose: Android keyboards report the Go key as a
+    // converting Enter, and blocking it would make the first Go tap do nothing.
+    const cleaned = clampPlayerName(name).trim();
+    if (!hasVisibleChar(cleaned)) return;
     onSubmit?.(cleaned);
   }
 
-  const ctaDisabled = interactive && (!name.trim() || submitting);
+  const ctaDisabled = interactive && (!hasVisibleChar(clampPlayerName(name).trim()) || submitting);
 
   return (
     <PhoneScreen data-testid="player-join" harvestSky="golden">
@@ -133,9 +171,11 @@ export function PlayerJoin({
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value.slice(0, 40))}
+                  {...nameInput}
                   placeholder="Your name"
-                  maxLength={40}
+                  // Raw ceiling only: the real 16-character cap is the clamp
+                  // above, because maxLength counts an emoji as 2+.
+                  maxLength={MAX_PLAYER_NAME_RAW}
                   autoFocus
                   autoComplete="off"
                   autoCorrect="off"
@@ -143,6 +183,7 @@ export function PlayerJoin({
                   spellCheck={false}
                   style={INPUT_STYLE(t.ink)}
                   aria-label="Your display name"
+                  aria-describedby={`${hintId} ${counterId}`}
                   data-testid="player-name-input"
                 />
               ) : (
@@ -161,7 +202,43 @@ export function PlayerJoin({
                 />
               )}
             </div>
-            <div style={{ marginTop: 10, color: t.inkMute, fontSize: 12 }}>Everyone sees this. Keep it kind.</div>
+            <div
+              style={{
+                marginTop: 10,
+                color: t.inkMute,
+                fontSize: 12,
+                display: "flex",
+                alignItems: "baseline",
+                // Counter sits right after the hint, not at the far edge:
+                // month art (September's confetti) lives at the right edge.
+                gap: 10,
+              }}
+            >
+              <span id={hintId}>Everyone sees this. Keep it kind.</span>
+              {interactive && (
+                <span
+                  id={counterId}
+                  data-testid="player-name-counter"
+                  style={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
+                >
+                  {/* Screen readers get words ("12 of 16 characters") when
+                      they read the box's description, never "12/16". */}
+                  <span aria-hidden="true">
+                    {nameCount}/{MAX_PLAYER_NAME}
+                  </span>
+                  <span style={VISUALLY_HIDDEN}>
+                    {nameCount} of {MAX_PLAYER_NAME} characters
+                  </span>
+                </span>
+              )}
+              {interactive && (
+                // Always in the page (late-added live regions are often
+                // missed). Silent while typing; one polite note at the cap.
+                <span aria-live="polite" data-testid="player-name-limit-note" style={VISUALLY_HIDDEN}>
+                  {nameFull ? `Name is full, ${MAX_PLAYER_NAME} characters.` : ""}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 

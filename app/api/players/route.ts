@@ -12,7 +12,12 @@
 // through the RLS-aware server client.
 
 import type { NextRequest } from "next/server";
-import { CreatePlayerSchema } from "@/lib/api/schemas";
+import { CreatePlayerLooseSchema } from "@/lib/api/schemas";
+import {
+  clampPlayerName,
+  cleanPlayerName,
+  hasVisibleChar,
+} from "@/lib/player/nameLimit";
 import { badRequest, ok, serverError, unauthorized, notFound, forbidden } from "@/lib/api/responses";
 import { getDeviceId } from "@/lib/api/auth";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
@@ -30,8 +35,13 @@ export async function POST(req: NextRequest) {
   } catch {
     return badRequest("invalid JSON");
   }
-  const parsed = CreatePlayerSchema.safeParse(body);
+  // Parse the name as a plain string first. Which name rules apply depends
+  // on whether this device already has a seat tonight, which we only learn
+  // after the lookups below.
+  const parsed = CreatePlayerLooseSchema.safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
+  // Same cleanup the phone applies, so both sides count the same thing.
+  const cleaned = cleanPlayerName(parsed.data.displayName).trim();
 
   const admin = getSupabaseAdmin();
 
@@ -52,13 +62,40 @@ export async function POST(req: NextRequest) {
   // lets the welcome broadcast fire ONLY when the player is genuinely new
   // — a returning player on the same device shouldn't trigger a second
   // welcome moment on the TV when they reload the page.
-  const { data: existing } = await admin
+  const { data: existing, error: lookupError } = await admin
     .from("players")
-    .select("id")
+    .select("id, display_name")
     .eq("night_id", parsed.data.nightId)
     .eq("device_id", deviceId)
     .maybeSingle();
+  // A failed lookup keeps the old behaviour for the welcome (fire it; the TV
+  // shrugs off a duplicate) but is never treated as "new" for name rules.
   const isFirstJoin = !existing;
+
+  // A name that can be shown: cleaned, cut to 16 characters, still visible.
+  const capped = clampPlayerName(cleaned).trim();
+  const usable = hasVisibleChar(capped) ? capped : null;
+
+  let displayName: string;
+  if (existing) {
+    // Already seated on this device tonight: the seat is ALWAYS kept. Use the
+    // new name (cut to 16) if it has something visible, otherwise keep the
+    // stored name (e.g. an old blank-looking name from the pre-cap page).
+    displayName = usable ?? existing.display_name;
+  } else if (lookupError) {
+    // Can't tell new from returning (database hiccup). Never refuse a
+    // possible rejoin over the name: accept it cut to 16. With nothing
+    // visible to show and no stored name to fall back on, ask for a retry.
+    if (!usable) return serverError("Couldn't check your seat. Try again.");
+    displayName = usable;
+  } else {
+    // Brand-new player: a name is required. One over 16 is cut, not refused:
+    // the phone already stops at 16, so this only happens when a phone counts
+    // characters a little differently from the server, and that player should
+    // still get in.
+    if (!usable) return badRequest("Pick a name to join.");
+    displayName = usable;
+  }
 
   // Upsert keyed on the unique (night_id, device_id). On conflict, refresh
   // display_name + last_seen_at so the player object is current.
@@ -69,7 +106,7 @@ export async function POST(req: NextRequest) {
       {
         night_id: parsed.data.nightId,
         device_id: deviceId,
-        display_name: parsed.data.displayName,
+        display_name: displayName,
         last_seen_at: now,
         // Migration 0022 makes signed-device players eligible to answer.
         // The cast is temporary until the planned Task 5 type regeneration.
