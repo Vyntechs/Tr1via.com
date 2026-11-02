@@ -37,15 +37,13 @@ import {
   ThemeProvider,
   Display,
   Eyebrow,
-  Numeric,
   useTheme,
   fireJuneBeat,
   PyrotechnicsBeatConductor,
 } from "@/components/system";
 import { PhoneScreen, PhoneHeader } from "@/components/shells";
-import { hasPhoneLayer } from "@/lib/experience/packs";
-import { FlamingHead } from "@/components/experience/october/FlamingHead";
-import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
+import { finaleWinner, isNovemberPhone, safeFinaleWinner } from "@/lib/experience/november/phone";
+import { PlayerFinaleView } from "@/components/player/PlayerFinale";
 import {
   PlayerLobby,
   PlayerLockInBolt,
@@ -73,6 +71,8 @@ import { useSurfaceObservation } from "@/lib/hooks/useGameDelivery";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
 import { awardPoints } from "@/lib/game/score";
 import { rankScores } from "@/lib/game/rankScores";
+import { scheduleNovemberPhonePreload } from "@/components/experience/november/preloadPhoneArt";
+import { NovemberGameNoContext } from "@/components/experience/november/phoneContext";
 import { playerColorHex } from "@/lib/player/playerColor";
 import {
   selectBetweenGamesView,
@@ -128,93 +128,6 @@ export default function PlayerRoomPage() {
   return <PlayerRoomInner roomCode={code} />;
 }
 
-function PlayerFinaleView({
-  won,
-  rank,
-  score,
-  correct,
-  answered,
-  fastestMs,
-  longestStreak,
-  satOut = false,
-  finalGameNo = 2,
-}: {
-  won: boolean;
-  rank: number | null;
-  score: number | null;
-  /** Never joined the final game (Game 2 is opt-in, or they arrived after a
-   *  one-game night ended), so no score is coming. */
-  satOut?: boolean;
-  finalGameNo?: number;
-  correct: number | null;
-  answered: number | null;
-  fastestMs: number | null;
-  longestStreak: number;
-}) {
-  const { t, themeKey } = useTheme();
-  const stats = [
-    correct !== null && answered !== null
-      ? { label: "GOT RIGHT", value: `${correct} / ${answered}` }
-      : null,
-    fastestMs !== null
-      ? { label: "FASTEST ANSWER", value: `${(fastestMs / 1000).toFixed(1)}s` }
-      : null,
-    longestStreak > 0
-      ? { label: "LONGEST STREAK", value: `× ${longestStreak}` }
-      : null,
-  ].filter((row): row is { label: string; value: string } => row !== null);
-
-  return (
-    <PhoneScreen data-testid="player-finale">
-      <PhoneHeader eyebrow="FINAL RESULTS" />
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>
-        <Display size="clamp(44px, 15vw, 64px)" color={t.ink} weight={700}>
-          {won ? "You won." : rank !== null ? `You finished #${rank}.` : "Game complete."}
-        </Display>
-        {won && hasPhoneLayer(themeKey) ? (
-          // October: the champion holds the flaming head. If it ever breaks,
-          // the line switches off and the finale reads as on any other night.
-          <ThemeLayerBoundary name="october:finale-flaming-head">
-            <div data-testid="player-finale-flaming-head" style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 10 }}>
-              <FlamingHead height={56} style={{ margin: "-12px 0 -4px" }} />
-              <span style={{ fontSize: 16, fontWeight: 700, color: t.pop }}>You hold the flaming head.</span>
-            </div>
-          </ThemeLayerBoundary>
-        ) : null}
-
-        <section
-          aria-label="Your final result"
-          style={{ marginTop: 24, padding: "20px 18px", borderRadius: 16, background: t.surface, border: `1px solid ${t.line}` }}
-        >
-          {score !== null ? (
-            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
-              <Eyebrow color={t.inkMid} size={10}>YOUR SCORE</Eyebrow>
-              <Numeric size={40} weight={800} color={t.ink}>{score.toLocaleString()}</Numeric>
-            </div>
-          ) : (
-            <p style={{ margin: 0, color: t.inkMid, lineHeight: 1.5 }}>
-              {satOut ? `You sat out Game ${finalGameNo}.` : "Your final score is still catching up."}
-            </p>
-          )}
-          {stats.length > 0 && (
-            <dl style={{ margin: "16px 0 0", paddingTop: 14, borderTop: `1px solid ${t.line}`, display: "grid", gap: 12 }}>
-              {stats.map((stat) => (
-                <div key={stat.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                  <dt><Eyebrow color={t.inkMid} size={9}>{stat.label}</Eyebrow></dt>
-                  <dd style={{ margin: 0 }}><Numeric size={16} weight={800} color={t.ink}>{stat.value}</Numeric></dd>
-                </div>
-              ))}
-            </dl>
-          )}
-        </section>
-
-        <p style={{ margin: "auto 0 0", paddingTop: 22, color: t.inkMid, fontSize: 14, lineHeight: 1.5 }}>
-          Final results are ready. Your host will end the game after the celebration.
-        </p>
-      </div>
-    </PhoneScreen>
-  );
-}
 
 function PlayerRoomInner({ roomCode }: { roomCode: string }) {
   const { isReady: sessionReady, isLoading: deviceLoading } = useDeviceSession();
@@ -419,6 +332,28 @@ function RoomStateMachine({
     }
   }, [themeKey, resolvedQId]);
 
+  // November: the phone pictures come in three small sets, each at a random
+  // 1-6 s, never all at once while 40 phones are joining (join itself only
+  // fetches its 15 KB field; the lobby turkey comes with the lobby): what the
+  // first question needs after this phone has joined, the reveal strips once
+  // a game is live, the night set at the first reveal (nobody is tapping
+  // then). A phone that reloads mid-game gets them all.
+  const novemberPhone = isNovemberPhone(themeKey);
+  const gameUnderway = currentGame?.state === "live" || game1?.state === "live" || game1?.state === "done";
+  const revealSeen = resolvedQId !== null;
+  useEffect(() => (novemberPhone ? scheduleNovemberPhonePreload("soon") : undefined), [novemberPhone]);
+  // The reveal set starts in the lobby, after the soon set (7-12 s after
+  // joining), so it never lands on question 1. If the game goes live before
+  // it has started (or this phone joined a live game) it comes 1-6 s later.
+  useEffect(
+    () => (novemberPhone ? scheduleNovemberPhonePreload("reveal", gameUnderway ? 1000 : 7000) : undefined),
+    [novemberPhone, gameUnderway],
+  );
+  useEffect(
+    () => (novemberPhone && revealSeen ? scheduleNovemberPhonePreload("night") : undefined),
+    [novemberPhone, revealSeen],
+  );
+
   // June: every lock-in ripples this phone's water — the room's pulse felt on
   // your own screen. Own lock is known locally (instant); other players' locks
   // ride the existing lock-sync poll (raw realtime is the weak spot on phones).
@@ -583,6 +518,18 @@ function RoomStateMachine({
             : !myParticipations.some((p) => p.game_id === finalGameForRecap.id)
         }
         finalGameNo={finalGameForRecap.game_no}
+        playerName={me.display_name}
+        playerCount={finalScores.length}
+        winner={
+          isNovemberPhone(themeKey)
+            ? safeFinaleWinner(() =>
+                finaleWinner(
+                  rankScores(finalScores),
+                  new Map(snapshot.players.map((p) => [p.id, p.display_name] as const)),
+                ),
+              )
+            : null
+        }
       />
     );
   } else if ((betweenView || waitingForGame2FirstQuestion) && game1 && game2) {
@@ -714,7 +661,9 @@ function RoomStateMachine({
           onComplete={() => setBoltActive(false)}
         />
       )}
-      {inner}
+      {/* November: lets the question, locked and wrong-answer screens show
+          the TV's light for this game (night in game 2). Read-only. */}
+      <NovemberGameNoContext.Provider value={currentGame?.game_no ?? null}>{inner}</NovemberGameNoContext.Provider>
       {/* July: schedule the synchronized firework beat for THIS phone. A finale
           (game end) fires for everyone; a per-question salvo fires only when I
           got it right (gateBeatForPlayer). Render-less; no-op on non-July. */}

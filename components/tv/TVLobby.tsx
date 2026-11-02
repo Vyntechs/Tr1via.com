@@ -21,6 +21,7 @@ import { colorHexFromKey, playerColorHex } from "@/lib/player/playerColor";
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { useStageWorld } from "@/components/experience/StageWorld";
 import { OctoberLobby } from "@/components/experience/october/tv/OctoberScreens";
+import { NovemberLobby } from "@/components/experience/november/tv/NovemberScreens";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { TVLobbyTopics } from "./TVLobbyTopics";
 import type { LobbyTopic } from "@/lib/tv/lobbyTopics";
@@ -102,6 +103,13 @@ function TVLobbyBody(props: Omit<TVLobbyProps, "themeKey">) {
     return (
       <ThemeLayerBoundary name="october:OctoberLobby" fallback={<TVLobbyInner {...props} />}>
         <OctoberLobby {...props} />
+      </ThemeLayerBoundary>
+    );
+  }
+  if (world?.pack === "november") {
+    return (
+      <ThemeLayerBoundary name="november:NovemberLobby" fallback={<TVLobbyInner {...props} />}>
+        <NovemberLobby {...props} />
       </ThemeLayerBoundary>
     );
   }

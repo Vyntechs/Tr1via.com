@@ -90,6 +90,7 @@ function TVRevealInner({
   // it sits on the world's dark scrim, and the answer column shrinks to fit
   // when a long question, answer and fact would otherwise be cut off.
   const world = useStageWorld();
+  const nov = world?.pack === "november";
 
   return (
     <TVStage
@@ -275,10 +276,12 @@ function TVRevealInner({
                 key={`${p.name}-${i}`}
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "44px minmax(0, 1fr) auto",
+                  // November's panel padding narrows this column; a tighter
+                  // row keeps ~24-character team names whole there.
+                  gridTemplateColumns: nov ? "30px minmax(0, 1fr) auto" : "44px minmax(0, 1fr) auto",
                   alignItems: "center",
-                  gap: 14,
-                  padding: "clamp(14px, 1.2vw, 20px) clamp(16px, 1.4vw, 24px)",
+                  gap: nov ? 10 : 14,
+                  padding: nov ? "clamp(14px, 1.2vw, 20px) 18px" : "clamp(14px, 1.2vw, 20px) clamp(16px, 1.4vw, 24px)",
                   background: t.surface,
                   color: t.ink,
                   borderRadius: 12,
@@ -299,7 +302,7 @@ function TVRevealInner({
                     overflow: "hidden",
                     textOverflow: "ellipsis",
                     whiteSpace: "nowrap",
-                    fontSize: "clamp(28px, 3vmin, 34px)",
+                    fontSize: nov ? 26 : "clamp(28px, 3vmin, 34px)",
                     fontWeight: 700,
                     letterSpacing: "-0.01em",
                   }}

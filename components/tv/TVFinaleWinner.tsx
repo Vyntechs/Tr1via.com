@@ -23,6 +23,8 @@ import type { ThemeKey } from "@/lib/theme/tokens";
 import { useStageWorld } from "@/components/experience/StageWorld";
 import { OctoberWinner } from "@/components/experience/october/tv/OctoberScreens";
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
+import { NovemberWinnerBurst } from "@/components/experience/november/tv/NovemberWinnerBurst";
+import { novWinnerNameSize } from "@/lib/experience/november/tvLook";
 import { useCrescendo } from "@/lib/hooks/useCrescendo";
 
 export interface TVFinaleWinnerData {
@@ -125,6 +127,8 @@ function TVFinaleWinnerInner({
   // crashed the venue TV at the finale — same class as the #67 TVPage crash.
   // Regression: tests/unit/tv-finale-winner-hooks.test.tsx.
   const { t, themeKey } = useTheme();
+  const world = useStageWorld();
+  const nov = world?.pack === "november";
 
   // Finale lightning: for the May "storm" theme, fire 2-3 close strikes in
   // quick succession once the winner paints. This is the "WHOA" moment — the
@@ -171,8 +175,10 @@ function TVFinaleWinnerInner({
       data-testid="tv-finale-winner"
       style={{
         width: "100%",
-        height: "100%",
-        background: t.paper,
+        height: nov ? `${(world?.contentHeight ?? 1) * 100}%` : "100%",
+        ...(nov ? { flexShrink: 0 } : null),
+        // November: the night field shows through (no paper of its own).
+        background: nov ? "transparent" : t.paper,
         color: t.ink,
         fontFamily: "var(--font-sans)",
         position: "relative",
@@ -183,12 +189,18 @@ function TVFinaleWinnerInner({
     >
       {/* Heightened weather — the theme's signature motion ramps up (build) into
           the synchronized firework erupt for the finale crescendo */}
-      <Weather
-        themeKey={themeKey}
-        intensity={finaleIntensity}
-        lightningTriggerCount={lightningTriggerCount}
-        page="finale"
-      />
+      {nov ? (
+        <ThemeLayerBoundary name="november:winner-burst">
+          <NovemberWinnerBurst />
+        </ThemeLayerBoundary>
+      ) : (
+        <Weather
+          themeKey={themeKey}
+          intensity={finaleIntensity}
+          lightningTriggerCount={lightningTriggerCount}
+          page="finale"
+        />
+      )}
       {/* Soft radial glow center-stage */}
       <div
         style={{
@@ -239,7 +251,7 @@ function TVFinaleWinnerInner({
             <Eyebrow color={t.accent} size={13}>WON THE NIGHT</Eyebrow>
             <span data-testid="tv-finale-winner-name" style={{ display: "block" }}>
               <Display
-                size={220}
+                size={nov ? novWinnerNameSize(winner.name) : 220}
                 color={t.ink}
                 weight={700}
                 tracking={-0.05}

@@ -56,7 +56,7 @@ export function PlayerJoinGame2({
   const { t } = useTheme();
   const ctaDisabled = !onJoin || submitting;
   return (
-    <PhoneScreen data-testid="player-join-game2">
+    <PhoneScreen data-testid="player-join-game2" harvestSky="night">
       <PhoneHeader eyebrow="GAME 1 · FINAL" />
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", paddingTop: 18 }}>

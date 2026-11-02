@@ -6,11 +6,12 @@
 // never calls the server. Themes without a pack are untouched: they render
 // exactly as they always have.
 //
-// October ("Sleepy Hollow Night") is the first pack.
+// October ("Sleepy Hollow Night") is the first pack; November ("Harvest
+// Field") the second.
 
 import type { ThemeKey } from "@/lib/theme/tokens";
 
-export type WorldPackId = "october";
+export type WorldPackId = "october" | "november";
 
 export interface TVWorldSpec {
   pack: WorldPackId;
@@ -22,6 +23,8 @@ export interface TVWorldSpec {
 
 const TV_WORLDS: Partial<Record<ThemeKey, TVWorldSpec>> = {
   october: { pack: "october", contentHeight: 680 / 900 },
+  // November ("Harvest Field"): same split, the turkey row has the bottom strip.
+  november: { pack: "november", contentHeight: 680 / 900 },
 };
 
 /** The world a TV surface wears for this theme, or null for a plain theme. */

@@ -23,7 +23,7 @@ export function fitScale(width: number, height: number): number {
   return Math.min(width / OCTOBER_STAGE_W, height / OCTOBER_STAGE_H);
 }
 
-export function FitStage({ children }: { children: ReactNode }) {
+export function FitStage({ children, testId = "october-fit-stage" }: { children: ReactNode; testId?: string }) {
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
 
@@ -51,7 +51,7 @@ export function FitStage({ children }: { children: ReactNode }) {
   return (
     <div
       ref={frameRef}
-      data-testid="october-fit-stage"
+      data-testid={testId}
       data-fit-scale={scale.toFixed(3)}
       // Content may spill a few pixels into the patch strip, as in the design.
       style={{ position: "relative", flex: 1, minHeight: 0, width: "100%", overflow: "visible" }}

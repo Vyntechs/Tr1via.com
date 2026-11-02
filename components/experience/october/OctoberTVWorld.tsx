@@ -15,7 +15,6 @@
 "use client";
 
 import {
-  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -26,23 +25,19 @@ import {
 import { ThemeLayerBoundary } from "@/components/system/ThemeLayerBoundary";
 import { StageWorldContext, TVMomentPublisherContext } from "@/components/experience/StageWorld";
 import type { TVWorldSpec } from "@/lib/experience/packs";
-import { NO_MOMENT, sameMoment, type TVMoment } from "@/lib/experience/tvMoment";
+import { NO_MOMENT } from "@/lib/experience/tvMoment";
+import { useStageScale, useTVWorldFeed } from "@/components/experience/shared/useTVWorldFeed";
 import {
-  momentSecondsLeft,
   nextHeadstoneTier,
   patchScene,
   type HeadstoneTier,
   type MoonPose,
-  type PatchAnswer,
-  type PatchPlayer,
   type PatchScene,
-  type QuestionClock,
 } from "@/lib/experience/october/patch";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { playerColorHex } from "@/lib/player/playerColor";
-import { gamePlayers } from "@/lib/tv/gamePlayers";
 import { HARVEST_MOON, HOLLOW_TV, PATCH_HILL, artUrl } from "./art";
 import { OctoberHeadstones } from "./OctoberHeadstones";
 import { OctoberPatchCanvas, type OctoberPatchInputs } from "./OctoberPatchCanvas";
@@ -61,7 +56,6 @@ export interface OctoberTVWorldProps {
 
 const NIGHT_BLACK = "#120A06";
 const STAGE_W = 1600;
-const PRESENT_FOR_MS = 10 * 60_000;
 // The same clock length the on-screen timer uses for this theme.
 const QUESTION_CLOCK_S = questionDurationFor("october");
 const STAGE_H = 900;
@@ -77,105 +71,13 @@ export function OctoberTVWorld({
   const reducedMotion = usePrefersReducedMotion();
   const tier = reducedMotion ? "still" : requestedTier;
 
-  // ── which moment the TV is showing ──
-  const [moment, setMoment] = useState<TVMoment>(NO_MOMENT);
-  const [questionClock, setQuestionClock] = useState<QuestionClock | null>(null);
-  const momentRef = useRef<TVMoment>(NO_MOMENT);
-  const clockRef = useRef<QuestionClock | null>(null);
-  const offsetRef = useRef(0);
-
-  const publish = useCallback((raw: TVMoment) => {
-    // A broadcast time that isn't a number (a bad timestamp) counts as unknown,
-    // so it can't turn every clock in the world into NaN.
-    const next: TVMoment = {
-      ...raw,
-      revealedAtMs: finiteOrNull(raw.revealedAtMs),
-      serverNowMs: finiteOrNull(raw.serverNowMs),
-    };
-    const prev = momentRef.current;
-    if (sameMoment(prev, next)) return;
-    if (next.kind === "question" && next.questionId && next.revealedAtMs !== null) {
-      // Same clock-skew rule as the on-screen timer.
-      offsetRef.current = next.serverNowMs !== null ? next.serverNowMs - Date.now() : 0;
-      clockRef.current = { questionId: next.questionId, revealedAtMs: next.revealedAtMs, endedAtMs: null };
-      setQuestionClock(clockRef.current);
-    } else if (prev.kind === "question" && clockRef.current && clockRef.current.endedAtMs === null) {
-      clockRef.current = { ...clockRef.current, endedAtMs: Date.now() + offsetRef.current };
-      setQuestionClock(clockRef.current);
-    }
-    momentRef.current = next;
-    setMoment(next);
-  }, []);
-
-  // ── who is in the patch ──
-  // Only the players in the game on screen. Game 2 is opt-in (Sep 24: 28 of
-  // 33 played it), and the scores feed lists exactly that game's players, so a
-  // patron who sat Game 2 out never gets a pumpkin knocked over for not
-  // answering. Before any game has scores (the lobby), it's the whole room.
-  // Same list the TV counts its PLAYERS / "of N" from (gamePlayers). The patch
-  // then also leaves out anyone silent for 10+ minutes (below), who still
-  // count on screen, so the patch can hold fewer pumpkins than that number.
-  const roster = useMemo(
-    () =>
-      [...gamePlayers({ players: snapshot.players, scores: snapshot.scores })].sort((a, b) =>
-        String(a.joinedAt ?? "").localeCompare(String(b.joinedAt ?? "")),
-      ),
-    [snapshot.players, snapshot.scores],
-  );
-  const answers = useMemo<PatchAnswer[]>(
-    () =>
-      snapshot.liveAnswers.map((a) => ({
-        playerKey: a.player_key,
-        questionId: a.question_id,
-        isCorrect: a.is_correct,
-      })),
-    [snapshot.liveAnswers],
-  );
-
-  // A pumpkin for everyone who is actually here: phones check in every 10 s
-  // while open, so anyone silent for 10 minutes (and not answering this
-  // question) has most likely gone home. Leaving them out keeps the patch
-  // from knocking over a ghost every question.
-  const onFailRef = useRef(onFail);
-  useEffect(() => {
-    onFailRef.current = onFail;
-  });
-  const [players, setPlayers] = useState<PatchPlayer[]>(() => roster.map(patchPlayer));
-  useEffect(() => {
-    // Switched off: no more checks (a repeating failure must not log every 30 s).
-    if (off) return;
-    const update = () => {
-      try {
-        const now = Date.now() + offsetRef.current;
-        const answering = new Set(
-          answers.filter((a) => a.questionId === momentRef.current.questionId).map((a) => a.playerKey),
-        );
-        const next = roster
-          .filter((p) => {
-            if (answering.has(p.id)) return true;
-            const seen = Date.parse(p.lastSeenAt);
-            return !Number.isFinite(seen) || now - seen < PRESENT_FOR_MS;
-          })
-          .map(patchPlayer);
-        setPlayers((prev) =>
-          prev.length === next.length && prev.every((p, i) => p.key === next[i].key && p.name === next[i].name)
-            ? prev
-            : next,
-        );
-      } catch (error) {
-        // A timer's error never reaches React's crash guard: report it the
-        // same way, then switch the world off.
-        console.warn(`[theme] "october:world" switched off after an error; the game keeps going.`, error);
-        onFailRef.current(error);
-      }
-    };
-    const first = window.setTimeout(update, 0);
-    const id = window.setInterval(update, 30_000);
-    return () => {
-      window.clearTimeout(first);
-      window.clearInterval(id);
-    };
-  }, [roster, answers, moment, off]);
+  // ── which moment the TV is showing, and who is in the patch ──
+  // Shared with every month's world (useTVWorldFeed): the moment each screen
+  // announces with its clock skew, and the row = the game on screen's
+  // players (the whole room in the lobby), minus anyone silent for 10+
+  // minutes who isn't answering this question (gone home).
+  const feed = useTVWorldFeed({ snapshot, off, onFail, name: "october:world", durationS: QUESTION_CLOCK_S });
+  const { moment, questionClock, publish, players, answers, serverNow, secondsLeftNow, report } = feed;
 
   // Which headstones stand, from the patch's own pumpkin count. Held as state
   // so a night hovering near a line never flickers (see nextHeadstoneTier).
@@ -200,15 +102,14 @@ export function OctoberTVWorld({
           questionClock,
           players,
           answers,
-          serverNowMs: Date.now() + offsetRef.current,
+          serverNowMs: serverNow(),
           durationS: QUESTION_CLOCK_S,
         });
         setScene((prev) => (sameScene(prev, next) ? prev : next));
       } catch (error) {
         // A timer's error never reaches React's crash guard: report it the
         // same way, then switch the world off.
-        console.warn(`[theme] "october:world" switched off after an error; the game keeps going.`, error);
-        onFailRef.current(error);
+        report(error);
       }
     };
     const first = window.setTimeout(update, 0);
@@ -217,20 +118,7 @@ export function OctoberTVWorld({
       window.clearTimeout(first);
       if (id !== null) window.clearInterval(id);
     };
-  }, [moment, questionClock, players, answers, timed, off]);
-
-  const secondsLeftNow = useCallback(
-    () =>
-      momentSecondsLeft({
-        moment: momentRef.current,
-        questionClock: clockRef.current,
-        players: [],
-        answers: [],
-        serverNowMs: Date.now() + offsetRef.current,
-        durationS: QUESTION_CLOCK_S,
-      }),
-    [],
-  );
+  }, [moment, questionClock, players, answers, timed, off, serverNow, report]);
 
   const inputs = useMemo<OctoberPatchInputs>(
     () => ({ players, scene, secondsLeftNow, colorFor: playerColorHex }),
@@ -243,22 +131,7 @@ export function OctoberTVWorld({
   // the whole picture scales down as one, exactly like the TV, instead of the
   // screens being squeezed (a 13" laptop window would cut off the question).
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const [stageScale, setStageScale] = useState(1);
-  useEffect(() => {
-    const root = rootRef.current;
-    if (!root || typeof ResizeObserver === "undefined") return;
-    const apply = (width: number, height: number) => {
-      if (width <= 0 || height <= 0) return;
-      const next = Math.min(width / STAGE_W, height / STAGE_H);
-      setStageScale((current) => (Math.abs(current - next) < 0.001 ? current : next));
-    };
-    const observer = new ResizeObserver((entries) => {
-      const box = entries[0]?.contentRect;
-      if (box) apply(box.width, box.height);
-    });
-    observer.observe(root);
-    return () => observer.disconnect();
-  }, []);
+  const stageScale = useStageScale(rootRef);
 
   return (
     <div
@@ -337,14 +210,6 @@ export function OctoberTVWorld({
       </div>
     </div>
   );
-}
-
-const finiteOrNull = (value: number | null): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
-
-/** A patch pumpkin for a player, whatever shape the name arrived in. */
-function patchPlayer(p: TVSnapshot["players"][number]): PatchPlayer {
-  return { key: String(p.id), name: typeof p.displayName === "string" ? p.displayName : "" };
 }
 
 function sameScene(a: PatchScene, b: PatchScene): boolean {
