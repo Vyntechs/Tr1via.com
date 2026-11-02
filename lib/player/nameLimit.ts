@@ -62,7 +62,7 @@ const isPictographic = (cp: string | undefined): boolean => !!cp && !!PICTOGRAPH
  * left-to-right / right-to-left mark, embedding, override and isolate.
  */
 const INVISIBLE =
-  /[\p{Cc}­؜ᅟᅠ឴឵᠎​‎‏‪-‮⁠-⁤⁦-⁯⠀ㅤ﻿ﾠ]/gu;
+  /[\p{Cc}­؜ᅟᅠ឴឵᠎​‎‏‪-‮⁠-⁯⠀ㅤ﻿ﾠ]/gu;
 const LETTER_OR_MARK = /^[\p{L}\p{M}]$/u;
 /** Parts that can sit between an emoji and its zero-width joiner. */
 const EMOJI_TRAIL = /^[\p{Mn}\p{Me}\u{1F3FB}-\u{1F3FF}]$/u;
@@ -136,8 +136,10 @@ function getSegmenter(): SegmenterLike | null {
 // count separately here, so a few names count higher on these old phones.
 const GLUES_TO_PREV = /^[\p{Mn}\p{Me}‍\u{1F3FB}-\u{1F3FF}\u{E0020}-\u{E007F}]$/u;
 const REGIONAL_INDICATOR = /^\p{Regional_Indicator}$/u;
-// The server never joins anything onto a control or format character.
-const NEVER_GLUED_ONTO = /^[\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]$/u;
+// The server never joins anything onto a control or format character, and
+// treats some unassigned code points the same way; an unassigned one is
+// never glued onto here (also covers characters too new for this phone).
+const NEVER_GLUED_ONTO = /^[\p{Cc}\p{Cf}\p{Cs}\p{Cn}\p{Zl}\p{Zp}]$/u;
 
 function emojiBeforeJoiner(cluster: string): boolean {
   const cps = Array.from(cluster);

@@ -97,6 +97,7 @@ describe("name limit without Intl.Segmenter", () => {
       "ᄀ", "ᅡ", "ᆨ", "한", // Hangul letter parts
       "\u0007", "­", "\r", "\n", "؀", "​", "‮", "ㅤ", // controls, format, invisibles
       "李", "ශ", "්", "ර",
+      "\u2065", "\uFFF0", "\u{E0000}", "\u{E0080}", "\u2028", // unassigned / separators the server never joins onto
     ];
     let checked = 0;
     for (let i = 0; i < 4000; i++) {
