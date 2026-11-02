@@ -1030,7 +1030,10 @@ async function runOnePass(passThemeKey) {
       if (g2?.state === "done") throw new Error(`unexpected g2.state=done before play`);
       pass(`intermission state: g1=done, g2=${g2?.state}`);
     }
-    if (screens) await screens.shot("between-games", { moments: ["between-games"] });
+    // Game 2 has no ready category yet, so the TV deliberately treats the
+    // night as a one-game finale (TVStateMachine: empty game-2 shell = no
+    // game 2) until the host builds game 2. Photograph whichever it shows.
+    if (screens) await screens.shot("g1-end", { moments: ["between-games", "winner"] });
 
     // Steps 9-12 only run in the default (3-phone) game-logic mode. LOAD MODE
     // stops after game 1 because the relevant signal is intra-game peak
@@ -1049,6 +1052,9 @@ async function runOnePass(passThemeKey) {
           pass(`g2 cat ${i + 1}/${CATEGORIES_PER_GAME} (${topic}) ready in ${Math.round((Date.now() - t0) / 1000)}s, points ${r.picked.map((q) => q.point_value).join(",")}`);
         }
       }
+
+      // Game 2 now has a ready category: the TV must switch to between-games.
+      if (screens) await screens.shot("between-games", { moments: ["between-games"] });
 
       // 9. Phones explicitly join game 2 (the "Join Game 2" button path)
       step("9. phones join game 2");
