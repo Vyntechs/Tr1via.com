@@ -15,6 +15,7 @@ import {
   MAX_PLAYER_NAME_RAW,
   PLAYER_NAME_TOO_LONG_MESSAGE,
   playerNameFits,
+  stripExcessMarks,
 } from "@/lib/player/nameLimit";
 
 const THEME_KEYS = [
@@ -72,16 +73,24 @@ export const CreateNightSchema = z.object({
 });
 
 /**
- * A player's name before the 16-character cap: trimmed, non-empty, with a
- * loose raw-length ceiling. Only the self-join route uses this directly, so
+ * A player's name before the 16-character cap: extra stacked marks
+ * stripped, trimmed, non-empty, with a raw-length ceiling. Only the self-join route uses this directly, so
  * a same-device rejoin carrying an old long name can be shortened instead
  * of bounced mid-night (see app/api/players/route.ts).
  */
 export const LoosePlayerDisplayNameSchema = z
   .string()
-  .trim()
-  .min(1, { message: "Pick a name to join." })
-  .max(MAX_PLAYER_NAME_RAW, { message: PLAYER_NAME_TOO_LONG_MESSAGE });
+  // Hard stop on junk before any work (old pages capped at 40).
+  .max(MAX_PLAYER_NAME_RAW * 8, { message: PLAYER_NAME_TOO_LONG_MESSAGE })
+  // Same "glitch text" strip the phone applies, so stacked accent marks are
+  // dropped the same way on both sides before anything is counted.
+  .transform((s) => stripExcessMarks(s).trim())
+  .pipe(
+    z
+      .string()
+      .min(1, { message: "Pick a name to join." })
+      .max(MAX_PLAYER_NAME_RAW, { message: PLAYER_NAME_TOO_LONG_MESSAGE }),
+  );
 
 /**
  * A player's name: at most 16 characters as people see them (an emoji

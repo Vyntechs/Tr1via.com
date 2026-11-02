@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { Eyebrow } from "@/components/system";
-import { MAX_PLAYER_NAME_RAW, clampPlayerName } from "@/lib/player/nameLimit";
+import { MAX_PLAYER_NAME_RAW, handleNameInputChange } from "@/lib/player/nameLimit";
 
 export interface AddLatecomerModalProps {
   onCancel: () => void;
@@ -104,10 +104,11 @@ export function AddLatecomerModal({ onCancel, onSubmit }: AddLatecomerModalProps
             type="text"
             value={name}
             autoFocus
+            data-testid="latecomer-name-input"
             maxLength={MAX_PLAYER_NAME_RAW}
             placeholder="e.g. Sam (phone dead)"
             // Same 16-character cap as the phone join screen (emoji = 1).
-            onChange={(e) => setName(clampPlayerName(e.target.value))}
+            onChange={(e) => handleNameInputChange(e.target, name, setName)}
             onKeyDown={(e) => {
               if (e.key === "Enter" && canSubmit) void submit();
             }}

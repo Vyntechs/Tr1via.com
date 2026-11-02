@@ -121,4 +121,26 @@ describe("POST /api/players — 16-character name cap", () => {
     expect(upserts[0].display_name).toBe("Bartholomew The");
     expect((await res.json()).player.displayName).toBe("Bartholomew The");
   });
+  it("same-device rejoin cut right at an emoji keeps the whole emoji", async () => {
+    const { admin, upserts } = makeAdmin({ id: "pppppppp-pppp-pppp-pppp-pppppppppppp" });
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { POST } = await import("@/app/api/players/route");
+    const family = "\u{1F468}\u200D\u{1F469}\u200D\u{1F467}"; // 8 UTF-16 units, 1 character
+    const res = await POST(
+      makeRequest({ nightId: NIGHT_ID, displayName: "A".repeat(15) + family + "BB" }),
+    );
+    expect(res.status).toBe(201);
+    expect(upserts[0].display_name).toBe("A".repeat(15) + family);
+  });
+
+  it("new player with stacked glitch marks joins with the extras stripped", async () => {
+    const { admin, upserts } = makeAdmin(null);
+    adminMock.getSupabaseAdmin.mockReturnValue(admin);
+    const { POST } = await import("@/app/api/players/route");
+    const res = await POST(
+      makeRequest({ nightId: NIGHT_ID, displayName: "A" + "\u0301".repeat(180) + "bc" }),
+    );
+    expect(res.status).toBe(201);
+    expect(upserts[0].display_name).toBe("A" + "\u0301".repeat(3) + "bc");
+  });
 });

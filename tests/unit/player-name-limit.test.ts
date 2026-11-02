@@ -8,9 +8,13 @@ import {
 } from "@/lib/api/schemas";
 import {
   MAX_PLAYER_NAME,
+  MAX_PLAYER_NAME_RAW,
+  MAX_STACKED_MARKS,
   PLAYER_NAME_TOO_LONG_MESSAGE,
+  applyNameEdit,
   clampPlayerName,
   countNameChars,
+  stripExcessMarks,
 } from "@/lib/player/nameLimit";
 
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
@@ -63,5 +67,75 @@ describe("player name limit (16 visible characters)", () => {
     const clamped = clampPlayerName("A".repeat(15) + "👨‍👩‍👧" + "BBB");
     expect(clamped).toBe("A".repeat(15) + "👨‍👩‍👧");
     expect(countNameChars(clamped)).toBe(16);
+  });
+});
+
+describe("stacked accent marks (\"glitch text\")", () => {
+  const ACUTE = "́";
+
+  it("keeps at most 3 marks on one character, phone and server alike", () => {
+    expect(MAX_STACKED_MARKS).toBe(3);
+    const glitch = "A" + ACUTE.repeat(180) + "bc";
+    expect(stripExcessMarks(glitch)).toBe("A" + ACUTE.repeat(3) + "bc");
+    expect(clampPlayerName(glitch)).toBe("A" + ACUTE.repeat(3) + "bc");
+    const res = join(glitch);
+    expect(res.success).toBe(true);
+    if (res.success) expect(res.data.displayName).toBe("A" + ACUTE.repeat(3) + "bc");
+  });
+
+  it("leaves real accented names and emoji untouched", () => {
+    const real = [
+      "José", // precomposed
+      "José", // e + accent mark
+      "Nguyện", // Vietnamese ệ typed as e + 2 marks
+      "Nguyễn",
+      "Peña",
+      "ज़ीं", // Hindi: nukta + vowel sign + nasal mark (3 marks)
+      "Sam 👍🏽",
+      "🇺🇸 Team",
+      "👨‍👩‍👧 Crew",
+      "🏳️‍🌈",
+      "Room 1️⃣", // keycap: FE0F + U+20E3, 2 marks
+      "👩🏽‍❤️‍💋‍👨🏻",
+    ];
+    for (const name of real) {
+      expect(stripExcessMarks(name)).toBe(name);
+      expect(clampPlayerName(name)).toBe(name);
+      expect(join(name).success).toBe(true);
+    }
+  });
+
+  it("raw ceiling is back near the old 40 and covers every old-page name", () => {
+    expect(MAX_PLAYER_NAME_RAW).toBe(64);
+    expect(MAX_PLAYER_NAME_RAW).toBeGreaterThanOrEqual(40);
+    // 16 letters with 3 marks each = 64 units, still fits.
+    const heavy = ("e" + "̣̂́").repeat(16);
+    expect(heavy.length).toBe(64);
+    expect(join(heavy).success).toBe(true);
+    // Junk over the ceiling is refused by the strict schema...
+    const fam = "👨‍👩‍👧‍👦"; // 11 units
+    expect(join(fam.repeat(7)).success).toBe(false);
+    // ...and the phone's clamp cuts at a whole character under the ceiling.
+    const clamped = clampPlayerName(fam.repeat(7));
+    expect(clamped).toBe(fam.repeat(5));
+    expect(HostAddPlayerSchema.safeParse({ displayName: clamped }).success).toBe(true);
+  });
+});
+
+describe("applyNameEdit (typing into a full box)", () => {
+  const FULL = "Jennifer Thompso"; // 16
+
+  it("ignores a keystroke in the middle of a full name instead of dropping the last letter", () => {
+    expect(applyNameEdit(FULL, "Jenniferr Thompso")).toBe(FULL);
+  });
+
+  it("still cuts a long paste to 16 when the box was not full", () => {
+    expect(applyNameEdit("", "Christopher Smith Jr")).toBe("Christopher Smit");
+    expect(applyNameEdit("Chris", "Christopher Smith Jr")).toBe("Christopher Smit");
+  });
+
+  it("allows normal typing and deleting", () => {
+    expect(applyNameEdit("Jen", "Jenn")).toBe("Jenn");
+    expect(applyNameEdit(FULL, "Jennifer Thomps")).toBe("Jennifer Thomps");
   });
 });

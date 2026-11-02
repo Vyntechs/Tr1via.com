@@ -10,7 +10,7 @@
 
 "use client";
 
-import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useId, useState, type CSSProperties, type FormEvent } from "react";
 import {
   useTheme,
   Wordmark,
@@ -24,7 +24,21 @@ import {
   MAX_PLAYER_NAME_RAW,
   clampPlayerName,
   countNameChars,
+  handleNameInputChange,
 } from "@/lib/player/nameLimit";
+
+// Read by screen readers, invisible on screen.
+const VISUALLY_HIDDEN: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0,0,0,0)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
 
 export interface PlayerJoinProps {
   themeKey?: ThemeKey;
@@ -74,6 +88,8 @@ export function PlayerJoin({
   }, [playerName, interactive]);
 
   const nameCount = countNameChars(name);
+  const hintId = useId();
+  const counterId = useId();
 
   function handleSubmit(event?: FormEvent<HTMLFormElement>) {
     event?.preventDefault();
@@ -128,7 +144,7 @@ export function PlayerJoin({
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(clampPlayerName(e.target.value))}
+                  onChange={(e) => handleNameInputChange(e.target, name, setName)}
                   placeholder="Your name"
                   // Raw ceiling only: the real 16-character cap is the clamp
                   // above, because maxLength counts an emoji as 2+.
@@ -140,6 +156,7 @@ export function PlayerJoin({
                   spellCheck={false}
                   style={INPUT_STYLE(t.ink)}
                   aria-label="Your display name"
+                  aria-describedby={`${hintId} ${counterId}`}
                   data-testid="player-name-input"
                 />
               ) : (
@@ -170,14 +187,28 @@ export function PlayerJoin({
                 gap: 10,
               }}
             >
-              <span>Everyone sees this. Keep it kind.</span>
+              <span id={hintId}>Everyone sees this. Keep it kind.</span>
               {interactive && (
                 <span
+                  id={counterId}
                   data-testid="player-name-counter"
-                  aria-label={`${nameCount} of ${MAX_PLAYER_NAME} characters`}
                   style={{ fontVariantNumeric: "tabular-nums", flexShrink: 0 }}
                 >
-                  {nameCount}/{MAX_PLAYER_NAME}
+                  {/* Screen readers get words ("12 of 16 characters") when
+                      they read the box's description, never "12/16". */}
+                  <span aria-hidden="true">
+                    {nameCount}/{MAX_PLAYER_NAME}
+                  </span>
+                  <span style={VISUALLY_HIDDEN}>
+                    {nameCount} of {MAX_PLAYER_NAME} characters
+                  </span>
+                </span>
+              )}
+              {interactive && (
+                // Always in the page (late-added live regions are often
+                // missed). Silent while typing; one polite note at the cap.
+                <span aria-live="polite" data-testid="player-name-limit-note" style={VISUALLY_HIDDEN}>
+                  {nameCount >= MAX_PLAYER_NAME ? `Name is full, ${MAX_PLAYER_NAME} characters.` : ""}
                 </span>
               )}
             </div>

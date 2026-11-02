@@ -306,3 +306,41 @@ describe("POST /api/nights/[id]/players (host adds latecomer)", () => {
     expect(participationInserts).toHaveLength(0);
   });
 });
+
+describe("POST /api/nights/[id]/players — 16-character name cap", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authMock.requireOwnedNight.mockResolvedValue({
+      ok: true,
+      host: { id: HOST_ID },
+      night: { id: NIGHT_ID, host_id: HOST_ID, closed_at: null },
+    });
+  });
+
+  it("rejects a 17-character latecomer name and saves nothing", async () => {
+    const { client, playersInserts } = makeAdminWithCapture({
+      night: { id: NIGHT_ID, closed_at: null },
+      games: [{ id: "g1", game_no: 1, state: "live" }],
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(client);
+    const { POST } = await import("@/app/api/nights/[id]/players/route");
+    const res = await POST(makeRequest({ displayName: "A".repeat(17) }), makeCtx());
+    expect(res.status).toBe(400);
+    expect(playersInserts).toHaveLength(0);
+  });
+
+  it("accepts 16 characters ending in an emoji, glitch marks stripped", async () => {
+    const { client, playersInserts } = makeAdminWithCapture({
+      night: { id: NIGHT_ID, closed_at: null },
+      games: [{ id: "g1", game_no: 1, state: "live" }],
+    });
+    adminMock.getSupabaseAdmin.mockReturnValue(client);
+    const { POST } = await import("@/app/api/nights/[id]/players/route");
+    const name = "Z" + "́".repeat(30) + "ack Attack Te🍕";
+    const res = await POST(makeRequest({ displayName: name }), makeCtx());
+    expect(res.status).toBeLessThan(300);
+    expect((playersInserts[0] as { display_name: string }).display_name).toBe(
+      "Z" + "́".repeat(3) + "ack Attack Te🍕",
+    );
+  });
+});
