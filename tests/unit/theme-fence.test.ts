@@ -16,7 +16,10 @@ const TIMER_ZERO_BACKUP = `  const { displaySeconds } = useTimer({
     onZero: () => {
       void fetch(\`/api/questions/\${question.id}/resolve\`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          [CLOSE_CALLER_HEADER]: "tv",
+        },
       }).catch(() => {
         // Network/transient failure: phones or host's manual End-early
         // button remain as fallbacks. Logging would be noise.

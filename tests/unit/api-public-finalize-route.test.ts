@@ -143,6 +143,25 @@ describe("POST /api/room/[code]/plays/[playId]/finalize", () => {
     expect(broadcastMock.broadcastFireworks).toHaveBeenCalledTimes(1);
   });
 
+  it("logs one close for a fresh finalization", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
+
+    const { POST } = await import("@/app/api/room/[code]/plays/[playId]/finalize/route");
+    await POST(request({ runId: RUN_ID }), ctx);
+
+    const closes = info.mock.calls
+      .filter(([line]) => typeof line === "string" && line.includes('"kind":"close"'))
+      .map(([line]) => JSON.parse(line as string) as unknown);
+    expect(closes).toEqual([{
+      kind: "close",
+      questionId: QUESTION_ID,
+      roomCode: "ABCDEF",
+      closedBy: "unknown",
+      lateMs: expect.any(Number),
+    }]);
+  });
+
   it("rejects caller-supplied authority fields before the RPC", async () => {
     const admin = makeAdmin();
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
@@ -285,8 +304,10 @@ describe("POST /api/room/[code]/plays/[playId]/finalize", () => {
     const response = await POST(request({ runId: RUN_ID }), ctx);
 
     expect(response.status).toBe(200);
-    expect(info).toHaveBeenCalledOnce();
-    const logged = info.mock.calls[0][0] as Record<string, unknown>;
+    // The other console.info line is the close log, a plain JSON string.
+    const health = info.mock.calls.filter(([event]) => typeof event !== "string");
+    expect(health).toHaveLength(1);
+    const logged = health[0][0] as Record<string, unknown>;
     expect(logged).toMatchObject({
       event: "live_answer_health",
       playId: PLAY_ID,
@@ -320,7 +341,9 @@ describe("POST /api/room/[code]/plays/[playId]/finalize", () => {
     expect(await response.json()).toMatchObject({
       result: { code: "resolved" },
     });
-    expect(info).toHaveBeenCalledOnce();
+    // The health sink and the close log each hit the throwing sink, and neither
+    // reached the reply.
+    expect(info).toHaveBeenCalledTimes(2);
     info.mockRestore();
   });
 });

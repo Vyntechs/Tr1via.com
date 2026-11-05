@@ -510,7 +510,10 @@ describe("player answer signed snapshot refresh", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/questions/question-1/resolve",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        headers: { "x-tr1via-close-caller": "phone" },
+      }),
     ));
     await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(2));
   });

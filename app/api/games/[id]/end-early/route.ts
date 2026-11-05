@@ -1,14 +1,15 @@
 // POST /api/games/:id/end-early — host short-circuits a question timer (theme-derived; 25s for every theme).
 //
-// Used when "everyone has obviously answered, let's see the result." Manual
-// presses reuse resolve_question(); guarded auto-reveal uses a DB-side
-// check-and-resolve RPC so a late participant cannot slip between app reads
-// and the resolve. After RPC, broadcast 'end-early' so the rest of the devices
-// skip straight to reveal.
+// Used when "everyone has obviously answered, let's see the result." Both a
+// manual press and guarded auto-reveal close through resolve_question_once,
+// which names one winner. Only the winner broadcasts 'end-early', so the rest
+// of the devices skip straight to reveal exactly once; a loser gets a 409.
 //
-// Note: resolve_question is idempotent. If a phone's timer races us and
-// also calls /api/questions/:id/resolve, only the first call does work
-// (the second sees `finished_at IS NOT NULL` and returns no-op).
+// Guarded auto-reveal checks "everyone has answered" with plain reads. It does
+// not call resolve_question_if_all_locked, whose table locks stall every open
+// night and which answers true for a question already closed. The cost is that
+// a player joining in the few milliseconds between the reads and the close
+// misses this question.
 
 import type { NextRequest } from "next/server";
 import { EndEarlySchema, HostPlayCommandSchema } from "@/lib/api/schemas";
@@ -19,6 +20,38 @@ import { broadcastAppliedLiveRoomEvent, broadcastFireworks, broadcastToRoom } fr
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
+import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import { closeLateMs, logClose } from "@/lib/live/logClose";
+
+/**
+ * True when at least one player can answer and every one of them has. An answer
+ * from someone no longer eligible counts for nothing. Null means a read failed.
+ */
+async function everyEligiblePlayerLocked(
+  admin: ReturnType<typeof getSupabaseAdmin>,
+  gameId: string,
+  nightId: string,
+  questionId: string,
+): Promise<boolean | null> {
+  const [participants, activePlayers, answers] = await Promise.all([
+    admin.from("game_participations").select("player_id").eq("game_id", gameId),
+    admin
+      .from("players")
+      .select("id")
+      .eq("night_id", nightId)
+      .is("removed_at", null)
+      .eq("can_answer", true),
+    admin.from("answers").select("player_id").eq("question_id", questionId),
+  ]);
+  if (participants.error || activePlayers.error || answers.error) return null;
+
+  const active = new Set((activePlayers.data ?? []).map((row) => row.id));
+  const answered = new Set((answers.data ?? []).map((row) => row.player_id));
+  const eligible = (participants.data ?? [])
+    .map((row) => row.player_id)
+    .filter((playerId) => active.has(playerId));
+  return eligible.length > 0 && eligible.every((id) => answered.has(id));
+}
 
 async function postEndEarly(
   req: NextRequest,
@@ -93,6 +126,14 @@ async function postEndEarly(
             console.warn("broadcast question fireworks failed");
           }
         }
+        if (fresh.kind === "play_resolved" && live.play?.questionId) {
+          logClose({
+            questionId: live.play.questionId,
+            roomCode: owned.night.room_code,
+            closedBy: "host",
+            lateMs: closeLateMs(Date.now(), Date.parse(live.play.mainZeroAt)),
+          });
+        }
       }
     }
     return ok(envelope.result);
@@ -121,22 +162,23 @@ async function postEndEarly(
   if (q.finished_at) return conflict("question is already resolved");
 
   if (legacy.requireAllLocked) {
-    const { data: didResolve, error: rpcError } = await admin.rpc(
-      "resolve_question_if_all_locked",
-      {
-        p_question_id: legacy.questionId,
-      },
+    const allLocked = await everyEligiblePlayerLocked(
+      admin,
+      gameId,
+      owned.night.id,
+      legacy.questionId,
     );
-    if (rpcError) return serverError(rpcError.message);
-    if (!didResolve) {
-      return conflict("not all eligible players are locked");
-    }
-  } else {
-    const { error: rpcError } = await admin.rpc("resolve_question", {
-      p_question_id: legacy.questionId,
-    });
-    if (rpcError) return serverError(rpcError.message);
+    if (allLocked === null) return serverError("could not check locked players");
+    if (!allLocked) return conflict("not all eligible players are locked");
   }
+
+  const { data: didResolve, error: rpcError } = await admin.rpc(
+    "resolve_question_once",
+    { p_question_id: legacy.questionId },
+  );
+  if (rpcError) return serverError(rpcError.message);
+  if (!didResolve) return conflict("question is already resolved");
+  const closedAtMs = Date.now();
 
   // Broadcast end-early as a hint that the reveal is "early"; phones can
   // animate the timer ring "snapping" to 0 rather than naturally winding.
@@ -147,13 +189,22 @@ async function postEndEarly(
     await broadcastToRoom(owned.night.room_code, "end-early", {
       questionId: legacy.questionId,
       correctIndex: q.correct_index,
-      serverNow: new Date().toISOString(),
+      serverNow: new Date(closedAtMs).toISOString(),
     });
   } catch (e) {
     console.warn("broadcast end-early failed", e);
   }
+  logClose({
+    questionId: legacy.questionId,
+    roomCode: owned.night.room_code,
+    closedBy: legacy.requireAllLocked ? "host-auto" : "host",
+    lateMs: closeLateMs(
+      closedAtMs,
+      new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000,
+    ),
+  });
 
-  return ok({ resolvedAt: new Date().toISOString() });
+  return ok({ resolvedAt: new Date(closedAtMs).toISOString() });
 }
 
 export const POST = withActionLog("end_early", postEndEarly, { idKind: "game" });

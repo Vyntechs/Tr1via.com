@@ -96,6 +96,7 @@ import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { readThemeSeed, writeThemeSeed } from "@/lib/theme/themeSeed";
 import { questionDurationFor, lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
+import { CLOSE_CALLER_HEADER } from "@/lib/live/logClose";
 import type {
   AnswerRow,
   CategoryRow,
@@ -926,6 +927,7 @@ function LiveQuestionView({
     void fetch(`/api/questions/${question.id}/resolve`, {
       method: "POST",
       credentials: "same-origin",
+      headers: { [CLOSE_CALLER_HEADER]: "phone" },
     })
       .catch((e) => console.warn("resolve failed", e))
       .finally(() => onResolveSettled());

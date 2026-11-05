@@ -307,6 +307,25 @@ describe("TVStateMachine diagnostic receipts (timer zero drawn, reveal drawn)", 
     vi.unstubAllGlobals();
   });
 
+  it("names itself as the TV when its real timer reaches zero", () => {
+    const fetchMock = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetchMock);
+    listen();
+    render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine snapshot={liveAfter25Seconds()} themeKey="april" />
+      </ThemeProvider>,
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/questions/q2/resolve",
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({ "x-tr1via-close-caller": "tv" }),
+      }),
+    );
+    vi.unstubAllGlobals();
+  });
+
   it("says the reveal was drawn when the answer frame shows", () => {
     listen();
     render(

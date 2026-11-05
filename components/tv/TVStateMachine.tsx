@@ -65,6 +65,7 @@ import { fireJuneBeat } from "@/components/system";
 import { TVWorldLayer } from "@/components/experience/TVWorldLayer";
 import { usePublishTVMoment } from "@/components/experience/StageWorld";
 import type { TVMoment } from "@/lib/experience/tvMoment";
+import { CLOSE_CALLER_HEADER } from "@/lib/live/logClose";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
 
@@ -554,7 +555,10 @@ function TVQuestionView({
     onZero: () => {
       void fetch(`/api/questions/${question.id}/resolve`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          [CLOSE_CALLER_HEADER]: "tv",
+        },
       }).catch(() => {
         // Network/transient failure: phones or host's manual End-early
         // button remain as fallbacks. Logging would be noise.

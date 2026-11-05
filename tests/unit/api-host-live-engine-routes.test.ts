@@ -198,6 +198,7 @@ describe("resilient host lifecycle routes", () => {
       controlRevision: 5,
     }],
   ])("accepts %s from Show Answer without calling legacy resolution", async (_kind, result) => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
     const admin = adminReturning(envelope(result));
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
     if (_kind === "play_resolved") {
@@ -234,9 +235,19 @@ describe("resilient host lifecycle routes", () => {
         "salvo",
         QUESTION_ID,
       );
+      expect(info).toHaveBeenCalledOnce();
+      expect(JSON.parse(info.mock.calls[0][0] as string)).toEqual({
+        kind: "close",
+        questionId: QUESTION_ID,
+        roomCode: "ABCDEF",
+        closedBy: "host",
+        lateMs: null,
+      });
     } else {
       expect(broadcastMock.broadcastFireworks).not.toHaveBeenCalled();
+      expect(info).not.toHaveBeenCalled();
     }
+    info.mockRestore();
   });
 
   it("does not repeat the resolved-question salvo for a nonfresh Show Answer retry", async () => {

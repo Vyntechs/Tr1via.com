@@ -11,7 +11,8 @@
 //
 // Beyond the 2s window: refuse with 409. This is a tiny, deliberate
 // surface; we don't want host palpitations about "did I just lose 30
-// answers?" Once people have answered, you're committed.
+// answers?" Once people have answered, you're committed. A question that has
+// already closed is refused too: it has been scored and the room has seen it.
 
 import { HostPlayCommandSchema } from "@/lib/api/schemas";
 import { ok, forbidden, unauthorized, serverError, notFound, conflict, badRequest } from "@/lib/api/responses";
@@ -99,6 +100,14 @@ async function postUndo(
   if (ageMs > UNDO_WINDOW_MS) {
     return conflict(`undo window expired (${Math.round(ageMs)}ms)`);
   }
+
+  const { data: question, error: questionError } = await admin
+    .from("questions")
+    .select("finished_at")
+    .eq("id", latest.question_id)
+    .maybeSingle();
+  if (questionError) return serverError(questionError.message);
+  if (question?.finished_at) return conflict("question is already resolved");
 
   // Sequence: undo-log first, then wipe answers, then clear played_at.
   // The reveals row is append-only audit; we don't delete the original

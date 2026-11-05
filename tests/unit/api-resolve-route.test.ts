@@ -166,6 +166,31 @@ describe("resilient POST /api/questions/[id]/resolve", () => {
     expect(body).not.toHaveProperty("freshlyApplied");
   });
 
+  it("logs one close for a fresh resolution and none for a replay", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const closeLines = () => info.mock.calls
+      .filter(([line]) => typeof line === "string" && line.includes('"kind":"close"'))
+      .map(([line]) => JSON.parse(line as string) as Record<string, unknown>);
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin(resolvedEnvelope(false)));
+    await POST(new Request("http://test"), ctx);
+    expect(closeLines()).toEqual([]);
+
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin(resolvedEnvelope(true)));
+    await POST(
+      new Request("http://test", { headers: { "x-tr1via-close-caller": "phone" } }),
+      ctx,
+    );
+    expect(closeLines()).toEqual([{
+      kind: "close",
+      questionId: QUESTION_ID,
+      roomCode: "ABCDEF",
+      closedBy: "phone",
+      lateMs: expect.any(Number),
+    }]);
+  });
+
   it("records the resilient due-finalizer through the safe server sink", async () => {
     const admin = makeAdmin(resolvedEnvelope(true));
     adminMock.getSupabaseAdmin.mockReturnValue(admin);
@@ -175,8 +200,10 @@ describe("resilient POST /api/questions/[id]/resolve", () => {
     const response = await POST(new Request("http://test"), ctx);
 
     expect(response.status).toBe(200);
-    expect(info).toHaveBeenCalledOnce();
-    expect(info.mock.calls[0][0]).toMatchObject({
+    // The other console.info line is the close log, a plain JSON string.
+    const health = info.mock.calls.filter(([event]) => typeof event !== "string");
+    expect(health).toHaveLength(1);
+    expect(health[0][0]).toMatchObject({
       event: "live_answer_health",
       playId: PLAY_ID,
       resultCode: "resolved",
