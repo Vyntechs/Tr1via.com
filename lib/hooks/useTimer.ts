@@ -6,6 +6,9 @@
 //   - serverNowMs: the server's "now" at the moment the reveal broadcast
 //     was sent. We use this to compute a per-device clock offset so the
 //     countdown is precisely aligned across phones / TV.
+//   - receivedAtMs: this device's clock when that broadcast arrived. Taken at
+//     the broadcast, not here, because the question screen can mount a good
+//     while later and the offset would run late by that gap.
 //   - durationS: seconds the question is live for. When omitted, defaults
 //     come from the theme registry (25 for every theme).
 //   - onZero: called exactly once when the timer first crosses 0. Used by
@@ -16,7 +19,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { secondsRemaining } from "@/lib/game/timer";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import type { ThemeKey } from "@/lib/theme/tokens";
@@ -28,6 +31,8 @@ export interface UseTimerOpts {
   revealedAtMs: number | null;
   /** Server's "now" at broadcast time. If provided, used to derive skew. */
   serverNowMs?: number | null;
+  /** This device's Date.now() when the broadcast carrying serverNowMs arrived. */
+  receivedAtMs?: number | null;
   /**
    * Total question duration in seconds. When omitted, the default comes
    * from the theme registry — 25 for every theme.
@@ -48,23 +53,34 @@ export interface UseTimerResult {
   fraction: number;
   /** True after secondsRemaining first hits 0. Stable thereafter. */
   hasExpired: boolean;
+  /** Milliseconds left right now, for timers that outlive a render. Stable identity. */
+  getRemainingMs: () => number;
 }
 
 export function useTimer(opts: UseTimerOpts): UseTimerResult {
   const duration = opts.durationS ?? questionDurationFor(opts.themeKey);
 
   // Clock-skew offset: serverNow - clientNow at the moment the broadcast
-  // arrived. Subtracting it from Date.now() gives the device's best
-  // estimate of the server clock. Recomputed only when opts change so
-  // we don't drift between renders.
+  // arrived. Adding it to Date.now() gives the device's best estimate of the
+  // server clock. A later broadcast of another kind replaces the reveal tag and
+  // takes serverNowMs back to null; the last good offset stays, because a skewed
+  // clock is still skewed. With no receipt stamp, "now" is the closest we have.
   const offsetMs = useRef(0);
   useEffect(() => {
     if (opts.serverNowMs && opts.revealedAtMs) {
-      offsetMs.current = opts.serverNowMs - Date.now();
-    } else {
-      offsetMs.current = 0;
+      offsetMs.current = opts.serverNowMs - (opts.receivedAtMs ?? Date.now());
     }
-  }, [opts.serverNowMs, opts.revealedAtMs]);
+  }, [opts.serverNowMs, opts.receivedAtMs, opts.revealedAtMs]);
+
+  const clockRef = useRef({ revealedAtMs: opts.revealedAtMs, duration });
+  clockRef.current = { revealedAtMs: opts.revealedAtMs, duration };
+  const getRemainingMs = useCallback(() => {
+    const { revealedAtMs, duration: durationS } = clockRef.current;
+    if (revealedAtMs === null) return durationS * 1000;
+    return (
+      secondsRemaining({ revealedAtMs, durationS, nowMs: Date.now() + offsetMs.current }) * 1000
+    );
+  }, []);
 
   const [remaining, setRemaining] = useState(() =>
     opts.revealedAtMs === null
@@ -121,5 +137,6 @@ export function useTimer(opts: UseTimerOpts): UseTimerResult {
     displaySeconds: Math.ceil(remaining),
     fraction: duration === 0 ? 0 : remaining / duration,
     hasExpired: remaining <= 0,
+    getRemainingMs,
   };
 }

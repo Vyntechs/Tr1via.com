@@ -422,6 +422,10 @@ function DesktopHostLiveConsoleClient({
     room.lastBroadcast?.event === "reveal"
       ? room.lastBroadcast.serverNow
       : null;
+  const tvLastBroadcastReceivedAtMs =
+    room.lastBroadcast?.event === "reveal"
+      ? room.lastBroadcast.receivedAtMs ?? null
+      : null;
 
   // Magic-Welcome event for the embedded TV panel. Lifts the
   // `roster-changed` broadcast into a UI-shaped event, holds for ~3s,
@@ -720,6 +724,8 @@ function DesktopHostLiveConsoleClient({
         tvSnapshot={tvSnapshot}
         tvLastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
         tvLastBroadcastServerNow={tvLastBroadcastServerNow}
+        tvLastBroadcastReceivedAtMs={tvLastBroadcastReceivedAtMs}
+        onTvResolveSettled={room.requestRefresh}
         welcomeEvent={welcomeEvent}
         roomMagicEnabled={Boolean(room.night?.room_magic_enabled)}
         lastRoomMagicReaction={room.lastRoomMagicReaction}

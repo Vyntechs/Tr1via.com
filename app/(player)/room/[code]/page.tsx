@@ -64,6 +64,7 @@ import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
 import { sumAwardedForGame } from "@/lib/player/revealTotal";
 import { useTimer } from "@/lib/hooks/useTimer";
+import { useResolveAtZero } from "@/lib/hooks/useResolveAtZero";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
@@ -96,7 +97,6 @@ import { type ThemeKey } from "@/lib/theme/tokens";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { readThemeSeed, writeThemeSeed } from "@/lib/theme/themeSeed";
 import { questionDurationFor, lockInCeremonyFor } from "@/lib/theme/lockInCeremony";
-import { CLOSE_CALLER_HEADER } from "@/lib/live/logClose";
 import type {
   AnswerRow,
   CategoryRow,
@@ -914,33 +914,27 @@ function LiveQuestionView({
     revealBroadcast?.event === "reveal" && revealBroadcast.questionId === question.id
       ? new Date(revealBroadcast.serverNow).getTime()
       : null;
+  const receivedAtMs =
+    revealBroadcast?.event === "reveal" && revealBroadcast.questionId === question.id
+      ? revealBroadcast.receivedAtMs ?? null
+      : null;
 
   // When the timer hits zero on THIS device, fire /resolve — the first phone
   // to arrive wins; the rest get no-ops. This also runs once the player has
   // locked in: if every player locks in early there is nobody else to trigger
   // the resolve, the server never sets finished_at, and every phone would sit
-  // on "Waiting for the room to lock in…" indefinitely.
-  const resolveCalled = useRef(false);
-  const handleZero = useCallback(() => {
-    if (resolveCalled.current) return;
-    resolveCalled.current = true;
-    void fetch(`/api/questions/${question.id}/resolve`, {
-      method: "POST",
-      credentials: "same-origin",
-      headers: { [CLOSE_CALLER_HEADER]: "phone" },
-    })
-      .catch((e) => console.warn("resolve failed", e))
-      .finally(() => onResolveSettled());
-  }, [onResolveSettled, question.id]);
+  // on "Waiting for the room to lock in…" indefinitely. The ladder keeps asking
+  // through a "not yet" or a bad reply, then re-reads the room once.
+  const handleZero = useResolveAtZero({
+    questionId: question.id,
+    caller: "phone",
+    onSettled: onResolveSettled,
+  });
 
-  // Reset the latch when the question changes.
-  useEffect(() => {
-    resolveCalled.current = false;
-  }, [question.id]);
-
-  const { displaySeconds, hasExpired } = useTimer({
+  const { displaySeconds, hasExpired, getRemainingMs } = useTimer({
     revealedAtMs,
     serverNowMs,
+    receivedAtMs,
     durationS: questionDurationFor(themeKey),
     onZero: handleZero,
   });

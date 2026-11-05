@@ -14,6 +14,8 @@ export interface HostVenueMonitorProps {
   themeKey?: ThemeKey;
   lastBroadcastRevealedAt?: string | null;
   lastBroadcastServerNow?: string | null;
+  lastBroadcastReceivedAtMs?: number | null;
+  onResolveSettled?: () => void;
 }
 
 export function HostVenueMonitor({
@@ -22,6 +24,8 @@ export function HostVenueMonitor({
   themeKey,
   lastBroadcastRevealedAt = null,
   lastBroadcastServerNow = null,
+  lastBroadcastReceivedAtMs = null,
+  onResolveSettled,
 }: HostVenueMonitorProps) {
   const { t } = useTheme();
   const [wideLayout, setWideLayout] = useState(false);
@@ -70,6 +74,8 @@ export function HostVenueMonitor({
                 snapshot={snapshot}
                 lastBroadcastRevealedAt={lastBroadcastRevealedAt}
                 lastBroadcastServerNow={lastBroadcastServerNow}
+                lastBroadcastReceivedAtMs={lastBroadcastReceivedAtMs}
+                onResolveSettled={onResolveSettled}
                 themeKey={themeKey}
                 // A theme's living world (October) draws still here, to
                 // save the host phone's battery. Plain themes ignore it.

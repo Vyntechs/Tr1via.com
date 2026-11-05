@@ -135,6 +135,9 @@ export interface BroadcastTag {
   questionId: string;
   /** Server's "now" at broadcast time. ISO string. */
   serverNow: string;
+  /** Reveal-specific: this device's Date.now() when the broadcast arrived, so
+   *  useTimer's clock offset doesn't include how long the screen took to mount. */
+  receivedAtMs?: number;
   /** Reveal-specific: server timestamp of the reveal. ISO string. */
   revealedAt?: string;
   /** Resolve-specific: canonical correct option index. */
@@ -473,6 +476,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             event: "reveal",
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
+            receivedAtMs: Date.now(),
             revealedAt: typeof p.revealedAt === "string" ? p.revealedAt : undefined,
           });
         })
@@ -1398,6 +1402,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             event: "reveal",
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
+            receivedAtMs: Date.now(),
             revealedAt: typeof p.revealedAt === "string" ? p.revealedAt : undefined,
           });
           // Realtime postgres_changes don't reliably reach phones (Realtime's

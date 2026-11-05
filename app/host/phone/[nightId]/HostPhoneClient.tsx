@@ -372,6 +372,7 @@ export function HostPhoneClient({
     serverNowMs: room.lastBroadcast
       ? new Date(room.lastBroadcast.serverNow).getTime()
       : null,
+    receivedAtMs: room.lastBroadcast?.receivedAtMs ?? null,
     themeKey,
   });
 
@@ -991,6 +992,8 @@ export function HostPhoneClient({
               : null
           }
           lastBroadcastServerNow={room.lastBroadcast?.serverNow ?? null}
+          lastBroadcastReceivedAtMs={room.lastBroadcast?.receivedAtMs ?? null}
+          onResolveSettled={room.requestRefresh}
         />
       )}
     >

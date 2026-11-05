@@ -50,6 +50,7 @@ export default function TVPage({
     lastBroadcast,
     lastFireworksBeat,
     lastRoomMagicReaction,
+    refresh,
   } = useTVRoom(code);
   useSurfaceObservation({
     endpoint: `/api/tv/${code}/observe`,
@@ -94,6 +95,8 @@ export default function TVPage({
     lastBroadcast?.event === "reveal" ? lastBroadcast.revealedAt ?? null : null;
   const broadcastServerNow =
     lastBroadcast?.event === "reveal" ? lastBroadcast.serverNow ?? null : null;
+  const broadcastReceivedAtMs =
+    lastBroadcast?.event === "reveal" ? lastBroadcast.receivedAtMs ?? null : null;
 
   // `welcomeEvent` is computed at the top of this component (above the early
   // returns) so its hook runs on every render — see the call site there.
@@ -105,6 +108,8 @@ export default function TVPage({
           snapshot={snapshot}
           lastBroadcastRevealedAt={broadcastRevealedAt}
           lastBroadcastServerNow={broadcastServerNow}
+          lastBroadcastReceivedAtMs={broadcastReceivedAtMs}
+          onResolveSettled={refresh}
           welcomeEvent={welcomeEvent}
           themeKey={themeKey}
         />

@@ -53,6 +53,7 @@ import { rankScores } from "@/lib/game/rankScores";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { diagDrawn } from "@/lib/diagnostics/client";
 import { useTimer } from "@/lib/hooks/useTimer";
+import { useResolveAtZero } from "@/lib/hooks/useResolveAtZero";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { countHouseLightsLocks } from "@/lib/room-magic/house-lights";
@@ -65,7 +66,6 @@ import { fireJuneBeat } from "@/components/system";
 import { TVWorldLayer } from "@/components/experience/TVWorldLayer";
 import { usePublishTVMoment } from "@/components/experience/StageWorld";
 import type { TVMoment } from "@/lib/experience/tvMoment";
-import { CLOSE_CALLER_HEADER } from "@/lib/live/logClose";
 
 const STUMPER_THRESHOLD = 4; // ≤ this many got it = use the stumper variant
 
@@ -78,6 +78,11 @@ export interface TVStateMachineProps {
   /** Server's "now" at the moment the broadcast was sent — used to derive
    *  client-clock skew. Optional. */
   lastBroadcastServerNow?: string | null;
+  /** This device's clock when that broadcast arrived. Optional. */
+  lastBroadcastReceivedAtMs?: number | null;
+  /** Runs once when the timer-zero ladder ends: re-read the room, in case the
+   *  close happened but its broadcast never arrived. Optional. */
+  onResolveSettled?: () => void;
   /** Host-only: when provided, the in-grid cells become clickable buttons
    *  and fire this handler with the picked question id. The standalone
    *  `/tv/[code]` route omits it so the audience surface stays inert. */
@@ -125,6 +130,8 @@ function TVStateMachineViews({
   snapshot,
   lastBroadcastRevealedAt = null,
   lastBroadcastServerNow = null,
+  lastBroadcastReceivedAtMs = null,
+  onResolveSettled,
   onGridCellClick,
   hostAdvanced = false,
   welcomeEvent = null,
@@ -283,6 +290,8 @@ function TVStateMachineViews({
           question={liveQuestion}
           revealedAt={lastBroadcastRevealedAt ?? liveQuestion.playedAt}
           serverNow={lastBroadcastServerNow}
+          receivedAtMs={lastBroadcastReceivedAtMs}
+          onResolveSettled={onResolveSettled}
           themeKey={themeKey}
           onPendingCountChange={onPendingCountChange}
         />
@@ -319,6 +328,8 @@ function TVStateMachineViews({
             question={revealQuestion}
             revealedAt={lastBroadcastRevealedAt ?? revealQuestion.playedAt}
             serverNow={lastBroadcastServerNow}
+            receivedAtMs={lastBroadcastReceivedAtMs}
+            onResolveSettled={onResolveSettled}
             themeKey={themeKey}
             onPendingCountChange={onPendingCountChange}
           />
@@ -518,6 +529,8 @@ function TVQuestionView({
   question,
   revealedAt,
   serverNow,
+  receivedAtMs,
+  onResolveSettled,
   themeKey,
   onPendingCountChange,
 }: {
@@ -525,6 +538,8 @@ function TVQuestionView({
   question: TVSnapshot["questions"][number];
   revealedAt: string | null;
   serverNow: string | null;
+  receivedAtMs: number | null;
+  onResolveSettled?: () => void;
   themeKey?: ThemeKey;
   /** Fires whenever the ceremony queue length changes — lets the parent
    *  state machine gate the reveal transition during the drain window. */
@@ -548,22 +563,19 @@ function TVQuestionView({
   // is idempotent — its RPC does a "select … for update" so a second caller
   // is a no-op. Without this onZero, a force-closed phone means the timer
   // hits 0 and the game stalls — host has to manually click "End early".
+  // The ladder keeps asking through a bad reply; if it still fails, phones or
+  // the host's End-early button remain as fallbacks.
+  const closeAtZero = useResolveAtZero({
+    questionId: question.id,
+    caller: "tv",
+    onSettled: onResolveSettled,
+  });
   const { displaySeconds } = useTimer({
     revealedAtMs: revealedMs,
     serverNowMs,
+    receivedAtMs,
     themeKey,
-    onZero: () => {
-      void fetch(`/api/questions/${question.id}/resolve`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          [CLOSE_CALLER_HEADER]: "tv",
-        },
-      }).catch(() => {
-        // Network/transient failure: phones or host's manual End-early
-        // button remain as fallbacks. Logging would be noise.
-      });
-    },
+    onZero: closeAtZero,
   });
 
   // Diagnostic log only: say so (once) when the frame showing the timer at 0 has

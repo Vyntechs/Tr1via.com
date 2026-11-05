@@ -157,6 +157,8 @@ export interface TVBroadcast {
    *  roster-changed. */
   questionId: string;
   serverNow: string;
+  /** Reveal only: this device's Date.now() when the broadcast arrived. */
+  receivedAtMs?: number;
   revealedAt?: string;
   correctIndex?: number;
   /** Ephemeral roster event identity, never a database player id. */
@@ -314,6 +316,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
             event: "reveal",
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
+            receivedAtMs: Date.now(),
             revealedAt:
               typeof p.revealedAt === "string" ? p.revealedAt : undefined,
           },
