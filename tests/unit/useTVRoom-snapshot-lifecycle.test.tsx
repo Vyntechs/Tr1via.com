@@ -452,4 +452,150 @@ describe("useTVRoom snapshot request lifecycle", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(result.current.snapshot?.night.venueName).toBe("Polled");
   });
+
+  async function advance(ms: number) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
+    await flushTimersAndPromises();
+  }
+
+  function signalOf(fetchMock: ReturnType<typeof vi.fn>, call: number) {
+    return (fetchMock.mock.calls[call][1] as RequestInit).signal as AbortSignal;
+  }
+
+  it("lets a slow reply land: a safety poll skips a request under 5s old", async () => {
+    vi.useFakeTimers();
+    const slow = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Initial")))
+      .mockReturnValueOnce(slow.promise);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+    await flushTimersAndPromises();
+
+    await advance(4_000); // the poll at 4s starts the slow request
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await advance(4_000); // the poll at 8s finds it 4s old and leaves it alone
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(signalOf(fetchMock, 1).aborted).toBe(false);
+
+    await advance(500);
+    slow.resolve(response(snapshot("ABCDEF", "Slow reply")));
+    await flushTimersAndPromises();
+
+    expect(result.current.status).toBe("ready");
+    expect(result.current.snapshot?.night.venueName).toBe("Slow reply");
+  });
+
+  it("skips while the very first load is pending, then polls again once the 5s bound clears it", async () => {
+    vi.useFakeTimers();
+    const hung = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(hung.promise)
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Recovered")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+    await flushTimersAndPromises();
+
+    await advance(4_000);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await advance(1_000); // the 5s bound gives up on it
+    expect(signalOf(fetchMock, 0).aborted).toBe(true);
+    expect(result.current.status).toBe("error");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await advance(3_000); // the poll at 8s has nothing in flight
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.current.status).toBe("ready");
+    expect(result.current.snapshot?.night.venueName).toBe("Recovered");
+  });
+
+  it("replaces a request that is stuck past 5s, which the fetch bound can't see once headers land", async () => {
+    vi.useFakeTimers();
+    const stuckBody = deferred<TVSnapshot>();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Initial")))
+      .mockResolvedValueOnce(
+        response(snapshot("ABCDEF", "never"), vi.fn(() => stuckBody.promise)),
+      )
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Replaced")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+    await flushTimersAndPromises();
+
+    await advance(4_000); // starts the request whose body never arrives
+    await advance(4_000); // 4s old: skipped
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await advance(4_000); // 8s old: replaced
+    expect(signalOf(fetchMock, 1).aborted).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(result.current.snapshot?.night.venueName).toBe("Replaced");
+  });
+
+  it("still aborts and restarts for a broadcast, however young the request", async () => {
+    vi.useFakeTimers();
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    const fetchMock = vi
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+    await flushTimersAndPromises();
+
+    await advance(2_000);
+    act(() => {
+      h.broadcast("ABCDEF", "resolve", {
+        questionId: "q1",
+        serverNow: "2026-07-20T01:00:00.000Z",
+      });
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(signalOf(fetchMock, 0).aborted).toBe(true);
+
+    await advance(2_000); // the poll at 4s finds a 2s-old request
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    second.resolve(response(snapshot("ABCDEF", "After resolve")));
+    await flushTimersAndPromises();
+    expect(result.current.snapshot?.night.venueName).toBe("After resolve");
+  });
+
+  it.each([
+    ["a server error", () => Promise.resolve({ ok: false, status: 503 } as Response), 0],
+    ["a dropped connection", () => Promise.reject(new TypeError("Failed to fetch")), 0],
+    ["a hung request", () => new Promise<Response>(() => {}), 5_000],
+  ])("keeps the last snapshot through %s, then takes the next good one", async (_name, failure, failsAfterMs) => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response(snapshot("ABCDEF", "Last good")))
+      .mockImplementationOnce(failure)
+      .mockResolvedValue(response(snapshot("ABCDEF", "Back online")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+    await flushTimersAndPromises();
+
+    await advance(4_000); // the poll at 4s meets the failure
+    await advance(failsAfterMs);
+    expect(result.current.status).toBe("error");
+    expect(result.current.snapshot?.night.venueName).toBe("Last good");
+
+    await advance(8_000 - failsAfterMs); // the poll at 12s at the latest
+    expect(result.current.status).toBe("ready");
+    expect(result.current.snapshot?.night.venueName).toBe("Back online");
+  });
 });

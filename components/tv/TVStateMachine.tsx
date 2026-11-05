@@ -107,6 +107,8 @@ export interface TVStateMachineProps {
   worldTier?: "full" | "still";
 }
 
+const LOCKING_IN_AFTER_ZERO_MS = 3000;
+
 /** Each screen announces its moment so a theme's world can react to it. */
 const momentOf = (
   kind: TVMoment["kind"],
@@ -586,6 +588,18 @@ function TVQuestionView({
     return diagDrawn("tz", question.id);
   }, [timerShowsZero, question.id]);
 
+  // Three seconds past zero with no close seen, say the room is still working.
+  // This runs on the local timer alone, so a TV with no network gets there too.
+  const [zeroOverdue, setZeroOverdue] = useState(false);
+  useEffect(() => {
+    if (!timerShowsZero) return;
+    const handle = setTimeout(() => setZeroOverdue(true), LOCKING_IN_AFTER_ZERO_MS);
+    return () => {
+      clearTimeout(handle);
+      setZeroOverdue(false);
+    };
+  }, [timerShowsZero, question.id]);
+
   const tiles: TVQuestionTile[] = useMemo(() => {
     // The TV shows tiles in the order they arrive — newest at the end so
     // LockInPileUp's "fresh landers" animation hits the last three each
@@ -732,6 +746,7 @@ function TVQuestionView({
         question={question.prompt}
         options={options}
         seconds={Math.max(0, displaySeconds)}
+        lockingIn={zeroOverdue && !question.finishedAt}
         tiles={tiles}
         totalPlayers={gamePlayerCount(snapshot)}
         imageUrl={question.imageUrl}

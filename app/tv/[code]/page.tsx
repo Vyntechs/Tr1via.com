@@ -66,18 +66,20 @@ export default function TVPage({
   //  count changed between renders and React crashed the whole TV (React #310).
   const welcomeEvent = useTVWelcomeEvent(lastBroadcast, snapshot?.players ?? []);
 
-  if (status === "loading") {
-    return <TVMessageStage title="Loading..." subtitle="" />;
-  }
-  if (status === "not-found") {
-    return (
-      <TVMessageStage
-        title="Game not found"
-        subtitle={`Check tr1via.com/host — code ${formatRoomCode(code)} isn't open.`}
-      />
-    );
-  }
-  if (status === "error" || !snapshot) {
+  // A failed poll keeps the last frame: the room stays on screen and the local
+  // timer keeps running. The message screens are for having no room to show.
+  if (!snapshot) {
+    if (status === "loading") {
+      return <TVMessageStage title="Loading..." subtitle="" />;
+    }
+    if (status === "not-found") {
+      return (
+        <TVMessageStage
+          title="Game not found"
+          subtitle={`Check tr1via.com/host — code ${formatRoomCode(code)} isn't open.`}
+        />
+      );
+    }
     return (
       <TVMessageStage
         title="Something's off."
