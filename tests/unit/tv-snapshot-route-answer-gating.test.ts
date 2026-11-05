@@ -296,6 +296,7 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
     expect(closeDueMock.closeOverdueOnTick).toHaveBeenCalledTimes(1);
     expect(closeDueMock.closeOverdueOnTick.mock.calls[0]?.[1]).toMatchObject({
       answerEngine: "legacy",
+      gameIsLive: true,
       question: { id: "q-live", played_at: Q_LIVE.played_at },
       nightId: NIGHT_ID,
       roomCode: CODE,
