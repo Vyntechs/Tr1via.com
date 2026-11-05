@@ -18,6 +18,7 @@ import {
   serverError,
   unauthorized,
 } from "@/lib/api/responses";
+import { scheduleCloseDrain } from "@/lib/api/closeOutbox";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
 
@@ -44,6 +45,7 @@ async function postAdvance(
   const parsed = AdvanceSchema.safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
 
+  scheduleCloseDrain();
   const admin = getSupabaseAdmin();
   const { data: question, error: questionError } = await admin
     .from("questions")

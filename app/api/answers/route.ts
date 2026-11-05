@@ -34,6 +34,7 @@ import type { NextRequest } from "next/server";
 import { ResilientAnswerSchema, SubmitAnswerSchema } from "@/lib/api/schemas";
 import { badRequest, noContent, forbidden, unauthorized, serverError, notFound, conflict, ok } from "@/lib/api/responses";
 import { getDeviceId } from "@/lib/api/auth";
+import { scheduleCloseDrain } from "@/lib/api/closeOutbox";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { scrambleFor } from "@/lib/game/scramble";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
@@ -166,6 +167,7 @@ async function handleAnswer(req: NextRequest) {
   // official receipt time used by the final database deadline check; parsing
   // and lookups must not move a timely answer past the line.
   const receivedAt = new Date();
+  scheduleCloseDrain();
   const deviceId = await getDeviceId();
   if (!deviceId) return unauthorized("no device session");
   diagNote({ deviceId }); // diagnostic log only; no-op unless logging is on

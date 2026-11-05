@@ -1164,6 +1164,90 @@ export type Database = {
           },
         ]
       }
+      live_clock: {
+        Row: {
+          grace_ms: number
+          id: boolean
+          last_gate_at: string | null
+          last_tick_at: string | null
+          mode: string
+          only_night_id: string | null
+          updated_at: string
+        }
+        Insert: {
+          grace_ms?: number
+          id?: boolean
+          last_gate_at?: string | null
+          last_tick_at?: string | null
+          mode?: string
+          only_night_id?: string | null
+          updated_at?: string
+        }
+        Update: {
+          grace_ms?: number
+          id?: boolean
+          last_gate_at?: string | null
+          last_tick_at?: string | null
+          mode?: string
+          only_night_id?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      question_close_events: {
+        Row: {
+          claim_count: number
+          claimed_at: string | null
+          closed_at: string
+          commit_at: string | null
+          correct_index: number
+          drop_reason: string | null
+          dropped_at: string | null
+          id: number
+          night_id: string
+          played_at: string
+          question_id: string
+          room_code: string
+          sent_at: string | null
+          sent_via: string | null
+          shadow: boolean
+        }
+        Insert: {
+          claim_count?: number
+          claimed_at?: string | null
+          closed_at?: string
+          commit_at?: string | null
+          correct_index: number
+          drop_reason?: string | null
+          dropped_at?: string | null
+          id?: never
+          night_id: string
+          played_at: string
+          question_id: string
+          room_code: string
+          sent_at?: string | null
+          sent_via?: string | null
+          shadow?: boolean
+        }
+        Update: {
+          claim_count?: number
+          claimed_at?: string | null
+          closed_at?: string
+          commit_at?: string | null
+          correct_index?: number
+          drop_reason?: string | null
+          dropped_at?: string | null
+          id?: never
+          night_id?: string
+          played_at?: string
+          question_id?: string
+          room_code?: string
+          sent_at?: string | null
+          sent_via?: string | null
+          shadow?: boolean
+        }
+        Relationships: []
+      }
       question_plays: {
         Row: {
           category_id: string
@@ -1828,6 +1912,14 @@ export type Database = {
       resolve_question_if_all_locked: {
         Args: { p_question_id: string }
         Returns: boolean
+      }
+      claim_close_broadcasts: {
+        Args: never
+        Returns: Database["public"]["Tables"]["question_close_events"]["Row"][]
+      }
+      live_clock_preshow_check: {
+        Args: { p_expected_mode?: string }
+        Returns: Json
       }
       resolve_question_once: {
         Args: { p_question_id: string }

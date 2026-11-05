@@ -13,12 +13,14 @@ import { NextResponse, type NextRequest } from "next/server";
 import { HeartbeatSchema } from "@/lib/api/schemas";
 import { badRequest, noContent, serverError, unauthorized, notFound } from "@/lib/api/responses";
 import { requireOwnedPlayerReference } from "@/lib/api/auth";
+import { scheduleCloseDrain } from "@/lib/api/closeOutbox";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  scheduleCloseDrain();
   const { id } = await ctx.params;
   const owned = await requireOwnedPlayerReference(id);
   if (!owned.ok) {

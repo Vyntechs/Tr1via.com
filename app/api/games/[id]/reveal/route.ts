@@ -21,11 +21,14 @@ import type { NextRequest } from "next/server";
 import { RevealSchema, ResilientRevealSchema } from "@/lib/api/schemas";
 import { badRequest, ok, forbidden, unauthorized, serverError, notFound, conflict } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
+import { drainCloseOutbox } from "@/lib/api/closeOutbox";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastAppliedLiveRoomEvent, broadcastToRoom } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
+
+const REVEAL_DRAIN_CAP_MS = 1_000;
 
 async function postReveal(
   req: NextRequest,
@@ -144,6 +147,14 @@ async function postReveal(
       return conflict("another question is already live in this game");
     }
   }
+
+  // A queued sweep close goes out ahead of the next question. This sits before
+  // the stamp so a slow drain can't eat into the players' 25 seconds, and the
+  // cap keeps a stuck drain from holding the host's tap.
+  await Promise.race([
+    drainCloseOutbox(admin, { urgent: true }),
+    new Promise((resolve) => setTimeout(resolve, REVEAL_DRAIN_CAP_MS)),
+  ]);
 
   // Stamp played_at first. If the broadcast fails, the durable state is
   // still correct — phones will pick up the reveal via Postgres Changes.

@@ -6,6 +6,7 @@ const authMock = vi.hoisted(() => ({ requireOwnedGame: vi.fn() }));
 const broadcastMock = vi.hoisted(() => ({
   broadcastAppliedLiveRoomEvent: vi.fn(),
   broadcastToRoom: vi.fn(),
+  broadcastFireworks: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/admin", () => adminMock);
@@ -255,6 +256,45 @@ describe("legacy reveal single-live-question guard", () => {
     expect(stamp).not.toHaveBeenCalled();
     expect(insertReveal).not.toHaveBeenCalled();
     expect(broadcastMock.broadcastToRoom).not.toHaveBeenCalled();
+  });
+
+  it("sends a queued sweep close before stamping and before its own broadcast", async () => {
+    const { __resetCloseOutboxForTests } = await import("@/lib/api/closeOutbox");
+    __resetCloseOutboxForTests();
+    const { admin, stamp } = singleLiveGuardAdmin({ otherLive: false });
+    const order: string[] = [];
+    const rpc = vi.fn(() => ({
+      abortSignal: async () => ({
+        data: [{
+          id: 1,
+          question_id: OTHER_QUESTION_ID,
+          room_code: "ABC123",
+          correct_index: 1,
+          closed_at: new Date().toISOString(),
+          claim_count: 1,
+        }],
+        error: null,
+      }),
+    }));
+    const from = vi.fn((table: string) =>
+      table === "question_close_events"
+        ? { update: () => ({ eq: async () => ({ error: null }) }) }
+        : admin.from(table),
+    );
+    adminMock.getSupabaseAdmin.mockReturnValue({ ...admin, rpc, from });
+    stamp.mockImplementationOnce(() => {
+      order.push("stamp");
+    });
+    broadcastMock.broadcastFireworks.mockResolvedValue(undefined);
+    broadcastMock.broadcastToRoom.mockImplementation(async (_room: string, event: string) => {
+      order.push(event);
+    });
+
+    const { POST } = await import("@/app/api/games/[id]/reveal/route");
+    await POST(revealRequest(), gameContext());
+
+    expect(order).toEqual(["resolve", "stamp", "reveal"]);
+    expect(rpc).toHaveBeenCalledWith("claim_close_broadcasts");
   });
 
   it("reveals normally when no other question in the game is unfinished", async () => {

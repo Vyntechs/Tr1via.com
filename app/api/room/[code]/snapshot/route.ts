@@ -25,6 +25,7 @@ import { countPickedByCategory, oneCategoryPerSlot } from "@/lib/host/oneCategor
 import { ok, badRequest, forbidden, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
+import { scheduleCloseDrain } from "@/lib/api/closeOutbox";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import {
   getAuthedHost,
@@ -228,6 +229,7 @@ export async function GET(
   const code = parseRoomCode(rawCode);
   if (!isValidRoomCode(code)) return badRequest("invalid room code");
 
+  scheduleCloseDrain();
   const admin = getSupabaseAdmin();
   const sharedResult = await loadSharedRoomState(admin, code);
   if (!sharedResult.ok) {

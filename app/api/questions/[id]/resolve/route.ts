@@ -23,6 +23,7 @@ import {
   broadcastToRoom,
   broadcastFireworks,
 } from "@/lib/api/broadcast";
+import { scheduleCloseDrain } from "@/lib/api/closeOutbox";
 import { isTestModeEnabled } from "@/lib/api/require-test-mode";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { resolveTheme } from "@/lib/theme/resolveTheme";
@@ -288,6 +289,7 @@ async function postResolve(
     // Most retries arrive after the winning transaction is visible. Return a
     // quiet success before the RPC and, crucially, before another broadcast.
     if (q.finished_at) {
+      scheduleCloseDrain();
       return ok({ resolvedAt: q.finished_at, alreadyResolved: true });
     }
 
@@ -314,6 +316,7 @@ async function postResolve(
   // transaction commits. The row-locked RPC identifies the sole winner; every
   // loser succeeds quietly so only one resolve/fireworks pair reaches the room.
   if (!freshlyResolved) {
+    scheduleCloseDrain();
     return ok({ alreadyResolved: true });
   }
 

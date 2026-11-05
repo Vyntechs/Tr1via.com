@@ -15,6 +15,7 @@ import type { NextRequest } from "next/server";
 import { EndEarlySchema, HostPlayCommandSchema } from "@/lib/api/schemas";
 import { badRequest, ok, forbidden, unauthorized, serverError, notFound, conflict } from "@/lib/api/responses";
 import { requireOwnedGame } from "@/lib/api/auth";
+import { scheduleCloseDrain } from "@/lib/api/closeOutbox";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { broadcastAppliedLiveRoomEvent, broadcastFireworks, broadcastToRoom } from "@/lib/api/broadcast";
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
@@ -78,6 +79,7 @@ async function postEndEarly(
   ).safeParse(body);
   if (!parsed.success) return badRequest(parsed.error);
 
+  scheduleCloseDrain();
   const admin = getSupabaseAdmin();
   if (owned.night.answer_engine === "resilient_v1") {
     const command = HostPlayCommandSchema.parse(parsed.data);

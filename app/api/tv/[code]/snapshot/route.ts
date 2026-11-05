@@ -21,6 +21,7 @@ import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { rankScores } from "@/lib/game/rankScores";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
+import { scheduleCloseDrain } from "@/lib/api/closeOutbox";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
 import { presentationKey } from "@/lib/room/presentationKey";
@@ -40,6 +41,7 @@ export async function GET(
   const code = parseRoomCode(rawCode);
   if (!isValidRoomCode(code)) return badRequest("invalid room code");
 
+  scheduleCloseDrain();
   const admin = getSupabaseAdmin();
 
   // Night + the host's default theme (for resolveTheme on the client when
