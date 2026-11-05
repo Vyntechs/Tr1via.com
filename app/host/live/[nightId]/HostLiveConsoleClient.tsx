@@ -468,6 +468,8 @@ function DesktopHostLiveConsoleClient({
     room.lastBroadcast?.event === "reveal"
       ? room.lastBroadcast.receivedAtMs ?? null
       : null;
+  const tvLastBroadcastQuestionId =
+    room.lastBroadcast?.event === "reveal" ? room.lastBroadcast.questionId : null;
 
   // Magic-Welcome event for the embedded TV panel. Lifts the
   // `roster-changed` broadcast into a UI-shaped event, holds for ~3s,
@@ -497,6 +499,14 @@ function DesktopHostLiveConsoleClient({
     void room.requestLiveCatchUp?.();
   }
   const { checking, startChecking, stopChecking } = useSentChecking(reReadRoom);
+  // The TV panel's timer-zero ladder ended. This is the recovery if the close
+  // landed but its broadcast was missed. Catch-up is what moves a legacy night
+  // (refresh only updates TV keys there), and it's empty on resilient nights,
+  // where refresh does the work. So ask for both.
+  function reReadAfterLadder() {
+    void room.requestLiveCatchUp?.();
+    void room.requestRefresh?.();
+  }
   function startAction() {
     setError(null);
     stopChecking();
@@ -799,7 +809,8 @@ function DesktopHostLiveConsoleClient({
         tvLastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
         tvLastBroadcastServerNow={tvLastBroadcastServerNow}
         tvLastBroadcastReceivedAtMs={tvLastBroadcastReceivedAtMs}
-        onTvResolveSettled={room.requestRefresh}
+        tvLastBroadcastQuestionId={tvLastBroadcastQuestionId}
+        onTvResolveSettled={reReadAfterLadder}
         welcomeEvent={welcomeEvent}
         roomMagicEnabled={Boolean(room.night?.room_magic_enabled)}
         lastRoomMagicReaction={room.lastRoomMagicReaction}

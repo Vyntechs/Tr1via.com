@@ -111,6 +111,8 @@ export interface HostLiveConsoleProps {
   tvLastBroadcastServerNow?: string | null;
   /** This device's clock when that broadcast arrived. */
   tvLastBroadcastReceivedAtMs?: number | null;
+  /** The question that reveal broadcast was for. */
+  tvLastBroadcastQuestionId?: string | null;
   /** Re-reads the room when the embedded TV's timer-zero ladder ends. */
   onTvResolveSettled?: () => void;
   /** Magic-Welcome: a fresh `roster-changed` event, held by the parent
@@ -172,6 +174,7 @@ function HostLiveConsoleInner({
   tvLastBroadcastRevealedAt = null,
   tvLastBroadcastServerNow = null,
   tvLastBroadcastReceivedAtMs = null,
+  tvLastBroadcastQuestionId = null,
   onTvResolveSettled,
   welcomeEvent = null,
   lastRoomMagicReaction = null,
@@ -263,6 +266,7 @@ function HostLiveConsoleInner({
               lastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
               lastBroadcastServerNow={tvLastBroadcastServerNow}
               lastBroadcastReceivedAtMs={tvLastBroadcastReceivedAtMs}
+              lastBroadcastQuestionId={tvLastBroadcastQuestionId}
               onResolveSettled={onTvResolveSettled}
               onGridCellClick={handleRevealCell}
               hostAdvanced={hostAdvanced}

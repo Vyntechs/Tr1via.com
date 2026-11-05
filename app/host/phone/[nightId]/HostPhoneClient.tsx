@@ -391,6 +391,13 @@ export function HostPhoneClient({
     void room.requestLiveCatchUp?.();
   }
   const { checking, startChecking, stopChecking } = useSentChecking(reReadRoom);
+  // The TV preview's timer-zero ladder ended: same recovery as the laptop console.
+  // Catch-up moves a legacy night and is empty on resilient nights, where refresh
+  // does the work.
+  function reReadAfterLadder() {
+    void room.requestLiveCatchUp?.();
+    void room.requestRefresh?.();
+  }
   function startAction() {
     setError(null);
     stopChecking();
@@ -1032,7 +1039,10 @@ export function HostPhoneClient({
           }
           lastBroadcastServerNow={room.lastBroadcast?.serverNow ?? null}
           lastBroadcastReceivedAtMs={room.lastBroadcast?.receivedAtMs ?? null}
-          onResolveSettled={room.requestRefresh}
+          lastBroadcastQuestionId={
+            room.lastBroadcast?.event === "reveal" ? room.lastBroadcast.questionId : null
+          }
+          onResolveSettled={reReadAfterLadder}
         />
       )}
     >

@@ -80,6 +80,11 @@ export interface TVStateMachineProps {
   lastBroadcastServerNow?: string | null;
   /** This device's clock when that broadcast arrived. Optional. */
   lastBroadcastReceivedAtMs?: number | null;
+  /** The question that reveal broadcast was for. The three stamps above drive a
+   *  question's clock only when this matches it. A screen whose live connection
+   *  dropped can bring up the next question from a poll while still holding the
+   *  last question's stamps, and those would put the new question at zero. */
+  lastBroadcastQuestionId?: string | null;
   /** Runs once when the timer-zero ladder ends: re-read the room, in case the
    *  close happened but its broadcast never arrived. Optional. */
   onResolveSettled?: () => void;
@@ -133,6 +138,7 @@ function TVStateMachineViews({
   lastBroadcastRevealedAt = null,
   lastBroadcastServerNow = null,
   lastBroadcastReceivedAtMs = null,
+  lastBroadcastQuestionId = null,
   onResolveSettled,
   onGridCellClick,
   hostAdvanced = false,
@@ -282,6 +288,16 @@ function TVStateMachineViews({
   }
 
   // ── Live game branches ──
+  // Broadcast stamps for the question they were sent for, played_at for any other.
+  const clockFor = (q: { id: string; playedAt: string | null }) =>
+    lastBroadcastQuestionId === q.id
+      ? {
+          revealedAt: lastBroadcastRevealedAt ?? q.playedAt,
+          serverNow: lastBroadcastServerNow,
+          receivedAtMs: lastBroadcastReceivedAtMs,
+        }
+      : { revealedAt: q.playedAt, serverNow: null, receivedAtMs: null };
+
   if (currentGame.state === "live") {
     // Live question (still open — finishedAt not yet set)?
     if (liveQuestion && !liveQuestion.finishedAt) {
@@ -290,9 +306,7 @@ function TVStateMachineViews({
           key={liveQuestion.id}
           snapshot={snapshot}
           question={liveQuestion}
-          revealedAt={lastBroadcastRevealedAt ?? liveQuestion.playedAt}
-          serverNow={lastBroadcastServerNow}
-          receivedAtMs={lastBroadcastReceivedAtMs}
+          {...clockFor(liveQuestion)}
           onResolveSettled={onResolveSettled}
           themeKey={themeKey}
           onPendingCountChange={onPendingCountChange}
@@ -328,9 +342,7 @@ function TVStateMachineViews({
             key={`${revealQuestion.id}-hold`}
             snapshot={snapshot}
             question={revealQuestion}
-            revealedAt={lastBroadcastRevealedAt ?? revealQuestion.playedAt}
-            serverNow={lastBroadcastServerNow}
-            receivedAtMs={lastBroadcastReceivedAtMs}
+            {...clockFor(revealQuestion)}
             onResolveSettled={onResolveSettled}
             themeKey={themeKey}
             onPendingCountChange={onPendingCountChange}

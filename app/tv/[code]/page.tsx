@@ -99,6 +99,8 @@ export default function TVPage({
     lastBroadcast?.event === "reveal" ? lastBroadcast.serverNow ?? null : null;
   const broadcastReceivedAtMs =
     lastBroadcast?.event === "reveal" ? lastBroadcast.receivedAtMs ?? null : null;
+  const broadcastQuestionId =
+    lastBroadcast?.event === "reveal" ? lastBroadcast.questionId : null;
 
   // `welcomeEvent` is computed at the top of this component (above the early
   // returns) so its hook runs on every render — see the call site there.
@@ -111,6 +113,7 @@ export default function TVPage({
           lastBroadcastRevealedAt={broadcastRevealedAt}
           lastBroadcastServerNow={broadcastServerNow}
           lastBroadcastReceivedAtMs={broadcastReceivedAtMs}
+          lastBroadcastQuestionId={broadcastQuestionId}
           onResolveSettled={refresh}
           welcomeEvent={welcomeEvent}
           themeKey={themeKey}

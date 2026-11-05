@@ -15,6 +15,7 @@ export interface HostVenueMonitorProps {
   lastBroadcastRevealedAt?: string | null;
   lastBroadcastServerNow?: string | null;
   lastBroadcastReceivedAtMs?: number | null;
+  lastBroadcastQuestionId?: string | null;
   onResolveSettled?: () => void;
 }
 
@@ -25,6 +26,7 @@ export function HostVenueMonitor({
   lastBroadcastRevealedAt = null,
   lastBroadcastServerNow = null,
   lastBroadcastReceivedAtMs = null,
+  lastBroadcastQuestionId = null,
   onResolveSettled,
 }: HostVenueMonitorProps) {
   const { t } = useTheme();
@@ -75,6 +77,7 @@ export function HostVenueMonitor({
                 lastBroadcastRevealedAt={lastBroadcastRevealedAt}
                 lastBroadcastServerNow={lastBroadcastServerNow}
                 lastBroadcastReceivedAtMs={lastBroadcastReceivedAtMs}
+                lastBroadcastQuestionId={lastBroadcastQuestionId}
                 onResolveSettled={onResolveSettled}
                 themeKey={themeKey}
                 // A theme's living world (October) draws still here, to

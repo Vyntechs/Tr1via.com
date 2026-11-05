@@ -19,6 +19,8 @@ const h = vi.hoisted(() => ({
   questions: [] as QuestionRow[],
   fetch: vi.fn(),
   refresh: vi.fn(),
+  timerZero: null as (() => void) | null,
+  previewClock: null as { revealedAtMs: number | null; serverNowMs: number | null } | null,
   scoreRows: [] as GameScoreRow[],
   scoreChangeHandlers: [] as Array<() => void>,
   fallback: { backupMode: false, payload: null as RoomFallbackPayload | null },
@@ -38,7 +40,14 @@ vi.mock("@/lib/hooks/useRoom", () => ({
 }));
 
 vi.mock("@/lib/hooks/useTimer", () => ({
-  useTimer: () => ({ secondsRemaining: 14 }),
+  useTimer: (opts: { onZero?: () => void; revealedAtMs: number | null; serverNowMs: number | null }) => {
+    // Only the TV preview's timer has an onZero.
+    if (opts.onZero) {
+      h.timerZero = opts.onZero;
+      h.previewClock = { revealedAtMs: opts.revealedAtMs, serverNowMs: opts.serverNowMs };
+    }
+    return { secondsRemaining: 14 };
+  },
 }));
 
 vi.mock("@/lib/room/roomFallbackStore", () => ({
@@ -1819,6 +1828,67 @@ describe("HostPhoneClient re-reads the room after its own presses", () => {
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(label, "i") }));
     await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(path, expect.anything()));
     await waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1));
+  });
+
+  describe("the TV preview's timer-zero ladder ends", () => {
+    function showPreview() {
+      h.timerZero = null;
+      // A wide screen keeps the preview mounted whichever section is open.
+      const noop = () => undefined;
+      vi.stubGlobal("matchMedia", () => ({
+        matches: true,
+        addListener: noop,
+        removeListener: noop,
+        addEventListener: noop,
+        removeEventListener: noop,
+      }));
+    }
+
+    const realMatchMedia = window.matchMedia;
+    afterEach(() => {
+      vi.stubGlobal("matchMedia", realMatchMedia);
+    });
+
+    it("a close seen only through that last read moves a legacy night on", async () => {
+      showPreview();
+      const closed = { ...liveQuestion, finished_at: "2026-07-08T00:01:56Z" };
+      // A legacy night: requestRefresh updates TV keys, so only catch-up can move it.
+      catchUp.mockImplementation(async () => {
+        h.room = { ...h.room!, currentQuestion: null, lastResolvedQuestion: closed };
+      });
+      const view = renderPhone();
+      await screen.findByRole("button", { name: /End early/i });
+      await waitFor(() => expect(h.timerZero).not.toBeNull());
+
+      act(() => h.timerZero?.());
+      await waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1));
+      expect(h.refresh).toHaveBeenCalledTimes(1);
+
+      view.rerender(
+        <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+      );
+      expect(screen.queryByRole("button", { name: /End early/i })).toBeNull();
+    });
+
+    it.each([
+      ["another question's reveal message is ignored", "reveal", "q-old", false],
+      ["this question's reveal message is used", "reveal", "q1", true],
+      ["a message of another kind is ignored", "resolve", "q1", false],
+    ] as const)("preview clock: %s", async (_label, event, questionId, used) => {
+      showPreview();
+      const heardAt = "2026-07-08T00:00:00.000Z";
+      h.room = {
+        ...h.room!,
+        lastBroadcast: { event, questionId, serverNow: heardAt, receivedAtMs: Date.parse(heardAt) },
+      };
+      renderPhone();
+      await waitFor(() => expect(h.previewClock).not.toBeNull());
+      expect(h.previewClock).toEqual(
+        used
+          ? { revealedAtMs: Date.parse(heardAt), serverNowMs: Date.parse(heardAt) }
+          : { revealedAtMs: Date.parse(liveQuestion.played_at), serverNowMs: null },
+      );
+    });
   });
 
   it("End early: also re-reads when the timer had already resolved the question", async () => {
