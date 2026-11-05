@@ -29,12 +29,21 @@ export type Reachability = "ok" | "unreachable";
 type Listener = (state: Reachability | undefined) => void;
 const listeners = new Set<Listener>();
 let currentState: Reachability | undefined = undefined;
+// When the current unreachable spell began. Repeat failures don't move it, so a
+// phone whose retries keep failing counts from the first one.
+let unreachableSince: number | null = null;
+
+/** Phones soften the ribbon until this long unreachable, then give the cellular hint. */
+export const UNREACHABLE_HINT_MS = 25_000;
+/** A phone holding a room or a recent join keeps its screen until this long unreachable. */
+export const UNREACHABLE_SCREEN_MS = 45_000;
 
 export function setReachability(state: Reachability | undefined): void {
   if (currentState === state) return;
   // Diagnostic log (does nothing unless logging is on).
   diagEvent("reach", { from: currentState, to: state }, true);
   currentState = state;
+  unreachableSince = state === "unreachable" ? Date.now() : null;
   for (const listener of listeners) listener(state);
 }
 
@@ -59,8 +68,36 @@ export function getReachability(): Reachability | undefined {
   return currentState;
 }
 
+/** When the current unreachable spell began; null when reachable or unknown. */
+export function getUnreachableSince(): number | null {
+  return unreachableSince;
+}
+
+/** True once this surface has been unreachable for at least `thresholdMs`. */
+export function useUnreachableFor(thresholdMs: number): boolean {
+  const state = useReachability();
+  // Re-arms after each firing: a recovery and a new failure can land in one
+  // render, which moves the start of the spell without changing `state`.
+  const [checks, setChecks] = useState(0);
+
+  useEffect(() => {
+    if (state !== "unreachable" || unreachableSince === null) return;
+    const left = unreachableSince + thresholdMs - Date.now();
+    if (left <= 0) return;
+    const timer = setTimeout(() => setChecks((n) => n + 1), left);
+    return () => clearTimeout(timer);
+  }, [state, thresholdMs, checks]);
+
+  return (
+    state === "unreachable" &&
+    unreachableSince !== null &&
+    Date.now() - unreachableSince >= thresholdMs
+  );
+}
+
 // Test-only: drop all listeners + reset state.
 export function __resetReachabilityForTests(): void {
   listeners.clear();
   currentState = undefined;
+  unreachableSince = null;
 }

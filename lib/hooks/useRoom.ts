@@ -127,6 +127,9 @@ export interface RoomSnapshot {
   isLoading: boolean;
 }
 
+/** Recovery reads land at a random moment inside this long. */
+const RECOVERY_SPREAD_MS = 2000;
+
 export interface BroadcastTag {
   event: "reveal" | "undo" | "resolve" | "advance" | "end-early" | "roster-changed";
   /** Question id for reveal/undo/resolve/end-early; empty string for
@@ -344,6 +347,41 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
   // few seconds of the network returning — no manual refresh.
   const reachability = useReachability();
   const [recoveryTick, setRecoveryTick] = useState(0);
+
+  // ── Spread recovery (players only) ─────────────────────────────────────
+  // A blip drops every phone at once, so they all come back at once. One
+  // snapshot read per recovery, at a random moment in the next 2s, keeps that
+  // from landing as a single spike. Question events stay immediate: those are
+  // the game moving, not a crowd reconnecting. One timer, so a rejoin and a
+  // reachability recovery in the same moment still cost one read.
+  const spreadRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleSpreadRefresh = useCallback(() => {
+    if (spreadRefreshTimerRef.current !== null) return;
+    spreadRefreshTimerRef.current = setTimeout(() => {
+      spreadRefreshTimerRef.current = null;
+      void playerRefreshRef.current?.();
+    }, Math.random() * RECOVERY_SPREAD_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (spreadRefreshTimerRef.current !== null) clearTimeout(spreadRefreshTimerRef.current);
+      spreadRefreshTimerRef.current = null;
+    },
+    [roomCode, audience],
+  );
+  const previousReachabilityRef = useRef(reachability);
+  useEffect(() => {
+    const was = previousReachabilityRef.current;
+    previousReachabilityRef.current = reachability;
+    if (audience === "player" && was === "unreachable" && reachability === "ok") {
+      scheduleSpreadRefresh();
+    }
+  }, [audience, reachability, scheduleSpreadRefresh]);
+  // The channel went down and has not yet said it is back.
+  const channelDroppedRef = useRef(false);
+  // The reconnectCounter the player branch last ran for, to tell a rebuild after
+  // a dropped channel from a focus or retry run.
+  const seenReconnectRef = useRef(reconnectCounter);
   useUnreachableRetry({
     enabled: reachability === "unreachable" && !!roomCode,
     onRetry: () => setRecoveryTick((t) => t + 1),
@@ -582,7 +620,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         .subscribe((status) => {
           if (cancelled) return;
           setChannelHealth(status);
+          if (status === "SUBSCRIBED" && channelDroppedRef.current) {
+            channelDroppedRef.current = false;
+            scheduleSpreadRefresh();
+          }
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            channelDroppedRef.current = true;
             const now = Date.now();
             if (now - lastReconnectAtRef.current < 2000) return;
             lastReconnectAtRef.current = now;
@@ -590,7 +633,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           }
         });
 
-      void refreshPlayerSnapshot();
+      // Rebuilt after a dropped channel: every phone in the room may be here at
+      // once. Anything else (first load, focus, the unreachable retry, which has
+      // its own spread) reads straight away.
+      if (reconnectCounter !== seenReconnectRef.current) scheduleSpreadRefresh();
+      else void refreshPlayerSnapshot();
+      seenReconnectRef.current = reconnectCounter;
       return () => {
         cancelled = true;
         if (playerRefreshRef.current === requestRefresh) {
@@ -1793,7 +1841,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       hostRefreshRef.current = null;
       hostCatchUpRef.current = null;
     };
-  }, [roomCode, audience, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick]);
+  }, [roomCode, audience, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick, scheduleSpreadRefresh]);
 
   return useMemo(
     () =>

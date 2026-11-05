@@ -59,7 +59,8 @@ import {
   type PlayerLockedSendState,
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
-import { useReachability } from "@/lib/realtime/reachability";
+import { UNREACHABLE_SCREEN_MS, useReachability, useUnreachableFor } from "@/lib/realtime/reachability";
+import { hasRecentJoin, rememberRecentJoin } from "@/lib/room/recentJoin";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
 import { sumAwardedForGame } from "@/lib/player/revealTotal";
@@ -199,6 +200,11 @@ function RoomBody({
   const router = useRouter();
   const me = snapshot.self ?? null;
   const reachability = useReachability();
+  const unreachableTooLong = useUnreachableFor(UNREACHABLE_SCREEN_MS);
+  const hasMe = Boolean(me);
+  useEffect(() => {
+    if (hasMe) rememberRecentJoin(roomCode);
+  }, [hasMe, roomCode]);
   useSurfaceObservation({
     endpoint: `/api/room/${roomCode}/observe`,
     canonical: snapshot.deliveryRevision ?? null,
@@ -226,13 +232,20 @@ function RoomBody({
     router.replace(`/room/${roomCode}/${path}`);
   }, [snapshot.night?.closed_at, snapshot.scores, me, finalGame, roomCode, router]);
 
-  // ── Unreachable: the browser→Supabase reads are blocked (restrictive venue
-  //    WiFi). Show an actionable "switch to a hotspot" screen instead of an
-  //    endless "Catching up…" spinner or the misleading "isn't open" screen.
-  //    Checked BEFORE loading/night-null because those would mask it. Clears on
-  //    its own when useRoom's self-healing retry reconnects (no refresh). ──
+  // ── Unreachable: the room read is failing (a venue blip, or restrictive WiFi).
+  //    A phone that has the room in memory keeps it on screen, because a blip
+  //    must not throw a whole room off the question: its sends keep running and
+  //    the ribbon carries the news. A reloaded phone that was just playing says
+  //    "Reconnecting" instead. Either way, 45s of this means it isn't a blip, so
+  //    it gets the actionable "switch to a hotspot" screen, as does a phone with
+  //    nothing to fall back on. Checked BEFORE loading/night-null because those
+  //    would mask it. Clears on its own when useRoom's retry reconnects. ──
   if (reachability === "unreachable") {
-    return <UnreachableScreen roomCode={roomCode} />;
+    const hasRoom = Boolean(snapshot.night);
+    if (unreachableTooLong || (!hasRoom && !hasRecentJoin(roomCode))) {
+      return <UnreachableScreen roomCode={roomCode} />;
+    }
+    if (!hasRoom) return <ReconnectingScreen roomCode={roomCode} />;
   }
 
   // ── Loading / not-joined screens ──
@@ -1401,6 +1414,26 @@ function LoadingScreen({ roomCode }: { roomCode: string }) {
           Catching
           <br />
           <span style={{ color: t.accent }}>up…</span>
+        </Display>
+      </div>
+    </PhoneScreen>
+  );
+}
+
+function ReconnectingScreen({ roomCode }: { roomCode: string }) {
+  const { t } = useTheme();
+  return (
+    <PhoneScreen>
+      <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
+      <div
+        data-testid="player-reconnecting"
+        role="status"
+        aria-live="polite"
+        style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}
+      >
+        <Eyebrow color={t.inkMid} size={11}>CONNECTION&apos;S SLOW</Eyebrow>
+        <Display size={36} color={t.ink}>
+          Reconnecting<span style={{ color: t.accent }}>…</span>
         </Display>
       </div>
     </PhoneScreen>

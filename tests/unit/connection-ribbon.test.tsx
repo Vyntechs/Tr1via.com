@@ -20,12 +20,31 @@ describe("ConnectionRibbon", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
-  it("shows the hotspot guidance on the 'unreachable' tier", () => {
-    render(wrap(<ConnectionRibbon status="unreachable" />));
+  it("shows the hotspot guidance once the 'unreachable' tier has lasted", () => {
+    render(wrap(<ConnectionRibbon status="unreachable" showHotspotHint />));
     const ribbon = screen.getByRole("status");
     expect(ribbon).toHaveTextContent(/can't reach the server/i);
     expect(ribbon).toHaveTextContent(/hotspot/i);
   });
+
+  it("stays soft for a short 'unreachable' spell", () => {
+    render(wrap(<ConnectionRibbon status="unreachable" />));
+    const ribbon = screen.getByRole("status");
+    expect(ribbon).toHaveTextContent(/connection's slow/i);
+    expect(ribbon).not.toHaveTextContent(/hotspot/i);
+    expect(ribbon).not.toHaveTextContent(/can't reach/i);
+  });
+
+  it.each(["offline", "reconnecting"] as const)(
+    "never promises to hold an answer past the deadline when %s",
+    (status) => {
+      render(wrap(<ConnectionRibbon status={status} />));
+      const ribbon = screen.getByRole("status");
+      expect(ribbon).not.toHaveTextContent(/held locally/i);
+      expect(ribbon).not.toHaveTextContent(/as soon as/i);
+      expect(ribbon).toHaveTextContent(/until time runs out/i);
+    },
+  );
 
   it("tags the unreachable ribbon with its data-testid", () => {
     render(wrap(<ConnectionRibbon status="unreachable" />));

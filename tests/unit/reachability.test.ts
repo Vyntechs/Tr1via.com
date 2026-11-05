@@ -5,17 +5,66 @@
 // reads time out / fail (restrictive venue WiFi). The player ribbon + host
 // banner read it to surface the "switch to hotspot" tier.
 
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import {
   setReachability,
   getReachability,
+  getUnreachableSince,
   useReachability,
+  useUnreachableFor,
   __resetReachabilityForTests,
 } from "@/lib/realtime/reachability";
 
 afterEach(() => {
+  vi.useRealTimers();
   __resetReachabilityForTests();
+});
+
+describe("how long a surface has been unreachable", () => {
+  it("stamps the start of a spell, keeps it through repeat failures, clears it on recovery", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    expect(getUnreachableSince()).toBeNull();
+    setReachability("unreachable");
+    expect(getUnreachableSince()).toBe(1_000_000);
+    vi.setSystemTime(1_005_000);
+    setReachability("unreachable");
+    expect(getUnreachableSince()).toBe(1_000_000);
+    setReachability("ok");
+    expect(getUnreachableSince()).toBeNull();
+  });
+
+  it("useUnreachableFor flips on the threshold and resets with the spell", () => {
+    vi.useFakeTimers();
+    const { result } = renderHook(() => useUnreachableFor(25_000));
+    expect(result.current).toBe(false);
+    act(() => setReachability("unreachable"));
+    act(() => {
+      vi.advanceTimersByTime(24_999);
+    });
+    expect(result.current).toBe(false);
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(result.current).toBe(true);
+
+    act(() => setReachability("ok"));
+    expect(result.current).toBe(false);
+    act(() => setReachability("unreachable"));
+    act(() => {
+      vi.advanceTimersByTime(24_999);
+    });
+    expect(result.current).toBe(false);
+  });
+
+  it("a surface mounting late counts from the start of the spell", () => {
+    vi.useFakeTimers();
+    setReachability("unreachable");
+    vi.advanceTimersByTime(30_000);
+    const { result } = renderHook(() => useUnreachableFor(25_000));
+    expect(result.current).toBe(true);
+  });
 });
 
 describe("reachability signal", () => {

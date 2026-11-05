@@ -106,10 +106,14 @@ test.describe("unreachable server — host + player surface the hotspot message 
     await blockSupabase(phone);
     await phonePage.reload();
 
-    // Not the endless "Catching up…" spinner, not "isn't open" — the hotspot
-    // guidance instead.
-    await expect(phonePage.getByTestId(TID.connection.playerUnreachable)).toBeVisible({
+    // Not the endless "Catching up…" spinner, not "isn't open". This phone just
+    // joined, so it says Reconnecting first, then gives the hotspot guidance
+    // once 45s of this shows it isn't a blip.
+    await expect(phonePage.getByTestId(TID.connection.playerReconnecting)).toBeVisible({
       timeout: 15_000,
+    });
+    await expect(phonePage.getByTestId(TID.connection.playerUnreachable)).toBeVisible({
+      timeout: 60_000,
     });
 
     // Recovery without a manual refresh: lift the block and let the retry heal.

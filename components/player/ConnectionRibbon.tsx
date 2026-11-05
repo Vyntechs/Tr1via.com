@@ -12,33 +12,42 @@ import type { ConnectionStatus } from "@/lib/hooks/useConnectionStatus";
 
 export interface ConnectionRibbonProps {
   status: ConnectionStatus;
+  /** "unreachable" only: this phone has been cut off long enough that changing
+   *  network is worth suggesting. Until then a blip gets the soft line, because
+   *  a whole room told to switch networks at once is worse than the blip. */
+  showHotspotHint?: boolean;
 }
 
-export function ConnectionRibbon({ status }: ConnectionRibbonProps) {
+export function ConnectionRibbon({ status, showHotspotHint = false }: ConnectionRibbonProps) {
   const { t } = useTheme();
   if (status === "online") return null;
 
   const reconnecting = status === "reconnecting";
   const backup = status === "backup";
   const unreachable = status === "unreachable";
-  // Amber (calm) for the working-but-degraded tiers (backup / reconnecting);
-  // red for the user-actionable tiers (unreachable / offline).
-  const calm = backup || reconnecting;
+  const slow = unreachable && !showHotspotHint;
+  // Amber (calm) for the working-but-degraded tiers (backup / reconnecting / a
+  // short unreachable spell); red for the user-actionable tiers.
+  const calm = backup || reconnecting || slow;
   const bg = calm ? t.pop : t.wrong;
   const label = backup
     ? "Catching up"
     : reconnecting
       ? "Reconnecting…"
-      : unreachable
-        ? "Can't reach the server"
-        : "You're offline";
+      : slow
+        ? "Connection's slow"
+        : unreachable
+          ? "Can't reach the server"
+          : "You're offline";
   const tail = backup
     ? "Game is still live. Keep playing; updates may take a moment."
     : reconnecting
-      ? "We'll send your answer as soon as the signal comes back."
-      : unreachable
-        ? "Switch this device to a hotspot or cellular — it'll reconnect on its own."
-        : "Check Wi-Fi or signal — your answer is held locally until you're back.";
+      ? "Keep playing. We'll keep sending your answer until time runs out."
+      : slow
+        ? "We're still trying to reach the game."
+        : unreachable
+          ? "Switch this device to a hotspot or cellular — it'll reconnect on its own."
+          : "Check Wi-Fi or signal. We'll keep sending your answer until time runs out.";
 
   return (
     <div

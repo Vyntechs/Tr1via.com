@@ -42,6 +42,7 @@ export const TID = {
   connection: {
     ribbon: "connection-ribbon",
     playerUnreachable: "player-unreachable",
+    playerReconnecting: "player-reconnecting",
     hostUnreachable: "host-unreachable",
     hostBackupBanner: "host-backup-banner",
   },

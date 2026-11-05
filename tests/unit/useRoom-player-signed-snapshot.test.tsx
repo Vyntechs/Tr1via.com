@@ -5,6 +5,7 @@ import type { RoomSnapshotPayload } from "@/lib/room/roomSnapshotPayload";
 
 const h = vi.hoisted(() => {
   const broadcastHandlers = new Map<string, (message: { payload: unknown }) => void>();
+  const subscribeCallbacks: Array<(status: string) => void> = [];
   const channelNames: string[] = [];
   const fromCalls: string[] = [];
   let focusTick = 0;
@@ -50,6 +51,7 @@ const h = vi.hoisted(() => {
           },
         ),
         subscribe: vi.fn((callback?: (status: string) => void) => {
+          if (callback) subscribeCallbacks.push(callback);
           callback?.("SUBSCRIBED");
           return channel;
         }),
@@ -62,6 +64,7 @@ const h = vi.hoisted(() => {
   return {
     broadcastHandlers,
     channelNames,
+    subscribeCallbacks,
     client,
     fetchSnapshot: vi.fn(),
     fromCalls,
@@ -69,6 +72,7 @@ const h = vi.hoisted(() => {
     reset() {
       broadcastHandlers.clear();
       channelNames.length = 0;
+      subscribeCallbacks.length = 0;
       fromCalls.length = 0;
       focusTick = 0;
       client.from.mockClear();
@@ -111,6 +115,7 @@ import { __resetDiagClientForTests, setDiagSink } from "@/lib/diagnostics/client
 import {
   __resetReachabilityForTests,
   getReachability,
+  setReachability,
 } from "@/lib/realtime/reachability";
 
 function playerPayload(label = "confirmed"): RoomSnapshotPayload {
@@ -517,5 +522,120 @@ describe("useRoom player audience", () => {
       await vi.advanceTimersByTimeAsync(15_000);
     });
     expect(h.fetchSnapshot).toHaveBeenCalledTimes(3);
+  });
+
+  describe("spread recovery", () => {
+    async function joined() {
+      vi.useFakeTimers();
+      vi.spyOn(Math, "random").mockReturnValue(0.5);
+      const view = renderHook(() =>
+        useRoom({ roomCode: "ABCDEF", audience: "player", sessionReady: true }),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+      return view;
+    }
+    const advance = (ms: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    const lastChannel = () => h.subscribeCallbacks[h.subscribeCallbacks.length - 1]!;
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    it("a dropped channel rebuilds and reads once, at a random moment, not at once", async () => {
+      await joined();
+      const channelsBefore = h.subscribeCallbacks.length;
+      act(() => lastChannel()("CHANNEL_ERROR"));
+      await advance(0);
+      expect(h.subscribeCallbacks.length).toBe(channelsBefore + 1); // rebuilt
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(1); // and not read yet
+      await advance(999);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+      await advance(1);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(2); // 0.5 of 2000
+      await advance(5000);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it("a channel that rejoins by itself gets the same single spread read", async () => {
+      await joined();
+      const channel = lastChannel();
+      // Inside the 2s throttle, so no rebuild: only the rejoin can recover it.
+      vi.setSystemTime(Date.now() + 5000);
+      act(() => channel("TIMED_OUT"));
+      await advance(0);
+      await advance(1000); // the rebuild's read
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+      act(() => lastChannel()("CLOSED")); // throttled: no rebuild this time
+      act(() => lastChannel()("SUBSCRIBED"));
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+      await advance(1000);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(3);
+    });
+
+    it("the first join costs no extra read", async () => {
+      await joined();
+      await advance(5000);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it("reachability coming back reads once more after a random wait", async () => {
+      await joined();
+      act(() => setReachability("unreachable"));
+      act(() => setReachability("ok"));
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+      await advance(1000);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it("a rejoin and a reachability recovery together still read once", async () => {
+      await joined();
+      act(() => setReachability("unreachable"));
+      act(() => lastChannel()("CLOSED"));
+      act(() => setReachability("ok"));
+      await advance(0);
+      act(() => lastChannel()("SUBSCRIBED"));
+      await advance(1000);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it("a question event during the wait still reads at once", async () => {
+      await joined();
+      act(() => setReachability("unreachable"));
+      act(() => setReachability("ok"));
+      act(() => {
+        h.broadcastHandlers.get("reveal")?.({
+          payload: { questionId: "q9", serverNow: "2026-11-04T20:00:00.000Z" },
+        });
+      });
+      await advance(0);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(2);
+    });
+
+    it("stamps the reveal with this device's clock when it arrives", async () => {
+      const { result } = await joined();
+      const now = Date.now();
+      act(() => {
+        h.broadcastHandlers.get("reveal")?.({
+          payload: { questionId: "q9", serverNow: "2026-11-04T20:00:00.000Z" },
+        });
+      });
+      await advance(0);
+      expect(result.current.lastBroadcast).toMatchObject({ event: "reveal", receivedAtMs: now });
+    });
+
+    it("drops the wait when the room goes away", async () => {
+      const { unmount } = await joined();
+      act(() => setReachability("unreachable"));
+      act(() => setReachability("ok"));
+      unmount();
+      await advance(5000);
+      expect(h.fetchSnapshot).toHaveBeenCalledTimes(1);
+    });
   });
 });

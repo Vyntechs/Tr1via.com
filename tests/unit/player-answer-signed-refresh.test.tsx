@@ -113,7 +113,8 @@ vi.mock("@/lib/hooks/usePrefersReducedMotion", () => ({
 }));
 
 import PlayerRoomPage from "@/app/(player)/room/[code]/page";
-import { __resetReachabilityForTests } from "@/lib/realtime/reachability";
+import { __resetReachabilityForTests, setReachability } from "@/lib/realtime/reachability";
+import { rememberRecentJoin } from "@/lib/room/recentJoin";
 
 function payload(
   myAnswers: Extract<RoomSnapshotPayload, { audience: "player" }>["myAnswers"],
@@ -342,6 +343,67 @@ describe("player answer signed snapshot refresh", () => {
     fireEvent.click(screen.getByTestId("player-locked-answer-3"));
     await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"));
     expect(bodies.map((b) => b.slotChosen)).toEqual([1, 3]);
+  });
+
+  describe("the hotspot screen, held back", () => {
+    const advance = (ms: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a phone with the room in memory keeps playing for 45s, then gets the screen", async () => {
+      h.fetchSnapshot.mockResolvedValue(payload([]));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+      render(<PlayerRoomPage />);
+      expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+
+      vi.useFakeTimers();
+      h.fetchSnapshot.mockRejectedValue(new Error("venue WiFi down"));
+      act(() => setReachability("unreachable"));
+      await advance(44_999);
+      expect(screen.getByTestId("player-question")).toBeInTheDocument();
+      expect(screen.queryByTestId("player-unreachable")).not.toBeInTheDocument();
+      await advance(1);
+      expect(screen.getByTestId("player-unreachable")).toBeInTheDocument();
+    });
+
+    it("a reloaded phone with a saved join says Reconnecting, then gets the screen at 45s", async () => {
+      rememberRecentJoin("ABCDEF");
+      h.fetchSnapshot.mockRejectedValue(new Error("venue WiFi down"));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+      render(<PlayerRoomPage />);
+      expect(await screen.findByTestId("player-reconnecting")).toBeInTheDocument();
+      expect(screen.queryByTestId("player-unreachable")).not.toBeInTheDocument();
+
+      vi.useFakeTimers();
+      // Start the spell again on the fake clock.
+      act(() => setReachability("ok"));
+      act(() => setReachability("unreachable"));
+      await advance(44_999);
+      expect(screen.getByTestId("player-reconnecting")).toBeInTheDocument();
+      await advance(1);
+      expect(screen.getByTestId("player-unreachable")).toBeInTheDocument();
+    });
+
+    it("a phone with no room and no saved join gets the screen straight away", async () => {
+      h.fetchSnapshot.mockRejectedValue(new Error("venue WiFi down"));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+      render(<PlayerRoomPage />);
+      expect(await screen.findByTestId("player-unreachable")).toBeInTheDocument();
+    });
+
+    it("remembers the join for next time", async () => {
+      h.fetchSnapshot.mockResolvedValue(payload([]));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+      render(<PlayerRoomPage />);
+      expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+      const { hasRecentJoin } = await import("@/lib/room/recentJoin");
+      expect(hasRecentJoin("ABCDEF")).toBe(true);
+    });
   });
 
   it("a refusal keeps its words past zero but loses Try again and the other cards", async () => {
