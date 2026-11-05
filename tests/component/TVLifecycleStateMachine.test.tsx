@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { __resetDiagClientForTests, setDiagSink } from "@/lib/diagnostics/client";
 import { TVStateMachine } from "@/components/tv/TVStateMachine";
@@ -356,5 +356,37 @@ describe("TVStateMachine diagnostic receipts (timer zero drawn, reveal drawn)", 
       </ThemeProvider>,
     );
     expect(raf).not.toHaveBeenCalled();
+  });
+});
+
+describe("TVStateMachine host board: a tile the host just tapped", () => {
+  function hostBoard(heldQuestionId: string | null) {
+    const onGridCellClick = vi.fn();
+    const snapshot = lifecycleSnapshot({
+      heldQuestionId,
+      targetQuestionId: null,
+      reveals: [],
+      scores: [],
+    });
+    render(
+      <ThemeProvider themeKey="april">
+        <TVStateMachine snapshot={snapshot} onGridCellClick={onGridCellClick} />
+      </ThemeProvider>,
+    );
+    return onGridCellClick;
+  }
+
+  it("is a normal button when nothing is held", () => {
+    const onGridCellClick = hostBoard(null);
+
+    fireEvent.click(screen.getByTestId("host-question-q2"));
+
+    expect(onGridCellClick).toHaveBeenCalledWith("q2");
+  });
+
+  it("is not a button at all while it is held", () => {
+    hostBoard("q2");
+
+    expect(screen.queryByTestId("host-question-q2")).toBeNull();
   });
 });

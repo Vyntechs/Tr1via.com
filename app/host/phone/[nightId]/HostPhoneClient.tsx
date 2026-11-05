@@ -36,12 +36,20 @@ import type { AnswerRow, GameScoreRow, QuestionRow } from "@/lib/supabase/types"
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { readableForeground } from "@/lib/theme/contrast";
 import { fetchJsonWithRetry } from "@/lib/realtime/fetchWithRetry";
-import { BOOTSTRAP_TIMEOUT_MS } from "@/lib/realtime/readTimeout";
+import { BOOTSTRAP_TIMEOUT_MS, withTimeout } from "@/lib/realtime/readTimeout";
 import type { HostLiveProjection } from "@/lib/live-answer/contracts";
 import { useGameDelivery } from "@/lib/hooks/useGameDelivery";
 import type { HostDeliveryReceipt } from "@/components/host/HostGameStatus";
 import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
 import { isAlreadyResolved } from "@/lib/host/endEarlyOutcome";
+import {
+  HOST_ACTION_TIMEOUT_MS,
+  hostFetch,
+  HostReplyLost,
+  isRevealAlreadyDone,
+} from "@/lib/host/hostFetch";
+import { useSentChecking } from "@/lib/hooks/useSentChecking";
+import { HostSentChecking } from "@/components/host/HostSentChecking";
 
 const UNDO_WINDOW_MS = 2_000;
 
@@ -382,13 +390,23 @@ export function HostPhoneClient({
   function reReadRoom() {
     void room.requestLiveCatchUp?.();
   }
+  const { checking, startChecking, stopChecking } = useSentChecking(reReadRoom);
+  function startAction() {
+    setError(null);
+    stopChecking();
+  }
+  function actionFailed(err: unknown, fallback: string) {
+    if (err instanceof HostReplyLost) startChecking();
+    else setError(err instanceof Error ? err.message : fallback);
+    if (isResilient) room.requestRefresh?.();
+  }
   async function reveal(questionId: string) {
     if (
       !controlGame ||
       !unplayedControlQuestions.some((question) => question.id === questionId)
     ) return;
     setBusy(true);
-    setError(null);
+    startAction();
     try {
       let startedControl: ResilientControl | null = null;
       if (controlGame.state === "draft" || controlGame.state === "ready") {
@@ -397,7 +415,7 @@ export function HostPhoneClient({
       const resilientControl = isResilient
         ? startedControl ?? requireResilientControl(authoritativeLive, room.night?.current_run_id)
         : null;
-      const res = await fetch(`/api/games/${controlGame.id}/reveal`, {
+      const res = await hostFetch(`/api/games/${controlGame.id}/reveal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
@@ -434,8 +452,13 @@ export function HostPhoneClient({
       );
       reReadRoom();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Reveal failed.");
-      if (isResilient) room.requestRefresh?.();
+      if (err instanceof Error && isRevealAlreadyDone(err.message)) {
+        // A question is already up, so the board is behind. Nothing went wrong.
+        reReadRoom();
+        if (isResilient) room.requestRefresh?.();
+      } else {
+        actionFailed(err, "Reveal failed.");
+      }
     } finally {
       setBusy(false);
     }
@@ -444,7 +467,7 @@ export function HostPhoneClient({
   async function endEarly(requireAllLocked = false): Promise<boolean> {
     if (!room.currentGame || !room.currentQuestion) return false;
     setBusy(true);
-    setError(null);
+    if (!requireAllLocked) startAction();
     try {
       const resilientPlay = isResilient
         ? requireResilientPlay(
@@ -454,7 +477,7 @@ export function HostPhoneClient({
             room.currentQuestion.id,
           )
         : null;
-      const res = await fetch(`/api/games/${room.currentGame.id}/end-early`, {
+      const res = await hostFetch(`/api/games/${room.currentGame.id}/end-early`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
@@ -477,13 +500,13 @@ export function HostPhoneClient({
           runId: resilientPlay.runId,
           playId: resilientPlay.playId,
         });
-      } else if (!res.ok && requireAllLocked && res.status === 409) {
-        return false;
       } else if (!res.ok && res.status === 409) {
         // The timer resolved it a beat before the tap landed. The answer is
         // already up, which is what the host wanted — see isAlreadyResolved.
+        // This comes first: for auto-end it is the signal to stop trying.
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         if (!isAlreadyResolved(body.error)) {
+          if (requireAllLocked) return false;
           throw new Error(body.error ?? "end-early failed");
         }
       } else {
@@ -492,9 +515,15 @@ export function HostPhoneClient({
       reReadRoom();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "End-early failed.");
-      if (isResilient) room.requestRefresh?.();
-      return true;
+      // False tells the auto-end hook to try again; true would stop it for good.
+      // Nobody pressed anything on an auto try, so it stays quiet.
+      if (!requireAllLocked) {
+        actionFailed(err, "End-early failed.");
+      } else {
+        if (err instanceof HostReplyLost) reReadRoom();
+        if (isResilient) room.requestRefresh?.();
+      }
+      return false;
     } finally {
       setBusy(false);
     }
@@ -503,7 +532,7 @@ export function HostPhoneClient({
   async function undo() {
     if (!room.currentGame) return;
     setBusy(true);
-    setError(null);
+    startAction();
     try {
       const resilientPlay = isResilient
         ? requireResilientPlay(
@@ -513,7 +542,7 @@ export function HostPhoneClient({
             room.currentQuestion?.id ?? null,
           )
         : null;
-      const res = await fetch(`/api/games/${room.currentGame.id}/undo`, resilientPlay
+      const res = await hostFetch(`/api/games/${room.currentGame.id}/undo`, resilientPlay
         ? {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -537,8 +566,7 @@ export function HostPhoneClient({
       setNavigation(null);
       reReadRoom();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Undo failed.");
-      if (isResilient) room.requestRefresh?.();
+      actionFailed(err, "Undo failed.");
     } finally {
       setBusy(false);
     }
@@ -547,12 +575,12 @@ export function HostPhoneClient({
   async function runLifecycle(path: string, gameId?: string) {
     if (busy) return;
     setBusy(true);
-    setError(null);
+    startAction();
     try {
       const resilientControl = isResilient && gameId
         ? requireResilientControl(authoritativeLive, room.night?.current_run_id)
         : null;
-      const res = await fetch(path, resilientControl
+      const res = await hostFetch(path, resilientControl
         ? {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -575,8 +603,7 @@ export function HostPhoneClient({
       setConfirmingEnd(false);
       reReadRoom();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Game control failed.");
-      if (isResilient) room.requestRefresh?.();
+      actionFailed(err, "Game control failed.");
     } finally {
       setBusy(false);
     }
@@ -606,7 +633,7 @@ export function HostPhoneClient({
       };
     }
 
-    const response = await fetch(`/api/games/${gameId}/start`, request);
+    const response = await hostFetch(`/api/games/${gameId}/start`, request);
     if (isResilient) {
       const applied = await requireAppliedCommand(response, {
         eventKinds: ["game_started"],
@@ -622,14 +649,13 @@ export function HostPhoneClient({
   async function runStartGame(gameId: string) {
     if (busy) return;
     setBusy(true);
-    setError(null);
+    startAction();
     try {
       await startGame(gameId);
       setConfirmingEnd(false);
       reReadRoom();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Game control failed.");
-      if (isResilient) room.requestRefresh?.();
+      actionFailed(err, "Game control failed.");
     } finally {
       setBusy(false);
     }
@@ -640,7 +666,7 @@ export function HostPhoneClient({
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch("/api/adjustments", {
+      const response = await hostFetch("/api/adjustments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -658,9 +684,17 @@ export function HostPhoneClient({
       // exact game's canonical score projection has been refreshed. This
       // prevents an adjustment in Game 1 from borrowing Game 2's standings.
       if (isResilient) {
-        await room.requestRefresh?.();
+        await withTimeout(
+          room.requestRefresh?.() ?? Promise.resolve(),
+          HOST_ACTION_TIMEOUT_MS,
+          SCORES_NOT_REFRESHED,
+        );
       } else {
-        const rows = await fetchDirectScores(scoreGameId);
+        const rows = await withTimeout(
+          fetchDirectScores(scoreGameId),
+          HOST_ACTION_TIMEOUT_MS,
+          SCORES_NOT_REFRESHED,
+        );
         setDirectScoreSnapshot({
           gameId: scoreGameId,
           eligibilityKey: `${scoreGameId}:${activePlayerIdSignature}`,
@@ -669,6 +703,11 @@ export function HostPhoneClient({
         setPreferredDirectScoreGameId(scoreGameId);
       }
     } catch (err) {
+      if (err instanceof HostReplyLost) {
+        const message = "Sent, checking. Look at the scores before trying again.";
+        setError(message);
+        throw new Error(message);
+      }
       setError(err instanceof Error ? err.message : "Point adjustment failed.");
       throw err;
     } finally {
@@ -1003,6 +1042,7 @@ export function HostPhoneClient({
           {PICKED_QUESTIONS_RETRY_MESSAGE}
         </p>
       )}
+      {checking && <HostSentChecking />}
       {error && <ErrorToast message={error} onDismiss={() => setError(null)} />}
     </PhoneCenter>
   );
@@ -1350,6 +1390,8 @@ function requireResilientPlay(
   }
   return { ...control, playId: live.play.playId };
 }
+
+const SCORES_NOT_REFRESHED = "Saved, but the scores haven't refreshed yet.";
 
 async function requireOk(response: Response, fallback: string): Promise<void> {
   if (response.ok) return;

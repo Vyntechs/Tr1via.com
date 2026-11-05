@@ -476,7 +476,7 @@ function TVGridView({
     return values.map((v) => {
       const q = catQuestions.find((cq) => cq.pointValue === v);
       return {
-        played: q ? q.finishedAt !== null : false,
+        played: q ? q.finishedAt !== null || q.id === snapshot.heldQuestionId : false,
         // No persistent "selected" notion — we light up the live one when
         // there is one. Otherwise nothing is selected.
         selected: q ? q.id === snapshot.liveQuestionId : false,

@@ -76,6 +76,8 @@ export interface RoomToTVSnapshotInput {
    *  question. Host's subscription targets the current question; when that
    *  question resolves, the rows stay valid through the reveal frame. */
   answers: RoomAnswerRow[];
+  /** A tile the host just tapped, shown as played until the room catches up. */
+  heldQuestionId?: string | null;
   /** False while `allQuestions` has not loaded yet. A doubled board slot is
    *  then held back (neither row shown) until its picked counts are known,
    *  so the header never flashes the wrong row. Defaults to true. */
@@ -89,7 +91,15 @@ export interface RoomToTVSnapshotInput {
 export function roomToTVSnapshot(
   input: RoomToTVSnapshotInput,
 ): TVSnapshot | null {
-  const { room, allQuestions, scores, allScores, answers, pickedCountsReady = true } = input;
+  const {
+    room,
+    allQuestions,
+    scores,
+    allScores,
+    answers,
+    pickedCountsReady = true,
+    heldQuestionId = null,
+  } = input;
   if (!room.night) return null;
 
   const night = nightToTVNight(room.night, room.hostDefaultThemeKey);
@@ -262,6 +272,7 @@ export function roomToTVSnapshot(
     categories,
     questions,
     liveQuestionId,
+    heldQuestionId,
     targetQuestionId,
     players,
     scores: tvScores,

@@ -143,6 +143,8 @@ export interface TVSnapshot {
   categories: TVCategory[];
   questions: TVQuestion[];
   liveQuestionId: string | null;
+  /** Host only: a tile just tapped, shown as played so it can't be tapped twice. */
+  heldQuestionId?: string | null;
   targetQuestionId: string | null;
   players: TVPlayer[];
   scores: TVScore[];
