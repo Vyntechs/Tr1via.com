@@ -10,7 +10,9 @@
 export const CLOSE_CALLER_HEADER = "x-tr1via-close-caller";
 
 export type TimerCaller = "phone" | "tv";
-export type ClosedBy = TimerCaller | "host" | "host-auto" | "unknown";
+/** The server's own closers: the reveal's alarm, and the two snapshot ticks. */
+export type CloseSource = "alarm" | "room-tick" | "tv-tick";
+export type ClosedBy = TimerCaller | CloseSource | "host" | "host-auto" | "unknown";
 
 export interface CloseEvent {
   kind: "close";
@@ -28,13 +30,62 @@ export interface LateRefusalEvent {
   lateMs: number | null;
 }
 
+export interface WouldCloseEvent {
+  kind: "would_close";
+  questionId: string;
+  roomCode: string;
+  source: CloseSource;
+  lateMs: number | null;
+}
+
+export interface AlarmWakeEvent {
+  kind: "alarm_wake";
+  questionId: string;
+  outcome: string;
+  /** Wake time minus the time the alarm was set for. */
+  lateMs: number;
+}
+
+export interface RepairEvent {
+  kind: "score_repair";
+  questionId: string;
+  rows: number;
+  /** True in shadow mode: these rows were found, not written. */
+  dryRun: boolean;
+}
+
+export interface LateScoredEvent {
+  kind: "late_scored";
+  questionId: string;
+  answerId: string;
+  /** How far past finished_at the answer's locked_at sits. */
+  msPastClose: number;
+}
+
+export interface PhoneStatsEvent {
+  kind: "phone_stats";
+  nightId: string;
+  resendCount: number;
+  longestReplyWaitMs: number;
+  secondsAtZero: number;
+}
+
+type LiveEvent =
+  | CloseEvent
+  | LateRefusalEvent
+  | WouldCloseEvent
+  | AlarmWakeEvent
+  | RepairEvent
+  | LateScoredEvent
+  | PhoneStatsEvent;
+
 export type LiveLogSink = (line: string) => void;
 
 const liveServerLogSink: LiveLogSink = (line) => {
   console.info(line);
 };
 
-function writeLine(event: CloseEvent | LateRefusalEvent, sink: LiveLogSink) {
+function writeLine(event: LiveEvent, sink: LiveLogSink) {
   try {
     sink(JSON.stringify(event));
   } catch {
@@ -68,4 +119,24 @@ export function logLateRefusal(
   sink: LiveLogSink = liveServerLogSink,
 ): void {
   writeLine({ kind: "late_refusal", ...refusal }, sink);
+}
+
+export function logWouldClose(event: Omit<WouldCloseEvent, "kind">): void {
+  writeLine({ kind: "would_close", ...event }, liveServerLogSink);
+}
+
+export function logAlarmWake(event: Omit<AlarmWakeEvent, "kind">): void {
+  writeLine({ kind: "alarm_wake", ...event }, liveServerLogSink);
+}
+
+export function logRepair(event: Omit<RepairEvent, "kind">): void {
+  writeLine({ kind: "score_repair", ...event }, liveServerLogSink);
+}
+
+export function logLateScored(event: Omit<LateScoredEvent, "kind">): void {
+  writeLine({ kind: "late_scored", ...event }, liveServerLogSink);
+}
+
+export function logPhoneStats(event: Omit<PhoneStatsEvent, "kind">): void {
+  writeLine({ kind: "phone_stats", ...event }, liveServerLogSink);
 }

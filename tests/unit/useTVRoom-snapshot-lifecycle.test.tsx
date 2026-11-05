@@ -167,6 +167,34 @@ describe("useTVRoom snapshot request lifecycle", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("refetches on a scores hint without touching the reveal tag the timer reads", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(async () => response(snapshot("ABCDEF", "Live")));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTVRoom("ABCDEF"));
+    await waitFor(() => expect(result.current.status).toBe("ready"));
+    act(() => {
+      h.broadcast("ABCDEF", "reveal", {
+        questionId: "room-a-question",
+        revealedAt: "2026-07-19T00:00:00.000Z",
+        serverNow: "2026-07-19T00:00:00.000Z",
+      });
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const tag = result.current.lastBroadcast;
+
+    act(() => {
+      h.broadcast("ABCDEF", "scores-refetch", {
+        questionId: "older-question",
+        serverNow: "2026-07-19T00:00:02.000Z",
+      });
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+    expect(result.current.lastBroadcast).toBe(tag);
+  });
+
   it("refetches immediately when the host publishes standings", async () => {
     const fetchMock = vi
       .fn()

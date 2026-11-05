@@ -21,6 +21,7 @@ import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
+import { recordCloseOnResolveRow } from "@/lib/live/closeDue";
 import { closeLateMs, logClose } from "@/lib/live/logClose";
 
 /**
@@ -194,14 +195,21 @@ async function postEndEarly(
   } catch (e) {
     console.warn("broadcast end-early failed", e);
   }
+  const closedBy = legacy.requireAllLocked ? "host-auto" : "host";
+  const lateMs = closeLateMs(
+    closedAtMs,
+    new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000,
+  );
   logClose({
     questionId: legacy.questionId,
     roomCode: owned.night.room_code,
-    closedBy: legacy.requireAllLocked ? "host-auto" : "host",
-    lateMs: closeLateMs(
-      closedAtMs,
-      new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000,
-    ),
+    closedBy,
+    lateMs,
+  });
+  await recordCloseOnResolveRow(admin, {
+    questionId: legacy.questionId,
+    closedBy,
+    lateMs,
   });
 
   return ok({ resolvedAt: new Date(closedAtMs).toISOString() });

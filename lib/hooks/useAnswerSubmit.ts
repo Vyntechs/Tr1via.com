@@ -48,6 +48,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { diagActive, diagEvent } from "@/lib/diagnostics/client";
+import { notePhoneReplyWait, notePhoneResend } from "@/lib/live/phoneStats";
 
 export type AnswerSubmitStatus = "idle" | "pending" | "retrying" | "sent" | "failed";
 /** Why a `failed` status happened. `closed` = the window ended before the
@@ -434,6 +435,8 @@ export function useAnswerSubmit({
       }, statusMs);
 
       void (async () => {
+        const sentAtMs = Date.now();
+        if (attempt > 0) notePhoneResend();
         try {
           const res = await fetch("/api/answers", {
             method: "POST",
@@ -456,6 +459,7 @@ export function useAnswerSubmit({
             },
             body: JSON.stringify({ questionId, slotChosen: slot, scramble: optsRef.current.scramble }),
           });
+          notePhoneReplyWait(Date.now() - sentAtMs);
           if (tapLogRef.current) tapLogRef.current.last = res.status;
           if (gen !== genRef.current || ctrl.signal.aborted) return finish();
           const { verdict, confirmedSlot } = await judgeResponse(res);
@@ -473,6 +477,7 @@ export function useAnswerSubmit({
             settleFailed(gen, slot, tries, alone ? "late" : "closed", !alone);
           } else followUp(false);
         } catch {
+          notePhoneReplyWait(Date.now() - sentAtMs);
           finish();
           // Aborted by us (answered elsewhere, question changed): not a failure.
           if (ctrl.signal.aborted || gen !== genRef.current) return;

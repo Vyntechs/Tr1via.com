@@ -23,6 +23,8 @@ import { NextRequest } from "next/server";
 
 const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
 vi.mock("@/lib/supabase/admin", () => adminMock);
+const closeDueMock = vi.hoisted(() => ({ closeOverdueOnTick: vi.fn() }));
+vi.mock("@/lib/live/closeDue", () => closeDueMock);
 
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
 const CODE = "ABCDEF"; // valid: alphabet excludes I/L/O/0/1
@@ -280,6 +282,25 @@ describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SESSION_SECRET = "snapshot-test-secret";
+  });
+
+  it("hands the live question to the closer before replying, as a TV tick", async () => {
+    closeDueMock.closeOverdueOnTick.mockClear();
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
+    const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+    const res = await GET(
+      new NextRequest(`http://test/api/tv/${CODE}/snapshot`),
+      { params: Promise.resolve({ code: CODE }) },
+    );
+    expect(res.status).toBe(200);
+    expect(closeDueMock.closeOverdueOnTick).toHaveBeenCalledTimes(1);
+    expect(closeDueMock.closeOverdueOnTick.mock.calls[0]?.[1]).toMatchObject({
+      answerEngine: "legacy",
+      question: { id: "q-live", played_at: Q_LIVE.played_at },
+      nightId: NIGHT_ID,
+      roomCode: CODE,
+      source: "tv-tick",
+    });
   });
 
   it("scopes reveal history before limiting and keeps the final current-game answer targeted", async () => {

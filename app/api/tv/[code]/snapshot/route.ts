@@ -21,7 +21,9 @@ import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { rankScores } from "@/lib/game/rankScores";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
+import { closeOverdueOnTick } from "@/lib/live/closeDue";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
 import { presentationKey } from "@/lib/room/presentationKey";
 import {
@@ -205,6 +207,19 @@ export async function GET(
     : null;
   const readyGame = games.find((g) => g.state === "ready") ?? null;
   const currentGame = liveGame ?? lastDone ?? readyGame ?? games[0] ?? null;
+
+  await closeOverdueOnTick(admin, {
+    answerEngine: night.answer_engine,
+    gameIsLive: Boolean(liveGame),
+    question: liveQuestion,
+    nightId,
+    roomCode: night.room_code,
+    source: "tv-tick",
+    themeKey: resolveTheme(
+      { theme_key: night.theme_key },
+      { default_theme_key: hostDefaultThemeKey },
+    ),
+  });
   const gameOne = games.find((game) => game.game_no === 1) ?? null;
   const liveGameCategoryIds = new Set(
     categories

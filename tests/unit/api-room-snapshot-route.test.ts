@@ -17,6 +17,8 @@ const authMock = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/supabase/admin", () => adminMock);
 vi.mock("@/lib/api/auth", () => authMock);
+const closeDueMock = vi.hoisted(() => ({ closeOverdueOnTick: vi.fn() }));
+vi.mock("@/lib/live/closeDue", () => closeDueMock);
 
 const CODE = "ABCDEF";
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
@@ -236,6 +238,36 @@ describe("GET /api/room/[code]/snapshot", () => {
     process.env.SESSION_SECRET = "snapshot-test-secret";
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
     authMock.hasHostSessionCookie.mockResolvedValue(false);
+  });
+
+  it("hands the live question to the closer before replying, as a room tick", async () => {
+    let released = false;
+    closeDueMock.closeOverdueOnTick.mockClear().mockImplementationOnce(async () => {
+      await Promise.resolve();
+      released = true;
+    });
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    expect(released).toBe(true);
+    expect(closeDueMock.closeOverdueOnTick).toHaveBeenCalledTimes(1);
+    expect(closeDueMock.closeOverdueOnTick.mock.calls[0]?.[1]).toMatchObject({
+      answerEngine: "legacy",
+      gameIsLive: true,
+      question: { id: "q-live", played_at: Q_LIVE.played_at },
+      nightId: NIGHT_ID,
+      roomCode: CODE,
+      source: "room-tick",
+      themeKey: "house",
+    });
+  });
+
+  it("never reaches the closer for a caller who isn't in the room", async () => {
+    closeDueMock.closeOverdueOnTick.mockClear();
+    authMock.getDeviceId.mockResolvedValue("NOT-A-PLAYER");
+    const res = await callRoute();
+    expect(res.status).toBe(403);
+    expect(closeDueMock.closeOverdueOnTick).not.toHaveBeenCalled();
   });
 
   it("403s when the caller is neither the owning host nor a player in the room", async () => {

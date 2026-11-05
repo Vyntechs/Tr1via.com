@@ -132,6 +132,9 @@ export const HostAddPlayerSchema = z.object({
 
 export const HeartbeatSchema = z.object({
   appSwitchSeconds: z.number().int().min(0).max(86_400).optional(),
+  resendCount: z.number().int().min(0).max(10_000).optional(),
+  longestReplyWaitMs: z.number().int().min(0).max(3_600_000).optional(),
+  secondsAtZero: z.number().int().min(0).max(86_400).optional(),
 });
 
 export const JoinGameSchema = z.object({

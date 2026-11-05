@@ -592,6 +592,11 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           if (event.kind === "answer_progress") return;
           refetchForBroadcast();
         })
+        .on("broadcast", { event: "scores-refetch" }, () => {
+          // A late answer was scored after the close. Touches no lastBroadcast:
+          // this can land mid-question, and the timer reads the reveal tag there.
+          refetchForBroadcast();
+        })
         .on("broadcast", { event: "roster-changed" }, (msg) => {
           const p = msg.payload as Record<string, unknown>;
           refetchForBroadcast({

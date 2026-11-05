@@ -26,6 +26,15 @@ import { broadcastAppliedLiveRoomEvent, broadcastToRoom } from "@/lib/api/broadc
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
+import { afterReply } from "@/lib/live/afterReply";
+import { runCloseAlarm } from "@/lib/live/closeDue";
+import { liveCloseModeFor } from "@/lib/live/liveCloseMode";
+import { sweepLastFinishedAfterReply } from "@/lib/live/scoreLateAnswers";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
+
+// The alarm sleeps 26.2s inside this function after the reply has gone, and
+// that time counts against the limit.
+export const maxDuration = 60;
 
 async function postReveal(
   req: NextRequest,
@@ -157,6 +166,28 @@ async function postReveal(
     .maybeSingle(); // CAS guard against a double-reveal race
   if (stampError) return serverError(stampError.message);
   if (!stampedQuestion) return conflict("question already revealed");
+
+  // Set before anything below can fail: the question is live from this moment.
+  if (liveCloseModeFor(owned.night.id) !== "off") {
+    const questionId = parsed.data.questionId;
+    afterReply(() =>
+      runCloseAlarm(admin, {
+        questionId,
+        expectedPlayedAt: revealedAt,
+        nightId: owned.night.id,
+        roomCode: owned.night.room_code,
+        themeKey: resolveTheme(
+          { theme_key: owned.night.theme_key },
+          { default_theme_key: owned.host.default_theme_key },
+        ),
+      }),
+    );
+  }
+  sweepLastFinishedAfterReply(admin, {
+    gameId,
+    nightId: owned.night.id,
+    roomCode: owned.night.room_code,
+  });
 
   // Log the reveal event.
   const { error: revealError } = await admin

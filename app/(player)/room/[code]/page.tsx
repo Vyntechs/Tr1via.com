@@ -66,6 +66,11 @@ import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
 import { sumAwardedForGame } from "@/lib/player/revealTotal";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useResolveAtZero } from "@/lib/hooks/useResolveAtZero";
+import {
+  notePhoneAtZero,
+  returnPhoneStats,
+  takePhoneStats,
+} from "@/lib/live/phoneStats";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
 import { clearPendingAnswer, loadPendingAnswer, useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
@@ -958,6 +963,13 @@ function LiveQuestionView({
     onZero: handleZero,
   });
 
+  // How long this phone sat at zero with no close, for the heartbeat's log line.
+  useEffect(() => {
+    if (!hasExpired) return;
+    const zeroAtMs = Date.now();
+    return () => notePhoneAtZero(Date.now() - zeroAtMs);
+  }, [hasExpired, question.id]);
+
   // The tap locks the choice on screen at once; the send keeps going (with
   // backoff and a time limit per try) until the server confirms or the
   // question closes. "Locked in" comes from the send reply itself. Scoring
@@ -1585,17 +1597,26 @@ function useHeartbeat(playerId: string | null, roomCode: string) {
     if (!playerId) return;
     let cancelled = false;
     const send = async () => {
+      const stats = takePhoneStats();
       try {
         const res = await fetch(`/api/players/${playerId}/heartbeat`, {
           method: "POST",
           credentials: "same-origin",
+          ...(stats
+            ? {
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(stats),
+              }
+            : {}),
         });
+        if (stats && !res.ok) returnPhoneStats(stats);
         if (cancelled) return;
         if (res.status === 410 && typeof window !== "undefined") {
           window.location.assign(`/join?code=${roomCode}`);
         }
       } catch {
         /* heartbeat is best-effort */
+        if (stats) returnPhoneStats(stats);
       }
     };
     // Immediate ping so the host sees us right away.

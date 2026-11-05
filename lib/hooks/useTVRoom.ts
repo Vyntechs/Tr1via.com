@@ -361,6 +361,11 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
         });
         void fetchSnapshot(code);
       })
+      .on("broadcast", { event: "scores-refetch" }, () => {
+        // Scores only. The reveal tag stays, because this can land mid-question.
+        if (!isActiveRoom()) return;
+        void fetchSnapshot(code);
+      })
       .on("broadcast", { event: "advance" }, (msg) => {
         if (!isActiveRoom()) return;
         const p = msg.payload as Record<string, unknown>;

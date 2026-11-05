@@ -13,6 +13,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { HeartbeatSchema } from "@/lib/api/schemas";
 import { badRequest, noContent, serverError, unauthorized, notFound } from "@/lib/api/responses";
 import { requireOwnedPlayerReference } from "@/lib/api/auth";
+import { logPhoneStats } from "@/lib/live/logClose";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
 export async function POST(
@@ -51,6 +52,19 @@ export async function POST(
     const parsed = HeartbeatSchema.safeParse(body);
     if (!parsed.success) return badRequest(parsed.error);
     parsedSeconds = parsed.data.appSwitchSeconds ?? null;
+    const { resendCount, longestReplyWaitMs, secondsAtZero } = parsed.data;
+    if (
+      resendCount !== undefined ||
+      longestReplyWaitMs !== undefined ||
+      secondsAtZero !== undefined
+    ) {
+      logPhoneStats({
+        nightId: owned.player.night_id,
+        resendCount: resendCount ?? 0,
+        longestReplyWaitMs: longestReplyWaitMs ?? 0,
+        secondsAtZero: secondsAtZero ?? 0,
+      });
+    }
   }
 
   const admin = getSupabaseAdmin();

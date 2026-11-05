@@ -47,6 +47,8 @@ import {
 } from "@/lib/room/roomAudience";
 import { presentationKey } from "@/lib/room/presentationKey";
 import { scrambleFor } from "@/lib/game/scramble";
+import { closeOverdueOnTick } from "@/lib/live/closeDue";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import type {
   CategoryRow,
   GameRow,
@@ -320,6 +322,20 @@ export async function GET(
     .sort((a, b) => (b.ended_at ?? "").localeCompare(a.ended_at ?? ""))[0];
   const readyGame = games.find((g) => g.state === "ready");
   const currentGame = liveGame ?? doneGame ?? readyGame ?? games[0] ?? null;
+
+  // After auth, and outside the shared load, so only this request waits on it.
+  await closeOverdueOnTick(admin, {
+    answerEngine: night.answer_engine,
+    gameIsLive: Boolean(liveGame),
+    question: currentQuestionRaw,
+    nightId,
+    roomCode: night.room_code,
+    source: "room-tick",
+    themeKey: resolveTheme(
+      { theme_key: night.theme_key },
+      { default_theme_key: hostDefaultThemeKey },
+    ),
+  });
 
   // A completed Game 1 play is not the current Game 2 play. This prevents the
   // between-games snapshot from replaying old answer state before Game 2's

@@ -45,6 +45,7 @@ export type RoomEventName =
   | "game-started"
   | "game-ended"
   | "roster-changed"
+  | "scores-refetch"
   | "room-magic-reaction"
   | "live-room-event"
   | "fireworks";

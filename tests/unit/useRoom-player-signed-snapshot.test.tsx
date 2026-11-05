@@ -305,6 +305,34 @@ describe("useRoom player audience", () => {
     expect(h.channelNames).toEqual(["room:ABCDEF"]);
   });
 
+  it("re-reads on a scores hint and keeps the reveal tag the timer reads", async () => {
+    h.fetchSnapshot.mockResolvedValue(playerPayload("confirmed"));
+    const { result } = renderHook(() =>
+      useRoom({ roomCode: "ABCDEF", audience: "player", sessionReady: true }),
+    );
+    await waitFor(() => expect(result.current.night?.venue_name).toBe("confirmed"));
+
+    act(() => {
+      h.broadcastHandlers.get("reveal")?.({
+        payload: {
+          questionId: "question-1",
+          serverNow: "2026-07-18T18:06:01.000Z",
+          revealedAt: "2026-07-18T18:06:00.000Z",
+        },
+      });
+    });
+    await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(2));
+    const tag = result.current.lastBroadcast;
+
+    act(() => {
+      h.broadcastHandlers.get("scores-refetch")?.({
+        payload: { questionId: "older-question", serverNow: "2026-07-18T18:06:03.000Z" },
+      });
+    });
+    await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(3));
+    expect(result.current.lastBroadcast).toEqual(tag);
+  });
+
   it("keeps the last confirmed snapshot visible while a broadcast refetch is pending", async () => {
     let resolveRecovery!: (payload: RoomSnapshotPayload) => void;
     h.fetchSnapshot

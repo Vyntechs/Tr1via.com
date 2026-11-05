@@ -54,6 +54,11 @@ import {
 import { withAnswerLog } from "@/lib/diagnostics/serverLog";
 import { diagMark, diagNote } from "@/lib/diagnostics/trace";
 import { logLateRefusal } from "@/lib/live/logClose";
+import {
+  repairAfterReply,
+  repairQuestionScoresCapped,
+  type RepairTarget,
+} from "@/lib/live/scoreLateAnswers";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
@@ -64,11 +69,12 @@ type LateReason =
 
 async function refuseLate(
   admin: AdminClient,
-  questionId: string,
+  target: RepairTarget,
   playerId: string,
   reason: LateReason,
   lateMs: number | null,
 ) {
+  const { questionId } = target;
   const { data: saved, error } = await admin
     .from("answers")
     .select("id")
@@ -77,7 +83,12 @@ async function refuseLate(
     .maybeSingle();
   // Not knowing is not the same as "no row": a 500 lets the phone keep asking.
   if (error) return serverError();
-  if (saved) return conflict("already answered");
+  if (saved) {
+    // This resend may be the only request that gets through in a blip, so it
+    // repairs inline rather than trusting after() with an undeliverable reply.
+    await repairQuestionScoresCapped(admin, target);
+    return conflict("already answered");
+  }
   logLateRefusal({ questionId, lateMs });
   return badRequest(reason);
 }
@@ -390,7 +401,7 @@ async function handleAnswer(req: NextRequest) {
 
   const { data: night, error: nightError } = await admin
     .from("nights")
-    .select("id, answer_engine")
+    .select("id, answer_engine, room_code")
     .eq("id", nightId)
     .maybeSingle();
   if (nightError) return serverError();
@@ -412,8 +423,14 @@ async function handleAnswer(req: NextRequest) {
   diagMark("player");
   if (player.removed_at) return forbidden("you have been removed");
 
+  const repairTarget: RepairTarget = {
+    questionId: parsed.data.questionId,
+    nightId,
+    roomCode: night.room_code,
+  };
+
   if (lateReason) {
-    return refuseLate(admin, parsed.data.questionId, player.id, lateReason, lateMs);
+    return refuseLate(admin, repairTarget, player.id, lateReason, lateMs);
   }
 
   // Verify per-game participation. Players who joined the night but didn't
@@ -469,25 +486,31 @@ async function handleAnswer(req: NextRequest) {
     if (error.code === "TR025") {
       return refuseLate(
         admin,
-        parsed.data.questionId,
+        repairTarget,
         player.id,
         "answer deadline passed",
         receivedMs - deadlineMs,
       );
     }
     if (error.code === "TRCL0") {
-      return refuseLate(admin, parsed.data.questionId, player.id, "question is closed", null);
+      return refuseLate(admin, repairTarget, player.id, "question is closed", null);
     }
     if (error.code === "TRNL0") {
-      return refuseLate(admin, parsed.data.questionId, player.id, "question is not live", null);
+      return refuseLate(admin, repairTarget, player.id, "question is not live", null);
     }
     // 23505 = duplicate (player already answered this question). The
     // rules say one answer per (player, question); surface as 409 so
     // the UI can show "you already answered" rather than spinning.
-    if (error.code === "23505") return conflict("already answered");
+    if (error.code === "23505") {
+      repairAfterReply(admin, repairTarget);
+      return conflict("already answered");
+    }
     return serverError();
   }
 
+  // The close can run between this request's read and its insert, and it won't
+  // see a row that commits behind it. The repair reads finished_at again.
+  repairAfterReply(admin, repairTarget);
   return noContent();
 }
 

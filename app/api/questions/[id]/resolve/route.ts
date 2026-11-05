@@ -20,7 +20,6 @@ import { conflict, ok, serverError, notFound } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import {
   broadcastAppliedLiveRoomEvent,
-  broadcastToRoom,
   broadcastFireworks,
 } from "@/lib/api/broadcast";
 import { isTestModeEnabled } from "@/lib/api/require-test-mode";
@@ -38,6 +37,10 @@ import {
   recordLiveAnswerHealth,
 } from "@/lib/live-answer/telemetry";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
+import {
+  broadcastLegacyResolveBestEffort,
+  recordCloseOnResolveRow,
+} from "@/lib/live/closeDue";
 import { closeCallerFrom, closeLateMs, logClose } from "@/lib/live/logClose";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
@@ -64,25 +67,6 @@ async function resolveLegacyQuestionOnce(
   });
   if (fallback.error) return { data: null, error: fallback.error };
   return { data: true, error: null };
-}
-
-async function broadcastLegacyResolveBestEffort(
-  roomCode: string,
-  payload: {
-    questionId: string;
-    correctIndex: number;
-    refetch: true;
-    serverNow: string;
-  },
-): Promise<void> {
-  try {
-    await broadcastToRoom(roomCode, "resolve", payload);
-  } catch {
-    // A timeout can mean Supabase accepted the broadcast but its acknowledgement
-    // was lost. Do not retry and amplify one commit into two room-wide refetches;
-    // durable Postgres Changes and snapshot recovery cover a truly missed signal.
-    console.warn("broadcast resolve failed");
-  }
 }
 
 async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
@@ -326,12 +310,9 @@ async function postResolve(
   };
 
   await broadcastLegacyResolveBestEffort(roomCode, payload);
-  logClose({
-    questionId,
-    roomCode,
-    closedBy: closeCallerFrom(req),
-    lateMs: closeLateMs(closedAtMs, resolveAtMs),
-  });
+  const closedBy = closeCallerFrom(req);
+  const lateMs = closeLateMs(closedAtMs, resolveAtMs);
+  logClose({ questionId, roomCode, closedBy, lateMs });
 
   // Synchronized firework salvo (July) — every July screen ignites the same
   // burst at the same instant as the answer is revealed. Cosmetic + best-effort
@@ -341,6 +322,8 @@ async function postResolve(
   } catch {
     console.warn("broadcast fireworks(salvo) failed");
   }
+
+  await recordCloseOnResolveRow(admin, { questionId, closedBy, lateMs });
 
   // Resolution is already committed and fanned out. Keep this aggregate
   // response metadata best-effort so an unrelated read failure cannot strand

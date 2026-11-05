@@ -17,6 +17,7 @@ import { broadcastAppliedLiveRoomEvent, broadcastGameEnded, broadcastFireworks }
 import { projectExactLiveEvent } from "@/lib/live-answer/projectEvent";
 import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-answer/rpcResult";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
+import { sweepLastFinishedAfterReply } from "@/lib/live/scoreLateAnswers";
 
 const LiveGameCommandSchema = z.object({
   runId: UuidSchema,
@@ -96,6 +97,12 @@ async function postEndGame(
     .select("state, ended_at")
     .single();
   if (error || !data) return serverError(error?.message ?? "could not end game");
+
+  sweepLastFinishedAfterReply(admin, {
+    gameId: id,
+    nightId: owned.night.id,
+    roomCode: owned.night.room_code,
+  });
 
   // Broadcast the state flip so phones + TV refresh without waiting on
   // postgres_changes. Phones flip to PlayerJoinGame2 (if game 1 ended) or
