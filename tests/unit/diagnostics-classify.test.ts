@@ -2,6 +2,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  broadcastDefinitelyRefused,
   broadcastErrorKind,
   classifyActionResponse,
   classifyAnswerResponse,
@@ -79,6 +80,33 @@ describe("broadcastErrorKind", () => {
     expect(broadcastErrorKind(new Error("broadcast HTTP 401: nope"))).toBe("http_4xx");
     expect(broadcastErrorKind(new TypeError("fetch failed"))).toBe("network");
     expect(broadcastErrorKind("weird")).toBe("network");
+  });
+});
+
+describe("broadcastDefinitelyRefused", () => {
+  const fetchFailed = (cause: unknown) => new TypeError("fetch failed", { cause });
+  const withCode = (code: string) => Object.assign(new Error(code), { code });
+
+  it("is true only when the broadcast clearly never arrived", () => {
+    expect(broadcastDefinitelyRefused(new Error("broadcast HTTP 401: nope"))).toBe(true);
+    expect(broadcastDefinitelyRefused(new Error("broadcast HTTP 429: slow down"))).toBe(true);
+    expect(broadcastDefinitelyRefused(new Error("broadcastToRoom: missing KEY"))).toBe(true);
+    expect(broadcastDefinitelyRefused(fetchFailed(withCode("ECONNREFUSED")))).toBe(true);
+    expect(broadcastDefinitelyRefused(fetchFailed(withCode("ENOTFOUND")))).toBe(true);
+    // Node's shape when every address for a host name refuses.
+    const allRefused = Object.assign(new AggregateError([withCode("ECONNREFUSED")]), {
+      code: "ECONNREFUSED",
+    });
+    expect(broadcastDefinitelyRefused(fetchFailed(allRefused))).toBe(true);
+  });
+
+  it("is false for anything that may have been delivered", () => {
+    expect(broadcastDefinitelyRefused(Object.assign(new Error("x"), { name: "AbortError" }))).toBe(false);
+    expect(broadcastDefinitelyRefused(new Error("broadcast HTTP 503: upstream"))).toBe(false);
+    expect(broadcastDefinitelyRefused(new Error("broadcast HTTP 504: gateway"))).toBe(false);
+    expect(broadcastDefinitelyRefused(fetchFailed(withCode("ECONNRESET")))).toBe(false);
+    expect(broadcastDefinitelyRefused(new TypeError("fetch failed"))).toBe(false);
+    expect(broadcastDefinitelyRefused("weird")).toBe(false);
   });
 });
 

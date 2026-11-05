@@ -184,3 +184,17 @@ export function broadcastErrorKind(error: unknown): string {
   if (message.startsWith("broadcastToRoom: missing")) return "no_config";
   return "network";
 }
+
+/**
+ * True only when a broadcast clearly never reached the room: Realtime answered
+ * with a 4xx, the keys are missing, or the connection never opened. Anything
+ * else (a timeout, a 5xx from a gateway, a reset after the post went out) may
+ * have been delivered.
+ */
+export function broadcastDefinitelyRefused(error: unknown): boolean {
+  const kind = broadcastErrorKind(error);
+  if (kind === "http_4xx" || kind === "no_config") return true;
+  if (kind !== "network" || !(error instanceof Error)) return false;
+  const code = (error.cause as { code?: unknown } | undefined)?.code;
+  return code === "ECONNREFUSED" || code === "ENOTFOUND";
+}

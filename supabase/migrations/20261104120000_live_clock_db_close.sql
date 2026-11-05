@@ -137,7 +137,13 @@ $$;
 
 -- Hands out closes still worth announcing. A reset or undo after the close drops
 -- the row. So does the 60-second budget: past that the phones' own refresh has
--- already caught up. The 3-second lease lets a refused send go round again.
+-- already caught up.
+--
+-- The claim is the sent mark, so delivery is at most once: a row handed out here
+-- is never handed out again unless the app clears sent_at after a definite
+-- refusal. The 3-second lease spaces out those retries. A crash after the claim,
+-- or a reply lost on the way back, costs that one broadcast and leaves phones on
+-- their 15-second refresh. sent_via stays 'claimed' on any such row.
 create or replace function public.claim_close_broadcasts()
 returns setof public.question_close_events
 language plpgsql
@@ -174,7 +180,8 @@ begin
 
   return query
   update public.question_close_events e
-     set claimed_at = v_now, claim_count = e.claim_count + 1
+     set claimed_at = v_now, claim_count = e.claim_count + 1,
+         sent_at = v_now, sent_via = 'claimed'
    where e.id in (
      select x.id from public.question_close_events x
       where x.sent_at is null and x.dropped_at is null and not x.shadow
@@ -210,15 +217,18 @@ begin
      where g.state = 'live' and n.answer_engine = 'legacy');
   select j.jobid, j.active into v_job, v_active
     from cron.job j where j.jobname = 'tr1via-close-due';
-  if v_job is not null and v_active is distinct from v_want then
+  if v_job is null then
+    raise warning 'live_clock_cron_gate: job tr1via-close-due is not scheduled';
+  elsif v_active is distinct from v_want then
     perform cron.alter_job(job_id := v_job, active := v_want);
   end if;
 end;
 $$;
 
--- The pre-show check, read-only. With a game live the sweep must have ticked in
--- the last 5 seconds. With none live the 1-second job is rightly off, so the
--- one-minute gate must have run instead.
+-- The pre-show check, read-only. All three jobs must exist. With a game live the
+-- sweep must have ticked in the last 5 seconds. With none live the 1-second job
+-- is rightly off, so the one-minute gate must have run instead. That proves less,
+-- so scripts/live-clock-preshow.mjs checks again once a game is live.
 create or replace function public.live_clock_preshow_check(p_expected_mode text default 'on')
 returns jsonb
 language plpgsql
@@ -232,6 +242,7 @@ declare
   v_live integer;
   v_unsent integer;
   v_ticking boolean;
+  v_missing text;
   v_problems text[] := '{}';
 begin
   select * into v_cfg from public.live_clock where id;
@@ -253,6 +264,19 @@ begin
   end if;
   if not v_ticking then
     v_problems := v_problems || 'job is not ticking'::text;
+  end if;
+  if pg_catalog.to_regnamespace('cron') is null then
+    v_problems := v_problems || 'pg_cron is not installed'::text;
+  else
+    for v_missing in
+      select want.jobname
+        from pg_catalog.unnest(array['tr1via-close-due', 'tr1via-close-due-gate',
+                                     'tr1via-cron-history-trim']) as want(jobname)
+       where not exists (select 1 from cron.job j where j.jobname = want.jobname)
+       order by want.jobname
+    loop
+      v_problems := v_problems || pg_catalog.format('job %s is not scheduled', v_missing);
+    end loop;
   end if;
   if v_unsent > 0 then
     v_problems := v_problems || pg_catalog.format('%s unsent close rows', v_unsent);

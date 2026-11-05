@@ -247,8 +247,54 @@ describe("database clock: close_due_questions and claim_close_broadcasts", () =>
     expect((await events(ids[3]))[0].drop_reason).toBe("expired");
     expect(await claim()).toEqual([]);
 
-    await db.exec("update question_close_events set claimed_at = claimed_at - interval '3 seconds'");
+    await db.exec(`
+      update question_close_events set sent_at = null, sent_via = null
+       where dropped_at is null;
+      update question_close_events set claimed_at = claimed_at - interval '3 seconds';
+    `);
     expect(await claim()).toHaveLength(3);
+  });
+
+  test("the claim is the sent mark: a claimed row never comes back on its own", async () => {
+    const id = await question(30);
+    await sweep();
+    expect(await claim()).toHaveLength(1);
+    const [claimed] = (await db.query<{ sent_at: Date | null; sent_via: string | null }>(
+      "select sent_at, sent_via from question_close_events where question_id = $1",
+      [id],
+    )).rows;
+    expect(claimed.sent_at).not.toBeNull();
+    expect(claimed.sent_via).toBe("claimed");
+
+    await db.exec("update question_close_events set claimed_at = claimed_at - interval '30 seconds'");
+    expect(await claim()).toEqual([]);
+  });
+
+  test("a released row waits out the lease, then goes round again", async () => {
+    const id = await question(30);
+    await sweep();
+    await claim();
+    const release = "update question_close_events set sent_at = null, sent_via = null";
+
+    await db.exec(release);
+    expect(await claim()).toEqual([]);
+
+    await db.exec("update question_close_events set claimed_at = claimed_at - interval '3 seconds'");
+    expect((await claim()).map((r) => r.question_id)).toEqual([id]);
+  });
+
+  test("a released row still expires at the 60-second budget", async () => {
+    const id = await question(30);
+    await sweep();
+    await claim();
+    await db.exec(`
+      update question_close_events set sent_at = null, sent_via = null,
+        claimed_at = claimed_at - interval '3 seconds',
+        closed_at = now() - interval '61 seconds';
+    `);
+
+    expect(await claim()).toEqual([]);
+    expect((await events(id))[0].drop_reason).toBe("expired");
   });
 
   describe("schedule and pre-show check", () => {
@@ -256,6 +302,19 @@ describe("database clock: close_due_questions and claim_close_broadcasts", () =>
       (await db.query<{ r: { ok: boolean; problems: string[] } }>(
         "select public.live_clock_preshow_check() r",
       )).rows[0].r;
+
+    beforeAll(async () => {
+      await db.exec(`
+        create schema cron;
+        create table cron.job (jobid bigserial primary key, jobname text unique, schedule text, command text, active boolean default true);
+        create function cron.schedule(n text, s text, c text) returns bigint language sql as
+          $$ insert into cron.job (jobname, schedule, command) values (n, s, c)
+             on conflict (jobname) do update set schedule = excluded.schedule returning jobid $$;
+        create function cron.alter_job(job_id bigint, active boolean) returns void language sql as
+          $$ update cron.job set active = alter_job.active where jobid = job_id $$;
+      `);
+      await db.exec(readFileSync(path.join(MIGRATIONS_DIR, CLOCK_FILE), "utf8"));
+    });
 
     test("the check names every problem, and passes when ticking and clean", async () => {
       const id = await question(30);
@@ -287,16 +346,48 @@ describe("database clock: close_due_questions and claim_close_broadcasts", () =>
       expect((await check()).ok).toBe(true);
     });
 
-    test("with a stand-in pg_cron: schedules three jobs, the gate follows live games", async () => {
+    test("with no live game, a recent gate run can't hide a missing job", async () => {
+      await db.query("update games set state = 'done' where id = $1", [gameId]);
       await db.exec(`
-        create schema cron;
-        create table cron.job (jobid bigserial primary key, jobname text unique, schedule text, command text, active boolean default true);
-        create function cron.schedule(n text, s text, c text) returns bigint language sql as
-          $$ insert into cron.job (jobname, schedule, command) values (n, s, c)
-             on conflict (jobname) do update set schedule = excluded.schedule returning jobid $$;
-        create function cron.alter_job(job_id bigint, active boolean) returns void language sql as
-          $$ update cron.job set active = alter_job.active where jobid = job_id $$;
+        create table cron.job_kept as select * from cron.job;
+        delete from cron.job where jobname = 'tr1via-close-due';
       `);
+      const warnings: string[] = [];
+      await db.query("select public.live_clock_cron_gate()", [], {
+        onNotice: (notice) => void warnings.push(notice.message ?? ""),
+      });
+      expect(warnings).toEqual(["live_clock_cron_gate: job tr1via-close-due is not scheduled"]);
+      expect(await check()).toMatchObject({
+        ok: false,
+        problems: ["job tr1via-close-due is not scheduled"],
+      });
+
+      await db.exec("delete from cron.job");
+      await db.query("select public.live_clock_cron_gate()");
+      expect((await check()).problems).toEqual([
+        "job tr1via-close-due is not scheduled",
+        "job tr1via-close-due-gate is not scheduled",
+        "job tr1via-cron-history-trim is not scheduled",
+      ]);
+
+      await db.exec(`
+        insert into cron.job select * from cron.job_kept
+          where jobname not in (select jobname from cron.job);
+        drop table cron.job_kept;
+      `);
+      await db.query("select public.live_clock_cron_gate()");
+      expect((await check()).ok).toBe(true);
+    });
+
+    test("a database without pg_cron fails the check", async () => {
+      await db.query("update games set state = 'done' where id = $1", [gameId]);
+      await db.exec("alter schema cron rename to cron_away");
+      await db.query("select public.live_clock_cron_gate()");
+      expect((await check()).problems).toEqual(["pg_cron is not installed"]);
+      await db.exec("alter schema cron_away rename to cron");
+    });
+
+    test("with a stand-in pg_cron: schedules three jobs, the gate follows live games", async () => {
       await db.exec(readFileSync(path.join(MIGRATIONS_DIR, CLOCK_FILE), "utf8"));
       const jobs = async () =>
         (await db.query<{ jobname: string; schedule: string; active: boolean }>(

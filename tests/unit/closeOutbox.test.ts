@@ -12,6 +12,7 @@ vi.mock("next/server", () => nextServer);
 
 import {
   __resetCloseOutboxForTests,
+  DRAIN_DEADLINE_MS,
   DRAIN_MIN_GAP_MS,
   drainCloseOutbox,
   scheduleCloseDrain,
@@ -39,8 +40,14 @@ const row = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function fakeAdmin(claims: unknown[][], claimError: unknown = null) {
-  const stamps: { id: unknown; values: Record<string, unknown> }[] = [];
+type WriteResult = { error: unknown };
+
+function fakeAdmin(
+  claims: unknown[][],
+  claimError: unknown = null,
+  write: () => Promise<WriteResult> = async () => ({ error: null }),
+) {
+  const stamps: { id: unknown; values: Record<string, unknown>; signal: unknown }[] = [];
   const order: string[] = [];
   let call = 0;
   const rpc = vi.fn(() => ({
@@ -51,17 +58,23 @@ function fakeAdmin(claims: unknown[][], claimError: unknown = null) {
   }));
   const from = vi.fn(() => ({
     update: (values: Record<string, unknown>) => ({
-      eq: async (_column: string, id: unknown) => {
-        order.push("stamp");
-        stamps.push({ id, values });
-        return { error: null };
-      },
+      eq: (_column: string, id: unknown) => ({
+        abortSignal: (signal: unknown) => {
+          order.push("stamp");
+          stamps.push({ id, values, signal });
+          return write();
+        },
+      }),
     }),
   }));
   return { admin: { rpc, from } as unknown as Admin, rpc, stamps, order };
 }
 
 const abortError = () => Object.assign(new Error("aborted"), { name: "AbortError" });
+const fetchFailed = (code: string) =>
+  new TypeError("fetch failed", { cause: Object.assign(new Error(code), { code }) });
+const neverSettles = () => new Promise<never>(() => {});
+const RELEASE = { sent_at: null, sent_via: null };
 
 describe("drainCloseOutbox", () => {
   beforeEach(() => {
@@ -81,7 +94,7 @@ describe("drainCloseOutbox", () => {
     expect(stamps).toEqual([]);
   });
 
-  it("sends one resolve, stamps it, then one fireworks for a claimed close", async () => {
+  it("sends one resolve, one fireworks, then labels the row", async () => {
     const { admin, stamps, order } = fakeAdmin([[row()]]);
     broadcast.broadcastToRoom.mockImplementation(async () => void order.push("resolve"));
     broadcast.broadcastFireworks.mockImplementation(async () => void order.push("fireworks"));
@@ -96,12 +109,13 @@ describe("drainCloseOutbox", () => {
     );
     expect(broadcast.broadcastFireworks).toHaveBeenCalledTimes(1);
     expect(broadcast.broadcastFireworks).toHaveBeenCalledWith("ROOM42", "salvo", "q1");
-    expect(order).toEqual(["resolve", "stamp", "fireworks"]);
+    expect(order).toEqual(["resolve", "fireworks", "stamp"]);
     expect(stamps[0].id).toBe(7);
-    expect(stamps[0].values.sent_via).toBe("rest");
+    expect(stamps[0].values).toEqual({ sent_via: "rest" });
+    expect(stamps[0].signal).toBeInstanceOf(AbortSignal);
   });
 
-  it("stamps a timed-out send as possibly delivered and doesn't resend it", async () => {
+  it("treats a timed-out send as possibly delivered and doesn't release it", async () => {
     const { admin, stamps } = fakeAdmin([[row()], []]);
     broadcast.broadcastToRoom.mockRejectedValueOnce(abortError());
 
@@ -109,22 +123,65 @@ describe("drainCloseOutbox", () => {
     await drainCloseOutbox(admin, { urgent: true });
 
     expect(broadcast.broadcastToRoom).toHaveBeenCalledTimes(1);
-    expect(stamps).toHaveLength(1);
-    expect(stamps[0].values.sent_via).toBe("rest-timeout");
+    expect(stamps.map((s) => s.values)).toEqual([{ sent_via: "rest-timeout" }]);
     expect(broadcast.broadcastFireworks).toHaveBeenCalledTimes(1);
   });
 
-  it("leaves a refused send unstamped, with no fireworks, for the next claim", async () => {
+  it.each([
+    ["a gateway 504", new Error("broadcast HTTP 504: gateway"), "rest-http_5xx"],
+    ["a 503", new Error("broadcast HTTP 503: down"), "rest-http_5xx"],
+    ["a reset after the post went out", fetchFailed("ECONNRESET"), "rest-network"],
+    ["a fetch failure with no reason", new TypeError("fetch failed"), "rest-network"],
+  ])("keeps the row sent after %s, which may have arrived", async (_name, error, via) => {
     const { admin, stamps } = fakeAdmin([[row()]]);
-    broadcast.broadcastToRoom.mockRejectedValueOnce(new Error("broadcast HTTP 503: down"));
+    broadcast.broadcastToRoom.mockRejectedValueOnce(error);
 
     await drainCloseOutbox(admin);
 
-    expect(stamps).toEqual([]);
+    expect(stamps.map((s) => s.values)).toEqual([{ sent_via: via }]);
+    expect(broadcast.broadcastFireworks).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ["a 401", new Error("broadcast HTTP 401: nope")],
+    ["missing keys", new Error("broadcastToRoom: missing NEXT_PUBLIC_SUPABASE_URL")],
+    ["a refused connection", fetchFailed("ECONNREFUSED")],
+    ["an unknown host", fetchFailed("ENOTFOUND")],
+  ])("releases the row after %s, with no fireworks", async (_name, error) => {
+    const { admin, stamps } = fakeAdmin([[row()]]);
+    broadcast.broadcastToRoom.mockRejectedValueOnce(error);
+
+    await drainCloseOutbox(admin);
+
+    expect(stamps.map((s) => s.values)).toEqual([RELEASE]);
+    expect(stamps[0].signal).toBeInstanceOf(AbortSignal);
     expect(broadcast.broadcastFireworks).not.toHaveBeenCalled();
   });
 
-  it("a failed fireworks send doesn't undo the stamp or retry", async () => {
+  it("a failed release leaves the row sent and never throws", async () => {
+    const { admin } = fakeAdmin([[row()]], null, async () => ({ error: { code: "57014" } }));
+    broadcast.broadcastToRoom.mockRejectedValueOnce(new Error("broadcast HTTP 401: nope"));
+
+    await expect(drainCloseOutbox(admin)).resolves.toBeUndefined();
+
+    expect(broadcast.broadcastFireworks).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["errors", async () => ({ error: { code: "57014" } })],
+    ["throws", () => Promise.reject(new Error("socket hang up"))],
+  ])("a label write that %s changes nothing: one resolve, one fireworks", async (_name, write) => {
+    const { admin, stamps } = fakeAdmin([[row()], []], null, write);
+
+    await expect(drainCloseOutbox(admin)).resolves.toBeUndefined();
+    await drainCloseOutbox(admin, { urgent: true });
+
+    expect(stamps).toHaveLength(1);
+    expect(broadcast.broadcastToRoom).toHaveBeenCalledTimes(1);
+    expect(broadcast.broadcastFireworks).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed fireworks send doesn't undo the label or retry", async () => {
     const { admin, stamps } = fakeAdmin([[row()]]);
     broadcast.broadcastFireworks.mockRejectedValueOnce(new Error("broadcast HTTP 500: x"));
 
@@ -132,6 +189,48 @@ describe("drainCloseOutbox", () => {
 
     expect(stamps).toHaveLength(1);
     expect(broadcast.broadcastFireworks).toHaveBeenCalledTimes(1);
+  });
+
+  it("a hung label write can't stop later drains: the deadline lets go of it", async () => {
+    vi.useFakeTimers();
+    const { admin, rpc } = fakeAdmin([[row()], [row({ id: 8, question_id: "q2" })]], null, neverSettles);
+
+    const stuck = drainCloseOutbox(admin);
+    await vi.advanceTimersByTimeAsync(DRAIN_DEADLINE_MS - 1);
+    const joined = drainCloseOutbox(admin, { urgent: true });
+    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(broadcast.broadcastFireworks).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(Promise.all([stuck, joined])).resolves.toBeDefined();
+
+    const next = drainCloseOutbox(admin, { urgent: true });
+    await vi.advanceTimersByTimeAsync(DRAIN_DEADLINE_MS);
+    await next;
+    expect(rpc).toHaveBeenCalledTimes(2);
+    expect(broadcast.broadcastToRoom).toHaveBeenCalledTimes(2);
+  });
+
+  it("a send that never settles can't stop later drains either", async () => {
+    vi.useFakeTimers();
+    const { admin, rpc } = fakeAdmin([[row()], []]);
+    broadcast.broadcastToRoom.mockImplementationOnce(neverSettles);
+
+    const stuck = drainCloseOutbox(admin);
+    await vi.advanceTimersByTimeAsync(DRAIN_DEADLINE_MS);
+    await stuck;
+
+    await drainCloseOutbox(admin, { urgent: true });
+    expect(rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it("a finished drain leaves no deadline timer behind", async () => {
+    vi.useFakeTimers();
+    const { admin } = fakeAdmin([[row()]]);
+
+    await drainCloseOutbox(admin);
+
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("claims at most once a second per instance", async () => {
