@@ -21,7 +21,9 @@ import { ok, badRequest, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { rankScores } from "@/lib/game/rankScores";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
+import { tickCloseIfDue } from "@/lib/live/closeDue";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import { projectLiveRoom } from "@/lib/live-answer/projectPlay";
 import { presentationKey } from "@/lib/room/presentationKey";
 import {
@@ -184,6 +186,24 @@ export async function GET(
   const liveQuestion =
     (liveQuestionRes.data ?? []).find((q) => categoryIds.has(q.category_id)) ??
     null;
+
+  // Backstop for lost timer-zero calls, same as the room snapshot.
+  if (night.answer_engine !== "resilient_v1" && liveQuestion?.played_at) {
+    const liveGameId = nightCategories.find((c) => c.id === liveQuestion.category_id)?.game_id;
+    if (games.find((g) => g.id === liveGameId)?.state === "live") {
+      await tickCloseIfDue(admin, {
+        nightId,
+        questionId: liveQuestion.id,
+        expectedPlayedAt: liveQuestion.played_at,
+        roomCode: code,
+        source: "tv-tick",
+        themeKey: resolveTheme(
+          { theme_key: night.theme_key },
+          { default_theme_key: hostDefaultThemeKey },
+        ),
+      });
+    }
+  }
 
   // Recent reveals are scoped to this night in Postgres before the limit.
   // Keep the in-memory guard as defense-in-depth against malformed join data.

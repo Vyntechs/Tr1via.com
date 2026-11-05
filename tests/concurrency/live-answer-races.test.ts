@@ -212,8 +212,13 @@ async function readyLegacyQuestion(playerCount = 2): Promise<Fixture> {
   );
   for (const [index, player] of fixture.players.entries()) {
     await admin.query(
-      `insert into answers (question_id, player_id, chosen_index, scramble, ms_to_lock)
-       values ($1, $2, 0, '[0,1,2,3]'::jsonb, $3)`,
+      // locked_at must sit inside the 25-second window. Its default of now() is
+      // 31 seconds after played_at here, which the deadline trigger refuses.
+      `insert into answers (question_id, player_id, chosen_index, scramble, ms_to_lock, locked_at)
+       values (
+         $1, $2, 0, '[0,1,2,3]'::jsonb, $3::int,
+         (select q.played_at from questions q where q.id = $1) + $3::int * interval '1 millisecond'
+       )`,
       [fixture.questionId, player.id, index === 0 ? 4999 : 5000],
     );
   }

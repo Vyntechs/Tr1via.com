@@ -16,6 +16,8 @@ vi.mock("@/lib/supabase/admin", () => adminMock);
 vi.mock("@/lib/api/broadcast", () => broadcastMock);
 vi.mock("@/lib/api/require-test-mode", () => testModeMock);
 
+import { CLOSE_CALLER_HEADER } from "@/lib/live/logClose";
+
 const QUESTION_ID = "11111111-1111-1111-1111-111111111111";
 const CATEGORY_ID = "22222222-2222-2222-2222-222222222222";
 const GAME_ID = "33333333-3333-3333-3333-333333333333";
@@ -107,6 +109,12 @@ function request(headers?: HeadersInit) {
 
 const ctx = { params: Promise.resolve({ id: QUESTION_ID }) };
 
+function closeLines(info: { mock: { calls: unknown[][] } }) {
+  return info.mock.calls
+    .filter(([line]) => typeof line === "string" && line.includes('"kind":"close"'))
+    .map(([line]) => JSON.parse(line as string) as unknown);
+}
+
 describe("POST /api/questions/[id]/resolve", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -130,8 +138,57 @@ describe("POST /api/questions/[id]/resolve", () => {
     const response = await POST(request(), ctx);
 
     expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: "question answer window is still open",
+      retryInMs: 15_000,
+    });
     expect(admin.rpc).not.toHaveBeenCalled();
     expect(broadcastMock.broadcastToRoom).not.toHaveBeenCalled();
+  });
+
+  it("logs the caller and how late the close was, after the broadcast", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      playedAt: "2026-07-19T03:59:33.000Z",
+    }));
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    await POST(request({ [CLOSE_CALLER_HEADER]: "tv" }), ctx);
+
+    expect(closeLines(info)).toEqual([{
+      kind: "close",
+      questionId: QUESTION_ID,
+      roomCode: "ABCDEF",
+      closedBy: "tv",
+      lateMs: 2_000,
+    }]);
+    expect(broadcastMock.broadcastToRoom.mock.invocationCallOrder[0])
+      .toBeLessThan(info.mock.invocationCallOrder[0]);
+  });
+
+  it("logs an unlisted caller header as unknown", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      playedAt: "2026-07-19T03:59:33.000Z",
+    }));
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    await POST(request({ [CLOSE_CALLER_HEADER]: "{\"forged\":true}" }), ctx);
+
+    expect(closeLines(info)).toMatchObject([{ closedBy: "unknown" }]);
+  });
+
+  it("writes no close line for a caller that lost the race", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({
+      playedAt: "2026-07-19T03:59:33.000Z",
+      freshlyResolved: false,
+    }));
+
+    const { POST } = await import("@/app/api/questions/[id]/resolve/route");
+    await POST(request({ [CLOSE_CALLER_HEADER]: "phone" }), ctx);
+
+    expect(closeLines(info)).toEqual([]);
   });
 
   it("allows an anonymous timer trigger once the authoritative window is due", async () => {

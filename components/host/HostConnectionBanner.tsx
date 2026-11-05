@@ -1,8 +1,10 @@
 // components/host/HostConnectionBanner.tsx
-// Non-intrusive connection banner for the HOST live console. Two tiers:
+// Non-intrusive connection banner for the HOST live console. Tiers:
 //   - "unreachable" (red): the browser→Supabase reads failed (restrictive
 //     venue WiFi) — tells the first host to switch the laptop to a hotspot. Takes
-//     precedence because it needs a real call to action.
+//     precedence because it needs a real call to action. With a room already on
+//     screen it waits 45s: a short blip must not send a host off to change
+//     networks mid-question. Until then it reads as the amber slow tier.
 //   - "reconnecting" (amber): the realtime socket is flaky but reachable —
 //     calmly reassures, never reloads the page (Option A).
 // Reads the shared channelHealth + reachability signals (set by useRoom).
@@ -10,17 +12,22 @@
 "use client";
 
 import { useChannelHealth } from "@/lib/realtime/channelHealth";
-import { useReachability } from "@/lib/realtime/reachability";
+import {
+  UNREACHABLE_SCREEN_MS,
+  useReachability,
+  useUnreachableFor,
+} from "@/lib/realtime/reachability";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 
 const UNHEALTHY = new Set(["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"]);
 
-export function HostConnectionBanner() {
+export function HostConnectionBanner({ hasRoomView = false }: { hasRoomView?: boolean }) {
   const health = useChannelHealth();
   const reachability = useReachability();
+  const unreachableTooLong = useUnreachableFor(UNREACHABLE_SCREEN_MS);
   const { backupMode } = useRoomFallback();
 
-  if (reachability === "unreachable") {
+  if (reachability === "unreachable" && (!hasRoomView || unreachableTooLong)) {
     return (
       <div
         role="status"
@@ -35,7 +42,7 @@ export function HostConnectionBanner() {
 
   // Running via the resilient server route — game is live, just on a backup
   // connection. Calmer than "reconnecting", and it outranks it.
-  if (backupMode) {
+  if (backupMode || reachability === "unreachable") {
     return (
       <div
         role="status"
@@ -43,7 +50,7 @@ export function HostConnectionBanner() {
         data-testid="host-backup-banner"
         className="fixed left-1/2 top-3 z-50 -translate-x-1/2 rounded-full bg-amber-500/90 px-4 py-1.5 text-sm font-medium text-black shadow-lg"
       >
-        Slow connection — game still live
+        Slow connection. Game still live.
       </div>
     );
   }

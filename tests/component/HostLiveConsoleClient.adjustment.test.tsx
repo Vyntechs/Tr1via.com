@@ -58,11 +58,15 @@ vi.mock("@/lib/supabase/client", () => ({
         if (table === "game_scores") {
           return {
             select: () => ({
-              eq: () => ({ order: async () => ({ data: [], error: null }) }),
+              eq: () => ({
+                order: () => ({ abortSignal: async () => ({ data: [], error: null }) }),
+              }),
             }),
           };
         }
-        return { select: () => ({ eq: async () => ({ data: [] }) }) };
+        return {
+          select: () => ({ eq: () => ({ abortSignal: async () => ({ data: [] }) }) }),
+        };
       },
       channel: () => channel,
       removeChannel: () => undefined,

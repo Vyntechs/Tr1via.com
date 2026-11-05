@@ -10,11 +10,20 @@
 //                                      408 / 425 / 429 are network-ish: they retry.
 //   failed (rejected) also stops every other request still out, so nothing can
 //   flip a refusal back to "retrying" or re-send the refused answer.
-//   *        → the answer window ends→ failed      (reason "closed": never confirmed)
+//   *        → the answer window ends→ failed      (reason "closed": never confirmed,
+//                                      so it may still count: the stored answer stays
+//                                      until a snapshot shows the row or the reveal)
+//   *        → 400 "answer deadline passed" / "question is closed"
+//                                      → failed      (reason "late" if this was the only
+//                                      send and nothing else is out, otherwise "closed")
 //   failed   → retry()               → pending     (manual re-attempt from the UI)
 //   failed   → submit(otherSlot)     → pending     (change of mind after a refusal)
 //
-// "Slow" = no reply within attemptTimeoutMs (default 6 s). A slow request is
+// "Slow" = no reply within the quiet timer, clamp(remainingMs - 1500, 1500, 6000).
+// The 1,500 is a 1,000ms landing margin plus the 500ms first backoff, so the
+// resend can still beat the deadline; none goes out with under 750ms left. The
+// screen runs on its own attemptTimeoutMs (6 s) timer, so a slow reply near zero
+// doesn't change the wording. Sends that fail outright retry as before. A slow request is
 // NOT cancelled: on a bad venue connection it may still land, and cancelling it
 // would restart the clock forever. The next attempt starts alongside it, at most
 // MAX_IN_FLIGHT at once, and the first confirmation wins. The server is
@@ -42,15 +51,18 @@ import { diagActive, diagEvent } from "@/lib/diagnostics/client";
 
 export type AnswerSubmitStatus = "idle" | "pending" | "retrying" | "sent" | "failed";
 /** Why a `failed` status happened. `closed` = the window ended before the
- *  server confirmed; `rejected` = the server refused the answer (or an explicit
- *  maxAttempts ran out). */
-export type AnswerSubmitFailure = "closed" | "rejected";
+ *  server confirmed, and the answer may still have landed; `late` = the only
+ *  send was refused for missing the deadline, so it did not; `rejected` = the
+ *  server refused the answer (or an explicit maxAttempts ran out). */
+export type AnswerSubmitFailure = "closed" | "rejected" | "late";
 
 export interface UseAnswerSubmitOptions {
   questionId: string;
   scramble: number[];
   /** False once the authoritative player timer reaches zero. */
   accepting?: boolean;
+  /** Milliseconds left on the timer. Without it the quiet timer is a flat attemptTimeoutMs. */
+  getRemainingMs?: () => number;
   /**
    * True once the signed room snapshot already carries this player's answer
    * for this question. Stops any resend: the server has it.
@@ -85,6 +97,15 @@ export interface UseAnswerSubmitResult {
 const DEFAULT_BACKOFF = [500, 1000, 2000];
 export const ANSWER_ATTEMPT_TIMEOUT_MS = 6000;
 const MAX_IN_FLIGHT = 3;
+/** Landing margin plus the first backoff. See the header. */
+const QUIET_MARGIN_MS = 1500;
+/** No quiet resend leaves with less than this on the clock. */
+const LAST_RESEND_MS = 750;
+
+function quietTimeoutMs(remainingMs: number, attemptTimeoutMs: number): number {
+  const floor = Math.min(QUIET_MARGIN_MS, attemptTimeoutMs);
+  return Math.min(attemptTimeoutMs, Math.max(floor, remainingMs - QUIET_MARGIN_MS));
+}
 
 export const PENDING_ANSWER_KEY = "tr1via:pending-answer";
 
@@ -142,7 +163,7 @@ function isTerminalClientError(status: number): boolean {
 
 /** "sent" = this very request was saved. "already" = the server said it already
  *  holds an answer (maybe another slot of ours). */
-type Verdict = "sent" | "already" | "retry" | "rejected";
+type Verdict = "sent" | "already" | "retry" | "rejected" | "late";
 
 /** Reads a reply body as JSON, or null when it is empty or not JSON. */
 async function readBody(
@@ -191,6 +212,14 @@ async function judgeResponse(res: Response): Promise<{ verdict: Verdict; confirm
     if (typeof code === "string" && code !== "retry_later") return { verdict: "rejected" };
     return { verdict: "retry" };
   }
+  if (res.status === 400) {
+    // The server looks for a saved row before refusing a late answer, so these
+    // two mean it holds nothing for this player right now.
+    const reason = (await readBody(res))?.error;
+    if (reason === "answer deadline passed" || reason === "question is closed") {
+      return { verdict: "late" };
+    }
+  }
   return { verdict: isTerminalClientError(res.status) ? "rejected" : "retry" };
 }
 
@@ -198,6 +227,7 @@ export function useAnswerSubmit({
   questionId,
   scramble,
   accepting = true,
+  getRemainingMs,
   serverHasAnswer = false,
   maxAttempts = Number.POSITIVE_INFINITY,
   backoffMs = DEFAULT_BACKOFF,
@@ -223,17 +253,23 @@ export function useAnswerSubmit({
   // may still have been saved, so a bare "already answered" only tells us which
   // card the server holds when exactly one slot was ever sent.
   const sentSlotsRef = useRef<Set<number>>(new Set());
+  // Requests sent for this question, on this page or (after a refresh) an earlier
+  // one. "Too late" is only certain when there was exactly one.
+  const sendCountRef = useRef(0);
+  // The server said the deadline has passed. A phone running slow can still show
+  // time left, so no tap may start a new send.
+  const refusedLateRef = useRef(false);
   const inFlightRef = useRef<Set<AbortController>>(new Set());
   const retryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const acceptingRef = useRef(accepting);
   acceptingRef.current = accepting;
   const serverHasAnswerRef = useRef(serverHasAnswer);
-  const optsRef = useRef({ scramble, maxAttempts, backoffMs, attemptTimeoutMs });
+  const optsRef = useRef({ scramble, maxAttempts, backoffMs, attemptTimeoutMs, getRemainingMs });
   // Latest options for the timers and replies that outlive a render. Declared
   // before the effects below so it is current when they run.
   useEffect(() => {
     serverHasAnswerRef.current = serverHasAnswer;
-    optsRef.current = { scramble, maxAttempts, backoffMs, attemptTimeoutMs };
+    optsRef.current = { scramble, maxAttempts, backoffMs, attemptTimeoutMs, getRemainingMs };
   });
   // Diagnostic log only: when this tap happened on the phone's own clock and
   // what the server last said. Never read by the answer logic. `resumed` marks
@@ -299,11 +335,14 @@ export function useAnswerSubmit({
       }
       // A refusal ends this try for good: any other request still out must not
       // later flip the line back to "retrying" or re-send the refused answer.
-      // (A window that closed leaves them alone: one may still land and lock in.)
+      // (A closed window or a late refusal leaves them alone: one may still
+      // land and lock in.)
       if (reason === "rejected" && !keepStoredAnswer) stopAll();
       reportTap(slot, tries, false);
-      // Out of window or refused: nothing useful to resume later. Out of
-      // attempts (explicit maxAttempts): leave it so a refresh can re-fire.
+      // Refused: nothing useful to resume later. Window closed unconfirmed: the
+      // answer may still count, so it stays until a snapshot shows the row or
+      // the reveal. Out of attempts (explicit maxAttempts): leave it so a
+      // refresh can re-fire.
       if (!keepStoredAnswer) clearPendingAnswer();
       setFailure(reason);
       setStatus("failed");
@@ -316,10 +355,11 @@ export function useAnswerSubmit({
       const gen = genRef.current;
       if (sentRef.current) return;
       if (!acceptingRef.current) {
-        settleFailed(gen, slot, attempt, "closed", false);
+        settleFailed(gen, slot, attempt, "closed", true);
         return;
       }
       const tries = attempt + 1;
+      sendCountRef.current += 1;
       const flying = inFlightRef.current;
       if (flying.size >= MAX_IN_FLIGHT) {
         const oldest = flying.values().next().value;
@@ -334,17 +374,22 @@ export function useAnswerSubmit({
       // Each attempt hands over to at most one follow-up attempt, whether it
       // failed outright or just went quiet.
       let followed = false;
-      let slowTimer: ReturnType<typeof setTimeout> | null = null;
+      let quietTimer: ReturnType<typeof setTimeout> | null = null;
+      let statusTimer: ReturnType<typeof setTimeout> | null = null;
       const finish = () => {
-        if (slowTimer) clearTimeout(slowTimer);
+        if (quietTimer) clearTimeout(quietTimer);
+        if (statusTimer) clearTimeout(statusTimer);
         flying.delete(ctrl);
       };
       const followUp = (quiet: boolean) => {
         if (followed || ctrl.signal.aborted || failedRef.current) return;
         if (gen !== genRef.current || sentRef.current) return;
         if (!acceptingRef.current) {
+          // Past zero a quiet send just keeps waiting: the status timer decides
+          // when the words change, however short the quiet timer ran.
+          if (quiet) return;
           followed = true;
-          settleFailed(gen, slot, tries, "closed", false);
+          settleFailed(gen, slot, tries, "closed", true);
           return;
         }
         if (tries >= optsRef.current.maxAttempts) {
@@ -355,12 +400,20 @@ export function useAnswerSubmit({
           settleFailed(gen, slot, tries, "rejected", true);
           return;
         }
-        followed = true;
-        setStatus("retrying");
-        const { backoffMs: schedule } = optsRef.current;
-        const base = schedule[Math.min(attempt, schedule.length - 1)] ?? schedule[schedule.length - 1] ?? 1000;
+        const { backoffMs: schedule, getRemainingMs: remaining } = optsRef.current;
+        // A quiet resend is racing the deadline, so it always takes the first
+        // step: the quiet timer's margin assumes that. Outright failures back off.
+        const step = quiet ? 0 : Math.min(attempt, schedule.length - 1);
+        const base = schedule[step] ?? schedule[schedule.length - 1] ?? 1000;
         // A little spread so a whole room does not retry on the same beat.
         const delay = base > 0 ? Math.round(base * (0.8 + Math.random() * 0.4)) : 0;
+        // Too close to zero to land. This request may still answer; if it fails
+        // outright, or the window closes first, that path settles it.
+        if (quiet && remaining && remaining() - delay < LAST_RESEND_MS) return;
+        followed = true;
+        // Only an outright failure changes the words here; a quiet send leaves
+        // that to the status timer below.
+        if (!quiet) setStatus("retrying");
         if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
         retryTimerRef.current = setTimeout(() => {
           retryTimerRef.current = null;
@@ -368,7 +421,17 @@ export function useAnswerSubmit({
         }, delay);
       };
 
-      slowTimer = setTimeout(() => followUp(true), optsRef.current.attemptTimeoutMs);
+      const { attemptTimeoutMs: statusMs, getRemainingMs: remainingNow } = optsRef.current;
+      quietTimer = setTimeout(
+        () => followUp(true),
+        remainingNow ? quietTimeoutMs(remainingNow(), statusMs) : statusMs,
+      );
+      statusTimer = setTimeout(() => {
+        if (ctrl.signal.aborted || failedRef.current) return;
+        if (gen !== genRef.current || sentRef.current) return;
+        if (!acceptingRef.current) settleFailed(gen, slot, tries, "closed", true);
+        else if (tries < optsRef.current.maxAttempts) setStatus("retrying");
+      }, statusMs);
 
       void (async () => {
         try {
@@ -402,7 +465,13 @@ export function useAnswerSubmit({
           if (verdict === "sent") settleSent(gen, slot, tries, "own", confirmedSlot);
           else if (verdict === "already") settleSent(gen, slot, tries, "already", undefined);
           else if (verdict === "rejected") settleFailed(gen, slot, tries, "rejected", false);
-          else followUp(false);
+          else if (verdict === "late") {
+            refusedLateRef.current = true;
+            // Sure only if this was the one send and nothing else is out. With
+            // more, one may yet confirm, so keep checking and leave them running.
+            const alone = sendCountRef.current === 1 && inFlightRef.current.size === 0;
+            settleFailed(gen, slot, tries, alone ? "late" : "closed", !alone);
+          } else followUp(false);
         } catch {
           finish();
           // Aborted by us (answered elsewhere, question changed): not a failure.
@@ -424,6 +493,8 @@ export function useAnswerSubmit({
     sentRef.current = false;
     failedRef.current = false;
     sentSlotsRef.current = new Set();
+    sendCountRef.current = 0;
+    refusedLateRef.current = false;
     tapLogRef.current = null;
     setStatus("idle");
     setConfirmedAt(null);
@@ -437,16 +508,27 @@ export function useAnswerSubmit({
     const pending = loadPendingAnswer();
     if (pending) {
       if (pending.questionId === questionId) {
-        if (acceptingRef.current && !serverHasAnswerRef.current) {
+        if (serverHasAnswerRef.current) {
+          clearPendingAnswer();
+        } else if (acceptingRef.current) {
           busyRef.current = true;
           lastSlotRef.current = pending.slotChosen;
           sentSlotsRef.current.add(pending.slotChosen);
+          // The page before this one sent at least once.
+          sendCountRef.current = 1;
           tapLogRef.current = { at: Date.now(), last: null, resumed: true }; // diagnostic log only
           setChosenSlot(pending.slotChosen);
           setStatus("pending");
           runAttempt(pending.slotChosen, 0);
         } else {
-          clearPendingAnswer();
+          // Refreshed after zero with the answer still unconfirmed: it can't be
+          // sent again, but it may have landed. Show the pick and keep checking.
+          failedRef.current = true;
+          lastSlotRef.current = pending.slotChosen;
+          sentSlotsRef.current.add(pending.slotChosen);
+          setChosenSlot(pending.slotChosen);
+          setFailure("closed");
+          setStatus("failed");
         }
       } else {
         // Stale entry for a different question — clear so it doesn't fire later.
@@ -465,15 +547,13 @@ export function useAnswerSubmit({
 
   useEffect(() => {
     if (accepting) return;
-    const pending = loadPendingAnswer();
-    if (pending?.questionId === questionId) clearPendingAnswer();
     // The window just ended. If nothing is in flight, nothing more can be
     // sent: say so now. If a request is still out, it may yet land; its
     // reply (or its quiet timer) settles this, and a queued retry will see
     // the closed window and stop.
     if (busyRef.current && !sentRef.current && inFlightRef.current.size === 0) {
       const slot = lastSlotRef.current;
-      if (slot) settleFailed(genRef.current, slot, 0, "closed", false);
+      if (slot) settleFailed(genRef.current, slot, 0, "closed", true);
     }
   }, [accepting, questionId, settleFailed]);
 
@@ -495,6 +575,8 @@ export function useAnswerSubmit({
     busyRef.current = false;
     failedRef.current = false;
     sentSlotsRef.current = new Set();
+    sendCountRef.current = 0;
+    refusedLateRef.current = false;
     lastSlotRef.current = null;
     setChosenSlot(null);
     setFailure(null);
@@ -530,14 +612,14 @@ export function useAnswerSubmit({
         diagEvent("tapx", { q: questionId, slot, why: "closed" }, true);
         return;
       }
-      if (busyRef.current || serverHasAnswerRef.current) return;
+      if (busyRef.current || serverHasAnswerRef.current || refusedLateRef.current) return;
       begin(slot);
     },
     [begin, questionId],
   );
 
   const retry = useCallback(() => {
-    if (!acceptingRef.current) return;
+    if (!acceptingRef.current || refusedLateRef.current) return;
     if (busyRef.current || serverHasAnswerRef.current) return;
     const slot = lastSlotRef.current;
     if (!slot) return;

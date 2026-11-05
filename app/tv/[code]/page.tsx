@@ -50,6 +50,7 @@ export default function TVPage({
     lastBroadcast,
     lastFireworksBeat,
     lastRoomMagicReaction,
+    refresh,
   } = useTVRoom(code);
   useSurfaceObservation({
     endpoint: `/api/tv/${code}/observe`,
@@ -65,18 +66,20 @@ export default function TVPage({
   //  count changed between renders and React crashed the whole TV (React #310).
   const welcomeEvent = useTVWelcomeEvent(lastBroadcast, snapshot?.players ?? []);
 
-  if (status === "loading") {
-    return <TVMessageStage title="Loading..." subtitle="" />;
-  }
-  if (status === "not-found") {
-    return (
-      <TVMessageStage
-        title="Game not found"
-        subtitle={`Check tr1via.com/host — code ${formatRoomCode(code)} isn't open.`}
-      />
-    );
-  }
-  if (status === "error" || !snapshot) {
+  // A failed poll keeps the last frame: the room stays on screen and the local
+  // timer keeps running. The message screens are for having no room to show.
+  if (!snapshot) {
+    if (status === "loading") {
+      return <TVMessageStage title="Loading..." subtitle="" />;
+    }
+    if (status === "not-found") {
+      return (
+        <TVMessageStage
+          title="Game not found"
+          subtitle={`Check tr1via.com/host — code ${formatRoomCode(code)} isn't open.`}
+        />
+      );
+    }
     return (
       <TVMessageStage
         title="Something's off."
@@ -94,6 +97,10 @@ export default function TVPage({
     lastBroadcast?.event === "reveal" ? lastBroadcast.revealedAt ?? null : null;
   const broadcastServerNow =
     lastBroadcast?.event === "reveal" ? lastBroadcast.serverNow ?? null : null;
+  const broadcastReceivedAtMs =
+    lastBroadcast?.event === "reveal" ? lastBroadcast.receivedAtMs ?? null : null;
+  const broadcastQuestionId =
+    lastBroadcast?.event === "reveal" ? lastBroadcast.questionId : null;
 
   // `welcomeEvent` is computed at the top of this component (above the early
   // returns) so its hook runs on every render — see the call site there.
@@ -105,6 +112,9 @@ export default function TVPage({
           snapshot={snapshot}
           lastBroadcastRevealedAt={broadcastRevealedAt}
           lastBroadcastServerNow={broadcastServerNow}
+          lastBroadcastReceivedAtMs={broadcastReceivedAtMs}
+          lastBroadcastQuestionId={broadcastQuestionId}
+          onResolveSettled={refresh}
           welcomeEvent={welcomeEvent}
           themeKey={themeKey}
         />

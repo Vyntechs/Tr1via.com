@@ -187,6 +187,7 @@ const h = vi.hoisted(() => {
     broadcastHandlers,
     changeHandlers,
     joinCallbacks,
+    realRoutePoll: false,
     NIGHT,
     RUN,
     seed,
@@ -214,11 +215,19 @@ vi.mock("@/lib/room/fetchRoomSnapshot", () => ({
 vi.mock("@/lib/hooks/useRevalidateOnFocus", () => ({ useRevalidateOnFocus: () => 0 }));
 vi.mock("@/lib/hooks/useFreshnessWatchdog", () => ({ useFreshnessWatchdog: () => undefined }));
 vi.mock("@/lib/hooks/useUnreachableRetry", () => ({ useUnreachableRetry: () => undefined }));
-vi.mock("@/lib/hooks/useRoomRoutePoll", () => ({ useRoomRoutePoll: () => undefined }));
+vi.mock("@/lib/hooks/useRoomRoutePoll", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/hooks/useRoomRoutePoll")>();
+  return {
+    useRoomRoutePoll: (args: Parameters<typeof actual.useRoomRoutePoll>[0]) => {
+      if (h.realRoutePoll) actual.useRoomRoutePoll(args);
+    },
+  };
+});
 
 import { useRoom } from "@/lib/hooks/useRoom";
 import { __resetReachabilityForTests, getReachability } from "@/lib/realtime/reachability";
 import { __resetRoomFallbackForTests, getRoomFallback } from "@/lib/room/roomFallbackStore";
+import { fetchRoomSnapshotPayload } from "@/lib/room/fetchRoomSnapshot";
 
 function deferred() {
   let release!: () => void;
@@ -1101,5 +1110,160 @@ describe("host laptop: re-reads the room in place when it may have missed someth
     });
 
     expect(h.executed.players).toBe(1);
+  });
+});
+
+describe("host laptop: route poll judges an outage (real useRoomRoutePoll)", () => {
+  const routeRead = vi.mocked(fetchRoomSnapshotPayload);
+  const goodPayload = {
+    audience: "host",
+    night: { id: "night-a" },
+    hostDefaultThemeKey: "may",
+    games: [],
+    categories: [],
+    players: [],
+    currentQuestion: null,
+    lastResolvedQuestion: null,
+    currentReveal: null,
+    allQuestions: [],
+    liveAnswers: [],
+    scores: [],
+    allScores: [],
+    tvPlayerKeys: {},
+    roomMagicReactions: [],
+  } as unknown as Awaited<ReturnType<typeof fetchRoomSnapshotPayload>>;
+  const noRoute = () => Promise.reject(new Error("route down"));
+
+  // Small steps: React holds re-renders until an act() ends, so one long advance
+  // would run a heartbeat's rebuild at the end of it instead of when it fired.
+  async function advance(ms: number) {
+    for (let left = ms; left >= 0; left -= 250) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(Math.min(left, 250));
+      });
+      if (left <= 250) break;
+    }
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    // rand 0: no first-fetch spread, and route polls land every 3.75s.
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => "visible" });
+    h.realRoutePoll = true;
+    h.seed();
+    __resetReachabilityForTests();
+    __resetRoomFallbackForTests();
+    routeRead.mockReset();
+    routeRead.mockImplementation(noRoute);
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ nightId: h.NIGHT, hostDefaultThemeKey: "may" }),
+    })));
+  });
+
+  afterEach(() => {
+    h.realRoutePoll = false;
+    h.gates.clear();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    Reflect.deleteProperty(document, "visibilityState");
+  });
+
+  /** Route reads since the outage began. The host also reads it once at mount for TV keys. */
+  let routeReadsAtMount = 0;
+  const routeReads = () => routeRead.mock.calls.length - routeReadsAtMount;
+
+  /** t=15s the heartbeat re-reads, t=20s those direct reads time out: the first miss. */
+  async function loseDirectReads() {
+    await advance(0);
+    routeReadsAtMount = routeRead.mock.calls.length;
+    h.gates.set("games", new Promise<void>(() => undefined));
+    await advance(20_500);
+  }
+
+  it("polls from the first missed read, and only the second failed poll marks unreachable", async () => {
+    await mountHost();
+    expect(getReachability()).toBe("ok");
+
+    await loseDirectReads();
+    // The one-off route read also failed. A room is on screen, so no verdict yet.
+    expect(routeReads()).toBe(1);
+    expect(getReachability()).toBe("ok");
+
+    await advance(3_750);
+    expect(routeReads()).toBe(2);
+    expect(getReachability()).toBe("ok");
+
+    await advance(3_750);
+    expect(routeReads()).toBe(3);
+    expect(getReachability()).toBe("unreachable");
+  });
+
+  it("the amber state waits for a real reply from the route", async () => {
+    await mountHost();
+    await loseDirectReads();
+    expect(getRoomFallback().backupMode).toBe(false);
+
+    routeRead.mockImplementation(async () => goodPayload);
+    await advance(3_750);
+
+    expect(routeReads()).toBe(2);
+    expect(getRoomFallback().backupMode).toBe(true);
+  });
+
+  it("a good poll between two bad ones resets the count", async () => {
+    await mountHost();
+    await loseDirectReads();
+
+    await advance(3_750); // miss
+    routeRead.mockImplementationOnce(async () => goodPayload);
+    await advance(3_750); // reply: t=27.5s
+    await advance(3_750); // miss: t=31.25s, the t=30s heartbeat has also run
+
+    expect(getReachability()).toBe("ok");
+  });
+
+  it("a connection rebuild cannot kill a poll that is running", async () => {
+    await mountHost();
+    await loseDirectReads();
+    const pollSignals: AbortSignal[] = [];
+    routeRead.mockImplementation((_code, options) => {
+      if (options?.signal) pollSignals.push(options.signal);
+      return new Promise(() => undefined);
+    });
+    await advance(3_750);
+    expect(pollSignals).toHaveLength(1);
+
+    act(() => {
+      for (const callback of [...h.joinCallbacks]) callback("CHANNEL_ERROR");
+    });
+    await advance(100);
+
+    expect(pollSignals[0].aborted).toBe(false);
+  });
+
+  it("direct reads coming back stop the poll", async () => {
+    await mountHost();
+    await loseDirectReads();
+    await advance(3_750);
+
+    h.gates.clear();
+    await advance(6_500); // the t=30s heartbeat's direct reads work again
+    const reads = routeReads();
+    await advance(10_000); // two poll slots, and still short of the t=45s heartbeat
+
+    expect(routeReads()).toBe(reads);
+    expect(getReachability()).toBe("ok");
+    expect(getRoomFallback().backupMode).toBe(false);
+  });
+
+  it("a host with nothing on screen still gets the verdict straight away", async () => {
+    h.gates.set("games", new Promise<void>(() => undefined));
+    renderHook(() => useRoom({ roomCode: "ABCDEF", audience: "host" }));
+
+    await advance(5_001);
+
+    expect(getReachability()).toBe("unreachable");
   });
 });

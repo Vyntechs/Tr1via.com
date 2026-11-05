@@ -222,14 +222,14 @@ describe("useAnswerSubmit", () => {
     expect(loadPendingAnswer()).toBeNull();
   });
 
-  it("clears rather than resuming a persisted answer after the deadline", () => {
+  it("keeps a persisted answer after the deadline without resending it", () => {
     window.localStorage.setItem(
       PENDING_ANSWER_KEY,
       JSON.stringify({ questionId: "q1", slotChosen: 4 }),
     );
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    renderHook(() =>
+    const { result } = renderHook(() =>
       useAnswerSubmit({
         questionId: "q1",
         scramble: [0, 1, 2, 3],
@@ -238,7 +238,10 @@ describe("useAnswerSubmit", () => {
     );
 
     expect(fetchSpy).not.toHaveBeenCalled();
-    expect(loadPendingAnswer()).toBeNull();
+    expect(loadPendingAnswer()).toEqual({ questionId: "q1", slotChosen: 4 });
+    expect(result.current.status).toBe("failed");
+    expect(result.current.failure).toBe("closed");
+    expect(result.current.chosenSlot).toBe(4);
   });
 
   it("clears stale localStorage entry when mounted on a different questionId", () => {

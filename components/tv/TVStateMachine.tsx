@@ -53,6 +53,7 @@ import { rankScores } from "@/lib/game/rankScores";
 import type { TVSnapshot } from "@/lib/hooks/useTVRoom";
 import { diagDrawn } from "@/lib/diagnostics/client";
 import { useTimer } from "@/lib/hooks/useTimer";
+import { useResolveAtZero } from "@/lib/hooks/useResolveAtZero";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { playerColorHex } from "@/lib/player/playerColor";
 import { countHouseLightsLocks } from "@/lib/room-magic/house-lights";
@@ -77,6 +78,16 @@ export interface TVStateMachineProps {
   /** Server's "now" at the moment the broadcast was sent — used to derive
    *  client-clock skew. Optional. */
   lastBroadcastServerNow?: string | null;
+  /** This device's clock when that broadcast arrived. Optional. */
+  lastBroadcastReceivedAtMs?: number | null;
+  /** The question that reveal broadcast was for. The three stamps above drive a
+   *  question's clock only when this matches it. A screen whose live connection
+   *  dropped can bring up the next question from a poll while still holding the
+   *  last question's stamps, and those would put the new question at zero. */
+  lastBroadcastQuestionId?: string | null;
+  /** Runs once when the timer-zero ladder ends: re-read the room, in case the
+   *  close happened but its broadcast never arrived. Optional. */
+  onResolveSettled?: () => void;
   /** Host-only: when provided, the in-grid cells become clickable buttons
    *  and fire this handler with the picked question id. The standalone
    *  `/tv/[code]` route omits it so the audience surface stays inert. */
@@ -101,6 +112,8 @@ export interface TVStateMachineProps {
   worldTier?: "full" | "still";
 }
 
+const LOCKING_IN_AFTER_ZERO_MS = 3000;
+
 /** Each screen announces its moment so a theme's world can react to it. */
 const momentOf = (
   kind: TVMoment["kind"],
@@ -124,6 +137,9 @@ function TVStateMachineViews({
   snapshot,
   lastBroadcastRevealedAt = null,
   lastBroadcastServerNow = null,
+  lastBroadcastReceivedAtMs = null,
+  lastBroadcastQuestionId = null,
+  onResolveSettled,
   onGridCellClick,
   hostAdvanced = false,
   welcomeEvent = null,
@@ -272,6 +288,16 @@ function TVStateMachineViews({
   }
 
   // ── Live game branches ──
+  // Broadcast stamps for the question they were sent for, played_at for any other.
+  const clockFor = (q: { id: string; playedAt: string | null }) =>
+    lastBroadcastQuestionId === q.id
+      ? {
+          revealedAt: lastBroadcastRevealedAt ?? q.playedAt,
+          serverNow: lastBroadcastServerNow,
+          receivedAtMs: lastBroadcastReceivedAtMs,
+        }
+      : { revealedAt: q.playedAt, serverNow: null, receivedAtMs: null };
+
   if (currentGame.state === "live") {
     // Live question (still open — finishedAt not yet set)?
     if (liveQuestion && !liveQuestion.finishedAt) {
@@ -280,8 +306,8 @@ function TVStateMachineViews({
           key={liveQuestion.id}
           snapshot={snapshot}
           question={liveQuestion}
-          revealedAt={lastBroadcastRevealedAt ?? liveQuestion.playedAt}
-          serverNow={lastBroadcastServerNow}
+          {...clockFor(liveQuestion)}
+          onResolveSettled={onResolveSettled}
           themeKey={themeKey}
           onPendingCountChange={onPendingCountChange}
         />
@@ -316,8 +342,8 @@ function TVStateMachineViews({
             key={`${revealQuestion.id}-hold`}
             snapshot={snapshot}
             question={revealQuestion}
-            revealedAt={lastBroadcastRevealedAt ?? revealQuestion.playedAt}
-            serverNow={lastBroadcastServerNow}
+            {...clockFor(revealQuestion)}
+            onResolveSettled={onResolveSettled}
             themeKey={themeKey}
             onPendingCountChange={onPendingCountChange}
           />
@@ -464,7 +490,7 @@ function TVGridView({
     return values.map((v) => {
       const q = catQuestions.find((cq) => cq.pointValue === v);
       return {
-        played: q ? q.finishedAt !== null : false,
+        played: q ? q.finishedAt !== null || q.id === snapshot.heldQuestionId : false,
         // No persistent "selected" notion — we light up the live one when
         // there is one. Otherwise nothing is selected.
         selected: q ? q.id === snapshot.liveQuestionId : false,
@@ -517,6 +543,8 @@ function TVQuestionView({
   question,
   revealedAt,
   serverNow,
+  receivedAtMs,
+  onResolveSettled,
   themeKey,
   onPendingCountChange,
 }: {
@@ -524,6 +552,8 @@ function TVQuestionView({
   question: TVSnapshot["questions"][number];
   revealedAt: string | null;
   serverNow: string | null;
+  receivedAtMs: number | null;
+  onResolveSettled?: () => void;
   themeKey?: ThemeKey;
   /** Fires whenever the ceremony queue length changes — lets the parent
    *  state machine gate the reveal transition during the drain window. */
@@ -547,19 +577,19 @@ function TVQuestionView({
   // is idempotent — its RPC does a "select … for update" so a second caller
   // is a no-op. Without this onZero, a force-closed phone means the timer
   // hits 0 and the game stalls — host has to manually click "End early".
+  // The ladder keeps asking through a bad reply; if it still fails, phones or
+  // the host's End-early button remain as fallbacks.
+  const closeAtZero = useResolveAtZero({
+    questionId: question.id,
+    caller: "tv",
+    onSettled: onResolveSettled,
+  });
   const { displaySeconds } = useTimer({
     revealedAtMs: revealedMs,
     serverNowMs,
+    receivedAtMs,
     themeKey,
-    onZero: () => {
-      void fetch(`/api/questions/${question.id}/resolve`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      }).catch(() => {
-        // Network/transient failure: phones or host's manual End-early
-        // button remain as fallbacks. Logging would be noise.
-      });
-    },
+    onZero: closeAtZero,
   });
 
   // Diagnostic log only: say so (once) when the frame showing the timer at 0 has
@@ -568,6 +598,18 @@ function TVQuestionView({
   useEffect(() => {
     if (!timerShowsZero) return;
     return diagDrawn("tz", question.id);
+  }, [timerShowsZero, question.id]);
+
+  // Three seconds past zero with no close seen, say the room is still working.
+  // This runs on the local timer alone, so a TV with no network gets there too.
+  const [zeroOverdue, setZeroOverdue] = useState(false);
+  useEffect(() => {
+    if (!timerShowsZero) return;
+    const handle = setTimeout(() => setZeroOverdue(true), LOCKING_IN_AFTER_ZERO_MS);
+    return () => {
+      clearTimeout(handle);
+      setZeroOverdue(false);
+    };
   }, [timerShowsZero, question.id]);
 
   const tiles: TVQuestionTile[] = useMemo(() => {
@@ -716,6 +758,7 @@ function TVQuestionView({
         question={question.prompt}
         options={options}
         seconds={Math.max(0, displaySeconds)}
+        lockingIn={zeroOverdue && !question.finishedAt}
         tiles={tiles}
         totalPlayers={gamePlayerCount(snapshot)}
         imageUrl={question.imageUrl}

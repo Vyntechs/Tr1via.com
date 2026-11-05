@@ -56,6 +56,8 @@ export interface TVQuestionTile {
 export interface TVQuestionProps {
   themeKey?: ThemeKey;
   seconds?: number;
+  /** The clock has been at zero a while and no close has been seen. */
+  lockingIn?: boolean;
   category?: string;
   value?: number;
   question?: string;
@@ -94,6 +96,7 @@ export function TVQuestion(props: TVQuestionProps) {
 
 function TVQuestionInner({
   seconds = 14,
+  lockingIn = false,
   category = "Geography",
   value = 100,
   question = "Which U.S. state has the longest coastline?",
@@ -106,13 +109,12 @@ function TVQuestionInner({
   houseLightsLockedCount,
 }: TVQuestionProps) {
   const { t } = useTheme();
-  // October's world says "TIME'S UP" when the clock hits zero (the Horseman
-  // is riding through the patch right then). The clock itself is unchanged.
   const pack = useStageWorld()?.pack;
   const octoberWorld = pack === "october";
   // November restyles this same screen on its quiet panel (same content).
   const nov = pack === "november";
   const cc = categoryColor(category, t.accent);
+  const showLockingIn = lockingIn && seconds <= 0;
   const [imageFailed, setImageFailed] = useState(false);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const showImage = !!imageUrl && !imageFailed;
@@ -305,8 +307,20 @@ function TVQuestionInner({
           ) : (
             <TVTimerArc accent={cc} seconds={seconds} />
           )}
-          <Eyebrow color={nov ? novTimerColor(seconds) : seconds <= 5 ? t.wrong : cc} size={nov ? 12 : 10}>
-            {(octoberWorld || nov) && seconds <= 0 ? "TIME'S UP" : seconds <= 5 ? "FINAL SECONDS" : "SPEED BONUS < 5s"}
+          {/* One line in every theme: November's column is 150px, its 12px type
+              would wrap this longest label, and that row clips a second line. */}
+          <Eyebrow
+            color={nov ? novTimerColor(seconds) : seconds <= 5 ? t.wrong : cc}
+            size={nov && !showLockingIn ? 12 : 10}
+            style={{ whiteSpace: "nowrap" }}
+          >
+            {seconds > 5
+              ? "SPEED BONUS < 5s"
+              : seconds > 0
+                ? "FINAL SECONDS"
+                : showLockingIn
+                  ? "Locking in answers"
+                  : "TIME'S UP"}
           </Eyebrow>
         </div>
       </div>

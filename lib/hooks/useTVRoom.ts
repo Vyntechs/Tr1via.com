@@ -12,7 +12,8 @@
 //   2. Any broadcast on `room:{code}` (`reveal`, `undo`, `resolve`,
 //      `end-early`, `game-started`, `game-ended`) — these are the host's
 //      high-signal moments.
-//   3. A 4-second safety re-fetch so any missed broadcast self-heals.
+//   3. A 4-second safety re-fetch so any missed broadcast self-heals. It leaves
+//      a younger request alone, so a slow venue link still gets its reply.
 //
 // The hook also exposes the most recent broadcast tag so the TV can derive
 // the timer (revealedAt + serverNow) without waiting for the next snapshot.
@@ -33,6 +34,10 @@ import { diagBroadcastHeard, diagSnap } from "@/lib/diagnostics/client";
 import { useDiagQuestionOpen } from "@/lib/diagnostics/useQuestionOpen";
 
 const SAFETY_REFETCH_MS = 4000;
+/** A safety poll leaves an in-flight request alone until it is this old. Past
+ *  this the request is stuck (the 5s fetch bound doesn't cover the body), so the
+ *  poll replaces it. Broadcast refetches don't wait: they always abort and restart. */
+const SAFETY_SKIP_UNDER_AGE_MS = 5000;
 
 export interface TVNight {
   /** Audience-scoped presentation key, never the database night id. */
@@ -143,6 +148,8 @@ export interface TVSnapshot {
   categories: TVCategory[];
   questions: TVQuestion[];
   liveQuestionId: string | null;
+  /** Host only: a tile just tapped, shown as played so it can't be tapped twice. */
+  heldQuestionId?: string | null;
   targetQuestionId: string | null;
   players: TVPlayer[];
   scores: TVScore[];
@@ -157,6 +164,8 @@ export interface TVBroadcast {
    *  roster-changed. */
   questionId: string;
   serverNow: string;
+  /** Reveal only: this device's Date.now() when the broadcast arrived. */
+  receivedAtMs?: number;
   revealedAt?: string;
   correctIndex?: number;
   /** Ephemeral roster event identity, never a database player id. */
@@ -206,6 +215,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
   const safetyHandle = useRef<ReturnType<typeof setInterval> | null>(null);
   const activeCodeRef = useRef<string | null>(null);
   const activeSnapshotAbortRef = useRef<AbortController | null>(null);
+  const activeSnapshotStartedAtRef = useRef(0);
   const snapshotRequestSequenceRef = useRef(0);
 
   const code = roomCodeRaw ? parseRoomCode(roomCodeRaw) : null;
@@ -218,14 +228,16 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     activeSnapshotAbortRef.current?.abort();
     const controller = new AbortController();
     activeSnapshotAbortRef.current = controller;
+    activeSnapshotStartedAtRef.current = Date.now();
     const diagStartedAt = performance.now(); // diagnostic log only
     const isCurrentRequest = () =>
       !controller.signal.aborted &&
       activeCodeRef.current === requestedCode &&
       snapshotRequestSequenceRef.current === requestSequence;
     try {
-      // Bound the fetch so a hung request fast-fails to "error" (and the 4s
-      // safety poll auto-recovers) rather than spinning the TV forever. The TV
+      // Bound the fetch so a hung request fast-fails to "error" (the TV keeps
+      // its last frame and the 4s safety poll auto-recovers) rather than
+      // spinning forever. The TV
       // reads server-side via Vercel, so it's immune to the venue WiFi that
       // blocks the host/player's direct Supabase reads — this just guards the
       // rarer hung-Vercel/DNS case.
@@ -314,6 +326,7 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
             event: "reveal",
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
+            receivedAtMs: Date.now(),
             revealedAt:
               typeof p.revealedAt === "string" ? p.revealedAt : undefined,
           },
@@ -461,6 +474,9 @@ export function useTVRoom(roomCodeRaw: string | null): TVRoomState {
     // joining the lobby, scores updating). Cheap: the snapshot route is
     // single-region, single-trip.
     safetyHandle.current = setInterval(() => {
+      const inFlight = activeSnapshotAbortRef.current !== null;
+      const ageMs = Date.now() - activeSnapshotStartedAtRef.current;
+      if (inFlight && ageMs < SAFETY_SKIP_UNDER_AGE_MS) return;
       void fetchSnapshot(code);
     }, SAFETY_REFETCH_MS);
 

@@ -280,7 +280,7 @@ describe("useAnswerSubmit — instant lock, sending, retrying", () => {
     expect(result.current.status).toBe("sent");
   });
 
-  it("question closes while the send is failing: stops, and says it was never confirmed", async () => {
+  it("question closes while the send is failing: stops, says it was never confirmed, keeps the stored answer", async () => {
     const { calls } = openFetch();
     const { result, rerender } = renderHook(
       ({ accepting }: { accepting: boolean }) => useAnswerSubmit({ ...OPTS, accepting }),
@@ -299,7 +299,7 @@ describe("useAnswerSubmit — instant lock, sending, retrying", () => {
     expect(result.current.confirmedAt).toBeNull();
     await advance(5000);
     expect(calls).toHaveLength(1); // no more tries once closed
-    expect(loadPendingAnswer()).toBeNull();
+    expect(loadPendingAnswer()).toEqual({ questionId: "q1", slotChosen: 2 });
   });
 
   it("question closes while a send is quiet: it is called unconfirmed at the 6 s mark, not left spinning", async () => {
@@ -353,7 +353,7 @@ describe("useAnswerSubmit — instant lock, sending, retrying", () => {
     const { calls } = openFetch();
     const { result } = renderHook(() => useAnswerSubmit(OPTS));
     act(() => result.current.submit(2));
-    await act(async () => calls[0].resolve(reply(400, { error: "answer deadline passed" })));
+    await act(async () => calls[0].resolve(reply(400, { error: "invalid answer" })));
     expect(result.current.status).toBe("failed");
     expect(result.current.failure).toBe("rejected");
 

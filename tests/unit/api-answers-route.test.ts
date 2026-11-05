@@ -147,6 +147,78 @@ function post(body: unknown) {
   });
 }
 
+function legacyLateAdmin({
+  finishedAt = null,
+  saved = false,
+  insertErrorCode,
+  lookupError = null,
+  player = { id: PLAYER_ID, removed_at: null },
+}: {
+  finishedAt?: string | null;
+  saved?: boolean;
+  insertErrorCode?: string;
+  lookupError?: { message: string } | null;
+  player?: { id: string; removed_at: string | null } | null;
+} = {}) {
+  const rows: Record<string, DbResult> = {
+    questions: {
+      data: {
+        id: QUESTION_ID,
+        category_id: CATEGORY_ID,
+        played_at: "2026-07-19T01:00:00.000Z",
+        finished_at: finishedAt,
+        correct_index: 0,
+      },
+      error: null,
+    },
+    categories: { data: { id: CATEGORY_ID, game_id: GAME_ID }, error: null },
+    games: { data: { id: GAME_ID, night_id: NIGHT_ID }, error: null },
+    nights: { data: { id: NIGHT_ID, answer_engine: "legacy" }, error: null },
+    players: { data: player, error: null },
+    game_participations: { data: { id: "participation" }, error: null },
+  };
+  const insert = vi.fn(async () => ({
+    data: null,
+    error: insertErrorCode ? { code: insertErrorCode, message: "refused" } : null,
+  }));
+  const answersLookup = vi.fn(async () => ({
+    data: saved ? { id: "saved-answer" } : null,
+    error: lookupError,
+  }));
+  const answersEq = vi.fn(() => answers);
+  const answers = {
+    insert,
+    select: vi.fn(() => answers),
+    eq: answersEq,
+    maybeSingle: answersLookup,
+  };
+  adminMock.getSupabaseAdmin.mockReturnValue({
+    rpc: vi.fn(),
+    from: vi.fn((table: string) =>
+      table === "answers" ? answers : query(rows[table]!),
+    ),
+  });
+  return { insert, answersLookup, answersEq };
+}
+
+async function postLegacyAnswerAt(receivedAt: string) {
+  vi.useFakeTimers();
+  vi.setSystemTime(receivedAt);
+  const { scrambleFor } = await import("@/lib/game/scramble");
+  const { POST } = await import("@/app/api/answers/route");
+  return POST(post({
+    questionId: QUESTION_ID,
+    slotChosen: 1,
+    scramble: scrambleFor(QUESTION_ID, PLAYER_ID),
+  }));
+}
+
+function lateRefusals(info: { mock: { calls: unknown[][] } }) {
+  return info.mock.calls
+    .filter(([line]) => typeof line === "string" && line.includes("late_refusal"))
+    .map(([line]) => JSON.parse(line as string) as unknown);
+}
+
 describe("POST /api/answers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -157,6 +229,7 @@ describe("POST /api/answers", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("preserves the legacy answer path and response", async () => {
@@ -208,39 +281,91 @@ describe("POST /api/answers", () => {
     expect(broadcastMock.broadcastAppliedLiveRoomEvent).not.toHaveBeenCalled();
   });
 
-  it("rejects the exact 25-second boundary before any save", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime("2026-07-19T01:00:25.000Z");
-    const rows: Record<string, DbResult> = {
-      questions: {
-        data: {
-          id: QUESTION_ID,
-          category_id: CATEGORY_ID,
-          played_at: "2026-07-19T01:00:00.000Z",
-          finished_at: null,
-          correct_index: 0,
-        },
-        error: null,
-      },
-    };
-    const from = vi.fn((table: string) => query(rows[table]!));
-    adminMock.getSupabaseAdmin.mockReturnValue({
-      rpc: vi.fn(),
-      from,
-    });
+  it("refuses the exact 25-second boundary without saving when no row exists", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const { insert, answersLookup } = legacyLateAdmin();
 
-    const { scrambleFor } = await import("@/lib/game/scramble");
-    const { POST } = await import("@/app/api/answers/route");
-    const response = await POST(post({
-      questionId: QUESTION_ID,
-      slotChosen: 1,
-      scramble: scrambleFor(QUESTION_ID, PLAYER_ID),
-    }));
+    const response = await postLegacyAnswerAt("2026-07-19T01:00:25.000Z");
 
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: "answer deadline passed" });
-    expect(from).toHaveBeenCalledTimes(1);
-    expect(from).toHaveBeenCalledWith("questions");
+    expect(answersLookup).toHaveBeenCalledTimes(1);
+    expect(insert).not.toHaveBeenCalled();
+    expect(lateRefusals(info)).toEqual([
+      { kind: "late_refusal", questionId: QUESTION_ID, lateMs: 0 },
+    ]);
+  });
+
+  it("saved answer, reply lost, resend refused at 25.000 returns 409", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    const { insert, answersEq } = legacyLateAdmin({ saved: true });
+
+    const response = await postLegacyAnswerAt("2026-07-19T01:00:25.000Z");
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: "already answered" });
+    expect(answersEq).toHaveBeenCalledWith("question_id", QUESTION_ID);
+    expect(answersEq).toHaveBeenCalledWith("player_id", PLAYER_ID);
+    expect(insert).not.toHaveBeenCalled();
+    expect(lateRefusals(info)).toEqual([]);
+  });
+
+  it("treats a resend after the host closed early the same way", async () => {
+    const finishedAt = "2026-07-19T01:00:10.000Z";
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    legacyLateAdmin({ finishedAt, saved: true });
+    const saved = await postLegacyAnswerAt("2026-07-19T01:00:12.500Z");
+    expect(saved.status).toBe(409);
+    expect(await saved.json()).toEqual({ error: "already answered" });
+
+    legacyLateAdmin({ finishedAt });
+    const refused = await postLegacyAnswerAt("2026-07-19T01:00:12.500Z");
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: "question is closed" });
+    expect(lateRefusals(info)).toEqual([
+      { kind: "late_refusal", questionId: QUESTION_ID, lateMs: 2_500 },
+    ]);
+  });
+
+  it.each([
+    ["TR025", "answer deadline passed"],
+    ["TRCL0", "question is closed"],
+    ["TRNL0", "question is not live"],
+  ])("looks up the saved row when the save trigger answers %s", async (code, reason) => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+    const withRow = legacyLateAdmin({ insertErrorCode: code, saved: true });
+    const saved = await postLegacyAnswerAt("2026-07-19T01:00:24.000Z");
+    expect(withRow.insert).toHaveBeenCalledTimes(1);
+    expect(saved.status).toBe(409);
+    expect(await saved.json()).toEqual({ error: "already answered" });
+    expect(lateRefusals(info)).toEqual([]);
+
+    legacyLateAdmin({ insertErrorCode: code });
+    const refused = await postLegacyAnswerAt("2026-07-19T01:00:24.000Z");
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: reason });
+    expect(lateRefusals(info)).toHaveLength(1);
+  });
+
+  it("does not claim a refusal when the saved-row lookup fails", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    legacyLateAdmin({ lookupError: { message: "read failed" } });
+
+    const response = await postLegacyAnswerAt("2026-07-19T01:00:25.000Z");
+
+    expect(response.status).toBe(500);
+    expect(lateRefusals(info)).toEqual([]);
+  });
+
+  it("does not reveal another device's row: an unknown device gets 403 when late", async () => {
+    const { answersLookup } = legacyLateAdmin({ player: null });
+
+    const response = await postLegacyAnswerAt("2026-07-19T01:00:25.000Z");
+
+    expect(response.status).toBe(403);
+    expect(answersLookup).not.toHaveBeenCalled();
   });
 
   it("rejects forbidden resilient identity and answer fields before mutation", async () => {

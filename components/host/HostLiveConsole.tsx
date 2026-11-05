@@ -109,6 +109,12 @@ export interface HostLiveConsoleProps {
   tvLastBroadcastRevealedAt?: string | null;
   /** Server "now" at the broadcast moment, for client-clock skew. */
   tvLastBroadcastServerNow?: string | null;
+  /** This device's clock when that broadcast arrived. */
+  tvLastBroadcastReceivedAtMs?: number | null;
+  /** The question that reveal broadcast was for. */
+  tvLastBroadcastQuestionId?: string | null;
+  /** Re-reads the room when the embedded TV's timer-zero ladder ends. */
+  onTvResolveSettled?: () => void;
   /** Magic-Welcome: a fresh `roster-changed` event, held by the parent
    *  for ~3s before being unset to null. Threaded into the embedded TV
    *  state machine so the host's laptop drives the same overlay the
@@ -167,6 +173,9 @@ function HostLiveConsoleInner({
   tvSnapshot,
   tvLastBroadcastRevealedAt = null,
   tvLastBroadcastServerNow = null,
+  tvLastBroadcastReceivedAtMs = null,
+  tvLastBroadcastQuestionId = null,
+  onTvResolveSettled,
   welcomeEvent = null,
   lastRoomMagicReaction = null,
   roomMagicReactions = [],
@@ -256,6 +265,9 @@ function HostLiveConsoleInner({
               snapshot={tvSnapshot}
               lastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
               lastBroadcastServerNow={tvLastBroadcastServerNow}
+              lastBroadcastReceivedAtMs={tvLastBroadcastReceivedAtMs}
+              lastBroadcastQuestionId={tvLastBroadcastQuestionId}
+              onResolveSettled={onTvResolveSettled}
               onGridCellClick={handleRevealCell}
               hostAdvanced={hostAdvanced}
               welcomeEvent={welcomeEvent}

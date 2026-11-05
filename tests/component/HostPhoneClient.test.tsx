@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { HostPhoneClient } from "@/app/host/phone/[nightId]/HostPhoneClient";
 import type { RoomSnapshot } from "@/lib/hooks/useRoom";
@@ -19,6 +19,8 @@ const h = vi.hoisted(() => ({
   questions: [] as QuestionRow[],
   fetch: vi.fn(),
   refresh: vi.fn(),
+  timerZero: null as (() => void) | null,
+  previewClock: null as { revealedAtMs: number | null; serverNowMs: number | null } | null,
   scoreRows: [] as GameScoreRow[],
   scoreChangeHandlers: [] as Array<() => void>,
   fallback: { backupMode: false, payload: null as RoomFallbackPayload | null },
@@ -38,7 +40,14 @@ vi.mock("@/lib/hooks/useRoom", () => ({
 }));
 
 vi.mock("@/lib/hooks/useTimer", () => ({
-  useTimer: () => ({ secondsRemaining: 14 }),
+  useTimer: (opts: { onZero?: () => void; revealedAtMs: number | null; serverNowMs: number | null }) => {
+    // Only the TV preview's timer has an onZero.
+    if (opts.onZero) {
+      h.timerZero = opts.onZero;
+      h.previewClock = { revealedAtMs: opts.revealedAtMs, serverNowMs: opts.serverNowMs };
+    }
+    return { secondsRemaining: 14 };
+  },
 }));
 
 vi.mock("@/lib/room/roomFallbackStore", () => ({
@@ -564,6 +573,7 @@ describe("HostPhoneClient reveal flow", () => {
       "/api/games/g1/undo",
       {
         method: "POST",
+        signal: expect.any(AbortSignal),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           playId: PLAY_ID,
@@ -599,6 +609,7 @@ describe("HostPhoneClient reveal flow", () => {
       "/api/games/g1/end",
       {
         method: "POST",
+        signal: expect.any(AbortSignal),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           runId: RUN_ID,
@@ -720,6 +731,212 @@ describe("HostPhoneClient reveal flow", () => {
     expect(h.fetch).toHaveBeenCalledTimes(1);
     pendingReveal.resolve?.(new Response(JSON.stringify({ ok: true }), { status: 200 }));
     await waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1));
+  });
+
+  describe("when a reply goes missing", () => {
+    const hungReply = (url: string, init?: RequestInit) =>
+      String(url).includes("/api/games/")
+        ? new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            );
+          })
+        : Promise.resolve(new Response(JSON.stringify(preflightResponse()), { status: 200 }));
+
+    async function advance(ms: number) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    }
+
+    const revealSends = () =>
+      h.fetch.mock.calls.filter(([url]) => String(url).endsWith("/reveal")).length;
+
+    const catchUp = vi.fn(async () => undefined);
+
+    beforeEach(() => {
+      catchUp.mockClear();
+      h.room = { ...(h.room as RoomSnapshot), requestLiveCatchUp: catchUp };
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a hung reveal frees the buttons at 8s, says 'Sent, checking', and is never re-sent", async () => {
+      h.fetch.mockImplementation(hungReply);
+      render(
+        <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+      );
+      const cell = await screen.findByRole("button", { name: "Salsa for 100 points" });
+      vi.useFakeTimers();
+
+      fireEvent.click(cell);
+      await advance(0);
+      expect(revealSends()).toBe(1);
+      // Busy: another tap does nothing while the first is out.
+      fireEvent.click(cell);
+      await advance(7_999);
+      expect(revealSends()).toBe(1);
+      expect(screen.queryByTestId("host-sent-checking")).toBeNull();
+
+      await advance(1);
+      expect(screen.getByTestId("host-sent-checking")).toHaveTextContent("Sent, checking");
+      expect(screen.queryByRole("alert")).toBeNull();
+      expect(catchUp).toHaveBeenCalled();
+
+      await advance(60_000);
+      expect(revealSends()).toBe(1);
+
+      // Busy cleared: the host's own tap goes out.
+      fireEvent.click(screen.getByRole("button", { name: "Salsa for 100 points" }));
+      await advance(0);
+      expect(revealSends()).toBe(2);
+    });
+
+    it.each([
+      ["question already revealed"],
+      ["another question is already live in this game"],
+    ])("reads the reveal refusal '%s' as a re-read, with no red toast", async (message) => {
+      h.fetch.mockImplementation(async (url: string) =>
+        String(url).endsWith("/reveal")
+          ? new Response(JSON.stringify({ error: message }), { status: 409 })
+          : new Response(JSON.stringify(preflightResponse()), { status: 200 }),
+      );
+      render(
+        <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+      );
+
+      fireEvent.click(await screen.findByRole("button", { name: "Salsa for 100 points" }));
+
+      await waitFor(() => expect(catchUp).toHaveBeenCalled());
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    async function openAdjustment() {
+      const liveGame = game("g1", 1, "live");
+      h.room = {
+        ...room(),
+        games: [liveGame],
+        currentGame: liveGame,
+        players: [player("p1")],
+        requestLiveCatchUp: catchUp,
+      };
+      const rows = [{ ...score("p1"), display_name: "Jordan", score: 6100, answered_count: 12, correct_count: 8 }];
+      h.fallback = {
+        backupMode: true,
+        payload: fallbackPayload({
+          games: [liveGame],
+          categories: [readyCategory],
+          players: h.room.players,
+          allQuestions: h.questions,
+          scores: rows,
+        }),
+      };
+      h.scoreRows = rows;
+      h.fetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+        String(input) === "/api/adjustments"
+          ? new Promise<Response>((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () =>
+                reject(new DOMException("Aborted", "AbortError")),
+              );
+            })
+          : Promise.resolve(new Response(JSON.stringify(preflightResponse()), { status: 200 })),
+      );
+      render(
+        <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+      );
+      fireEvent.click(await screen.findByRole("button", { name: "Scores" }));
+      fireEvent.click(await screen.findByRole("button", { name: "Adjust points for Jordan" }));
+      fireEvent.change(screen.getByPlaceholderText(/scoring fix/i), { target: { value: "Bonus" } });
+    }
+
+    it("a hung point adjustment frees the buttons and warns before a second try", async () => {
+      await openAdjustment();
+      vi.useFakeTimers();
+
+      fireEvent.click(screen.getByRole("button", { name: "Apply +100" }));
+      await advance(8_000);
+
+      // Both the form and the toast carry it, as they do for any failed adjustment.
+      for (const alert of screen.getAllByRole("alert")) {
+        expect(alert).toHaveTextContent("Sent, checking. Look at the scores before trying again.");
+      }
+      expect(
+        h.fetch.mock.calls.filter(([url]) => String(url) === "/api/adjustments"),
+      ).toHaveLength(1);
+    });
+
+    function liveAutoEndRoom() {
+      const liveGame = game("g1", 1, "live");
+      const liveQuestion = { ...pickedQuestion, played_at: "2026-07-08T00:01:30Z" };
+      const players = [player("p1"), player("p2")];
+      h.room = {
+        ...room(),
+        games: [liveGame],
+        currentGame: liveGame,
+        currentQuestion: liveQuestion,
+        players,
+        requestLiveCatchUp: catchUp,
+      };
+      h.fallback = {
+        backupMode: true,
+        payload: fallbackPayload({
+          games: [liveGame],
+          currentQuestion: liveQuestion,
+          players,
+          liveAnswers: [answer("a1", "p1"), answer("a2", "p2")],
+          scores: [score("p1"), score("p2")],
+        }),
+      };
+    }
+
+    async function autoEndWith(reply: () => Response | Promise<Response>) {
+      liveAutoEndRoom();
+      h.fetch.mockImplementation(async (url: string) =>
+        String(url).includes("/end-early")
+          ? reply()
+          : new Response(JSON.stringify(preflightResponse()), { status: 200 }),
+      );
+      render(
+        <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+      );
+      await waitFor(() => expect(h.autoRevealOptions?.decision?.complete).toBe(true));
+      let result: unknown;
+      await act(async () => {
+        result = await h.autoRevealOptions?.onAutoReveal();
+      });
+      return result;
+    }
+
+    it("a failed auto-end try says false so the hook tries again, with no red toast", async () => {
+      const result = await autoEndWith(
+        () => new Response(JSON.stringify({ error: "boom" }), { status: 500 }),
+      );
+
+      expect(result).toBe(false);
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("an already-resolved reply ends the auto-end tries and re-reads", async () => {
+      const result = await autoEndWith(
+        () => new Response(JSON.stringify({ error: "question is already resolved" }), { status: 409 }),
+      );
+
+      expect(result).toBe(true);
+      expect(catchUp).toHaveBeenCalled();
+    });
+
+    it("'not all locked' still says false", async () => {
+      const result = await autoEndWith(
+        () =>
+          new Response(JSON.stringify({ error: "not all eligible players are locked" }), {
+            status: 409,
+          }),
+      );
+
+      expect(result).toBe(false);
+    });
   });
 
   it("provides honest Board, Players, Scores, and TV preview destinations", async () => {
@@ -859,7 +1076,7 @@ describe("HostPhoneClient reveal flow", () => {
 
     await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(
       "/api/games/g1/start",
-      { method: "POST" },
+      { method: "POST", signal: expect.any(AbortSignal) },
     ));
   });
 
@@ -888,6 +1105,7 @@ describe("HostPhoneClient reveal flow", () => {
       "/api/games/g2/start",
       {
         method: "POST",
+        signal: expect.any(AbortSignal),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           runId: RUN_ID,
@@ -1061,6 +1279,7 @@ describe("HostPhoneClient reveal flow", () => {
       "/api/games/g2/end",
       {
         method: "POST",
+        signal: expect.any(AbortSignal),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           runId: RUN_ID,
@@ -1230,6 +1449,7 @@ describe("HostPhoneClient reveal flow", () => {
       "/api/adjustments",
       {
         method: "POST",
+        signal: expect.any(AbortSignal),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           playerId: "p1",
@@ -1442,6 +1662,7 @@ describe("HostPhoneClient reveal flow", () => {
       "/api/games/g1/start",
       {
         method: "POST",
+        signal: expect.any(AbortSignal),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           runId: RUN_ID,
@@ -1607,6 +1828,67 @@ describe("HostPhoneClient re-reads the room after its own presses", () => {
     fireEvent.click(await screen.findByRole("button", { name: new RegExp(label, "i") }));
     await waitFor(() => expect(h.fetch).toHaveBeenCalledWith(path, expect.anything()));
     await waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1));
+  });
+
+  describe("the TV preview's timer-zero ladder ends", () => {
+    function showPreview() {
+      h.timerZero = null;
+      // A wide screen keeps the preview mounted whichever section is open.
+      const noop = () => undefined;
+      vi.stubGlobal("matchMedia", () => ({
+        matches: true,
+        addListener: noop,
+        removeListener: noop,
+        addEventListener: noop,
+        removeEventListener: noop,
+      }));
+    }
+
+    const realMatchMedia = window.matchMedia;
+    afterEach(() => {
+      vi.stubGlobal("matchMedia", realMatchMedia);
+    });
+
+    it("a close seen only through that last read moves a legacy night on", async () => {
+      showPreview();
+      const closed = { ...liveQuestion, finished_at: "2026-07-08T00:01:56Z" };
+      // A legacy night: requestRefresh updates TV keys, so only catch-up can move it.
+      catchUp.mockImplementation(async () => {
+        h.room = { ...h.room!, currentQuestion: null, lastResolvedQuestion: closed };
+      });
+      const view = renderPhone();
+      await screen.findByRole("button", { name: /End early/i });
+      await waitFor(() => expect(h.timerZero).not.toBeNull());
+
+      act(() => h.timerZero?.());
+      await waitFor(() => expect(catchUp).toHaveBeenCalledTimes(1));
+      expect(h.refresh).toHaveBeenCalledTimes(1);
+
+      view.rerender(
+        <HostPhoneClient nightId="night-1" roomCode="ABC123" hostName="Heather Moore" themeKey="house" />,
+      );
+      expect(screen.queryByRole("button", { name: /End early/i })).toBeNull();
+    });
+
+    it.each([
+      ["another question's reveal message is ignored", "reveal", "q-old", false],
+      ["this question's reveal message is used", "reveal", "q1", true],
+      ["a message of another kind is ignored", "resolve", "q1", false],
+    ] as const)("preview clock: %s", async (_label, event, questionId, used) => {
+      showPreview();
+      const heardAt = "2026-07-08T00:00:00.000Z";
+      h.room = {
+        ...h.room!,
+        lastBroadcast: { event, questionId, serverNow: heardAt, receivedAtMs: Date.parse(heardAt) },
+      };
+      renderPhone();
+      await waitFor(() => expect(h.previewClock).not.toBeNull());
+      expect(h.previewClock).toEqual(
+        used
+          ? { revealedAtMs: Date.parse(heardAt), serverNowMs: Date.parse(heardAt) }
+          : { revealedAtMs: Date.parse(liveQuestion.played_at), serverNowMs: null },
+      );
+    });
   });
 
   it("End early: also re-reads when the timer had already resolved the question", async () => {

@@ -86,7 +86,7 @@ describe("PlayerQuestion in-place lock", () => {
       cardNodes("player-locked-answer").forEach((c, i) => expect(c).toBe(cards[i]));
       cards.forEach((c, i) => expect([c.style.minHeight, c.style.border]).toEqual(sizing[i]));
     }
-    expect(screen.getByTestId("player-send-status")).toHaveTextContent("We couldn’t confirm your answer");
+    expect(screen.getByTestId("player-send-status")).toHaveTextContent("Still checking. If it reached us, it counts.");
   });
 
   it("the chosen card always has room for its mark, so its text wraps the same as before the tap", () => {

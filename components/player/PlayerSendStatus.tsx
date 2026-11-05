@@ -1,9 +1,11 @@
 // The status block inside the timer strip on the player phone: "Sending…",
-// "Didn't go through — retrying", "Locked in" (then "LOCKED AT 2.3s" once the
-// saved row has the real time), "We couldn't confirm your answer", or the
-// refusal with its 44 px "Try again". Shared by the in-place tap screen
-// (PlayerQuestion) and the stand-alone PlayerLocked so they can never differ.
-// Only "locked" claims anything about the answer being counted.
+// "Still checking your answer", "Locked in" (then "LOCKED AT 2.3s" once the
+// saved row has the real time), "Still checking. If it reached us, it counts.",
+// the late line, or the refusal with its 44 px "Try again". Shared by the
+// in-place tap screen (PlayerQuestion) and the stand-alone PlayerLocked so they
+// can never differ. Only "locked" says the answer counted, and only "late" says
+// it didn't, because those are the two the phone was told. A phone that heard
+// nothing says so: the answer may have landed with its reply lost.
 
 "use client";
 
@@ -16,6 +18,7 @@ export type PlayerLockedSendState =
   | "retrying"
   | "locked"
   | "unconfirmed"
+  | "late"
   | "rejected";
 
 /** Height of the status block in every state (the saved-time line is the
@@ -29,7 +32,8 @@ export interface PlayerSendStatusProps {
   msToLock: number | null;
   /** The category colour (dot and time). */
   accent: string;
-  /** "rejected" only: lets the player send the same answer again. */
+  /** "rejected" only: lets the player send the same answer again. Leave it
+   *  out once the question has closed. */
   onRetry?: () => void;
 }
 
@@ -43,10 +47,12 @@ export function PlayerSendStatus({ sendState, msToLock, accent, onRetry }: Playe
   const speedBonus = msToLock !== null && msToLock < 5000;
   const inFlight = sendState === "sending" || sendState === "retrying";
   const offersRetry = sendState === "rejected" && !!onRetry;
-  // The two long lines (refusal beside its button, and "Didn't go through —
-  // retrying") go without the small label: on a 320 px phone the freed line is
-  // what lets them wrap to two lines without growing the strip.
-  const showLabel = !offersRetry && sendState !== "retrying";
+  // The long lines (refusal beside its button, and the two "Still checking"
+  // lines) go without the small label: on a 320 px phone the freed line is what
+  // lets them wrap without growing the strip. The longest one needs three lines
+  // beside the pumpkin, so it also drops a point.
+  const unconfirmed = sendState === "unconfirmed";
+  const showLabel = !offersRetry && sendState !== "retrying" && !unconfirmed;
 
   return (
     <div
@@ -80,7 +86,7 @@ export function PlayerSendStatus({ sendState, msToLock, accent, onRetry }: Playe
         <div style={{ flex: 1, minWidth: 0 }}>
           {showLabel && (
             <Eyebrow color={t.inkMid} size={9}>
-              {sendState === "unconfirmed" ? "TIME’S UP" : "YOUR ANSWER"}
+              {sendState === "late" ? "TIME’S UP" : "YOUR ANSWER"}
             </Eyebrow>
           )}
           <div
@@ -89,7 +95,7 @@ export function PlayerSendStatus({ sendState, msToLock, accent, onRetry }: Playe
               display: "flex",
               alignItems: "center",
               gap: 8,
-              fontSize: 14,
+              fontSize: unconfirmed ? 13 : 14,
               lineHeight: 1.2,
               color: sendState === "sending" ? t.inkMid : t.ink,
               fontWeight: 600,
@@ -111,9 +117,10 @@ export function PlayerSendStatus({ sendState, msToLock, accent, onRetry }: Playe
             )}
             <span>
               {sendState === "sending" && "Sending…"}
-              {sendState === "retrying" && "Didn’t go through — retrying"}
+              {sendState === "retrying" && "Still checking your answer"}
               {isLocked && "Locked in"}
-              {sendState === "unconfirmed" && "We couldn’t confirm your answer"}
+              {unconfirmed && "Still checking. If it reached us, it counts."}
+              {sendState === "late" && "That one just missed the buzzer."}
               {sendState === "rejected" && "Couldn’t send your answer"}
             </span>
           </div>

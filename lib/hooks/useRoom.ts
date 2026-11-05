@@ -127,6 +127,9 @@ export interface RoomSnapshot {
   isLoading: boolean;
 }
 
+/** Recovery reads land at a random moment inside this long. */
+const RECOVERY_SPREAD_MS = 2000;
+
 export interface BroadcastTag {
   event: "reveal" | "undo" | "resolve" | "advance" | "end-early" | "roster-changed";
   /** Question id for reveal/undo/resolve/end-early; empty string for
@@ -135,6 +138,9 @@ export interface BroadcastTag {
   questionId: string;
   /** Server's "now" at broadcast time. ISO string. */
   serverNow: string;
+  /** Reveal-specific: this device's Date.now() when the broadcast arrived, so
+   *  useTimer's clock offset doesn't include how long the screen took to mount. */
+  receivedAtMs?: number;
   /** Reveal-specific: server timestamp of the reveal. ISO string. */
   revealedAt?: string;
   /** Resolve-specific: canonical correct option index. */
@@ -148,6 +154,9 @@ export interface BroadcastTag {
   /** roster-changed specific: ISO timestamp the row was inserted. */
   joinedAt?: string;
 }
+
+// Route polls that must fail in a row before a host is marked unreachable.
+const ROUTE_POLL_MISSES_FOR_UNREACHABLE = 2;
 
 // Max random delay before the FIRST server-route fallback fetch, to de-sync a
 // whole room whose direct reads all fail at the same timeout (anti-stampede).
@@ -341,6 +350,41 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
   // few seconds of the network returning — no manual refresh.
   const reachability = useReachability();
   const [recoveryTick, setRecoveryTick] = useState(0);
+
+  // ── Spread recovery (players only) ─────────────────────────────────────
+  // A blip drops every phone at once, so they all come back at once. One
+  // snapshot read per recovery, at a random moment in the next 2s, keeps that
+  // from landing as a single spike. Question events stay immediate: those are
+  // the game moving, not a crowd reconnecting. One timer, so a rejoin and a
+  // reachability recovery in the same moment still cost one read.
+  const spreadRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scheduleSpreadRefresh = useCallback(() => {
+    if (spreadRefreshTimerRef.current !== null) return;
+    spreadRefreshTimerRef.current = setTimeout(() => {
+      spreadRefreshTimerRef.current = null;
+      void playerRefreshRef.current?.();
+    }, Math.random() * RECOVERY_SPREAD_MS);
+  }, []);
+  useEffect(
+    () => () => {
+      if (spreadRefreshTimerRef.current !== null) clearTimeout(spreadRefreshTimerRef.current);
+      spreadRefreshTimerRef.current = null;
+    },
+    [roomCode, audience],
+  );
+  const previousReachabilityRef = useRef(reachability);
+  useEffect(() => {
+    const was = previousReachabilityRef.current;
+    previousReachabilityRef.current = reachability;
+    if (audience === "player" && was === "unreachable" && reachability === "ok") {
+      scheduleSpreadRefresh();
+    }
+  }, [audience, reachability, scheduleSpreadRefresh]);
+  // The channel went down and has not yet said it is back.
+  const channelDroppedRef = useRef(false);
+  // The reconnectCounter the player branch last ran for, to tell a rebuild after
+  // a dropped channel from a focus or retry run.
+  const seenReconnectRef = useRef(reconnectCounter);
   useUnreachableRetry({
     enabled: reachability === "unreachable" && !!roomCode,
     onRetry: () => setRecoveryTick((t) => t + 1),
@@ -361,18 +405,35 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
   useEffect(() => {
     setBackupMode(backupMode);
   }, [backupMode]);
+  // Set by the first missed direct read, so the poll is already running if the
+  // one-off route read below is slow or gets cut off by a rebuild. Backup mode
+  // (and its amber banner) still waits for a real reply.
+  const [routePollArmed, setRoutePollArmed] = useState(false);
+  const routePollMissesRef = useRef(0);
+  // A host with a room on screen lets the route poll judge an outage. One that
+  // has nothing to show needs the hotspot message straight away.
+  const hostHasRoomViewRef = useRef(false);
+  useEffect(() => {
+    hostHasRoomViewRef.current = isHost && snapshot.night !== null;
+  }, [isHost, snapshot.night]);
   useRoomRoutePoll({
-    enabled: isHost && backupMode && !!roomCode,
-    fetchPayload: () => fetchRoomSnapshotPayload(parseRoomCode(roomCode as string)),
+    enabled: isHost && (backupMode || routePollArmed) && !!roomCode,
+    fetchPayload: (signal) =>
+      fetchRoomSnapshotPayload(parseRoomCode(roomCode as string), { signal }),
     onPayload: (payload) => {
+      routePollMissesRef.current = 0;
       publishRoomFallback(payload);
       setSnapshot(payloadToRoomSnapshot(payload));
       // A route poll succeeded → the server is reachable; clear any hotspot tier.
       setReachability("ok");
+      setBackupModeState(true);
     },
     onError: () => {
-      // Even the route is failing now → true outage → surface the hotspot tier.
-      setReachability("unreachable");
+      // One miss can be a blip. Two in a row is an outage → the hotspot tier.
+      routePollMissesRef.current += 1;
+      if (routePollMissesRef.current >= ROUTE_POLL_MISSES_FOR_UNREACHABLE) {
+        setReachability("unreachable");
+      }
     },
   });
 
@@ -385,6 +446,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         // fresh room doesn't inherit the previous one's failure state.
         setReachability(undefined);
         setBackupModeState(false);
+        setRoutePollArmed(false);
+        routePollMissesRef.current = 0;
       }
       return;
     }
@@ -473,6 +536,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             event: "reveal",
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
+            receivedAtMs: Date.now(),
             revealedAt: typeof p.revealedAt === "string" ? p.revealedAt : undefined,
           });
         })
@@ -578,7 +642,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         .subscribe((status) => {
           if (cancelled) return;
           setChannelHealth(status);
+          if (status === "SUBSCRIBED" && channelDroppedRef.current) {
+            channelDroppedRef.current = false;
+            scheduleSpreadRefresh();
+          }
           if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            channelDroppedRef.current = true;
             const now = Date.now();
             if (now - lastReconnectAtRef.current < 2000) return;
             lastReconnectAtRef.current = now;
@@ -586,7 +655,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
           }
         });
 
-      void refreshPlayerSnapshot();
+      // Rebuilt after a dropped channel: every phone in the room may be here at
+      // once. Anything else (first load, focus, the unreachable retry, which has
+      // its own spread) reads straight away.
+      if (reconnectCounter !== seenReconnectRef.current) scheduleSpreadRefresh();
+      else void refreshPlayerSnapshot();
+      seenReconnectRef.current = reconnectCounter;
       return () => {
         cancelled = true;
         if (playerRefreshRef.current === requestRefresh) {
@@ -887,6 +961,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     // route (Phase 2). Returns true if the route served a snapshot (→ backup
     // mode), false if even the route failed (→ caller marks "unreachable").
     async function tryRouteFallback(): Promise<boolean> {
+      if (isHost) setRoutePollArmed(true);
       try {
         // Spread the herd: a whole room's direct reads fail at the SAME
         // deterministic timeout, so without this every phone would hit the
@@ -908,6 +983,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       } catch {
         return false;
       }
+    }
+
+    // Direct reads and the route both failed. See hostHasRoomViewRef.
+    function noteOutage() {
+      if (!hostHasRoomViewRef.current) setReachability("unreachable");
+      setSnapshot((prev) => ({ ...prev, isLoading: false }));
     }
 
     async function bootstrap() {
@@ -935,10 +1016,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         // before declaring "unreachable" (it does its own night lookup).
         if (cancelled) return;
         const served = await tryRouteFallback();
-        if (!cancelled && !served) {
-          setReachability("unreachable");
-          setSnapshot((prev) => ({ ...prev, isLoading: false }));
-        }
+        if (!cancelled && !served) noteOutage();
         return;
       }
       if (!nightRes.ok) {
@@ -946,6 +1024,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         if (!cancelled) {
           setReachability("ok");
           setBackupModeState(false);
+          setRoutePollArmed(false);
+          routePollMissesRef.current = 0;
           setSnapshot({ ...EMPTY, isLoading: false });
         }
         return;
@@ -1118,10 +1198,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         // surface the switch-to-hotspot tier (true outage).
         if (cancelled) return;
         const served = await tryRouteFallback();
-        if (!cancelled && !served) {
-          setReachability("unreachable");
-          setSnapshot((prev) => ({ ...prev, isLoading: false }));
-        }
+        if (!cancelled && !served) noteOutage();
         return;
       }
 
@@ -1131,6 +1208,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // the aux hooks resume their direct reads + realtime).
       setReachability("ok");
       setBackupModeState(false);
+      setRoutePollArmed(false);
+      routePollMissesRef.current = 0;
       const [
         nightRow,
         gameRows,
@@ -1398,6 +1477,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
             event: "reveal",
             questionId: String(p.questionId),
             serverNow: String(p.serverNow),
+            receivedAtMs: Date.now(),
             revealedAt: typeof p.revealedAt === "string" ? p.revealedAt : undefined,
           });
           // Realtime postgres_changes don't reliably reach phones (Realtime's
@@ -1788,7 +1868,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       hostRefreshRef.current = null;
       hostCatchUpRef.current = null;
     };
-  }, [roomCode, audience, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick]);
+  }, [roomCode, audience, isHost, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick, scheduleSpreadRefresh]);
 
   return useMemo(
     () =>

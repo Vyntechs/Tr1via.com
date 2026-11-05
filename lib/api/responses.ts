@@ -58,8 +58,11 @@ export function notFound(what = "not found"): NextResponse {
   return NextResponse.json({ error: what }, { status: 404 });
 }
 
-export function conflict(reason: string): NextResponse {
-  return NextResponse.json({ error: reason }, { status: 409 });
+export function conflict(
+  reason: string,
+  extra?: Record<string, unknown>,
+): NextResponse {
+  return NextResponse.json({ ...extra, error: reason }, { status: 409 });
 }
 
 export function serverError(reason = "server error"): NextResponse {

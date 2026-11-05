@@ -8,7 +8,7 @@
 import { ConnectionRibbon } from "./ConnectionRibbon";
 import { useConnectionStatus } from "@/lib/hooks/useConnectionStatus";
 import { useChannelHealth } from "@/lib/realtime/channelHealth";
-import { useReachability } from "@/lib/realtime/reachability";
+import { UNREACHABLE_HINT_MS, useReachability, useUnreachableFor } from "@/lib/realtime/reachability";
 import { useRoomFallback } from "@/lib/room/roomFallbackStore";
 
 export function ConnectionRibbonProvider() {
@@ -16,5 +16,6 @@ export function ConnectionRibbonProvider() {
   const reachability = useReachability();
   const { backupMode } = useRoomFallback();
   const status = useConnectionStatus({ channelState, reachability, backupMode });
-  return <ConnectionRibbon status={status} />;
+  const showHotspotHint = useUnreachableFor(UNREACHABLE_HINT_MS);
+  return <ConnectionRibbon status={status} showHotspotHint={showHotspotHint} />;
 }

@@ -12,6 +12,11 @@
 //      computes — anti-tamper. If a malicious client tried to claim a
 //      different slot was correct, the scramble check rejects it.
 //
+// A late request is not refused until the player is known and their saved row
+// has been looked up. A resend whose first reply was lost arrives here after
+// the deadline with its answer already stored, and that must read as saved
+// (409 "already answered"), never as a late refusal.
+//
 // We translate the player's `slotChosen` (1..4 — the visible slot on the
 // phone) into a canonical `chosen_index` (0..3 — what the host's question
 // row calls the correct answer) by indexing the scramble. The DB stores
@@ -48,8 +53,34 @@ import {
 } from "@/lib/live-answer/telemetry";
 import { withAnswerLog } from "@/lib/diagnostics/serverLog";
 import { diagMark, diagNote } from "@/lib/diagnostics/trace";
+import { logLateRefusal } from "@/lib/live/logClose";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
+
+type LateReason =
+  | "answer deadline passed"
+  | "question is closed"
+  | "question is not live";
+
+async function refuseLate(
+  admin: AdminClient,
+  questionId: string,
+  playerId: string,
+  reason: LateReason,
+  lateMs: number | null,
+) {
+  const { data: saved, error } = await admin
+    .from("answers")
+    .select("id")
+    .eq("question_id", questionId)
+    .eq("player_id", playerId)
+    .maybeSingle();
+  // Not knowing is not the same as "no row": a 500 lets the phone keep asking.
+  if (error) return serverError();
+  if (saved) return conflict("already answered");
+  logLateRefusal({ questionId, lateMs });
+  return badRequest(reason);
+}
 
 async function recordAnswerHealth(
   playId: string,
@@ -325,17 +356,17 @@ async function handleAnswer(req: NextRequest) {
   diagNote({ questionPlayedAt: q?.played_at, questionFinishedAt: q?.finished_at });
   if (!q) return notFound("question not found");
   if (!q.played_at) return conflict("question is not live");
-  if (
-    receivedAt.getTime() >=
-    new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000
-  ) {
-    return badRequest("answer deadline passed");
-  }
-  if (
-    q.finished_at &&
-    receivedAt.getTime() >= new Date(q.finished_at).getTime()
-  ) {
-    return badRequest("question is closed");
+  const receivedMs = receivedAt.getTime();
+  const deadlineMs =
+    new Date(q.played_at).getTime() + questionDurationFor(undefined) * 1_000;
+  let lateReason: LateReason | null = null;
+  let lateMs: number | null = null;
+  if (receivedMs >= deadlineMs) {
+    lateReason = "answer deadline passed";
+    lateMs = receivedMs - deadlineMs;
+  } else if (q.finished_at && receivedMs >= new Date(q.finished_at).getTime()) {
+    lateReason = "question is closed";
+    lateMs = receivedMs - new Date(q.finished_at).getTime();
   }
 
   const { data: cat, error: categoryError } = await admin
@@ -380,6 +411,10 @@ async function handleAnswer(req: NextRequest) {
   diagNote({ playerId: player.id });
   diagMark("player");
   if (player.removed_at) return forbidden("you have been removed");
+
+  if (lateReason) {
+    return refuseLate(admin, parsed.data.questionId, player.id, lateReason, lateMs);
+  }
 
   // Verify per-game participation. Players who joined the night but didn't
   // opt into this game (e.g. arrived after game 1 ended, didn't hit Join
@@ -429,9 +464,23 @@ async function handleAnswer(req: NextRequest) {
     });
   diagMark("insert");
   if (error) {
-    if (error.code === "TR025") return badRequest("answer deadline passed");
-    if (error.code === "TRCL0") return badRequest("question is closed");
-    if (error.code === "TRNL0") return badRequest("question is not live");
+    // The save trigger refuses before the unique index is checked, so a resend
+    // of a saved answer can land here too.
+    if (error.code === "TR025") {
+      return refuseLate(
+        admin,
+        parsed.data.questionId,
+        player.id,
+        "answer deadline passed",
+        receivedMs - deadlineMs,
+      );
+    }
+    if (error.code === "TRCL0") {
+      return refuseLate(admin, parsed.data.questionId, player.id, "question is closed", null);
+    }
+    if (error.code === "TRNL0") {
+      return refuseLate(admin, parsed.data.questionId, player.id, "question is not live", null);
+    }
     // 23505 = duplicate (player already answered this question). The
     // rules say one answer per (player, question); surface as 409 so
     // the UI can show "you already answered" rather than spinning.

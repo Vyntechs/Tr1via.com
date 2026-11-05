@@ -6,6 +6,12 @@ import {
   type AllLockedAutoRevealDecision,
 } from "@/lib/game/allLockedAutoReveal";
 
+/**
+ * How long to wait before each retry of a failed auto-end. Past these the hook
+ * stops: the timer closes the question anyway, and "Show answer now" still works.
+ */
+export const AUTO_REVEAL_RETRY_DELAYS_MS = [1_200, 2_400, 4_800] as const;
+
 export interface UseAllLockedAutoRevealOpts {
   questionId: string | null | undefined;
   decision: AllLockedAutoRevealDecision | null;
@@ -25,6 +31,8 @@ export function useAllLockedAutoReveal({
   const latestQuestionIdRef = useRef<string | null | undefined>(questionId);
   const latestDecisionCompleteRef = useRef(Boolean(decision?.complete));
   const timeoutRef = useRef<number | null>(null);
+  // Retries used on this question since everyone last became locked.
+  const retriesRef = useRef<{ questionId: string; used: number } | null>(null);
 
   useEffect(() => {
     onAutoRevealRef.current = onAutoReveal;
@@ -42,6 +50,7 @@ export function useAllLockedAutoReveal({
     if (!questionId) {
       firedQuestionRef.current = null;
       inFlightQuestionRef.current = null;
+      retriesRef.current = null;
       if (timeoutRef.current !== null) {
         window.clearTimeout(timeoutRef.current);
         timeoutRef.current = null;
@@ -57,7 +66,7 @@ export function useAllLockedAutoReveal({
       }
     };
 
-    const scheduleAttempt = (targetQuestionId: string) => {
+    const scheduleAttempt = (targetQuestionId: string, delayMs: number) => {
       if (timeoutRef.current !== null) return;
       if (firedQuestionRef.current === targetQuestionId) return;
       if (inFlightQuestionRef.current === targetQuestionId) return;
@@ -71,6 +80,7 @@ export function useAllLockedAutoReveal({
 
         inFlightQuestionRef.current = targetQuestionId;
         void Promise.resolve(onAutoRevealRef.current())
+          .catch(() => false as const)
           .then((result) => {
             if (result === false) {
               if (inFlightQuestionRef.current === targetQuestionId) {
@@ -80,7 +90,14 @@ export function useAllLockedAutoReveal({
                 latestQuestionIdRef.current === targetQuestionId &&
                 latestDecisionCompleteRef.current
               ) {
-                scheduleAttempt(targetQuestionId);
+                const used =
+                  retriesRef.current?.questionId === targetQuestionId
+                    ? retriesRef.current.used
+                    : 0;
+                const delay = AUTO_REVEAL_RETRY_DELAYS_MS[used];
+                if (delay === undefined) return;
+                retriesRef.current = { questionId: targetQuestionId, used: used + 1 };
+                scheduleAttempt(targetQuestionId, delay);
               }
               return;
             }
@@ -91,15 +108,17 @@ export function useAllLockedAutoReveal({
               inFlightQuestionRef.current = null;
             }
           });
-      }, graceMs);
+      }, delayMs);
     };
 
     if (!questionId || !decision?.complete) {
+      // Someone unlocked or joined, so the next "everyone locked" is new news.
+      retriesRef.current = null;
       clearScheduled();
       return clearScheduled;
     }
 
-    scheduleAttempt(questionId);
+    scheduleAttempt(questionId, graceMs);
     return clearScheduled;
   }, [decision?.complete, graceMs, questionId]);
 }

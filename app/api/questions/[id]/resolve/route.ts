@@ -20,7 +20,6 @@ import { conflict, ok, serverError, notFound } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import {
   broadcastAppliedLiveRoomEvent,
-  broadcastToRoom,
   broadcastFireworks,
 } from "@/lib/api/broadcast";
 import { isTestModeEnabled } from "@/lib/api/require-test-mode";
@@ -38,6 +37,8 @@ import {
   recordLiveAnswerHealth,
 } from "@/lib/live-answer/telemetry";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
+import { broadcastLegacyResolveBestEffort } from "@/lib/live/closeDue";
+import { closeCallerFrom, closeLateMs, logClose } from "@/lib/live/logClose";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 
@@ -63,25 +64,6 @@ async function resolveLegacyQuestionOnce(
   });
   if (fallback.error) return { data: null, error: fallback.error };
   return { data: true, error: null };
-}
-
-async function broadcastLegacyResolveBestEffort(
-  roomCode: string,
-  payload: {
-    questionId: string;
-    correctIndex: number;
-    refetch: true;
-    serverNow: string;
-  },
-): Promise<void> {
-  try {
-    await broadcastToRoom(roomCode, "resolve", payload);
-  } catch {
-    // A timeout can mean Supabase accepted the broadcast but its acknowledgement
-    // was lost. Do not retry and amplify one commit into two room-wide refetches;
-    // durable Postgres Changes and snapshot recovery cover a truly missed signal.
-    console.warn("broadcast resolve failed");
-  }
 }
 
 async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
@@ -210,6 +192,7 @@ async function postResolve(
       },
     );
     if (finalizeError) return serverError();
+    const closedAtMs = Date.now();
     const envelope = parseLiveFinalizeRpcEnvelope(rpcData);
     if (!envelope) return serverError();
     const result = envelope.result;
@@ -257,6 +240,14 @@ async function postResolve(
           }
         }
       }
+      if (freshEvent.kind === "play_resolved") {
+        logClose({
+          questionId,
+          roomCode,
+          closedBy: closeCallerFrom(req),
+          lateMs: closeLateMs(closedAtMs, Date.parse(play.main_zero_at)),
+        });
+      }
     }
 
     const responseLive = exactLive ?? await loadCurrentLiveRoom(admin, night.id);
@@ -269,6 +260,7 @@ async function postResolve(
   // its request can skip elapsed time without introducing a body/query force
   // flag that could ever work in production.
   const isTestFastForward = isTestModeEnabled(req);
+  let resolveAtMs: number | null = null;
   if (!isTestFastForward) {
     if (!q.played_at) {
       return conflict("question is not live");
@@ -288,9 +280,10 @@ async function postResolve(
       { theme_key: night.theme_key },
       { default_theme_key: host?.default_theme_key ?? null },
     );
-    const resolveAtMs = playedAtMs + questionDurationFor(themeKey) * 1_000;
-    if (Date.now() < resolveAtMs) {
-      return conflict("question answer window is still open");
+    resolveAtMs = playedAtMs + questionDurationFor(themeKey) * 1_000;
+    const retryInMs = resolveAtMs - Date.now();
+    if (retryInMs > 0) {
+      return conflict("question answer window is still open", { retryInMs });
     }
   }
 
@@ -305,14 +298,21 @@ async function postResolve(
     return ok({ alreadyResolved: true });
   }
 
+  const closedAtMs = Date.now();
   const payload = {
     questionId,
     correctIndex: q.correct_index,
     refetch: true as const,
-    serverNow: new Date().toISOString(),
+    serverNow: new Date(closedAtMs).toISOString(),
   };
 
   await broadcastLegacyResolveBestEffort(roomCode, payload);
+  logClose({
+    questionId,
+    roomCode,
+    closedBy: closeCallerFrom(req),
+    lateMs: closeLateMs(closedAtMs, resolveAtMs),
+  });
 
   // Synchronized firework salvo (July) — every July screen ignites the same
   // burst at the same instant as the answer is revealed. Cosmetic + best-effort

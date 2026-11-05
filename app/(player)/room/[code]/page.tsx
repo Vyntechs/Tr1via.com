@@ -59,13 +59,15 @@ import {
   type PlayerLockedSendState,
 } from "@/components/player";
 import { useRoom } from "@/lib/hooks/useRoom";
-import { useReachability } from "@/lib/realtime/reachability";
+import { UNREACHABLE_SCREEN_MS, useReachability, useUnreachableFor } from "@/lib/realtime/reachability";
+import { hasRecentJoin, rememberRecentJoin } from "@/lib/room/recentJoin";
 import { useLockInSync } from "@/lib/hooks/useLockInSync";
 import { shouldFireReveal, newLockIds } from "@/lib/player/waterPulse";
 import { sumAwardedForGame } from "@/lib/player/revealTotal";
 import { useTimer } from "@/lib/hooks/useTimer";
+import { useResolveAtZero } from "@/lib/hooks/useResolveAtZero";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
-import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
+import { clearPendingAnswer, loadPendingAnswer, useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { useSurfaceObservation } from "@/lib/hooks/useGameDelivery";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
@@ -198,6 +200,11 @@ function RoomBody({
   const router = useRouter();
   const me = snapshot.self ?? null;
   const reachability = useReachability();
+  const unreachableTooLong = useUnreachableFor(UNREACHABLE_SCREEN_MS);
+  const hasMe = Boolean(me);
+  useEffect(() => {
+    if (hasMe) rememberRecentJoin(roomCode);
+  }, [hasMe, roomCode]);
   useSurfaceObservation({
     endpoint: `/api/room/${roomCode}/observe`,
     canonical: snapshot.deliveryRevision ?? null,
@@ -225,13 +232,20 @@ function RoomBody({
     router.replace(`/room/${roomCode}/${path}`);
   }, [snapshot.night?.closed_at, snapshot.scores, me, finalGame, roomCode, router]);
 
-  // ── Unreachable: the browser→Supabase reads are blocked (restrictive venue
-  //    WiFi). Show an actionable "switch to a hotspot" screen instead of an
-  //    endless "Catching up…" spinner or the misleading "isn't open" screen.
-  //    Checked BEFORE loading/night-null because those would mask it. Clears on
-  //    its own when useRoom's self-healing retry reconnects (no refresh). ──
+  // ── Unreachable: the room read is failing (a venue blip, or restrictive WiFi).
+  //    A phone that has the room in memory keeps it on screen, because a blip
+  //    must not throw a whole room off the question: its sends keep running and
+  //    the ribbon carries the news. A reloaded phone that was just playing says
+  //    "Reconnecting" instead. Either way, 45s of this means it isn't a blip, so
+  //    it gets the actionable "switch to a hotspot" screen, as does a phone with
+  //    nothing to fall back on. Checked BEFORE loading/night-null because those
+  //    would mask it. Clears on its own when useRoom's retry reconnects. ──
   if (reachability === "unreachable") {
-    return <UnreachableScreen roomCode={roomCode} />;
+    const hasRoom = Boolean(snapshot.night);
+    if (unreachableTooLong || (!hasRoom && !hasRecentJoin(roomCode))) {
+      return <UnreachableScreen roomCode={roomCode} />;
+    }
+    if (!hasRoom) return <ReconnectingScreen roomCode={roomCode} />;
   }
 
   // ── Loading / not-joined screens ──
@@ -331,6 +345,12 @@ function RoomStateMachine({
       fireJuneBeat("reveal");
     }
   }, [themeKey, resolvedQId]);
+
+  // The reveal settles an unconfirmed answer: whatever the server holds is what
+  // counts, so the copy kept on this phone can go.
+  useEffect(() => {
+    if (resolvedQId && loadPendingAnswer()?.questionId === resolvedQId) clearPendingAnswer();
+  }, [resolvedQId]);
 
   // November: the phone pictures come in three small sets, each at a random
   // 1-6 s, never all at once while 40 phones are joining (join itself only
@@ -913,32 +933,27 @@ function LiveQuestionView({
     revealBroadcast?.event === "reveal" && revealBroadcast.questionId === question.id
       ? new Date(revealBroadcast.serverNow).getTime()
       : null;
+  const receivedAtMs =
+    revealBroadcast?.event === "reveal" && revealBroadcast.questionId === question.id
+      ? revealBroadcast.receivedAtMs ?? null
+      : null;
 
   // When the timer hits zero on THIS device, fire /resolve — the first phone
   // to arrive wins; the rest get no-ops. This also runs once the player has
   // locked in: if every player locks in early there is nobody else to trigger
   // the resolve, the server never sets finished_at, and every phone would sit
-  // on "Waiting for the room to lock in…" indefinitely.
-  const resolveCalled = useRef(false);
-  const handleZero = useCallback(() => {
-    if (resolveCalled.current) return;
-    resolveCalled.current = true;
-    void fetch(`/api/questions/${question.id}/resolve`, {
-      method: "POST",
-      credentials: "same-origin",
-    })
-      .catch((e) => console.warn("resolve failed", e))
-      .finally(() => onResolveSettled());
-  }, [onResolveSettled, question.id]);
+  // on "Waiting for the room to lock in…" indefinitely. The ladder keeps asking
+  // through a "not yet" or a bad reply, then re-reads the room once.
+  const handleZero = useResolveAtZero({
+    questionId: question.id,
+    caller: "phone",
+    onSettled: onResolveSettled,
+  });
 
-  // Reset the latch when the question changes.
-  useEffect(() => {
-    resolveCalled.current = false;
-  }, [question.id]);
-
-  const { displaySeconds, hasExpired } = useTimer({
+  const { displaySeconds, hasExpired, getRemainingMs } = useTimer({
     revealedAtMs,
     serverNowMs,
+    receivedAtMs,
     durationS: questionDurationFor(themeKey),
     onZero: handleZero,
   });
@@ -958,6 +973,7 @@ function LiveQuestionView({
     questionId: question.id,
     scramble: Array.from(scramble),
     accepting: !hasExpired,
+    getRemainingMs,
     serverHasAnswer: myAnswer != null,
   });
 
@@ -998,10 +1014,15 @@ function LiveQuestionView({
       : submitStatus === "retrying"
         ? "retrying"
         : submitStatus === "failed"
-          ? failure === "closed" || hasExpired
-            ? "unconfirmed"
-            : "rejected"
+          ? failure === "late"
+            ? "late"
+            : failure === "closed"
+              ? "unconfirmed"
+              : "rejected"
           : "sending";
+  // A refusal stays a refusal past zero (the phone was told), but there is
+  // nothing left to resend into.
+  const questionClosed = hasExpired || question.finished_at != null;
 
   return (
     <PlayerQuestion
@@ -1022,8 +1043,8 @@ function LiveQuestionView({
               sendState,
               // Only the saved row knows the real time; before it arrives no time is claimed.
               msToLock: myAnswer ? myAnswer.ms_to_lock : null,
-              onRetry: retry,
-              onPick: handleTap,
+              onRetry: questionClosed ? undefined : retry,
+              onPick: questionClosed ? undefined : handleTap,
               standings,
             }
           : undefined
@@ -1393,6 +1414,26 @@ function LoadingScreen({ roomCode }: { roomCode: string }) {
           Catching
           <br />
           <span style={{ color: t.accent }}>up…</span>
+        </Display>
+      </div>
+    </PhoneScreen>
+  );
+}
+
+function ReconnectingScreen({ roomCode }: { roomCode: string }) {
+  const { t } = useTheme();
+  return (
+    <PhoneScreen>
+      <PhoneHeader eyebrow={`GAME · ${formatRoomCode(roomCode)}`} />
+      <div
+        data-testid="player-reconnecting"
+        role="status"
+        aria-live="polite"
+        style={{ flex: 1, display: "flex", flexDirection: "column", justifyContent: "center" }}
+      >
+        <Eyebrow color={t.inkMid} size={11}>CONNECTION&apos;S SLOW</Eyebrow>
+        <Display size={36} color={t.ink}>
+          Reconnecting<span style={{ color: t.accent }}>…</span>
         </Display>
       </div>
     </PhoneScreen>

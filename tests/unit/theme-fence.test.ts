@@ -9,19 +9,17 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { THEME_FENCE_PATHS, isFenced } from "@/lib/experience/fence";
 
-const TIMER_ZERO_BACKUP = `  const { displaySeconds } = useTimer({
+const TIMER_ZERO_BACKUP = `  const closeAtZero = useResolveAtZero({
+    questionId: question.id,
+    caller: "tv",
+    onSettled: onResolveSettled,
+  });
+  const { displaySeconds } = useTimer({
     revealedAtMs: revealedMs,
     serverNowMs,
+    receivedAtMs,
     themeKey,
-    onZero: () => {
-      void fetch(\`/api/questions/\${question.id}/resolve\`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      }).catch(() => {
-        // Network/transient failure: phones or host's manual End-early
-        // button remain as fallbacks. Logging would be noise.
-      });
-    },
+    onZero: closeAtZero,
   });`;
 
 describe("theme fence", () => {

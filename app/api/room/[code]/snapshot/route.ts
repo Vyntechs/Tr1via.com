@@ -25,7 +25,9 @@ import { countPickedByCategory, oneCategoryPerSlot } from "@/lib/host/oneCategor
 import { ok, badRequest, forbidden, notFound, serverError } from "@/lib/api/responses";
 import { isValidRoomCode, parseRoomCode } from "@/lib/game/room-code";
 import { isRoomMagicReactionKind } from "@/lib/room-magic/reactions";
+import { tickCloseIfDue } from "@/lib/live/closeDue";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
+import { resolveTheme } from "@/lib/theme/resolveTheme";
 import {
   getAuthedHost,
   getDeviceId,
@@ -338,6 +340,28 @@ export async function GET(
   // that was frozen for a play already in progress.
   if (mode === "player" && playerRow?.removed_at && !projectionEligibility) {
     return forbidden("not a player in this room");
+  }
+
+  // Backstop for lost timer-zero calls. Only a caller this route has authorized
+  // gets here. The reply still shows the pre-close room; the broadcast and the
+  // phone's queued refresh bring the reveal.
+  if (
+    !resilient &&
+    liveGame &&
+    currentQuestionRaw?.played_at &&
+    categories.find((c) => c.id === currentQuestionRaw.category_id)?.game_id === liveGame.id
+  ) {
+    await tickCloseIfDue(admin, {
+      nightId,
+      questionId: currentQuestionRaw.id,
+      expectedPlayedAt: currentQuestionRaw.played_at,
+      roomCode: code,
+      source: "snapshot-tick",
+      themeKey: resolveTheme(
+        { theme_key: night.theme_key },
+        { default_theme_key: hostDefaultThemeKey },
+      ),
+    });
   }
 
   const live = resilient && night.current_run_id

@@ -81,7 +81,11 @@ function legacyAdmin(options: {
   const insert = vi.fn(async () => ({ data: null, error: options.insertError ?? null }));
   return {
     rpc: vi.fn(),
-    from: vi.fn((table: string) => (table === "answers" ? { insert } : query(rows[table]))),
+    from: vi.fn((table: string) =>
+      table === "answers"
+        ? { ...query({ data: null, error: null }), insert }
+        : query(rows[table]),
+    ),
   };
 }
 
@@ -337,14 +341,22 @@ describe("POST /api/answers diagnostic log", () => {
     });
   });
 
-  it("fills in the player and night for a tap turned away before the player lookup", async () => {
-    // A late tap is refused before the route ever looks the player up.
+  it("a late tap carries the player and night the route found, with no extra lookup", async () => {
+    // A late tap goes through the player lookup, to check for a saved answer.
     const late = SCENARIOS[1]!;
     await run(late, "on");
     const rows = writeMock.recordDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
     expect(rows[0]).toMatchObject({ player_id: PLAYER_ID, night_id: NIGHT_ID, game_id: GAME_ID });
     expect(rows[0]!.ms_after_open).toBe(26_000);
     expect(rows[0]!.deadline_s).toBe(25);
+    expect(writeMock.lookupPlayerId).not.toHaveBeenCalled();
+  });
+
+  it("fills in the player and night for a tap turned away before the player lookup", async () => {
+    // A tap on a question that is not live is refused before the player lookup.
+    await run(SCENARIOS[2]!, "on");
+    const rows = writeMock.recordDiagRows.mock.calls[0]![1] as Record<string, unknown>[];
+    expect(rows[0]).toMatchObject({ player_id: PLAYER_ID, night_id: NIGHT_ID, game_id: GAME_ID });
     expect(writeMock.lookupPlayerId).toHaveBeenCalledWith(NIGHT_ID, DEVICE_ID);
   });
 
@@ -438,9 +450,9 @@ describe("POST /api/answers diagnostic log", () => {
 
     it("a real cookie that never joined this night (a free cookie from /api/session/init)", async () => {
       writeMock.lookupPlayerId.mockResolvedValue(null);
-      // a late tap is turned away before the route looks the player up
-      const late = SCENARIOS[1]!;
-      await run(late, "on");
+      // a tap on a question that is not live is turned away before the route
+      // looks the player up
+      await run(SCENARIOS[2]!, "on");
       expect(writeMock.lookupPlayerId).toHaveBeenCalledWith(NIGHT_ID, DEVICE_ID);
       expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
       expect(writeMock.noteIgnored).toHaveBeenCalledWith("answer");
@@ -448,13 +460,13 @@ describe("POST /api/answers diagnostic log", () => {
 
     it("a lookup that is too slow to answer is NOT taken for 'not a player': nothing is stored, and it is not counted as a stranger", async () => {
       writeMock.lookupPlayerId.mockRejectedValue(new DiagLookupSlow());
-      const late = SCENARIOS[1]!;
-      await run(late, "on"); // (run swallows the failure the way scheduleDiagWrite does)
+      const early = SCENARIOS[2]!;
+      await run(early, "on"); // (run swallows the failure the way scheduleDiagWrite does)
       expect(writeMock.recordDiagRows).not.toHaveBeenCalled();
       expect(writeMock.noteIgnored).not.toHaveBeenCalled(); // scheduleDiagWrite counts it as "slow"
       // the phone still got its normal answer
-      const baseline = await run(late, "off");
-      expect(baseline.status).toBe(400);
+      const baseline = await run(early, "off");
+      expect(baseline.status).toBe(409);
     });
 
     it("a tap about a question that does not exist", async () => {

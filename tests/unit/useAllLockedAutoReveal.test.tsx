@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import { useAllLockedAutoReveal } from "@/lib/hooks/useAllLockedAutoReveal";
 import type { AllLockedAutoRevealDecision } from "@/lib/game/allLockedAutoReveal";
 
@@ -166,5 +166,134 @@ describe("useAllLockedAutoReveal", () => {
     vi.advanceTimersByTime(1200);
 
     expect(onAutoReveal).toHaveBeenCalledTimes(2);
+  });
+  describe("retries after a failed try", () => {
+    const flushAdvance = async (ms: number) => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    };
+
+    it("waits 1.2, 2.4 and 4.8s, then stops", async () => {
+      vi.useFakeTimers();
+      const onAutoReveal = vi.fn(async () => false);
+      renderHook(() =>
+        useAllLockedAutoReveal({ questionId: "q1", decision: completeDecision, onAutoReveal }),
+      );
+
+      await flushAdvance(1_200);
+      expect(onAutoReveal).toHaveBeenCalledTimes(1);
+
+      await flushAdvance(1_199);
+      expect(onAutoReveal).toHaveBeenCalledTimes(1);
+      await flushAdvance(1);
+      expect(onAutoReveal).toHaveBeenCalledTimes(2);
+
+      await flushAdvance(2_399);
+      expect(onAutoReveal).toHaveBeenCalledTimes(2);
+      await flushAdvance(1);
+      expect(onAutoReveal).toHaveBeenCalledTimes(3);
+
+      await flushAdvance(4_799);
+      expect(onAutoReveal).toHaveBeenCalledTimes(3);
+      await flushAdvance(1);
+      expect(onAutoReveal).toHaveBeenCalledTimes(4);
+
+      await flushAdvance(120_000);
+      expect(onAutoReveal).toHaveBeenCalledTimes(4);
+    });
+
+    it("the delay runs from when the failed try came back", async () => {
+      vi.useFakeTimers();
+      const onAutoReveal = vi.fn(
+        () => new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 8_000)),
+      );
+      renderHook(() =>
+        useAllLockedAutoReveal({ questionId: "q1", decision: completeDecision, onAutoReveal }),
+      );
+
+      await flushAdvance(1_200 + 8_000 + 1_199);
+      expect(onAutoReveal).toHaveBeenCalledTimes(1);
+      await flushAdvance(1);
+      expect(onAutoReveal).toHaveBeenCalledTimes(2);
+    });
+
+    it("stops the moment a try succeeds", async () => {
+      vi.useFakeTimers();
+      const onAutoReveal = vi.fn(async () => true as boolean);
+      onAutoReveal.mockResolvedValueOnce(false);
+      renderHook(() =>
+        useAllLockedAutoReveal({ questionId: "q1", decision: completeDecision, onAutoReveal }),
+      );
+
+      await flushAdvance(30_000);
+
+      expect(onAutoReveal).toHaveBeenCalledTimes(2);
+    });
+
+    it("counts a thrown failure the same as false", async () => {
+      vi.useFakeTimers();
+      const onAutoReveal = vi.fn(async () => true as boolean);
+      onAutoReveal.mockRejectedValueOnce(new Error("boom"));
+      renderHook(() =>
+        useAllLockedAutoReveal({ questionId: "q1", decision: completeDecision, onAutoReveal }),
+      );
+
+      await flushAdvance(1_200 + 1_200);
+
+      expect(onAutoReveal).toHaveBeenCalledTimes(2);
+    });
+
+    it("a new question gets its own three retries", async () => {
+      vi.useFakeTimers();
+      const onAutoReveal = vi.fn(async () => false);
+      const { rerender } = renderHook(
+        ({ questionId }) =>
+          useAllLockedAutoReveal({ questionId, decision: completeDecision, onAutoReveal }),
+        { initialProps: { questionId: "q1" } },
+      );
+      await flushAdvance(30_000);
+      expect(onAutoReveal).toHaveBeenCalledTimes(4);
+
+      rerender({ questionId: "q2" });
+      await flushAdvance(30_000);
+
+      expect(onAutoReveal).toHaveBeenCalledTimes(8);
+    });
+
+    it("everyone locking again after someone unlocked starts the count afresh", async () => {
+      vi.useFakeTimers();
+      const onAutoReveal = vi.fn(async () => false);
+      const { rerender } = renderHook(
+        ({ decision }) =>
+          useAllLockedAutoReveal({ questionId: "q1", decision, onAutoReveal }),
+        { initialProps: { decision: completeDecision } },
+      );
+      await flushAdvance(30_000);
+      expect(onAutoReveal).toHaveBeenCalledTimes(4);
+
+      rerender({ decision: incompleteDecision });
+      rerender({ decision: completeDecision });
+      await flushAdvance(30_000);
+
+      expect(onAutoReveal).toHaveBeenCalledTimes(8);
+    });
+
+    it("drops a waiting retry when the question moves on", async () => {
+      vi.useFakeTimers();
+      const onAutoReveal = vi.fn(async () => false);
+      const { rerender } = renderHook(
+        ({ questionId }: { questionId: string | null }) =>
+          useAllLockedAutoReveal({ questionId, decision: completeDecision, onAutoReveal }),
+        { initialProps: { questionId: "q1" as string | null } },
+      );
+      await flushAdvance(1_200);
+      expect(onAutoReveal).toHaveBeenCalledTimes(1);
+
+      rerender({ questionId: null });
+      await flushAdvance(30_000);
+
+      expect(onAutoReveal).toHaveBeenCalledTimes(1);
+    });
   });
 });

@@ -113,7 +113,9 @@ vi.mock("@/lib/hooks/usePrefersReducedMotion", () => ({
 }));
 
 import PlayerRoomPage from "@/app/(player)/room/[code]/page";
-import { __resetReachabilityForTests } from "@/lib/realtime/reachability";
+import { __resetReachabilityForTests, setReachability } from "@/lib/realtime/reachability";
+import { rememberRecentJoin } from "@/lib/room/recentJoin";
+import { PENDING_ANSWER_KEY } from "@/lib/hooks/useAnswerSubmit";
 
 function payload(
   myAnswers: Extract<RoomSnapshotPayload, { audience: "player" }>["myAnswers"],
@@ -313,7 +315,7 @@ describe("player answer signed snapshot refresh", () => {
     const lockedScreen = screen.getByTestId("player-locked");
 
     await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "retrying"));
-    expect(sendState()).toHaveTextContent("Didn’t go through — retrying");
+    expect(sendState()).toHaveTextContent("Still checking your answer");
     expect(screen.getByTestId("player-locked")).toBe(lockedScreen);
 
     await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"), { timeout: 5000 });
@@ -328,7 +330,7 @@ describe("player answer signed snapshot refresh", () => {
       if (String(input) !== "/api/answers") return new Response("{}", { status: 200 });
       bodies.push(JSON.parse(String(init!.body)));
       return bodies.length === 1
-        ? new Response(JSON.stringify({ error: "answer deadline passed" }), { status: 400 })
+        ? new Response(JSON.stringify({ error: "invalid answer" }), { status: 400 })
         : new Response(null, { status: 204 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -342,6 +344,124 @@ describe("player answer signed snapshot refresh", () => {
     fireEvent.click(screen.getByTestId("player-locked-answer-3"));
     await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"));
     expect(bodies.map((b) => b.slotChosen)).toEqual([1, 3]);
+  });
+
+  describe("the hotspot screen, held back", () => {
+    const advance = (ms: number) =>
+      act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("a phone with the room in memory keeps playing for 45s, then gets the screen", async () => {
+      h.fetchSnapshot.mockResolvedValue(payload([]));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+      render(<PlayerRoomPage />);
+      expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+
+      vi.useFakeTimers();
+      h.fetchSnapshot.mockRejectedValue(new Error("venue WiFi down"));
+      act(() => setReachability("unreachable"));
+      await advance(44_999);
+      expect(screen.getByTestId("player-question")).toBeInTheDocument();
+      expect(screen.queryByTestId("player-unreachable")).not.toBeInTheDocument();
+      await advance(1);
+      expect(screen.getByTestId("player-unreachable")).toBeInTheDocument();
+    });
+
+    it("a reloaded phone with a saved join says Reconnecting, then gets the screen at 45s", async () => {
+      rememberRecentJoin("ABCDEF");
+      h.fetchSnapshot.mockRejectedValue(new Error("venue WiFi down"));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+      render(<PlayerRoomPage />);
+      expect(await screen.findByTestId("player-reconnecting")).toBeInTheDocument();
+      expect(screen.queryByTestId("player-unreachable")).not.toBeInTheDocument();
+
+      vi.useFakeTimers();
+      // Start the spell again on the fake clock.
+      act(() => setReachability("ok"));
+      act(() => setReachability("unreachable"));
+      await advance(44_999);
+      expect(screen.getByTestId("player-reconnecting")).toBeInTheDocument();
+      await advance(1);
+      expect(screen.getByTestId("player-unreachable")).toBeInTheDocument();
+    });
+
+    it("a phone with no room and no saved join gets the screen straight away", async () => {
+      h.fetchSnapshot.mockRejectedValue(new Error("venue WiFi down"));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+      render(<PlayerRoomPage />);
+      expect(await screen.findByTestId("player-unreachable")).toBeInTheDocument();
+    });
+
+    it("remembers the join for next time", async () => {
+      h.fetchSnapshot.mockResolvedValue(payload([]));
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+      render(<PlayerRoomPage />);
+      expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+      const { hasRecentJoin } = await import("@/lib/room/recentJoin");
+      expect(hasRecentJoin("ABCDEF")).toBe(true);
+    });
+  });
+
+  it("lets go of an unconfirmed answer once the reveal has settled it", async () => {
+    window.localStorage.setItem(
+      PENDING_ANSWER_KEY,
+      JSON.stringify({ questionId: "question-1", slotChosen: 2 }),
+    );
+    const signed = payload([]) as Extract<RoomSnapshotPayload, { audience: "player" }>;
+    signed.currentQuestion = {
+      ...signed.currentQuestion!,
+      finishedAt: "2026-07-18T18:06:25.000Z",
+    };
+    h.fetchSnapshot.mockResolvedValue(signed);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+    render(<PlayerRoomPage />);
+    await waitFor(() => expect(window.localStorage.getItem(PENDING_ANSWER_KEY)).toBeNull());
+    expect(screen.queryByTestId("player-question")).not.toBeInTheDocument();
+  });
+
+  it("a refusal keeps its words past zero but loses Try again and the other cards", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/answers"
+        ? new Response(JSON.stringify({ error: "invalid answer" }), { status: 400 })
+        : new Response("{}", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "rejected"));
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+
+    act(() => h.setExpired(true));
+
+    expect(sendState()).toHaveAttribute("data-send-state", "rejected");
+    expect(sendState()).toHaveTextContent("Couldn’t send your answer");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("says the answer missed the buzzer, with no Try again, when its only send was too late", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/answers"
+        ? new Response(JSON.stringify({ error: "answer deadline passed" }), { status: 400 })
+        : new Response("{}", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "late"));
+    expect(sendState()).toHaveTextContent("That one just missed the buzzer.");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
   it("a 200 reply that is an HTML page never shows 'Locked in'", async () => {
@@ -375,8 +495,7 @@ describe("player answer signed snapshot refresh", () => {
     act(() => h.setExpired(true));
 
     expect(sendState()).toHaveAttribute("data-send-state", "unconfirmed");
-    expect(sendState()).toHaveTextContent(/time’s up/i);
-    expect(sendState()).toHaveTextContent("We couldn’t confirm your answer");
+    expect(sendState()).toHaveTextContent("Still checking. If it reached us, it counts.");
     expect(sendState()).not.toHaveTextContent("Locked in");
     const sends = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/answers").length;
     const before = sends();
@@ -510,7 +629,10 @@ describe("player answer signed snapshot refresh", () => {
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       "/api/questions/question-1/resolve",
-      expect.objectContaining({ method: "POST" }),
+      expect.objectContaining({
+        method: "POST",
+        headers: { "x-tr1via-close-caller": "phone" },
+      }),
     ));
     await waitFor(() => expect(h.fetchSnapshot).toHaveBeenCalledTimes(2));
   });

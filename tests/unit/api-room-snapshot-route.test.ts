@@ -17,6 +17,8 @@ const authMock = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/supabase/admin", () => adminMock);
 vi.mock("@/lib/api/auth", () => authMock);
+const closeDueMock = vi.hoisted(() => ({ tickCloseIfDue: vi.fn() }));
+vi.mock("@/lib/live/closeDue", () => closeDueMock);
 
 const CODE = "ABCDEF";
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
@@ -236,6 +238,31 @@ describe("GET /api/room/[code]/snapshot", () => {
     process.env.SESSION_SECRET = "snapshot-test-secret";
     adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
     authMock.hasHostSessionCookie.mockResolvedValue(false);
+  });
+
+  it("gives an authorized legacy caller the close tick for the live game's question", async () => {
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+    const res = await callRoute();
+    expect(res.status).toBe(200);
+    expect(closeDueMock.tickCloseIfDue).toHaveBeenCalledTimes(1);
+    expect(closeDueMock.tickCloseIfDue).toHaveBeenCalledWith(expect.anything(), {
+      nightId: NIGHT_ID,
+      questionId: "q-live",
+      expectedPlayedAt: Q_LIVE.played_at,
+      roomCode: CODE,
+      source: "snapshot-tick",
+      themeKey: "house",
+    });
+  });
+
+  it("gives the close tick to neither a stranger nor a resilient night", async () => {
+    authMock.getDeviceId.mockResolvedValue(null);
+    expect((await callRoute()).status).toBe(403);
+
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin({ resilient: true }));
+    authMock.getDeviceId.mockResolvedValue(DEVICE_ID);
+    expect((await callRoute()).status).toBe(200);
+    expect(closeDueMock.tickCloseIfDue).not.toHaveBeenCalled();
   });
 
   it("403s when the caller is neither the owning host nor a player in the room", async () => {

@@ -100,10 +100,12 @@ vi.mock("@/lib/supabase/client", () => ({
           return {
             select: () => ({
               eq: () => ({
-                order: async () => {
-                  h.scoreReads += 1;
-                  return { data: [], error: null };
-                },
+                order: () => ({
+                  abortSignal: async () => {
+                    h.scoreReads += 1;
+                    return { data: [], error: null };
+                  },
+                }),
               }),
             }),
           };
@@ -111,13 +113,15 @@ vi.mock("@/lib/supabase/client", () => ({
         if (table === "answers") {
           return {
             select: () => ({
-              eq: async () => {
-                h.answerReads += 1;
-                if (h.answersError) {
-                  return { data: null, error: { message: h.answersError } };
-                }
-                return { data: h.answerRows, error: null };
-              },
+              eq: () => ({
+                abortSignal: async () => {
+                  h.answerReads += 1;
+                  if (h.answersError) {
+                    return { data: null, error: { message: h.answersError } };
+                  }
+                  return { data: h.answerRows, error: null };
+                },
+              }),
             }),
           };
         }

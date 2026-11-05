@@ -20,6 +20,7 @@ import {
 } from "@/lib/live-answer/telemetry";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
+import { closeCallerFrom, closeLateMs, logClose } from "@/lib/live/logClose";
 
 const FinalizeBodySchema = z.object({ runId: UuidSchema }).strict();
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
@@ -140,6 +141,7 @@ async function postFinalize(
     },
   );
   if (rpcError) return serverError();
+  const closedAtMs = Date.now();
   const envelope = parseLiveFinalizeRpcEnvelope(rpcData);
   if (!envelope) return serverError();
   const result = envelope.result;
@@ -186,6 +188,14 @@ async function postFinalize(
           console.warn("broadcast fireworks(salvo) failed");
         }
       }
+    }
+    if (freshEvent.kind === "play_resolved") {
+      logClose({
+        questionId: play.question_id,
+        roomCode,
+        closedBy: closeCallerFrom(req),
+        lateMs: closeLateMs(closedAtMs, Date.parse(play.main_zero_at)),
+      });
     }
   }
 

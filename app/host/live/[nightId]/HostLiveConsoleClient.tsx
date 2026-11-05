@@ -41,6 +41,7 @@ import {
   type HostLivePlayer,
 } from "@/components/host";
 import { HostConnectionBanner } from "@/components/host/HostConnectionBanner";
+import { HostSentChecking } from "@/components/host/HostSentChecking";
 import type {
   AnswerRow,
   QuestionRow,
@@ -51,6 +52,9 @@ import type {
 import type { ThemeKey } from "@/lib/theme/tokens";
 import { roomToTVSnapshot } from "@/lib/host/roomToTVSnapshot";
 import { isAlreadyResolved } from "@/lib/host/endEarlyOutcome";
+import { hostFetch, HostReplyLost, isRevealAlreadyDone } from "@/lib/host/hostFetch";
+import { startHostPollLoop } from "@/lib/host/hostPollLoop";
+import { SENT_CHECKING_HOLD_MS, useSentChecking } from "@/lib/hooks/useSentChecking";
 import { WELCOME_OVERLAY_DURATION_MS, PyrotechnicsBeatConductor } from "@/components/system";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
@@ -85,8 +89,8 @@ const TIMER_END_RECHECK_MS = 3_000;
 // grant — the anti-cheat posture is correct — give both reads the same polled
 // floor every other panel on this page already has via useRoom. The
 // subscription stays as the fast path; the poll is what makes a dropped stream
-// cost one tick instead of the whole night.
-const AUX_POLL_MS = 2_000;
+// cost one tick instead of the whole night. startHostPollLoop keeps it to one read
+// at a time, so bad WiFi can't stack the reads up behind each other.
 
 export interface HostLiveConsoleClientProps {
   nightId: string;
@@ -208,15 +212,17 @@ function DesktopHostLiveConsoleClient({
     setDirectScoresReadyForGameId(null);
     const supa = getSupabaseBrowser();
     let cancelled = false;
-    async function load(markStaleFirst = false) {
-      if (markStaleFirst && !cancelled) {
-        setDirectScoresReadyForGameId(null);
-      }
+    // Bumps when the players change, so a read already under way can't mark the
+    // new roster's scores as ready. The kick that follows reads them afresh.
+    let rosterChanges = 0;
+    async function load(signal: AbortSignal) {
+      const rosterAtStart = rosterChanges;
       const { data, error } = await supa
         .from("game_scores")
         .select("*")
         .eq("game_id", currentGameId)
-        .order("score", { ascending: false });
+        .order("score", { ascending: false })
+        .abortSignal(signal);
       if (cancelled) return;
       // A failed read is NOT "everybody has zero points". Swallowing the error
       // and writing [] is how the winners screen announced three players at 0.
@@ -225,22 +231,22 @@ function DesktopHostLiveConsoleClient({
         console.error("[host] game_scores read failed:", error.message);
         return;
       }
+      if (signal.aborted || rosterAtStart !== rosterChanges) return;
       setScores(((data as GameScoreRow[] | null) ?? []));
       setDirectScoresReadyForGameId(eligibilityKey);
     }
-    void load();
-    const poll = setInterval(() => void load(), AUX_POLL_MS);
+    const poll = startHostPollLoop(load);
     const channel = supa
       .channel(`host-scores:${currentGameId}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "answers" },
-        () => void load(),
+        () => poll.kick(),
       )
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "adjustments" },
-        () => void load(),
+        () => poll.kick(),
       )
       .on(
         "postgres_changes",
@@ -250,12 +256,17 @@ function DesktopHostLiveConsoleClient({
           table: "game_participations",
           filter: `game_id=eq.${currentGameId}`,
         },
-        () => void load(true),
+        () => {
+          if (cancelled) return;
+          rosterChanges += 1;
+          setDirectScoresReadyForGameId(null);
+          poll.kick();
+        },
       )
       .subscribe();
     return () => {
       cancelled = true;
-      clearInterval(poll);
+      poll.stop();
       void supa.removeChannel(channel);
     };
   }, [activePlayerIdSignature, room.currentGame?.id]);
@@ -280,11 +291,12 @@ function DesktopHostLiveConsoleClient({
     const targetId = answerTargetId;
     const supa = getSupabaseBrowser();
     let cancelled = false;
-    async function load() {
+    async function load(signal: AbortSignal) {
       const { data, error } = await supa
         .from("answers")
         .select("*")
-        .eq("question_id", targetId);
+        .eq("question_id", targetId)
+        .abortSignal(signal);
       if (cancelled) return;
       // A failed read is NOT "nobody locked in". Writing [] here is what painted
       // "0 OF 32 LOCKED IN" over a question 15 people had answered.
@@ -292,10 +304,10 @@ function DesktopHostLiveConsoleClient({
         console.error("[host] answers read failed:", error.message);
         return;
       }
+      if (signal.aborted) return;
       setAnswers(((data as AnswerRow[] | null) ?? []));
     }
-    void load();
-    const poll = setInterval(() => void load(), AUX_POLL_MS);
+    const poll = startHostPollLoop(load);
     const channel = supa
       .channel(`host-answers:${targetId}`)
       .on(
@@ -306,12 +318,12 @@ function DesktopHostLiveConsoleClient({
           table: "answers",
           filter: `question_id=eq.${targetId}`,
         },
-        () => void load(),
+        () => poll.kick(),
       )
       .subscribe();
     return () => {
       cancelled = true;
-      clearInterval(poll);
+      poll.stop();
       void supa.removeChannel(channel);
     };
   }, [answerTargetId]);
@@ -402,6 +414,35 @@ function DesktopHostLiveConsoleClient({
     ? `game ${currentGame.game_no} · ${currentGame.state}`
     : "waiting";
 
+  // ── the tile the host just tapped ────────────────────────────────────
+  // Shown as played from the tap, so it can't be tapped twice, and let go once
+  // the room has the question or the hold runs out. It has to run out: if the
+  // reveal never landed, the host needs the tile back to try again.
+  const [heldRevealId, setHeldRevealId] = useState<string | null>(null);
+  const revealInFlightRef = useRef(false);
+  const heldRevealTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  function clearHeldRevealTimer() {
+    if (heldRevealTimerRef.current !== null) clearTimeout(heldRevealTimerRef.current);
+    heldRevealTimerRef.current = null;
+  }
+  function releaseRevealTileAfterHold() {
+    clearHeldRevealTimer();
+    heldRevealTimerRef.current = setTimeout(() => {
+      heldRevealTimerRef.current = null;
+      setHeldRevealId(null);
+    }, SENT_CHECKING_HOLD_MS);
+  }
+  useEffect(
+    () => () => {
+      if (heldRevealTimerRef.current !== null) clearTimeout(heldRevealTimerRef.current);
+    },
+    [],
+  );
+  const roomHasHeldReveal =
+    room.currentQuestion?.id === heldRevealId ||
+    room.lastResolvedQuestion?.id === heldRevealId;
+  const heldQuestionId = roomHasHeldReveal ? null : heldRevealId;
+
   // ── derive the inline TV snapshot for the embedded TV panel ──────────
   const tvSnapshot = useMemo(
     () =>
@@ -411,8 +452,9 @@ function DesktopHostLiveConsoleClient({
         scores,
         answers,
         pickedCountsReady,
+        heldQuestionId,
       }),
-    [room, allQuestions, scores, answers, pickedCountsReady],
+    [room, allQuestions, scores, answers, pickedCountsReady, heldQuestionId],
   );
   const tvLastBroadcastRevealedAt =
     room.lastBroadcast?.event === "reveal"
@@ -422,6 +464,12 @@ function DesktopHostLiveConsoleClient({
     room.lastBroadcast?.event === "reveal"
       ? room.lastBroadcast.serverNow
       : null;
+  const tvLastBroadcastReceivedAtMs =
+    room.lastBroadcast?.event === "reveal"
+      ? room.lastBroadcast.receivedAtMs ?? null
+      : null;
+  const tvLastBroadcastQuestionId =
+    room.lastBroadcast?.event === "reveal" ? room.lastBroadcast.questionId : null;
 
   // Magic-Welcome event for the embedded TV panel. Lifts the
   // `roster-changed` broadcast into a UI-shaped event, holds for ~3s,
@@ -450,16 +498,36 @@ function DesktopHostLiveConsoleClient({
   function reReadRoom() {
     void room.requestLiveCatchUp?.();
   }
-  async function handleReveal(questionId: string) {
-    if (!currentGame) return;
+  const { checking, startChecking, stopChecking } = useSentChecking(reReadRoom);
+  // The TV panel's timer-zero ladder ended. This is the recovery if the close
+  // landed but its broadcast was missed. Catch-up is what moves a legacy night
+  // (refresh only updates TV keys there), and it's empty on resilient nights,
+  // where refresh does the work. So ask for both.
+  function reReadAfterLadder() {
+    void room.requestLiveCatchUp?.();
+    void room.requestRefresh?.();
+  }
+  function startAction() {
     setError(null);
+    stopChecking();
+  }
+  function actionFailed(err: unknown, fallback: string) {
+    if (err instanceof HostReplyLost) startChecking();
+    else setError(err instanceof Error ? err.message : fallback);
+  }
+  async function handleReveal(questionId: string) {
+    if (!currentGame || revealInFlightRef.current) return;
+    revealInFlightRef.current = true;
+    clearHeldRevealTimer();
+    setHeldRevealId(questionId);
+    startAction();
     try {
       // First reveal of a draft/ready game also starts it (idempotent on
       // already-live). Kept for safety even though "Start Game 1" now
       // promotes the game explicitly via handleStartGame — older snapshots
       // may still race.
       if (currentGame.state === "draft" || currentGame.state === "ready") {
-        const startRes = await fetch(`/api/games/${currentGame.id}/start`, {
+        const startRes = await hostFetch(`/api/games/${currentGame.id}/start`, {
           method: "POST",
         });
         if (!startRes.ok) {
@@ -467,7 +535,7 @@ function DesktopHostLiveConsoleClient({
           throw new Error(body.error ?? "could not start the game");
         }
       }
-      const res = await fetch(`/api/games/${currentGame.id}/reveal`, {
+      const res = await hostFetch(`/api/games/${currentGame.id}/reveal`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ questionId }),
@@ -477,29 +545,44 @@ function DesktopHostLiveConsoleClient({
         throw new Error(body.error ?? "reveal failed");
       }
       reReadRoom();
+      releaseRevealTileAfterHold();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Reveal failed.");
+      if (err instanceof HostReplyLost) {
+        startChecking();
+        releaseRevealTileAfterHold();
+      } else if (err instanceof Error && isRevealAlreadyDone(err.message)) {
+        // A question is already up, so the board is behind. Nothing went wrong.
+        reReadRoom();
+        releaseRevealTileAfterHold();
+      } else {
+        setHeldRevealId(null);
+        setError(err instanceof Error ? err.message : "Reveal failed.");
+      }
+    } finally {
+      revealInFlightRef.current = false;
     }
   }
   async function handleUndo() {
     if (!currentGame) return;
-    setError(null);
+    startAction();
     try {
-      const res = await fetch(`/api/games/${currentGame.id}/undo`, { method: "POST" });
+      const res = await hostFetch(`/api/games/${currentGame.id}/undo`, { method: "POST" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "undo failed");
       }
+      clearHeldRevealTimer();
+      setHeldRevealId(null);
       reReadRoom();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Undo failed.");
+      actionFailed(err, "Undo failed.");
     }
   }
   async function handleAdvance(questionId: string): Promise<boolean> {
     if (!currentGame) return false;
-    setError(null);
+    startAction();
     try {
-      const response = await fetch(`/api/games/${currentGame.id}/advance`, {
+      const response = await hostFetch(`/api/games/${currentGame.id}/advance`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ questionId }),
@@ -511,7 +594,7 @@ function DesktopHostLiveConsoleClient({
       reReadRoom();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not show standings.");
+      actionFailed(err, "Could not show standings.");
       return false;
     }
   }
@@ -521,9 +604,9 @@ function DesktopHostLiveConsoleClient({
     requireAllLocked?: boolean;
   } = {}): Promise<boolean> {
     if (!currentGame || !room.currentQuestion) return false;
-    setError(null);
+    if (!requireAllLocked) startAction();
     try {
-      const res = await fetch(`/api/games/${currentGame.id}/end-early`, {
+      const res = await hostFetch(`/api/games/${currentGame.id}/end-early`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -533,53 +616,57 @@ function DesktopHostLiveConsoleClient({
       });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        if (requireAllLocked && res.status === 409) {
-          return false;
-        }
         // The timer beat the tap. The console still showed "Show answer now"
         // because its snapshot hadn't caught the auto-resolve yet, so the host
         // pressed a button for something that had already happened. The answer
         // is on screen either way — that is the outcome she asked for, not a
         // failure, and a red banner mid-show reads as "something broke".
+        // This comes first: for auto-end it is the signal to stop trying.
         if (res.status === 409 && isAlreadyResolved(body.error)) {
           reReadRoom();
           return true;
+        }
+        if (requireAllLocked && res.status === 409) {
+          return false;
         }
         throw new Error(body.error ?? "end-early failed");
       }
       reReadRoom();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "End-early failed.");
-      return true;
+      // False tells the auto-end hook to try again; true would stop it for good.
+      // Nobody pressed anything on an auto try, so it stays quiet.
+      if (!requireAllLocked) actionFailed(err, "End-early failed.");
+      else if (err instanceof HostReplyLost) reReadRoom();
+      return false;
     }
   }
   async function handleStartGame(gameId: string | null) {
     if (!gameId) return;
-    setError(null);
+    startAction();
     try {
-      const res = await fetch(`/api/games/${gameId}/start`, { method: "POST" });
+      const res = await hostFetch(`/api/games/${gameId}/start`, { method: "POST" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "start failed");
       }
       reReadRoom();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Start failed.");
+      actionFailed(err, "Start failed.");
     }
   }
   async function handleEndGame() {
     if (!currentGame) return;
-    setError(null);
+    startAction();
     try {
-      const res = await fetch(`/api/games/${currentGame.id}/end`, { method: "POST" });
+      const res = await hostFetch(`/api/games/${currentGame.id}/end`, { method: "POST" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error ?? "end-game failed");
       }
       reReadRoom();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "End-game failed.");
+      actionFailed(err, "End-game failed.");
     }
   }
   async function handleCloseNight() {
@@ -675,7 +762,8 @@ function DesktopHostLiveConsoleClient({
 
   return (
     <>
-      <HostConnectionBanner />
+      <HostConnectionBanner hasRoomView={room.night !== null} />
+      {checking && <HostSentChecking />}
       {pickedQuestionsRetrying && !backupMode && (
         <p role="status" style={PICKED_RETRY_NOTE_STYLE}>
           {PICKED_QUESTIONS_RETRY_MESSAGE}
@@ -720,6 +808,9 @@ function DesktopHostLiveConsoleClient({
         tvSnapshot={tvSnapshot}
         tvLastBroadcastRevealedAt={tvLastBroadcastRevealedAt}
         tvLastBroadcastServerNow={tvLastBroadcastServerNow}
+        tvLastBroadcastReceivedAtMs={tvLastBroadcastReceivedAtMs}
+        tvLastBroadcastQuestionId={tvLastBroadcastQuestionId}
+        onTvResolveSettled={reReadAfterLadder}
         welcomeEvent={welcomeEvent}
         roomMagicEnabled={Boolean(room.night?.room_magic_enabled)}
         lastRoomMagicReaction={room.lastRoomMagicReaction}

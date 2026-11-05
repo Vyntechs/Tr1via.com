@@ -297,7 +297,7 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
     await page.getByTestId(TID.playerQuestion.answer(3)).tap();
     await expect(status(page)).toHaveAttribute("data-send-state", "sending");
     await expect(status(page)).toHaveAttribute("data-send-state", "retrying", { timeout: 8000 });
-    await expect(status(page)).toContainText("Didn’t go through — retrying");
+    await expect(status(page)).toContainText("Still checking your answer");
     await page.screenshot({ path: path.join(SHOTS, "house-3-slow-retrying.png") });
     await expect(status(page)).toHaveAttribute("data-send-state", "locked", { timeout: 15_000 });
     await context.close();
@@ -470,7 +470,7 @@ test.describe("phone answer: instant lock, sending, locked in", () => {
     await expect(status(page)).toHaveAttribute("data-send-state", "retrying", { timeout: 5000 });
     // Keep retrying until the phone's own timer ends...
     await expect(status(page)).toHaveAttribute("data-send-state", "unconfirmed", { timeout: 45_000 });
-    await expect(status(page)).toContainText("We couldn’t confirm your answer");
+    await expect(status(page)).toContainText("Still checking. If it reached us, it counts.");
     await page.screenshot({ path: path.join(SHOTS, "house-7-closed-unconfirmed.png") });
     await context.close();
   });
