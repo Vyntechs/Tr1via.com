@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { HeartbeatSchema } from "@/lib/api/schemas";
 import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import {
   notePhoneAtZero,
@@ -51,6 +52,19 @@ describe("phone stats for the heartbeat", () => {
       longestReplyWaitMs: 5_000,
       secondsAtZero: 0,
     });
+  });
+
+  it("a reply wait that spans a locked phone stays inside what the heartbeat accepts", () => {
+    notePhoneReplyWait(61 * 60_000);
+    const taken = takePhoneStats()!;
+    expect(taken.longestReplyWaitMs).toBe(3_600_000);
+    expect(HeartbeatSchema.parse(taken).longestReplyWaitMs).toBe(3_600_000);
+  });
+
+  it("a reply wait that isn't a number is skipped", () => {
+    notePhoneReplyWait(Number.NaN);
+    notePhoneReplyWait(5_000);
+    expect(takePhoneStats()?.longestReplyWaitMs).toBe(5_000);
   });
 
   it("the answer send counts a resend and its reply wait", async () => {

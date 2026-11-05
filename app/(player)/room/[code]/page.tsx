@@ -1609,7 +1609,7 @@ function useHeartbeat(playerId: string | null, roomCode: string) {
               }
             : {}),
         });
-        if (stats && !res.ok) returnPhoneStats(stats);
+        if (stats && res.status >= 500) returnPhoneStats(stats);
         if (cancelled) return;
         if (res.status === 410 && typeof window !== "undefined") {
           window.location.assign(`/join?code=${roomCode}`);

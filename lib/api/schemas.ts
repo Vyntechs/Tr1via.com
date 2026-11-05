@@ -10,6 +10,7 @@
 // avoids subtle drift between routes that all "took the same shape".
 
 import { z } from "zod";
+import { MAX_REPLY_WAIT_MS } from "@/lib/live/phoneStats";
 import { ALPHABET } from "@/lib/game/room-code";
 import {
   MAX_PLAYER_NAME_RAW,
@@ -130,11 +131,15 @@ export const HostAddPlayerSchema = z.object({
   displayName: PlayerDisplayNameSchema,
 });
 
+const phoneStat = (max: number) =>
+  z.number().int().min(0).max(max).optional().catch(undefined);
+
 export const HeartbeatSchema = z.object({
   appSwitchSeconds: z.number().int().min(0).max(86_400).optional(),
-  resendCount: z.number().int().min(0).max(10_000).optional(),
-  longestReplyWaitMs: z.number().int().min(0).max(3_600_000).optional(),
-  secondsAtZero: z.number().int().min(0).max(86_400).optional(),
+  // Log-only numbers: a bad one reads as missing, so it can't fail the heartbeat.
+  resendCount: phoneStat(10_000),
+  longestReplyWaitMs: phoneStat(MAX_REPLY_WAIT_MS),
+  secondsAtZero: phoneStat(86_400),
 });
 
 export const JoinGameSchema = z.object({

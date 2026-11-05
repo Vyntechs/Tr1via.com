@@ -22,6 +22,7 @@ import { freshLiveEventFromRpc, parseLiveCommandRpcEnvelope } from "@/lib/live-a
 import { withActionLog } from "@/lib/diagnostics/serverLog";
 import { questionDurationFor } from "@/lib/theme/lockInCeremony";
 import { recordCloseOnResolveRow } from "@/lib/live/closeDue";
+import { liveCloseModeFor } from "@/lib/live/liveCloseMode";
 import { closeLateMs, logClose } from "@/lib/live/logClose";
 
 /**
@@ -206,11 +207,13 @@ async function postEndEarly(
     closedBy,
     lateMs,
   });
-  await recordCloseOnResolveRow(admin, {
-    questionId: legacy.questionId,
-    closedBy,
-    lateMs,
-  });
+  if (liveCloseModeFor(owned.night.id) === "on") {
+    await recordCloseOnResolveRow(admin, {
+      questionId: legacy.questionId,
+      closedBy,
+      lateMs,
+    });
+  }
 
   return ok({ resolvedAt: new Date(closedAtMs).toISOString() });
 }

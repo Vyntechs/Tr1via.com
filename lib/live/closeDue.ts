@@ -58,7 +58,8 @@ export async function broadcastLegacyResolveBestEffort(
 /**
  * Stamps who closed it on the question's resolve row, keeping what is there:
  * the host reads correct_index from this column. Winners only, at close time.
- * A later write to this row can replace `currentReveal` and flip a mirrored TV.
+ * Callers run this only when the mode is on. The host ignores reveals updates,
+ * since a later write to this row could otherwise flip a mirrored TV.
  */
 export async function recordCloseOnResolveRow(
   admin: AdminClient,

@@ -8,6 +8,9 @@ export interface PhoneStats {
   secondsAtZero: number;
 }
 
+/** The most the heartbeat takes. The wait is wall-clock, so it counts a locked phone. */
+export const MAX_REPLY_WAIT_MS = 3_600_000;
+
 const empty = (): PhoneStats => ({
   resendCount: 0,
   longestReplyWaitMs: 0,
@@ -21,7 +24,11 @@ export function notePhoneResend(): void {
 }
 
 export function notePhoneReplyWait(ms: number): void {
-  stats.longestReplyWaitMs = Math.max(stats.longestReplyWaitMs, Math.round(ms));
+  if (!Number.isFinite(ms)) return;
+  stats.longestReplyWaitMs = Math.max(
+    stats.longestReplyWaitMs,
+    Math.min(Math.round(ms), MAX_REPLY_WAIT_MS),
+  );
 }
 
 export function notePhoneAtZero(ms: number): void {
@@ -39,7 +46,11 @@ export function takePhoneStats(): PhoneStats | null {
   return hasAny ? taken : null;
 }
 
-/** A heartbeat that failed gives its stats back: a blip is when they matter. */
+/**
+ * A heartbeat lost to the network or a 5xx gives its stats back: a blip is when
+ * they matter. Any other refusal drops them, since resending the same numbers
+ * would only be refused again.
+ */
 export function returnPhoneStats(taken: PhoneStats): void {
   stats.resendCount += taken.resendCount;
   stats.longestReplyWaitMs = Math.max(

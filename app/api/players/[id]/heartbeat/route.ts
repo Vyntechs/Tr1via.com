@@ -16,6 +16,8 @@ import { requireOwnedPlayerReference } from "@/lib/api/auth";
 import { logPhoneStats } from "@/lib/live/logClose";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 
+const PHONE_STAT_FIELDS = ["resendCount", "longestReplyWaitMs", "secondsAtZero"] as const;
+
 export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
@@ -53,6 +55,11 @@ export async function POST(
     if (!parsed.success) return badRequest(parsed.error);
     parsedSeconds = parsed.data.appSwitchSeconds ?? null;
     const { resendCount, longestReplyWaitMs, secondsAtZero } = parsed.data;
+    const sent = body as Record<string, unknown>;
+    const ignored = PHONE_STAT_FIELDS.filter(
+      (field) => sent[field] !== undefined && parsed.data[field] === undefined,
+    );
+    if (ignored.length > 0) console.warn(`phone stats ignored: ${ignored.join(",")}`);
     if (
       resendCount !== undefined ||
       longestReplyWaitMs !== undefined ||

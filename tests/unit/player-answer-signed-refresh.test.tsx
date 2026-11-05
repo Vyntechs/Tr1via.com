@@ -116,6 +116,7 @@ import PlayerRoomPage from "@/app/(player)/room/[code]/page";
 import { __resetReachabilityForTests, setReachability } from "@/lib/realtime/reachability";
 import { rememberRecentJoin } from "@/lib/room/recentJoin";
 import { PENDING_ANSWER_KEY } from "@/lib/hooks/useAnswerSubmit";
+import { notePhoneResend, takePhoneStats } from "@/lib/live/phoneStats";
 
 function payload(
   myAnswers: Extract<RoomSnapshotPayload, { audience: "player" }>["myAnswers"],
@@ -423,6 +424,39 @@ describe("player answer signed snapshot refresh", () => {
     render(<PlayerRoomPage />);
     await waitFor(() => expect(window.localStorage.getItem(PENDING_ANSWER_KEY)).toBeNull());
     expect(screen.queryByTestId("player-question")).not.toBeInTheDocument();
+  });
+
+  describe("a heartbeat's phone stats", () => {
+    const heartbeatDone = async (reply: () => Promise<Response>) => {
+      takePhoneStats();
+      notePhoneResend();
+      notePhoneResend();
+      h.fetchSnapshot.mockResolvedValue(payload([]));
+      const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+        String(input).endsWith("/heartbeat") ? reply() : new Response("{}", { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      render(<PlayerRoomPage />);
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/heartbeat"))).toBe(true),
+      );
+      await act(async () => {
+        for (let index = 0; index < 20; index += 1) await Promise.resolve();
+      });
+      return takePhoneStats()?.resendCount;
+    };
+
+    it("are dropped on a 400, so one bad number can't fail every later beat", async () => {
+      expect(await heartbeatDone(async () => new Response("{}", { status: 400 }))).toBeUndefined();
+    });
+
+    it("come back after a 5xx", async () => {
+      expect(await heartbeatDone(async () => new Response("{}", { status: 503 }))).toBe(2);
+    });
+
+    it("come back after a network failure", async () => {
+      expect(await heartbeatDone(async () => Promise.reject(new TypeError("network")))).toBe(2);
+    });
   });
 
   it("a refusal keeps its words past zero but loses Try again and the other cards", async () => {

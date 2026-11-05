@@ -1849,7 +1849,10 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       function mergeRevealChange(payload: ChangePayload<RevealRow>) {
         if (cancelled) return;
         markFresh();
-        if (payload.eventType === "DELETE") return;
+        // Only a new row is a new moment. An update is the close stamp landing on
+        // the resolve row, maybe after the host advanced: taking it would put an
+        // older row back and flip a mirrored TV. Nothing here reads the stamp.
+        if (payload.eventType !== "INSERT") return;
         const row = payload.new as RevealRow;
         // Filter to reveals whose game belongs to this night.
         if (!games.some((g) => g.id === row.game_id)) return;

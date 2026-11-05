@@ -418,6 +418,67 @@ describe("closer wiring in the routes", () => {
     });
   });
 
+  describe("close records stay off the row unless the mode is on", () => {
+    const seed = () => ({
+      questions: [
+        {
+          id: QUESTION,
+          category_id: CATEGORY,
+          correct_index: 2,
+          point_value: 200,
+          played_at: "2026-11-04T19:59:34.000+00:00",
+          finished_at: null,
+        },
+      ],
+      categories: [{ id: CATEGORY, game_id: GAME }],
+      games: [{ id: GAME, night_id: NIGHT }],
+      nights: [night],
+      reveals: [
+        {
+          id: "resolve-row",
+          question_id: QUESTION,
+          event: "resolve",
+          occurred_at: "2026-11-04T20:00:00+00:00",
+          metadata: { correct_index: 2, point_value: 200 },
+        },
+      ],
+      answers: [],
+    });
+    const closes = {
+      "/resolve": () =>
+        postResolve(
+          jsonPost(`/api/questions/${QUESTION}/resolve`, {}, { "x-tr1via-close-caller": "phone" }),
+          { params: Promise.resolve({ id: QUESTION }) },
+        ),
+      "end-early": () =>
+        postEndEarly(jsonPost(`/api/games/${GAME}/end-early`, { questionId: QUESTION }), {
+          params: Promise.resolve({ id: GAME }),
+        }),
+    };
+
+    for (const [route, close] of Object.entries(closes)) {
+      for (const mode of ["off", "shadow"]) {
+        it(`${route} leaves the resolve row alone when ${mode}, and still logs the close`, async () => {
+          vi.stubEnv("LIVE_CLOSE_MODE", mode);
+          const admin = fakeLiveAdmin(seed());
+          adminMock.getSupabaseAdmin.mockReturnValue(admin);
+          const res = await close();
+          expect(res.status).toBe(200);
+          expect(admin.writes.filter((write) => write.table === "reveals")).toEqual([]);
+          expect(logged(info, "close")).toHaveLength(1);
+        });
+      }
+
+      it(`${route} leaves the resolve row alone on a night outside the list`, async () => {
+        vi.stubEnv("LIVE_CLOSE_NIGHTS", "99999999-9999-4999-8999-999999999999");
+        const admin = fakeLiveAdmin(seed());
+        adminMock.getSupabaseAdmin.mockReturnValue(admin);
+        await close();
+        expect(admin.writes.filter((write) => write.table === "reveals")).toEqual([]);
+      });
+    }
+  });
+
   describe("POST /api/players/:id/heartbeat", () => {
     const context = { params: Promise.resolve({ id: PLAYER }) };
     const beat = (body?: unknown) =>
@@ -453,8 +514,29 @@ describe("closer wiring in the routes", () => {
       expect(logged(info, "phone_stats")).toEqual([]);
     });
 
-    it("refuses numbers out of range", async () => {
-      const res = await beat({ resendCount: -1 });
+    it("a bad number is ignored and can't stop last_seen_at", async () => {
+      const players: Array<Record<string, unknown>> = [{ id: PLAYER }];
+      adminMock.getSupabaseAdmin.mockReturnValue(fakeLiveAdmin({ players }));
+      const res = await beat({ longestReplyWaitMs: 3_660_000 });
+      expect(res.status).toBe(204);
+      expect(players[0]?.last_seen_at).toEqual(expect.any(String));
+      expect(logged(info, "phone_stats")).toEqual([]);
+      expect(console.warn).toHaveBeenCalledWith("phone stats ignored: longestReplyWaitMs");
+    });
+
+    it("keeps the good numbers when one is bad", async () => {
+      const res = await beat({ resendCount: 3, longestReplyWaitMs: null, secondsAtZero: -1 });
+      expect(res.status).toBe(204);
+      expect(logged(info, "phone_stats")).toEqual([
+        { kind: "phone_stats", nightId: NIGHT, resendCount: 3, longestReplyWaitMs: 0, secondsAtZero: 0 },
+      ]);
+      expect(console.warn).toHaveBeenCalledWith(
+        "phone stats ignored: longestReplyWaitMs,secondsAtZero",
+      );
+    });
+
+    it("still refuses a bad app-switch report", async () => {
+      const res = await beat({ appSwitchSeconds: -1 });
       expect(res.status).toBe(400);
     });
   });

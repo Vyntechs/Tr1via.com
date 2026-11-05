@@ -41,6 +41,7 @@ import {
   broadcastLegacyResolveBestEffort,
   recordCloseOnResolveRow,
 } from "@/lib/live/closeDue";
+import { liveCloseModeFor } from "@/lib/live/liveCloseMode";
 import { closeCallerFrom, closeLateMs, logClose } from "@/lib/live/logClose";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
@@ -323,7 +324,9 @@ async function postResolve(
     console.warn("broadcast fireworks(salvo) failed");
   }
 
-  await recordCloseOnResolveRow(admin, { questionId, closedBy, lateMs });
+  if (liveCloseModeFor(night.id) === "on") {
+    await recordCloseOnResolveRow(admin, { questionId, closedBy, lateMs });
+  }
 
   // Resolution is already committed and fanned out. Keep this aggregate
   // response metadata best-effort so an unrelated read failure cannot strand

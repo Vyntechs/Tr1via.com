@@ -987,6 +987,50 @@ describe("host laptop: re-reads the room in place when it may have missed someth
     expect(result.current.lastResolvedQuestion?.id).toBe("q2");
   });
 
+  it("a late stamp on the resolve row doesn't take the TV back off the board", async () => {
+    h.db.questions[0].played_at = "2026-10-07T00:10:00.000Z";
+    h.db.questions[0].finished_at = "2026-10-07T00:10:30.000Z";
+    const resolveRow = {
+      id: "r-resolve",
+      game_id: "game-a",
+      question_id: "q1",
+      event: "resolve",
+      occurred_at: "2026-10-07T00:10:30.000000+00:00",
+      metadata: { correct_index: 0 },
+    };
+    h.db.reveals.push(resolveRow);
+    const { result } = await mountHost();
+    expect(result.current.currentReveal?.id).toBe("r-resolve");
+
+    // The host advances, then the stamp written after the slow broadcasts lands.
+    act(() => {
+      h.changeHandlers.get("reveals")?.({
+        eventType: "INSERT",
+        new: {
+          id: "r-advance",
+          game_id: "game-a",
+          question_id: "q1",
+          event: "advance",
+          occurred_at: "2026-10-07T00:10:30.150000+00:00",
+          metadata: null,
+        },
+        old: {},
+      });
+    });
+    act(() => {
+      h.changeHandlers.get("reveals")?.({
+        eventType: "UPDATE",
+        new: {
+          ...resolveRow,
+          metadata: { correct_index: 0, closed_by: "phone", late_ms: 900 },
+        },
+        old: {},
+      });
+    });
+
+    expect(result.current.currentReveal?.id).toBe("r-advance");
+  });
+
   it("leaves a piece alone when its read fails", async () => {
     const { result } = await mountHost();
     h.failing.add("players");
