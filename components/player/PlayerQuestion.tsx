@@ -369,7 +369,7 @@ export function PlayerQuestion({
               // its width is what the Try again button needs on a small phone.)
               // October: your pumpkin lights the moment the server says yes.
               <YourPumpkin
-                mood={pickedLocked ? "lit" : pick.sendState === "unconfirmed" ? "toppled" : "waiting"}
+                mood={pickedLocked ? "lit" : pick.sendState === "late" ? "toppled" : "waiting"}
                 size={56}
                 style={{ margin: "-18px 0 -8px" }}
               />
@@ -510,7 +510,7 @@ export function PlayerQuestion({
                   ? "Waiting for the room to lock in\u2026"
                   : pick.sendState === "retrying"
                     ? "Keep this screen open while we retry."
-                    : pick.sendState === "unconfirmed"
+                    : pick.sendState === "unconfirmed" || pick.sendState === "late"
                       ? "Waiting for the reveal\u2026"
                       : "\u00A0"}
               </Eyebrow>

@@ -313,7 +313,7 @@ describe("player answer signed snapshot refresh", () => {
     const lockedScreen = screen.getByTestId("player-locked");
 
     await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "retrying"));
-    expect(sendState()).toHaveTextContent("Didn’t go through — retrying");
+    expect(sendState()).toHaveTextContent("Still checking your answer");
     expect(screen.getByTestId("player-locked")).toBe(lockedScreen);
 
     await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"), { timeout: 5000 });
@@ -328,7 +328,7 @@ describe("player answer signed snapshot refresh", () => {
       if (String(input) !== "/api/answers") return new Response("{}", { status: 200 });
       bodies.push(JSON.parse(String(init!.body)));
       return bodies.length === 1
-        ? new Response(JSON.stringify({ error: "answer deadline passed" }), { status: 400 })
+        ? new Response(JSON.stringify({ error: "invalid answer" }), { status: 400 })
         : new Response(null, { status: 204 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -342,6 +342,45 @@ describe("player answer signed snapshot refresh", () => {
     fireEvent.click(screen.getByTestId("player-locked-answer-3"));
     await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "locked"));
     expect(bodies.map((b) => b.slotChosen)).toEqual([1, 3]);
+  });
+
+  it("a refusal keeps its words past zero but loses Try again and the other cards", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/answers"
+        ? new Response(JSON.stringify({ error: "invalid answer" }), { status: 400 })
+        : new Response("{}", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "rejected"));
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
+
+    act(() => h.setExpired(true));
+
+    expect(sendState()).toHaveAttribute("data-send-state", "rejected");
+    expect(sendState()).toHaveTextContent("Couldn’t send your answer");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
+  });
+
+  it("says the answer missed the buzzer, with no Try again, when its only send was too late", async () => {
+    h.fetchSnapshot.mockResolvedValue(payload([]));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) =>
+      String(input) === "/api/answers"
+        ? new Response(JSON.stringify({ error: "answer deadline passed" }), { status: 400 })
+        : new Response("{}", { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<PlayerRoomPage />);
+    expect(await screen.findByTestId("player-question")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("player-answer-1"));
+    await waitFor(() => expect(sendState()).toHaveAttribute("data-send-state", "late"));
+    expect(sendState()).toHaveTextContent("That one just missed the buzzer.");
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
   it("a 200 reply that is an HTML page never shows 'Locked in'", async () => {
@@ -375,8 +414,7 @@ describe("player answer signed snapshot refresh", () => {
     act(() => h.setExpired(true));
 
     expect(sendState()).toHaveAttribute("data-send-state", "unconfirmed");
-    expect(sendState()).toHaveTextContent(/time’s up/i);
-    expect(sendState()).toHaveTextContent("We couldn’t confirm your answer");
+    expect(sendState()).toHaveTextContent("Still checking. If it reached us, it counts.");
     expect(sendState()).not.toHaveTextContent("Locked in");
     const sends = () => fetchMock.mock.calls.filter(([url]) => String(url) === "/api/answers").length;
     const before = sends();

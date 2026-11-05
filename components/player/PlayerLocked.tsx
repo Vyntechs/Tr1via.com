@@ -210,7 +210,7 @@ export function PlayerLocked({
           // its width is what the Try again button needs on a small phone.)
           // October: your pumpkin lights the moment the server says yes.
           <YourPumpkin
-            mood={isLocked ? "lit" : sendState === "unconfirmed" ? "toppled" : "waiting"}
+            mood={isLocked ? "lit" : sendState === "late" ? "toppled" : "waiting"}
             size={56}
             style={{ margin: "-18px 0 -8px" }}
           />
@@ -337,7 +337,7 @@ export function PlayerLocked({
             ? "Waiting for the room to lock in\u2026"
             : sendState === "retrying"
               ? "Keep this screen open while we retry."
-              : sendState === "unconfirmed"
+              : sendState === "unconfirmed" || sendState === "late"
                 ? "Waiting for the reveal\u2026"
                 : ""}
         </span>

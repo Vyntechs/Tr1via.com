@@ -25,9 +25,10 @@ const status = () => screen.getByTestId("player-send-status");
 
 const CASES: Array<[PlayerLockedSendState, string]> = [
   ["sending", "Sending…"],
-  ["retrying", "Didn’t go through — retrying"],
+  ["retrying", "Still checking your answer"],
   ["locked", "Locked in"],
-  ["unconfirmed", "We couldn’t confirm your answer"],
+  ["unconfirmed", "Still checking. If it reached us, it counts."],
+  ["late", "That one just missed the buzzer."],
   ["rejected", "Couldn’t send your answer"],
 ];
 

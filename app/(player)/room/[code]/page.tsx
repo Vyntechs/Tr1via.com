@@ -66,7 +66,7 @@ import { sumAwardedForGame } from "@/lib/player/revealTotal";
 import { useTimer } from "@/lib/hooks/useTimer";
 import { useResolveAtZero } from "@/lib/hooks/useResolveAtZero";
 import { useDeviceSession } from "@/lib/hooks/useDeviceSession";
-import { useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
+import { clearPendingAnswer, loadPendingAnswer, useAnswerSubmit } from "@/lib/hooks/useAnswerSubmit";
 import { usePrefersReducedMotion } from "@/lib/hooks/usePrefersReducedMotion";
 import { useSurfaceObservation } from "@/lib/hooks/useGameDelivery";
 import { scrambleFor, correctSlotFor } from "@/lib/game/scramble";
@@ -332,6 +332,12 @@ function RoomStateMachine({
       fireJuneBeat("reveal");
     }
   }, [themeKey, resolvedQId]);
+
+  // The reveal settles an unconfirmed answer: whatever the server holds is what
+  // counts, so the copy kept on this phone can go.
+  useEffect(() => {
+    if (resolvedQId && loadPendingAnswer()?.questionId === resolvedQId) clearPendingAnswer();
+  }, [resolvedQId]);
 
   // November: the phone pictures come in three small sets, each at a random
   // 1-6 s, never all at once while 40 phones are joining (join itself only
@@ -954,6 +960,7 @@ function LiveQuestionView({
     questionId: question.id,
     scramble: Array.from(scramble),
     accepting: !hasExpired,
+    getRemainingMs,
     serverHasAnswer: myAnswer != null,
   });
 
@@ -994,10 +1001,15 @@ function LiveQuestionView({
       : submitStatus === "retrying"
         ? "retrying"
         : submitStatus === "failed"
-          ? failure === "closed" || hasExpired
-            ? "unconfirmed"
-            : "rejected"
+          ? failure === "late"
+            ? "late"
+            : failure === "closed"
+              ? "unconfirmed"
+              : "rejected"
           : "sending";
+  // A refusal stays a refusal past zero (the phone was told), but there is
+  // nothing left to resend into.
+  const questionClosed = hasExpired || question.finished_at != null;
 
   return (
     <PlayerQuestion
@@ -1018,8 +1030,8 @@ function LiveQuestionView({
               sendState,
               // Only the saved row knows the real time; before it arrives no time is claimed.
               msToLock: myAnswer ? myAnswer.ms_to_lock : null,
-              onRetry: retry,
-              onPick: handleTap,
+              onRetry: questionClosed ? undefined : retry,
+              onPick: questionClosed ? undefined : handleTap,
               standings,
             }
           : undefined
