@@ -23,6 +23,8 @@ import { NextRequest } from "next/server";
 
 const adminMock = vi.hoisted(() => ({ getSupabaseAdmin: vi.fn() }));
 vi.mock("@/lib/supabase/admin", () => adminMock);
+const closeDueMock = vi.hoisted(() => ({ tickCloseIfDue: vi.fn() }));
+vi.mock("@/lib/live/closeDue", () => closeDueMock);
 
 const NIGHT_ID = "11111111-1111-1111-1111-111111111111";
 const CODE = "ABCDEF"; // valid: alphabet excludes I/L/O/0/1
@@ -276,10 +278,39 @@ function makeAdmin({
   };
 }
 
+async function callRoute() {
+  const { GET } = await import("@/app/api/tv/[code]/snapshot/route");
+  return GET(new NextRequest(`http://test/api/tv/${CODE}/snapshot`), {
+    params: Promise.resolve({ code: CODE }),
+  });
+}
+
 describe("GET /api/tv/[code]/snapshot — answer gating (route level)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.SESSION_SECRET = "snapshot-test-secret";
+  });
+
+  it("gives a legacy live question the close tick", async () => {
+    adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin());
+    expect((await callRoute()).status).toBe(200);
+    expect(closeDueMock.tickCloseIfDue).toHaveBeenCalledTimes(1);
+    expect(closeDueMock.tickCloseIfDue).toHaveBeenCalledWith(expect.anything(), {
+      nightId: NIGHT_ID,
+      questionId: "q-live",
+      expectedPlayedAt: Q_LIVE.played_at,
+      roomCode: CODE,
+      source: "tv-tick",
+      themeKey: "house",
+    });
+  });
+
+  it("gives no close tick to a resilient night, a finished game or a quiet board", async () => {
+    for (const options of [{ resilient: true }, { secondGame: true }, { live: false }]) {
+      adminMock.getSupabaseAdmin.mockReturnValue(makeAdmin(options));
+      expect((await callRoute()).status).toBe(200);
+    }
+    expect(closeDueMock.tickCloseIfDue).not.toHaveBeenCalled();
   });
 
   it("scopes reveal history before limiting and keeps the final current-game answer targeted", async () => {

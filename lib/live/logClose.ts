@@ -10,7 +10,8 @@
 export const CLOSE_CALLER_HEADER = "x-tr1via-close-caller";
 
 export type TimerCaller = "phone" | "tv";
-export type ClosedBy = TimerCaller | "host" | "host-auto" | "unknown";
+export type TickCaller = "snapshot-tick" | "tv-tick";
+export type ClosedBy = TimerCaller | TickCaller | "host" | "host-auto" | "unknown";
 
 export interface CloseEvent {
   kind: "close";
@@ -28,13 +29,25 @@ export interface LateRefusalEvent {
   lateMs: number | null;
 }
 
+/** LIVE_CLOSE_MODE=shadow: this tick would have closed the question, and didn't. */
+export interface CloseShadowEvent {
+  kind: "close_shadow";
+  questionId: string;
+  roomCode: string;
+  source: TickCaller;
+  lateMs: number | null;
+}
+
 export type LiveLogSink = (line: string) => void;
 
 const liveServerLogSink: LiveLogSink = (line) => {
   console.info(line);
 };
 
-function writeLine(event: CloseEvent | LateRefusalEvent, sink: LiveLogSink) {
+function writeLine(
+  event: CloseEvent | CloseShadowEvent | LateRefusalEvent,
+  sink: LiveLogSink,
+) {
   try {
     sink(JSON.stringify(event));
   } catch {
@@ -61,6 +74,13 @@ export function logClose(
   sink: LiveLogSink = liveServerLogSink,
 ): void {
   writeLine({ kind: "close", ...close }, sink);
+}
+
+export function logCloseShadow(
+  shadow: Omit<CloseShadowEvent, "kind">,
+  sink: LiveLogSink = liveServerLogSink,
+): void {
+  writeLine({ kind: "close_shadow", ...shadow }, sink);
 }
 
 export function logLateRefusal(

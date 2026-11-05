@@ -20,7 +20,6 @@ import { conflict, ok, serverError, notFound } from "@/lib/api/responses";
 import { getSupabaseAdmin } from "@/lib/supabase/admin";
 import {
   broadcastAppliedLiveRoomEvent,
-  broadcastToRoom,
   broadcastFireworks,
 } from "@/lib/api/broadcast";
 import { isTestModeEnabled } from "@/lib/api/require-test-mode";
@@ -38,6 +37,7 @@ import {
   recordLiveAnswerHealth,
 } from "@/lib/live-answer/telemetry";
 import { withActionLog } from "@/lib/diagnostics/serverLog";
+import { broadcastLegacyResolveBestEffort } from "@/lib/live/closeDue";
 import { closeCallerFrom, closeLateMs, logClose } from "@/lib/live/logClose";
 
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
@@ -64,25 +64,6 @@ async function resolveLegacyQuestionOnce(
   });
   if (fallback.error) return { data: null, error: fallback.error };
   return { data: true, error: null };
-}
-
-async function broadcastLegacyResolveBestEffort(
-  roomCode: string,
-  payload: {
-    questionId: string;
-    correctIndex: number;
-    refetch: true;
-    serverNow: string;
-  },
-): Promise<void> {
-  try {
-    await broadcastToRoom(roomCode, "resolve", payload);
-  } catch {
-    // A timeout can mean Supabase accepted the broadcast but its acknowledgement
-    // was lost. Do not retry and amplify one commit into two room-wide refetches;
-    // durable Postgres Changes and snapshot recovery cover a truly missed signal.
-    console.warn("broadcast resolve failed");
-  }
 }
 
 async function loadCurrentLiveRoom(admin: AdminClient, nightId: string) {
