@@ -155,6 +155,9 @@ export interface BroadcastTag {
   joinedAt?: string;
 }
 
+// Route polls that must fail in a row before a host is marked unreachable.
+const ROUTE_POLL_MISSES_FOR_UNREACHABLE = 2;
+
 // Max random delay before the FIRST server-route fallback fetch, to de-sync a
 // whole room whose direct reads all fail at the same timeout (anti-stampede).
 const INITIAL_FALLBACK_SPREAD_MS = 2500;
@@ -402,18 +405,35 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
   useEffect(() => {
     setBackupMode(backupMode);
   }, [backupMode]);
+  // Set by the first missed direct read, so the poll is already running if the
+  // one-off route read below is slow or gets cut off by a rebuild. Backup mode
+  // (and its amber banner) still waits for a real reply.
+  const [routePollArmed, setRoutePollArmed] = useState(false);
+  const routePollMissesRef = useRef(0);
+  // A host with a room on screen lets the route poll judge an outage. One that
+  // has nothing to show needs the hotspot message straight away.
+  const hostHasRoomViewRef = useRef(false);
+  useEffect(() => {
+    hostHasRoomViewRef.current = isHost && snapshot.night !== null;
+  }, [isHost, snapshot.night]);
   useRoomRoutePoll({
-    enabled: isHost && backupMode && !!roomCode,
-    fetchPayload: () => fetchRoomSnapshotPayload(parseRoomCode(roomCode as string)),
+    enabled: isHost && (backupMode || routePollArmed) && !!roomCode,
+    fetchPayload: (signal) =>
+      fetchRoomSnapshotPayload(parseRoomCode(roomCode as string), { signal }),
     onPayload: (payload) => {
+      routePollMissesRef.current = 0;
       publishRoomFallback(payload);
       setSnapshot(payloadToRoomSnapshot(payload));
       // A route poll succeeded → the server is reachable; clear any hotspot tier.
       setReachability("ok");
+      setBackupModeState(true);
     },
     onError: () => {
-      // Even the route is failing now → true outage → surface the hotspot tier.
-      setReachability("unreachable");
+      // One miss can be a blip. Two in a row is an outage → the hotspot tier.
+      routePollMissesRef.current += 1;
+      if (routePollMissesRef.current >= ROUTE_POLL_MISSES_FOR_UNREACHABLE) {
+        setReachability("unreachable");
+      }
     },
   });
 
@@ -426,6 +446,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         // fresh room doesn't inherit the previous one's failure state.
         setReachability(undefined);
         setBackupModeState(false);
+        setRoutePollArmed(false);
+        routePollMissesRef.current = 0;
       }
       return;
     }
@@ -939,6 +961,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
     // route (Phase 2). Returns true if the route served a snapshot (→ backup
     // mode), false if even the route failed (→ caller marks "unreachable").
     async function tryRouteFallback(): Promise<boolean> {
+      if (isHost) setRoutePollArmed(true);
       try {
         // Spread the herd: a whole room's direct reads fail at the SAME
         // deterministic timeout, so without this every phone would hit the
@@ -960,6 +983,12 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       } catch {
         return false;
       }
+    }
+
+    // Direct reads and the route both failed. See hostHasRoomViewRef.
+    function noteOutage() {
+      if (!hostHasRoomViewRef.current) setReachability("unreachable");
+      setSnapshot((prev) => ({ ...prev, isLoading: false }));
     }
 
     async function bootstrap() {
@@ -987,10 +1016,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         // before declaring "unreachable" (it does its own night lookup).
         if (cancelled) return;
         const served = await tryRouteFallback();
-        if (!cancelled && !served) {
-          setReachability("unreachable");
-          setSnapshot((prev) => ({ ...prev, isLoading: false }));
-        }
+        if (!cancelled && !served) noteOutage();
         return;
       }
       if (!nightRes.ok) {
@@ -998,6 +1024,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         if (!cancelled) {
           setReachability("ok");
           setBackupModeState(false);
+          setRoutePollArmed(false);
+          routePollMissesRef.current = 0;
           setSnapshot({ ...EMPTY, isLoading: false });
         }
         return;
@@ -1170,10 +1198,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
         // surface the switch-to-hotspot tier (true outage).
         if (cancelled) return;
         const served = await tryRouteFallback();
-        if (!cancelled && !served) {
-          setReachability("unreachable");
-          setSnapshot((prev) => ({ ...prev, isLoading: false }));
-        }
+        if (!cancelled && !served) noteOutage();
         return;
       }
 
@@ -1183,6 +1208,8 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       // the aux hooks resume their direct reads + realtime).
       setReachability("ok");
       setBackupModeState(false);
+      setRoutePollArmed(false);
+      routePollMissesRef.current = 0;
       const [
         nightRow,
         gameRows,
@@ -1841,7 +1868,7 @@ export function useRoom({ roomCode, audience, sessionReady = true }: UseRoomArgs
       hostRefreshRef.current = null;
       hostCatchUpRef.current = null;
     };
-  }, [roomCode, audience, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick, scheduleSpreadRefresh]);
+  }, [roomCode, audience, isHost, waitingForSession, revalidateTick, reconnectCounter, heartbeatTick, watchdogTick, recoveryTick, scheduleSpreadRefresh]);
 
   return useMemo(
     () =>
