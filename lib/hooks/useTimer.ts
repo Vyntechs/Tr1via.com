@@ -73,7 +73,9 @@ export function useTimer(opts: UseTimerOpts): UseTimerResult {
   }, [opts.serverNowMs, opts.receivedAtMs, opts.revealedAtMs]);
 
   const clockRef = useRef({ revealedAtMs: opts.revealedAtMs, duration });
-  clockRef.current = { revealedAtMs: opts.revealedAtMs, duration };
+  useEffect(() => {
+    clockRef.current = { revealedAtMs: opts.revealedAtMs, duration };
+  }, [opts.revealedAtMs, duration]);
   const getRemainingMs = useCallback(() => {
     const { revealedAtMs, duration: durationS } = clockRef.current;
     if (revealedAtMs === null) return durationS * 1000;

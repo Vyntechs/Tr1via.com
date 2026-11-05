@@ -115,6 +115,7 @@ vi.mock("@/lib/hooks/usePrefersReducedMotion", () => ({
 import PlayerRoomPage from "@/app/(player)/room/[code]/page";
 import { __resetReachabilityForTests, setReachability } from "@/lib/realtime/reachability";
 import { rememberRecentJoin } from "@/lib/room/recentJoin";
+import { PENDING_ANSWER_KEY } from "@/lib/hooks/useAnswerSubmit";
 
 function payload(
   myAnswers: Extract<RoomSnapshotPayload, { audience: "player" }>["myAnswers"],
@@ -404,6 +405,24 @@ describe("player answer signed snapshot refresh", () => {
       const { hasRecentJoin } = await import("@/lib/room/recentJoin");
       expect(hasRecentJoin("ABCDEF")).toBe(true);
     });
+  });
+
+  it("lets go of an unconfirmed answer once the reveal has settled it", async () => {
+    window.localStorage.setItem(
+      PENDING_ANSWER_KEY,
+      JSON.stringify({ questionId: "question-1", slotChosen: 2 }),
+    );
+    const signed = payload([]) as Extract<RoomSnapshotPayload, { audience: "player" }>;
+    signed.currentQuestion = {
+      ...signed.currentQuestion!,
+      finishedAt: "2026-07-18T18:06:25.000Z",
+    };
+    h.fetchSnapshot.mockResolvedValue(signed);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
+
+    render(<PlayerRoomPage />);
+    await waitFor(() => expect(window.localStorage.getItem(PENDING_ANSWER_KEY)).toBeNull());
+    expect(screen.queryByTestId("player-question")).not.toBeInTheDocument();
   });
 
   it("a refusal keeps its words past zero but loses Try again and the other cards", async () => {

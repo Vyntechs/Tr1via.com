@@ -76,23 +76,26 @@ export function getUnreachableSince(): number | null {
 /** True once this surface has been unreachable for at least `thresholdMs`. */
 export function useUnreachableFor(thresholdMs: number): boolean {
   const state = useReachability();
-  // Re-arms after each firing: a recovery and a new failure can land in one
-  // render, which moves the start of the spell without changing `state`.
-  const [checks, setChecks] = useState(0);
+  // The spell that crossed the threshold. Comparing it with the current one
+  // means a new spell starts from false with no reset step.
+  const [crossedSpell, setCrossedSpell] = useState<number | null>(null);
 
   useEffect(() => {
-    if (state !== "unreachable" || unreachableSince === null) return;
-    const left = unreachableSince + thresholdMs - Date.now();
-    if (left <= 0) return;
-    const timer = setTimeout(() => setChecks((n) => n + 1), left);
+    if (state !== "unreachable") return;
+    let timer: ReturnType<typeof setTimeout>;
+    const check = () => {
+      if (unreachableSince === null) return;
+      const left = unreachableSince + thresholdMs - Date.now();
+      // A recovery and a new failure can land in one render, which moves the
+      // start of the spell without changing `state`, so this looks again.
+      if (left > 0) timer = setTimeout(check, left);
+      else setCrossedSpell(unreachableSince);
+    };
+    timer = setTimeout(check, 0);
     return () => clearTimeout(timer);
-  }, [state, thresholdMs, checks]);
+  }, [state, thresholdMs]);
 
-  return (
-    state === "unreachable" &&
-    unreachableSince !== null &&
-    Date.now() - unreachableSince >= thresholdMs
-  );
+  return state === "unreachable" && crossedSpell !== null && crossedSpell === unreachableSince;
 }
 
 // Test-only: drop all listeners + reset state.

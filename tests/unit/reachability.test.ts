@@ -63,6 +63,9 @@ describe("how long a surface has been unreachable", () => {
     setReachability("unreachable");
     vi.advanceTimersByTime(30_000);
     const { result } = renderHook(() => useUnreachableFor(25_000));
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
     expect(result.current).toBe(true);
   });
 });
