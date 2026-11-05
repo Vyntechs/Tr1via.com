@@ -78,12 +78,12 @@ begin
   if not pg_catalog.pg_try_advisory_xact_lock(7241001) then
     return 0;
   end if;
+  set local lock_timeout = '500ms';
   update public.live_clock set last_tick_at = pg_catalog.clock_timestamp()
    where id returning * into v_cfg;
   if not found or v_cfg.mode = 'off' then
     return 0;
   end if;
-  set local lock_timeout = '500ms';
   v_due_by := v_now - interval '25 seconds' - v_cfg.grace_ms * interval '1 millisecond';
 
   for r in
