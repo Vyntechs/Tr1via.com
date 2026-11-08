@@ -162,6 +162,12 @@ function HostGenEditInner({
   // saving actions until they're fixed.
   const answerProblem = findAnswerChoiceProblem(options);
   const problemRows = new Set(answerProblem?.rows ?? []);
+  // While a save or a fun-fact rewrite is in flight the form is read-only.
+  // When either finishes, the pick screen reloads this panel from the saved
+  // question (its key includes the fun fact), so anything typed during the
+  // wait was silently thrown away — a rewrite takes a few seconds and the
+  // box looked editable the whole time. Lock it and say why instead.
+  const busy = isSaving || isRewritingFact;
   const [pointValue, setPointValue] = useState<HostGenEditValues["pointValue"]>(
     initial.pointValue,
   );
@@ -230,7 +236,10 @@ function HostGenEditInner({
             <Eyebrow color={t.inkMute} size={9}>QUESTION</Eyebrow>
             <textarea
               value={prompt}
-              onChange={(e) => setPrompt(e.target.value)}
+              readOnly={busy}
+              onChange={(e) => {
+                if (!busy) setPrompt(e.target.value);
+              }}
               rows={2}
               style={{
                 marginTop: 8, width: "100%", padding: "14px 16px", borderRadius: 10,
@@ -259,6 +268,7 @@ function HostGenEditInner({
                       // marks this option as the correct one. Editing option
                       // text still works via the input.
                       if ((e.target as HTMLElement).tagName === "INPUT") return;
+                      if (busy) return;
                       setCorrectIndex(i as 0 | 1 | 2 | 3);
                     }}
                     style={{
@@ -275,7 +285,10 @@ function HostGenEditInner({
                       value={o}
                       aria-label={`Answer ${i + 1}`}
                       aria-invalid={flagged || undefined}
-                      onChange={(e) => updateOption(i, e.target.value)}
+                      readOnly={busy}
+                      onChange={(e) => {
+                        if (!busy) updateOption(i, e.target.value);
+                      }}
                       style={{
                         flex: 1, minWidth: mobile ? "calc(100% - 46px)" : undefined, fontSize: 14, color: t.ink, fontWeight: 500,
                         background: "transparent", border: "none", outline: "none",
@@ -287,6 +300,7 @@ function HostGenEditInner({
                     ) : (
                       <button
                         type="button"
+                        disabled={busy}
                         onClick={(e) => {
                           e.stopPropagation();
                           setCorrectIndex(i as 0 | 1 | 2 | 3);
@@ -344,7 +358,10 @@ function HostGenEditInner({
             </div>
             <textarea
               value={factBlurb}
-              onChange={(e) => setFactBlurb(e.target.value)}
+              readOnly={busy}
+              onChange={(e) => {
+                if (!busy) setFactBlurb(e.target.value);
+              }}
               rows={2}
               placeholder="Optional — leave this empty and nothing is shown."
               style={{
@@ -356,10 +373,22 @@ function HostGenEditInner({
                 resize: "vertical", outline: "none",
               }}
             />
-            <div style={{ marginTop: 6, fontSize: 11, color: t.inkMute, lineHeight: 1.45 }}>
-              Change the question and this rewrites itself to match when you save. Type your own
-              here and yours is kept.
-            </div>
+            {busy ? (
+              <div
+                role="status"
+                data-testid="host-gen-edit-busy"
+                style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: t.ink, lineHeight: 1.45 }}
+              >
+                {isRewritingFact
+                  ? "Writing a fun fact for this question. Hold on a few seconds; you can keep editing when it's done."
+                  : "Saving. Hold on a second."}
+              </div>
+            ) : (
+              <div style={{ marginTop: 6, fontSize: 11, color: t.inkMute, lineHeight: 1.45 }}>
+                Change the question and this rewrites itself to match when you save. Type your own
+                here and yours is kept.
+              </div>
+            )}
           </div>
 
           <div style={{ display: "grid", gridTemplateColumns: mobile ? "minmax(0, 1fr)" : "180px 1fr", gap: 16, alignItems: "flex-start" }}>
@@ -376,9 +405,9 @@ function HostGenEditInner({
               <button
                 type="button"
                 onClick={handleSwapImage}
-                disabled={isSaving || !!answerProblem}
+                disabled={busy || !!answerProblem}
                 title={answerProblem ? answerProblem.message : undefined}
-                style={{ marginTop: 8, width: "100%", padding: "8px 0", borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.ink, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: isSaving || answerProblem ? "default" : "pointer", opacity: isSaving || answerProblem ? 0.6 : 1 }}
+                style={{ marginTop: 8, width: "100%", padding: "8px 0", borderRadius: 8, border: `1px solid ${t.line}`, background: "transparent", color: t.ink, fontSize: 12, fontWeight: 600, fontFamily: "var(--font-sans)", cursor: busy || answerProblem ? "default" : "pointer", opacity: busy || answerProblem ? 0.6 : 1 }}
               >
                 Swap image  →
               </button>
@@ -402,6 +431,7 @@ function HostGenEditInner({
                       <button
                         key={v}
                         type="button"
+                        disabled={busy}
                         onClick={() => setPointValue(v)}
                         style={{
                           padding: "8px 0",
@@ -427,7 +457,7 @@ function HostGenEditInner({
                   <button
                     type="button"
                     onClick={() => setPointValue(null)}
-                    disabled={pointValue === null}
+                    disabled={busy || pointValue === null}
                     style={{
                       padding: "4px 10px",
                       borderRadius: 6,
@@ -459,22 +489,24 @@ function HostGenEditInner({
             <button
               type="button"
               onClick={handleSave}
-              disabled={isSaving || blurbTooLong || !!answerProblem}
+              disabled={busy || blurbTooLong || !!answerProblem}
               style={{
                 flex: 2, padding: "12px 0", minHeight: mobile ? 52 : undefined, borderRadius: 10, border: "none",
                 background: t.accent, color: "#FFF",
                 fontSize: 13, fontWeight: 700, fontFamily: "var(--font-sans)",
-                cursor: isSaving || blurbTooLong || answerProblem ? "default" : "pointer",
-                opacity: isSaving || blurbTooLong || answerProblem ? 0.7 : 1,
+                cursor: busy || blurbTooLong || answerProblem ? "default" : "pointer",
+                opacity: busy || blurbTooLong || answerProblem ? 0.7 : 1,
               }}
             >
               {isSaving
                 ? "Saving…"
-                : answerProblem
-                  ? "Fix the answers to save"
-                  : blurbTooLong
-                    ? "Fun fact is too long"
-                    : "Save · this question"}
+                : isRewritingFact
+                  ? "Writing the fun fact…"
+                  : answerProblem
+                    ? "Fix the answers to save"
+                    : blurbTooLong
+                      ? "Fun fact is too long"
+                      : "Save · this question"}
             </button>
           </div>
         </div>
