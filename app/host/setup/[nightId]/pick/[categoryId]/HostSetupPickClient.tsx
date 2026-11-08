@@ -55,6 +55,7 @@ import {
 } from "@/lib/host/mergePickedAfterRefetch";
 import { editQuestionEyebrow } from "@/lib/host/editQuestionEyebrow";
 import { shouldRewriteFactBlurb } from "@/lib/host/factBlurbStaleness";
+import { explainQuestionSaveError } from "@/lib/host/answerChoiceProblem";
 import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
   explainLockFailure,
@@ -971,7 +972,7 @@ export function HostSetupPickClient({
       }
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "could not save edit");
+        throw new Error(explainQuestionSaveError(body.error ?? "could not save edit"));
       }
       const { question } = (await res.json()) as { question: QuestionRow };
       setQuestions((prev) => prev.map((q) => (q.id === question.id ? question : q)));
