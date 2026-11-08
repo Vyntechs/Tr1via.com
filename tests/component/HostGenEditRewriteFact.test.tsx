@@ -70,7 +70,9 @@ function json(body: unknown, status = 200) {
 
 /** Faithful-enough server: real PATCH schema, same field mapping as
  *  apply_question_authoring_patch, fact-blurb answers when released. */
-function installServer() {
+type FactReply = "ok" | "fail" | "empty";
+
+function installServer(factReplies: FactReply[] = []) {
   const db = new Map<string, Row>([["q1", ptaRow()]]);
   const log: string[] = [];
   const patches: unknown[] = [];
@@ -83,10 +85,16 @@ function installServer() {
       const id = fact[1];
       log.push("POST fact-blurb");
       await new Promise<void>((r) => heldFacts.push(r));
+      const reply = factReplies.shift() ?? "ok";
       const row = db.get(id)!;
-      const next = { ...row, fact_blurb: `AI FACT for: ${row.prompt.slice(0, 30)}` };
+      // Same three outcomes as app/api/questions/[id]/fact-blurb/route.ts:
+      // a fact, a model/network failure (500, row untouched), or nothing
+      // usable (200, fun fact saved as null).
+      if (reply === "fail") return json({ error: "could not rewrite the fun fact — try again" }, 500);
+      const blurb = reply === "empty" ? null : `AI FACT for: ${row.prompt.slice(0, 30)}`;
+      const next = { ...row, fact_blurb: blurb };
       db.set(id, next);
-      return json({ question: next, blurb: next.fact_blurb });
+      return json({ question: next, blurb });
     }
     const save = url.match(/\/api\/questions\/([^/]+)$/);
     if (save && method === "PATCH") {
@@ -222,5 +230,83 @@ describe("Question editor: Rewrite to match (2026-11-07)", () => {
     type(after.answers[3], "Win a turkey pardon");
     expect(form().answers[3].value).toBe("Win a turkey pardon");
     expect(s.db.get("q1")!.options[3]).toBe("Become the presidential turkey");
+  });
+
+  it("her whole path: fix the answers, Rewrite to match, then Save", async () => {
+    const s = installServer();
+    renderPick();
+    await openEditor();
+    retypeAsFreeBirds("Win a cooking competition");
+    type(form().answers[3], "Become the presidential turkey");
+
+    fireEvent.click(screen.getByRole("button", { name: /rewrite to match/i }));
+    await waitFor(() => expect(s.log).toContain("POST fact-blurb"));
+    // The old movie's fact is already gone from the saved question.
+    expect(s.db.get("q1")!.fact_blurb).toBeNull();
+    await s.releaseFact();
+    await waitFor(() => expect(form().fact.value).toMatch(/^AI FACT for: In the animated movie/));
+
+    fireEvent.click(screen.getByRole("button", { name: /save · this question/i }));
+    await waitFor(() => expect(document.querySelectorAll("textarea")).toHaveLength(0));
+    const saved = s.db.get("q1")!;
+    expect(saved.prompt).toMatch(/Free Birds/);
+    expect(saved.options).toEqual([
+      "Escape from a farm",
+      "Win a cooking competition",
+      "Travel back in time to remove turkey from Thanksgiving",
+      "Become the presidential turkey",
+    ]);
+    expect(saved.correct_index).toBe(2);
+    expect(saved.fact_blurb).toMatch(/^AI FACT for: In the animated movie/);
+    expect(saved.point_value).toBe(200);
+    // Save didn't ask for a second fact, and nothing went wrong on screen.
+    expect(s.log.filter((l) => l === "POST fact-blurb")).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: "Dismiss" })).toBeNull();
+  });
+
+  it("if the AI fails, the old movie's fun fact is not left behind, and Rewrite again works", async () => {
+    const s = installServer(["fail", "ok"]);
+    renderPick();
+    await openEditor();
+    retypeAsFreeBirds("Become the presidential turkey");
+    fireEvent.click(screen.getByRole("button", { name: /rewrite to match/i }));
+    await waitFor(() => expect(s.log).toContain("POST fact-blurb"));
+    await s.releaseFact();
+
+    await screen.findByText(/the fun fact couldn't be rewritten/i);
+    expect(s.db.get("q1")!.fact_blurb).toBeNull();
+    expect(form().fact.value).toBe("");
+    expect(form().prompt.value).toMatch(/Free Birds/);
+
+    fireEvent.click(screen.getByRole("button", { name: /rewrite to match/i }));
+    await waitFor(() => expect(s.log.filter((l) => l === "POST fact-blurb")).toHaveLength(2));
+    await s.releaseFact();
+    await waitFor(() => expect(form().fact.value).toMatch(/^AI FACT for: In the animated movie/));
+  });
+
+  it("if the AI comes back empty, she is told instead of seeing a blank box", async () => {
+    const s = installServer(["empty"]);
+    renderPick();
+    await openEditor();
+    retypeAsFreeBirds("Become the presidential turkey");
+    fireEvent.click(screen.getByRole("button", { name: /rewrite to match/i }));
+    await waitFor(() => expect(s.log).toContain("POST fact-blurb"));
+    await s.releaseFact();
+    await screen.findByText(
+      "We couldn't write a fun fact for this question. Type one yourself, or try Rewrite again.",
+    );
+    expect(form().fact.value).toBe("");
+  });
+
+  it("a failed rewrite on an unchanged question keeps the fun fact it already had", async () => {
+    const s = installServer(["fail"]);
+    renderPick();
+    await openEditor();
+    fireEvent.click(screen.getByRole("button", { name: /rewrite to match/i }));
+    await waitFor(() => expect(s.log).toContain("POST fact-blurb"));
+    await s.releaseFact();
+    await screen.findByText(/the fun fact couldn't be rewritten/i);
+    expect(s.db.get("q1")!.fact_blurb).toBe(PTA_FACT);
+    expect(form().fact.value).toBe(PTA_FACT);
   });
 });
