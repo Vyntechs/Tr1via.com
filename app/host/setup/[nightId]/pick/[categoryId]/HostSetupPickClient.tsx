@@ -54,7 +54,11 @@ import {
   mergePickedAfterRefetch,
 } from "@/lib/host/mergePickedAfterRefetch";
 import { editQuestionEyebrow } from "@/lib/host/editQuestionEyebrow";
-import { shouldRewriteFactBlurb } from "@/lib/host/factBlurbStaleness";
+import {
+  questionMeaningChanged,
+  shouldRewriteFactBlurb,
+} from "@/lib/host/factBlurbStaleness";
+import { explainQuestionSaveError } from "@/lib/host/answerChoiceProblem";
 import { shouldAutoResumeGeneration } from "@/lib/host/generationAutoResume";
 import {
   explainLockFailure,
@@ -971,7 +975,7 @@ export function HostSetupPickClient({
       }
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(body.error ?? "could not save edit");
+        throw new Error(explainQuestionSaveError(body.error ?? "could not save edit"));
       }
       const { question } = (await res.json()) as { question: QuestionRow };
       setQuestions((prev) => prev.map((q) => (q.id === question.id ? question : q)));
@@ -1006,10 +1010,22 @@ export function HostSetupPickClient({
         );
         return false;
       }
-      const { question } = (await res.json()) as { question: QuestionRow };
+      const { question, blurb } = (await res.json()) as {
+        question: QuestionRow;
+        blurb?: string | null;
+      };
       setQuestions((prev) =>
         prev.map((q) => (q.id === question.id ? question : q)),
       );
+      // The route answers 200 with `blurb: null` when the AI gave back
+      // nothing usable; it saves the question with no fun fact. Say so —
+      // otherwise the box just goes empty and the button looks broken.
+      if (!blurb || !blurb.trim()) {
+        setError(
+          "We couldn't write a fun fact for this question. Type one yourself, or try Rewrite again.",
+        );
+        return false;
+      }
       return true;
     } catch {
       setError(
@@ -1068,7 +1084,24 @@ export function HostSetupPickClient({
   async function handleRewriteFact(values: HostGenEditValues) {
     if (modal.kind !== "edit") return;
     const questionId = modal.questionId;
-    const saved = await persistEdit(values, questionId);
+    const before = questions.find((q) => q.id === questionId);
+    // If she changed what the question asks, the fun fact on screen was
+    // written for the OLD question. Clear it in this save, exactly as Save
+    // does, so a failed or slow rewrite leaves no fun fact rather than the
+    // old one (2026-11-07: a Planes, Trains and Automobiles fact under her
+    // new Free Birds question). If the question didn't change, the current
+    // fact is still true, so it stays until the new one arrives.
+    const meaningChanged =
+      !!before &&
+      questionMeaningChanged(values, {
+        prompt: before.prompt,
+        options: (before.options ?? []) as string[],
+        correctIndex: before.correct_index,
+      });
+    const saved = await persistEdit(
+      meaningChanged ? { ...values, factBlurb: "" } : values,
+      questionId,
+    );
     if (!saved) return;
     await rewriteFactBlurb(questionId);
   }

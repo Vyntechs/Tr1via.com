@@ -232,3 +232,92 @@ describe("HostGenEdit", () => {
     });
   });
 });
+
+describe("HostGenEdit — repeated or blank answers", () => {
+  const FREE_BIRDS: HostGenEditValues = {
+    prompt: "In the animated movie Free Birds, what are the two turkeys trying to accomplish?",
+    options: [
+      "Escape from a farm",
+      "Win a cooking competition",
+      "Travel back in time to remove turkey from Thanksgiving",
+      "Win a cooking competition",
+    ],
+    correctIndex: 2,
+    factBlurb: "Neal and Del travel by plane, train, bus, taxi, semi-truck, and rental car.",
+    pointValue: 200,
+  };
+
+  it("says which answers match and holds every action that saves", () => {
+    const onSave = vi.fn();
+    const onRewriteFact = vi.fn();
+    const onSwapImage = vi.fn();
+    render(
+      <HostGenEdit
+        themeKey="november"
+        topic="Thanksgiving Movies"
+        initial={FREE_BIRDS}
+        onSave={onSave}
+        onRewriteFact={onRewriteFact}
+        onSwapImage={onSwapImage}
+      />,
+    );
+
+    expect(screen.getByTestId("answer-choice-problem").textContent).toBe(
+      "Answers 2 and 4 are the same. Change one so all four are different.",
+    );
+    expect(screen.getByLabelText("Answer 2").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByLabelText("Answer 4").getAttribute("aria-invalid")).toBe("true");
+    expect(screen.getByLabelText("Answer 1").getAttribute("aria-invalid")).toBeNull();
+
+    const save = screen.getByRole("button", { name: /fix the answers to save/i });
+    const rewrite = screen.getByRole("button", { name: /rewrite to match/i });
+    const swap = screen.getByRole("button", { name: /swap image/i });
+    for (const b of [save, rewrite, swap]) {
+      expect((b as HTMLButtonElement).disabled).toBe(true);
+      fireEvent.click(b);
+    }
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onRewriteFact).not.toHaveBeenCalled();
+    expect(onSwapImage).not.toHaveBeenCalled();
+  });
+
+  it("clears as soon as the host changes one of them", () => {
+    const onRewriteFact = vi.fn();
+    render(
+      <HostGenEdit
+        themeKey="november"
+        topic="Thanksgiving Movies"
+        initial={FREE_BIRDS}
+        onRewriteFact={onRewriteFact}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Answer 4"), {
+      target: { value: "Become the president's pardoned turkey" },
+    });
+
+    expect(screen.queryByTestId("answer-choice-problem")).toBeNull();
+    expect(screen.getByRole("button", { name: /save · this question/i })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /rewrite to match/i }));
+    expect(onRewriteFact).toHaveBeenCalledTimes(1);
+    expect(onRewriteFact.mock.calls[0]![0].options[3]).toBe(
+      "Become the president's pardoned turkey",
+    );
+  });
+
+  it("flags a blank answer the same way", () => {
+    render(
+      <HostGenEdit
+        themeKey="house"
+        topic="Test"
+        initial={{ ...INITIAL, options: ["alpha", "", "charlie", "delta"] }}
+      />,
+    );
+    expect(screen.getByTestId("answer-choice-problem").textContent).toBe(
+      "Answer 2 is empty. Fill in all four answers.",
+    );
+    expect(
+      (screen.getByRole("button", { name: /fix the answers to save/i }) as HTMLButtonElement).disabled,
+    ).toBe(true);
+  });
+});
